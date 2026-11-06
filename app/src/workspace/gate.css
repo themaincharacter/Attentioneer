@@ -1,0 +1,98 @@
+/* Gate styles — quiet, on the paper theme from canvas.css. */
+
+.gate {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+.gate-panel {
+  width: min(440px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px 0;
+}
+
+.gate-panel h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.gate-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.gate-actions button {
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid #26282c;
+  background: #26282c;
+  color: #f2f0ec;
+  cursor: pointer;
+}
+
+.gate-actions button:hover {
+  opacity: 0.88;
+}
+
+.gate-message {
+  margin: 0;
+  font-size: 13px;
+  color: #8d887c;
+}
+
+.gate-recents {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid #ddd7cc;
+  padding-top: 14px;
+}
+
+.gate-recents-label {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #8d887c;
+  margin-bottom: 6px;
+}
+
+.gate-recent {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.gate-recent:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.gate-recent-name {
+  flex: 0 0 auto;
+}
+
+.gate-recent-path {
+  font-size: 11px;
+  color: #8d887c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
