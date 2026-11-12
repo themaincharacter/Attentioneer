@@ -1,22 +1,27 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CanvasPlane } from "./canvas/CanvasPlane";
 import { DistanceWire } from "./canvas/DistanceWire";
+import {
+  centerOf,
+  DEFAULT_BOX,
+  edgePoint,
+  type Box,
+  type Point,
+} from "./canvas/geometry";
 import { ReferenceWord } from "./canvas/ReferenceWord";
 import { useCamera } from "./canvas/useCamera";
 import { useMap } from "./canvas/useMap";
+import type { Reference } from "./map/refs";
 import { WorkspaceGate } from "./workspace/WorkspaceGate";
 import type { Workspace } from "./workspace/lifecycle";
-
-type Point = { x: number; y: number };
-
-/** A word's anchor point — its stored top-left corner. */
-function wordPoint(word: { x: number; y: number }): Point {
-  return { x: word.x, y: word.y };
-}
 
 /**
  * One workspace per window (ADR-0002): the gate or an open workspace's canvas,
  * carrying references as bare words and distances as plain wires (Epic 2).
+ *
+ * Wire geometry is derived from *live* word positions: a word being dragged
+ * reports its position up here every frame, so its wires follow the pointer
+ * instead of snapping into place on drop.
  */
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -39,6 +44,37 @@ function App() {
     recoinDistance,
     removeDistance,
   } = map;
+
+  // Live positions (slug → plane point) while a word is being dragged, and
+  // measured word boxes, so wires can attach to the word's edges.
+  const [livePos, setLivePos] = useState<Record<string, Point>>({});
+  const [boxes, setBoxes] = useState<Record<string, Box>>({});
+
+  const handleDragMove = useCallback((slug: string, x: number, y: number) => {
+    setLivePos((prev) => {
+      const current = prev[slug];
+      if (current && current.x === x && current.y === y) return prev;
+      return { ...prev, [slug]: { x, y } };
+    });
+  }, []);
+
+  const handleMeasure = useCallback((slug: string, w: number, h: number) => {
+    setBoxes((prev) => {
+      const current = prev[slug];
+      if (current && Math.abs(current.w - w) < 0.5 && Math.abs(current.h - h) < 0.5) {
+        return prev;
+      }
+      return { ...prev, [slug]: { w, h } };
+    });
+  }, []);
+
+  const posOf = (word: Reference): Point => {
+    const live = word.slug !== null ? livePos[word.slug] : undefined;
+    return live ?? { x: word.x, y: word.y };
+  };
+  const boxOf = (word: Reference): Box =>
+    (word.slug !== null ? boxes[word.slug] : undefined) ?? DEFAULT_BOX;
+  const centerOfWord = (word: Reference): Point => centerOf(posOf(word), boxOf(word));
 
   // Track the pointer live during a connect draw so the dashed preview follows,
   // and end the draw when the pointer is released off a target word.
@@ -75,6 +111,12 @@ function App() {
   const fromRef = connect?.from ? refs.find((r) => r.slug === connect.from) : undefined;
   const toRef = connect?.to ? refs.find((r) => r.slug === connect.to) : undefined;
 
+  // The dashed preview starts at the origin word's edge, pointing at the pointer.
+  const previewFrom =
+    connect && !connect.to && fromRef
+      ? edgePoint(centerOfWord(fromRef), boxOf(fromRef), connect)
+      : null;
+
   return (
     <CanvasPlane
       camera={camera}
@@ -86,11 +128,14 @@ function App() {
         <ReferenceWord
           key={word.id}
           word={word}
+          position={posOf(word)}
           onChange={updateReference}
           onDiscard={discardReference}
           onRename={rename}
           onRemove={remove}
           onConnectFrom={(slug, c) => beginConnect(slug, c.x, c.y)}
+          onDragMove={handleDragMove}
+          onMeasure={handleMeasure}
           connectTarget={connect !== null && connect.from !== word.slug}
           onDropConnect={dropConnect}
         />
@@ -101,12 +146,14 @@ function App() {
         const f = refs.find((r) => r.slug === d.from);
         const t = refs.find((r) => r.slug === d.to);
         if (!f || !t) return null;
+        const fCenter = centerOfWord(f);
+        const tCenter = centerOfWord(t);
         return (
           <DistanceWire
             key={`${d.from}\u0000${d.to}\u0000${d.word}`}
             distance={d}
-            fromPoint={wordPoint(f)}
-            toPoint={wordPoint(t)}
+            fromPoint={edgePoint(fCenter, boxOf(f), tCenter)}
+            toPoint={edgePoint(tCenter, boxOf(t), fCenter)}
             onChange={recoinDistance}
             onRemove={removeDistance}
           />
@@ -114,15 +161,15 @@ function App() {
       })}
 
       {/* dashed preview while drawing */}
-      {connect && !connect.to && fromRef && (
-        <ConnectPreview from={wordPoint(fromRef)} to={connect} />
+      {previewFrom && connect && !connect.to && (
+        <ConnectPreview from={previewFrom} to={connect} />
       )}
 
       {/* coin-in-place field once the pair is fixed */}
       {connect && connect.to && fromRef && toRef && (
         <DistanceCoinField
-          fromCenter={wordPoint(fromRef)}
-          toCenter={wordPoint(toRef)}
+          fromCenter={centerOfWord(fromRef)}
+          toCenter={centerOfWord(toRef)}
           onCoin={coinConnect}
           onCancel={cancelConnect}
         />
@@ -134,14 +181,14 @@ function App() {
 function ConnectPreview({ from, to }: { from: Point; to: Point }) {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
+  const length = Math.max(0, Math.hypot(dx, dy));
+  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
   return (
     <div
       className="connect-preview-line"
       style={{
-        left: from.x,
-        top: from.y,
-        width: Math.hypot(dx, dy),
-        transform: `rotate(${(Math.atan2(dy, dx) * 180) / Math.PI}deg)`,
+        width: length,
+        transform: `translate3d(${from.x}px, ${from.y}px, 0) rotate(${angle}deg)`,
       }}
     />
   );

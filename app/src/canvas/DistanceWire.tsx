@@ -10,9 +10,9 @@ import { distanceLabelVisible } from "./zoomBands";
 
 interface DistanceWireProps {
   distance: Distance;
-  /** World center of the origin word. */
+  /** World point on the origin word's edge. */
   fromPoint: { x: number; y: number };
-  /** World center of the destination word. */
+  /** World point on the destination word's edge. */
   toPoint: { x: number; y: number };
   onChange: (distance: Distance, word: string) => void;
   onRemove: (distance: Distance) => void;
@@ -24,6 +24,9 @@ interface DistanceWireProps {
  * midpoint. The word hides below the configurable band (zoomBands) while the
  * wire stays. The word is revised in place: re-coin = a new word (a new key);
  * remove = one click, no ceremony.
+ *
+ * The line is a 1px element stretched with `scaleX`, so following a dragged
+ * word costs a compositor transform rather than a layout pass.
  */
 export function DistanceWire({
   distance,
@@ -85,20 +88,17 @@ export function DistanceWire({
   }
 
   return (
-    <div className="distance" style={{ left: 0, top: 0 }}>
+    <div className="distance">
       <div
         className="distance-line"
         style={{
-          left: fromPoint.x,
-          top: fromPoint.y,
-          width: length,
-          transform: `rotate(${angle}deg)`,
+          transform: `translate3d(${fromPoint.x}px, ${fromPoint.y}px, 0) rotate(${angle}deg) scaleX(${length})`,
         }}
       />
       {labelVisible && (
         <div
           className="distance-label"
-          style={{ left: mx, top: my }}
+          style={{ left: mx, top: my, transform: "translate(-50%, -50%)" }}
           onDoubleClick={beginEdit}
         >
           {editing ? (

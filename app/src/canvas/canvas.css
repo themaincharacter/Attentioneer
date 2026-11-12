@@ -1,6 +1,45 @@
 /* Quiet canvas theme — carried over from the working-surface prototype
    (variant A, chosen at the surface ticket). Provisional: the visual
-   language is not settled by any ADR yet. */
+   language is not settled by any ADR yet.
+
+   Motion rules: short, soft, ease-out; nothing bounces, nothing celebrates.
+   Positions are composited (translate3d / scaleX) so dragging stays fluid. */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dash-flow {
+  to {
+    background-position-x: 14px;
+  }
+}
+
+@keyframes target-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(141, 136, 124, 0.32);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(141, 136, 124, 0);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 
 html,
 body,
@@ -14,6 +53,8 @@ body {
   font: 15px/1.55 -apple-system, "Segoe UI", system-ui, sans-serif;
   color: #1e2126;
   background: #f7f6f3;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .plane {
@@ -38,6 +79,7 @@ body {
   left: 0;
   top: 0;
   transform-origin: 0 0;
+  will-change: transform;
 }
 
 .zoom-chip {
@@ -52,6 +94,7 @@ body {
   padding: 4px 12px;
   color: #6b675e;
   pointer-events: none;
+  transition: opacity 220ms ease;
 }
 
 .plane-hint {
@@ -63,18 +106,30 @@ body {
   color: #8d887c;
   z-index: 5;
   pointer-events: none;
+  transition: opacity 220ms ease;
 }
 
-/* References render as bare words (ADR-0007); memory is tucked behind a dot. */
+/* References render as bare words (ADR-0007); memory is tucked behind a dot.
+   The word is positioned with a transform so dragging is compositor-cheap. */
 
 .word {
   position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
   cursor: grab;
   user-select: none;
+  will-change: transform;
+  animation: fade-in 180ms ease-out;
 }
 
 .word:active {
   cursor: grabbing;
+}
+
+.word.dragging {
+  cursor: grabbing;
+  z-index: 5;
 }
 
 .word.editing {
@@ -86,18 +141,29 @@ body {
   align-items: center;
   gap: 5px;
   padding: 3px 6px;
-  border-radius: 6px;
+  border-radius: 7px;
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease,
+    border-color 150ms ease;
 }
 
 .word:hover .word-row {
-  background: rgba(30, 33, 38, 0.05);
+  background: rgba(30, 33, 38, 0.045);
+}
+
+.word.dragging .word-row {
+  background: rgba(30, 33, 38, 0.07);
+  box-shadow: 0 3px 14px rgba(40, 35, 25, 0.14);
 }
 
 .word-name {
   font-size: 17px;
   font-weight: 500;
+  letter-spacing: -0.01em;
   color: #1e2126;
   white-space: nowrap;
+  cursor: grab;
 }
 
 .memory-dot {
@@ -109,6 +175,15 @@ body {
   border-radius: 50%;
   background: transparent;
   cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.memory-dot:hover {
+  transform: scale(1.35);
+  border-color: #6b675e;
 }
 
 .memory-dot.has-memory {
@@ -118,16 +193,19 @@ body {
 
 .word.revealing {
   cursor: default;
+  z-index: 3;
 }
 
-.word.revealing .word-row {
+.word.revealing .word-row,
+.word.renaming .word-row {
   background: #fffdf8;
   border: 1px solid #ddd7cc;
-  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.1);
+  box-shadow: 0 3px 16px rgba(40, 35, 25, 0.12);
 }
 
 .word .memory {
   margin-top: 6px;
+  animation: rise-in 150ms ease-out;
 }
 
 .word .memory textarea {
@@ -164,37 +242,53 @@ body {
 
 .word-coin::placeholder {
   color: #c4beb1;
-}/* Distances render as plain wires + a coined word (ADR-0006). The wire is a
-   thin transform-rotated line anchored at the origin word's corner; the word
-   shows at the midpoint and hides below the configurable band while the wire
-   stays. */
+}
+
+/* Distances render as plain wires + a coined word (ADR-0006). */
 
 .distance {
   position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
   pointer-events: none;
 }
 
 .distance-line {
   position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
   height: 0;
-  border-top: 1px solid #a9a294;
+  border-top: 1px solid #b5ad9e;
   transform-origin: 0 0;
   pointer-events: none;
+  will-change: transform;
+  animation: fade-in 240ms ease-out;
 }
 
 .distance-label {
   position: absolute;
-  transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 1px 5px;
+  gap: 4px;
+  padding: 1px 6px;
   background: #fffdf8;
   border: 1px solid #ddd7cc;
   border-radius: 999px;
   box-shadow: 0 1px 6px rgba(40, 35, 25, 0.08);
   pointer-events: auto;
   cursor: default;
+  z-index: 3;
+  animation: fade-in 200ms ease-out;
+  transition:
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+
+.distance-label:hover {
+  box-shadow: 0 3px 12px rgba(40, 35, 25, 0.14);
+  border-color: #c9c2b4;
 }
 
 .distance-word {
@@ -231,6 +325,14 @@ body {
   border: 0;
   padding: 0 2px;
   cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.distance-label:hover .distance-remove {
+  opacity: 1;
 }
 
 .distance-remove:hover {
@@ -248,26 +350,47 @@ body {
   border-radius: 50%;
   background: #f7f6f3;
   cursor: crosshair;
+  opacity: 0.4;
+  transition:
+    opacity 150ms ease,
+    background-color 150ms ease,
+    transform 150ms ease;
+}
+
+.word:hover .connect-handle {
+  opacity: 1;
 }
 
 .connect-handle:hover {
   background: #e8e4db;
+  transform: scale(1.2);
 }
 
 .word.connect-target {
-  outline: 1px dashed #8d887c;
-  outline-offset: 2px;
-  border-radius: 6px;
+  outline: 1px dashed #a49c8d;
+  outline-offset: 3px;
+  border-radius: 7px;
+  animation: target-pulse 1.3s ease-in-out infinite;
 }
 
 /* The dashed follow-line while a distance draw is in flight. */
 
 .connect-preview-line {
   position: absolute;
-  height: 0;
-  border-top: 1px dashed #8d887c;
+  left: 0;
+  top: 0;
+  height: 2px;
+  background-image: repeating-linear-gradient(
+    90deg,
+    #a49c8d 0 8px,
+    transparent 8px 14px
+  );
+  background-repeat: repeat-x;
+  background-size: 14px 2px;
   transform-origin: 0 0;
   pointer-events: none;
+  z-index: 1;
+  animation: dash-flow 480ms linear infinite;
 }
 
 /* The in-place coin field for a newly drawn distance. */
@@ -277,10 +400,11 @@ body {
   transform: translate(-50%, -50%);
   background: #fffdf8;
   border: 1px solid #c9c2b4;
-  border-radius: 6px;
-  box-shadow: 0 2px 12px rgba(40, 35, 25, 0.12);
+  border-radius: 7px;
+  box-shadow: 0 4px 18px rgba(40, 35, 25, 0.14);
   padding: 3px 8px;
-  z-index: 4;
+  z-index: 6;
+  animation: fade-in 150ms ease-out;
 }
 
 .distance-coinfield input {
@@ -296,12 +420,15 @@ body {
 
 .distance-coinfield input::placeholder {
   color: #c4beb1;
-}/* Story 3: rename (double-click the word) and remove (a ×, no ceremony). */
+}
+
+/* Story 3: rename (double-click the word) and remove (a ×, no ceremony). */
 
 .word-rename {
   font: inherit;
   font-size: 17px;
   font-weight: 500;
+  letter-spacing: -0.01em;
   color: #1e2126;
   border: 0;
   outline: none;
@@ -320,6 +447,9 @@ body {
   padding: 0 2px;
   cursor: pointer;
   opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
 }
 
 .word:hover .word-remove {
@@ -330,8 +460,12 @@ body {
   color: #b33;
 }
 
-.word.renaming .word-row {
-  background: #fffdf8;
-  border: 1px solid #ddd7cc;
-  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.1);
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
