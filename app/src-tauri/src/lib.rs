@@ -47,6 +47,25 @@ fn list_dir(path: String) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// Rename a reference file when its slug changes (ADR-0005's atomic patch).
+#[tauri::command]
+fn rename_file(from: String, to: String) -> Result<(), String> {
+    if let Some(parent) = Path::new(&to).parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create {}: {}", parent.display(), e))?;
+    }
+    fs::rename(&from, &to).map_err(|e| format!("rename {} -> {}: {}", from, to, e))
+}
+
+/// Remove a reference file (ADR-0007's atomic delete).
+#[tauri::command]
+fn remove_file(path: String) -> Result<(), String> {
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("remove {}: {}", path, e)),
+    }
+}
+
 /// The app-side config file (ADR-0002: the only app-side persistence).
 #[tauri::command]
 fn config_path() -> Result<String, String> {
@@ -66,6 +85,8 @@ pub fn run() {
             create_dir_all,
             path_exists,
             list_dir,
+            rename_file,
+            remove_file,
             config_path
         ])
         .run(tauri::generate_context!())

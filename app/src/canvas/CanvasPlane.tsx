@@ -80,8 +80,8 @@ export function CanvasPlane({
   function handleDoubleClick(e: ReactMouseEvent<HTMLDivElement>) {
     const el = planeRef.current;
     if (!el || !onPlaneDoubleClick) return;
-    // Only a double-click whose both clicks landed on empty plane creates a
-    // note: a click on a card centers it (moving it), so the follow-up click
+    // Only a double-click whose two clicks both landed on empty plane coins a
+    // word: a click on a word centers it (moving it), so the follow-up click
     // of a hurried double-click can hit the plane — that must stay quiet.
     const recent = planeDownsRef.current.filter((t) => Date.now() - t < 800);
     if (recent.length < 2) {
@@ -121,7 +121,7 @@ export function CanvasPlane({
 
     // Count plane mousedowns before attaching d3 (d3 stops immediate
     // propagation on mousedown, so later same-element listeners never run).
-    // Card clicks stop propagation first and never reach this counter.
+    // Word clicks stop propagation first and never reach this counter.
     const countPlaneDown = () => {
       planeDownsRef.current.push(Date.now());
     };
@@ -181,7 +181,7 @@ export function CanvasPlane({
         </div>
         <div className="zoom-chip">{Math.round(camera.zoom * 100)}%</div>
         <div className="plane-hint">
-          drag to pan · scroll to zoom · double-click to add a note
+          drag to pan · scroll to zoom · double-click to coin a word
         </div>
       </div>
     </PlaneContext.Provider>

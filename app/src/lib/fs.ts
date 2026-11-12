@@ -24,3 +24,11 @@ export async function pathExists(path: string): Promise<boolean> {
 export async function listDir(path: string): Promise<string[]> {
   return await invoke<string[]>("list_dir", { path });
 }
+
+export async function renameFile(from: string, to: string): Promise<void> {
+  await invoke("rename_file", { from, to });
+}
+
+export async function removeFile(path: string): Promise<void> {
+  await invoke("remove_file", { path });
+}

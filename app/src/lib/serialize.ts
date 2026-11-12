@@ -12,6 +12,24 @@ import { createDirAll, pathExists, writeTextFile } from "./fs";
 /** The workspace format key (provisional). */
 export const FORMAT_KEY = "attentioneer-workspace/1";
 
+/**
+ * A reference's file slug (ADR-0005, rule 4): unicode letters and digits
+ * kept and case-folded, every other character becomes `-`, runs trimmed.
+ * Non-Latin coined names survive — the old a-z0-9 rule collapsed them to
+ * `untitled`, which would have broken name-identity.
+ */
+export function slugName(name: string): string {
+  const slug = name
+    .normalize("NFKC")
+    .toLowerCase()
+    .split("")
+    .map((char) => (/[\p{L}\p{Nd}]/u.test(char) ? char : "-"))
+    .join("")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "untitled";
+}
+
 function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sortKeys);
@@ -111,8 +129,10 @@ export function agentsMd(workspaceName: string): string {
     "## What is here",
     "",
     "- `workspace.yml` — workspace marker and format key; keep it.",
-    "- `notes/` — working notes: one Markdown file per thought, named after it.",
-    "- `map/` and `ontology/` arrive later; until then the notes are the content.",
+    "- `map/references/` — one Markdown file per reference: its coined name, its",
+    "  place on the plane, and its optional memory (prose).",
+    "- `notes/` — working notes from before the map; kept untouched, no longer shown.",
+    "- `map/distances.jsonl` and `ontology/` arrive in later efforts.",
     "",
     "## Ground rules",
     "",
@@ -132,8 +152,9 @@ export function agentsMd(workspaceName: string): string {
 }
 
 /**
- * Scaffold a workspace folder (ADR-0004's Epic 1 slice): `workspace.yml`,
- * `AGENTS.md`, `notes/`. Files that already exist are left as they are.
+ * Scaffold a workspace folder (ADR-0004): `workspace.yml`, `AGENTS.md`,
+ * `notes/` (earlier scaffolding, kept) and `map/references/` (Epic 2).
+ * Files that already exist are left as they are.
  */
 export async function scaffoldWorkspace(path: string, name: string): Promise<void> {
   const files: ReadonlyArray<readonly [string, string]> = [
@@ -146,4 +167,5 @@ export async function scaffoldWorkspace(path: string, name: string): Promise<voi
     }
   }
   await createDirAll(`${path}/notes`);
+  await createDirAll(`${path}/map/references`);
 }

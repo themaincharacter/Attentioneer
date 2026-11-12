@@ -65,85 +65,273 @@ body {
   pointer-events: none;
 }
 
-/* Working-note cards (provisional; the card becomes a Reference node in Epic 2). */
+/* References render as bare words (ADR-0007); memory is tucked behind a dot. */
 
-.card {
+.word {
   position: absolute;
-  width: 300px;
-  background: #fffdf8;
-  border: 1px solid #ddd7cc;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.1);
-  padding: 16px 18px;
   cursor: grab;
   user-select: none;
 }
 
-.card:active {
+.word:active {
   cursor: grabbing;
 }
 
-.card.editing {
+.word.editing {
+  cursor: text;
+}
+
+.word .word-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+
+.word:hover .word-row {
+  background: rgba(30, 33, 38, 0.05);
+}
+
+.word-name {
+  font-size: 17px;
+  font-weight: 500;
+  color: #1e2126;
+  white-space: nowrap;
+}
+
+.memory-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid #9a9489;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.memory-dot.has-memory {
+  background: #67625a;
+  border-color: #67625a;
+}
+
+.word.revealing {
   cursor: default;
 }
 
-.card.collapsed {
-  padding: 10px 14px;
+.word.revealing .word-row {
+  background: #fffdf8;
+  border: 1px solid #ddd7cc;
+  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.1);
 }
 
-.card h2 {
-  margin: 0 0 6px;
-  font-size: 16px;
-  font-weight: 600;
+.word .memory {
+  margin-top: 6px;
 }
 
-.card .title-empty {
-  color: #b3ada0;
-  font-weight: 500;
-}
-
-.card.collapsed h2 {
-  margin-bottom: 0;
-}
-
-.card p {
-  margin: 0;
-  font-size: 13.5px;
-  color: #4c4a44;
-  white-space: pre-wrap;
-}
-
-.card .card-edit {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.card input,
-.card textarea {
+.word .memory textarea {
   font: inherit;
-  color: inherit;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #4c4a44;
+  width: 240px;
+  min-height: 90px;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0 6px 3px;
+  white-space: pre-wrap;
+  cursor: text;
+}
+
+.word .memory textarea::placeholder {
+  color: #c4beb1;
+}
+
+.word-coin {
+  font: inherit;
+  font-size: 17px;
+  font-weight: 500;
+  color: #1e2126;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 3px 6px;
+  width: 180px;
+}
+
+.word-coin::placeholder {
+  color: #c4beb1;
+}/* Distances render as plain wires + a coined word (ADR-0006). The wire is a
+   thin transform-rotated line anchored at the origin word's corner; the word
+   shows at the midpoint and hides below the configurable band while the wire
+   stays. */
+
+.distance {
+  position: absolute;
+  pointer-events: none;
+}
+
+.distance-line {
+  position: absolute;
+  height: 0;
+  border-top: 1px solid #a9a294;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.distance-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 5px;
+  background: #fffdf8;
+  border: 1px solid #ddd7cc;
+  border-radius: 999px;
+  box-shadow: 0 1px 6px rgba(40, 35, 25, 0.08);
+  pointer-events: auto;
+  cursor: default;
+}
+
+.distance-word {
+  font: inherit;
+  font-size: 12px;
+  color: #4c4a44;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: text;
+}
+
+.distance-coin {
+  font: inherit;
+  font-size: 12px;
+  color: #1e2126;
   border: 0;
   outline: none;
   background: transparent;
   padding: 0;
-  width: 100%;
+  min-width: 80px;
 }
 
-.card input {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.card textarea {
-  font-size: 13.5px;
-  line-height: 1.55;
-  color: #4c4a44;
-  resize: none;
-  min-height: 120px;
-}
-
-.card input::placeholder,
-.card textarea::placeholder {
+.distance-coin::placeholder {
   color: #c4beb1;
+}
+
+.distance-remove {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.distance-remove:hover {
+  color: #b33;
+}
+
+/* Reference words: a connect handle starts a distance draw. */
+
+.connect-handle {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid #a9a294;
+  border-radius: 50%;
+  background: #f7f6f3;
+  cursor: crosshair;
+}
+
+.connect-handle:hover {
+  background: #e8e4db;
+}
+
+.word.connect-target {
+  outline: 1px dashed #8d887c;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* The dashed follow-line while a distance draw is in flight. */
+
+.connect-preview-line {
+  position: absolute;
+  height: 0;
+  border-top: 1px dashed #8d887c;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+/* The in-place coin field for a newly drawn distance. */
+
+.distance-coinfield {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: #fffdf8;
+  border: 1px solid #c9c2b4;
+  border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(40, 35, 25, 0.12);
+  padding: 3px 8px;
+  z-index: 4;
+}
+
+.distance-coinfield input {
+  font: inherit;
+  font-size: 13px;
+  color: #1e2126;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  min-width: 140px;
+}
+
+.distance-coinfield input::placeholder {
+  color: #c4beb1;
+}/* Story 3: rename (double-click the word) and remove (a ×, no ceremony). */
+
+.word-rename {
+  font: inherit;
+  font-size: 17px;
+  font-weight: 500;
+  color: #1e2126;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  min-width: 80px;
+}
+
+.word-remove {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.word:hover .word-remove {
+  opacity: 1;
+}
+
+.word-remove:hover {
+  color: #b33;
+}
+
+.word.renaming .word-row {
+  background: #fffdf8;
+  border: 1px solid #ddd7cc;
+  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.1);
 }
