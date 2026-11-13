@@ -10,6 +10,7 @@ import {
 } from "./canvas/geometry";
 import { LackMark } from "./canvas/LackMark";
 import { resolveMarkDrop, type WireHit, type WordHit } from "./canvas/markTargets";
+import { PlaneMenu } from "./canvas/PlaneMenu";
 import { useRingDrag } from "./canvas/ringDrag";
 import { ReferenceWord } from "./canvas/ReferenceWord";
 import { ShelfFold } from "./canvas/ShelfFold";
@@ -29,11 +30,14 @@ const WIRE_DROP_PX = 12;
  * carrying references as bare words and distances as plain wires (Epic 2),
  * quietened by open marks (Epic 3, ADR-0009).
  *
- * Story 2 gives the mark its own gestures: a plain click casts a bare lack,
- * the ring drags to bind/unbind, a double-click on a bare ring grows it into a
- * named question-word, and its × withdraws it. Wire geometry is derived from
- * *live* word positions, so a dragged word's wires follow the pointer instead
- * of snapping into place on drop.
+ * Creation lives on the double-click (Epic 3 feedback): a double-click on
+ * empty plane opens a small word/lack ring menu there; choosing word coins in
+ * place, choosing lack casts a bare open mark. A single click creates nothing.
+ * The mark's own gestures are story 2's: the ring drags to bind/unbind, a
+ * double-click on a bare ring grows it into a named question-word, and its ×
+ * withdraws it. Wire geometry is derived from *live* word positions, so a
+ * dragged word's wires follow the pointer instead of snapping into place on
+ * drop.
  */
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -76,6 +80,8 @@ function App() {
   const [boxes, setBoxes] = useState<Record<string, Box>>({});
   // The bare lack whose name field is open (double-clicked ring), if any.
   const [growAt, setGrowAt] = useState<Point | null>(null);
+  // The plane point where the double-click creation menu is open, if any.
+  const [menuAt, setMenuAt] = useState<Point | null>(null);
 
   const handleDragMove = useCallback((slug: string, x: number, y: number) => {
     setLivePos((prev) => {
@@ -212,26 +218,28 @@ function App() {
 
   const markDrag = useRingDrag(handleRingDrop, toWorld);
 
-  /** A plain click on empty plane casts a bare lack at that spot (deferred). */
-  const handlePlaneClick = useCallback(
-    (point: Point) => castMark(point.x, point.y),
-    [castMark],
-  );
+  /** A double-click on empty plane opens the word/lack ring menu at that point. */
+  const handlePlaneDoubleClick = useCallback((point: Point) => {
+    setMenuAt(point);
+  }, []);
 
-  /**
-   * Double-click on empty plane still coins a word (ADR-0007). If the coin's
-   * first click had already cast its deferred lack (a slower double-click),
-   * the coin consumes that exact spot line: coining leaves no stray mark.
-   */
-  const handlePlaneDoubleClick = useCallback(
-    (point: Point, consumedSpot?: Point) => {
-      if (consumedSpot) {
-        withdrawMark({ type: "spot", x: consumedSpot.x, y: consumedSpot.y });
-      }
-      coinReference(point.x, point.y);
-    },
-    [withdrawMark, coinReference],
-  );
+  const closePlaneMenu = useCallback(() => setMenuAt(null), []);
+
+  /** The menu's word choice: close it and open the in-place coin field. */
+  const chooseWord = useCallback(() => {
+    const spot = menuAt;
+    if (!spot) return;
+    setMenuAt(null);
+    coinReference(spot.x, spot.y);
+  }, [menuAt, coinReference]);
+
+  /** The menu's lack choice: close it and cast the bare open mark. */
+  const chooseLack = useCallback(() => {
+    const spot = menuAt;
+    if (!spot) return;
+    setMenuAt(null);
+    castMark(spot.x, spot.y);
+  }, [menuAt, castMark]);
 
   // Track the pointer live during a connect draw so the dashed preview follows,
   // and end the draw when the pointer is released off a target word.
@@ -283,7 +291,6 @@ function App() {
       <CanvasPlane
         camera={camera}
         intents={intents}
-        onPlaneClick={handlePlaneClick}
         onPlaneDoubleClick={handlePlaneDoubleClick}
       >
         {/* the shelf's fold and margin: a place in world space (story 3) */}
@@ -403,6 +410,17 @@ function App() {
             toCenter={centerOfWord(toRef)}
             onCoin={coinConnect}
             onCancel={cancelConnect}
+          />
+        )}
+
+        {/* the double-click creation menu: word or lack, at the point */}
+        {menuAt && (
+          <PlaneMenu
+            x={menuAt.x}
+            y={menuAt.y}
+            onWord={chooseWord}
+            onLack={chooseLack}
+            onClose={closePlaneMenu}
           />
         )}
       </CanvasPlane>

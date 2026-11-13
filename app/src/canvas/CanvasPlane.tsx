@@ -17,15 +17,7 @@ import {
   type ZoomTransform,
 } from "d3-zoom";
 import { MAX_ZOOM, MIN_ZOOM, type Camera, type CameraIntents } from "./useCamera";
-import {
-  castIsConsumed,
-  CAST_DELAY_MS,
-  closesPair,
-  DOUBLE_CLICK_MS,
-  isPlainClick,
-  isSecondOfPair,
-  type PlanePress,
-} from "./clickSequence";
+import { closesPair, DOUBLE_CLICK_MS, type PlanePress } from "./planePress";
 import "./canvas.css";
 
 /**
@@ -33,12 +25,12 @@ import "./canvas.css";
  * into camera intents; the camera transform is applied to `.plane-inner`.
  * The dot grid tracks the camera so even an empty plane shows motion.
  *
- * The plane holds two gestures that must not collide (Epic 3 story 2): a
- * double-click on empty plane coins a word (ADR-0007), and a plain click casts
- * a bare lack (map ticket 03). The cast is deferred by `CAST_DELAY_MS` (see
- * clickSequence.ts): a close second press cancels it, so coining never leaves
- * a stray mark; a slower double-click consumes the spot cast by its first
- * click. A pan (pointer drift on the press) never casts.
+ * Creation lives on the double-click (Epic 3 feedback): a double-click on
+ * empty plane reports its point, and the app opens the word/lack ring menu
+ * there. A single click does nothing at all; a pan is inert. The press
+ * counter guards the gesture — both of the double-click's presses must have
+ * landed on empty plane, so a hurried double-click on a word (which centers
+ * it) can never create. `planePress.ts` holds the pure pair rule.
  *
  * Provisional: grid size and zoom-band behavior are not settled by any ADR yet.
  */
@@ -46,13 +38,13 @@ import "./canvas.css";
 /** Space between grid dots at 100% zoom. */
 const GRID = 28;
 
-/** Ring/word/field targets whose clicks never reach the plane's gestures. */
+/** Ring/word/field/menu targets whose clicks never reach the plane's gestures. */
 const CONTENT_SELECTOR =
-  ".word, .lack-mark, .distance-label, .distance-ring, .distance-coinfield, .grow-field";
+  ".word, .lack-mark, .distance-label, .distance-ring, .distance-coinfield, .grow-field, .plane-menu";
 
-interface PendingCast {
-  timer: number;
-  press: PlanePress;
+/** Is this event target one of the content elements above? */
+function isContentTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(CONTENT_SELECTOR) !== null;
 }
 
 /** What content components can see and do through the plane (ADR-0003). */
@@ -75,34 +67,23 @@ export function usePlane(): PlaneApi {
 interface CanvasPlaneProps {
   camera: Camera;
   intents: CameraIntents;
-  /** Called (deferred) with the plane-space point under a plain click. */
-  onPlaneClick?: (point: { x: number; y: number }) => void;
   /**
    * Called with the plane-space point under a double-click on empty plane.
-   * `consumedSpot` is set when the first click's deferred cast already fired —
-   * the coin consumes that exact spot line (no stray mark).
+   * The app opens its word/lack creation menu at that point.
    */
-  onPlaneDoubleClick?: (
-    point: { x: number; y: number },
-    consumedSpot?: { x: number; y: number },
-  ) => void;
+  onPlaneDoubleClick?: (point: { x: number; y: number }) => void;
   children?: ReactNode;
 }
 
 export function CanvasPlane({
   camera,
   intents,
-  onPlaneClick,
   onPlaneDoubleClick,
   children,
 }: CanvasPlaneProps) {
   const planeRef = useRef<HTMLDivElement>(null);
   const behaviorRef = useRef<ZoomBehavior<HTMLDivElement, unknown> | null>(null);
   const pressesRef = useRef<PlanePress[]>([]);
-  const pendingCastsRef = useRef<PendingCast[]>([]);
-  const lastCastRef = useRef<{ press: PlanePress; point: { x: number; y: number } } | null>(
-    null,
-  );
 
   const planeApi = useMemo<PlaneApi>(
     () => ({
@@ -129,41 +110,6 @@ export function CanvasPlane({
     };
   }
 
-  function isContentTarget(target: EventTarget | null): boolean {
-    return target instanceof Element && target.closest(CONTENT_SELECTOR) !== null;
-  }
-
-  function cancelPendingCast(pressT: number) {
-    const keep: PendingCast[] = [];
-    for (const pending of pendingCastsRef.current) {
-      if (pending.press.t === pressT) window.clearTimeout(pending.timer);
-      else keep.push(pending);
-    }
-    pendingCastsRef.current = keep;
-  }
-
-  function handleClick(e: ReactMouseEvent<HTMLDivElement>) {
-    if (isContentTarget(e.target)) return;
-    const presses = pressesRef.current;
-    const press = presses[presses.length - 1];
-    if (!press) return;
-    const click = { t: Date.now(), x: e.clientX, y: e.clientY };
-    // A pan is not a click; a close second press belongs to a double-click.
-    if (!isPlainClick(press, click)) return;
-    if (isSecondOfPair(presses)) return;
-    if (pendingCastsRef.current.some((pending) => pending.press.t === press.t)) return;
-    const point = pointFromClient(e.clientX, e.clientY);
-    if (!point || !onPlaneClick) return;
-    const timer = window.setTimeout(() => {
-      pendingCastsRef.current = pendingCastsRef.current.filter(
-        (pending) => pending.timer !== timer,
-      );
-      lastCastRef.current = { press, point };
-      onPlaneClick(point);
-    }, CAST_DELAY_MS);
-    pendingCastsRef.current.push({ timer, press });
-  }
-
   function handleDoubleClick(e: ReactMouseEvent<HTMLDivElement>) {
     if (isContentTarget(e.target)) return;
     const now = Date.now();
@@ -173,32 +119,20 @@ export function CanvasPlane({
       return;
     }
     // Only a close pair counts: a press from an earlier gesture must never
-    // turn a single plane click into a coin (or consume an older lack). Both
-    // of this double-click's clicks must have landed on empty plane.
+    // turn a single plane click into creation. Both of this double-click's
+    // presses must have landed on empty plane (content presses are filtered
+    // out of the counter, and a content double-click target returns above).
     const first = recent[recent.length - 2];
     const second = recent[recent.length - 1];
     if (!closesPair(first, second)) {
       pressesRef.current = recent;
       return;
     }
-    cancelPendingCast(first.t);
     pressesRef.current = [];
-    const lastCast = lastCastRef.current;
-    lastCastRef.current = null;
-    const consumed =
-      lastCast && castIsConsumed(first, lastCast) ? lastCast.point : undefined;
     const point = pointFromClient(e.clientX, e.clientY);
-    if (!point || !onPlaneDoubleClick) return;
-    onPlaneDoubleClick(point, consumed);
+    if (!point) return;
+    onPlaneDoubleClick?.(point);
   }
-
-  // Cancel any cast still waiting on a timer when the plane goes away.
-  useEffect(() => {
-    return () => {
-      for (const pending of pendingCastsRef.current) window.clearTimeout(pending.timer);
-      pendingCastsRef.current = [];
-    };
-  }, []);
 
   // Attach d3-zoom once: wheel / pinch / drag → camera intents.
   // Double-click zoom is filtered out so the plane stays quiet.
@@ -224,17 +158,14 @@ export function CanvasPlane({
       });
 
     // Record plane presses before attaching d3 (d3 stops immediate propagation
-    // on mousedown, so later same-element listeners never run). Word and ring
-    // presses stop propagation first and never reach this counter. A close
-    // second press cancels the first click's pending cast (the double-click
-    // rule) — the coin gesture must never leave a stray lack behind.
+    // on mousedown, so later same-element listeners never run). Content presses
+    // are filtered by target as well as by their own stopPropagation, so the
+    // pair below is always two presses on empty plane.
     const countPlanePress = (event: MouseEvent) => {
+      if (event.button !== 0 || isContentTarget(event.target)) return;
       const now = Date.now();
       const recent = pressesRef.current.filter((press) => now - press.t <= DOUBLE_CLICK_MS);
-      const press: PlanePress = { t: now, x: event.clientX, y: event.clientY };
-      const previous = recent[recent.length - 1];
-      if (previous && closesPair(previous, press)) cancelPendingCast(previous.t);
-      recent.push(press);
+      recent.push({ t: now, x: event.clientX, y: event.clientY });
       pressesRef.current = recent;
     };
     el.addEventListener("mousedown", countPlanePress);
@@ -281,7 +212,6 @@ export function CanvasPlane({
         ref={planeRef}
         className="plane"
         style={gridStyle}
-        onClick={handleClick}
         onDoubleClick={handleDoubleClick}
       >
         <div
@@ -294,8 +224,8 @@ export function CanvasPlane({
         </div>
         <div className="zoom-chip">{Math.round(camera.zoom * 100)}%</div>
         <div className="plane-hint">
-          drag to pan · scroll to zoom · click to leave a lack · double-click to coin a word
-          · drag past the fold to set aside
+          drag to pan · scroll to zoom · double-click: word or lack · drag past the fold
+          to set aside
         </div>
       </div>
     </PlaneContext.Provider>

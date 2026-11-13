@@ -759,6 +759,68 @@ body {
   color: #c4beb1;
 }
 
+/* The double-click creation menu (Epic 3 feedback): a small dark ring at the
+   plane point, carrying two quiet choices — word or lack — and a center dot
+   on the anchor. Single clicks create nothing, so this is the only creation
+   door. It lives inside .plane-inner and renders above words and wires; one
+   accent (the paper dot), no counts, no captions, no gimmicks. */
+
+.plane-menu {
+  position: absolute;
+  z-index: 9;
+  width: 124px;
+  height: 124px;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid rgba(255, 253, 248, 0.12);
+  border-radius: 50%;
+  background: #26282c;
+  box-shadow: 0 10px 30px rgba(30, 25, 20, 0.24);
+  color: #f2f0ec;
+  user-select: none;
+  animation: fade-in 130ms ease-out;
+}
+
+.plane-menu-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f2f0ec;
+  opacity: 0.85;
+}
+
+.plane-menu-option {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #dedad2;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 12px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+
+.plane-menu-option:hover {
+  color: #fffdf8;
+  background: rgba(255, 253, 248, 0.09);
+}
+
+.plane-menu-option:focus-visible {
+  color: #fffdf8;
+  background: rgba(255, 253, 248, 0.09);
+  outline: 1px solid rgba(255, 253, 248, 0.55);
+  outline-offset: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

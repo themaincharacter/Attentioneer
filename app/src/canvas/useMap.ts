@@ -117,9 +117,8 @@ export function useMap(workspacePath: string) {
       marksRef.current = deduped;
       setMarks(deduped);
       const malformedLines = [...malformedMarksRef.current];
-      // One marks writer at a time: the cast a slower double-click made and the
-      // coin that consumes it must land in order, never as the stale spot line
-      // reappearing under the new word.
+      // One marks writer at a time: a burst of menu casts, ring drags and grows
+      // must land in order, never as a stale line reappearing under a newer one.
       marksWriteRef.current = marksWriteRef.current
         .catch(() => undefined)
         .then(() => saveMarks(workspacePath, deduped, malformedLines));
@@ -220,7 +219,7 @@ export function useMap(workspacePath: string) {
     [persistMarks],
   );
 
-  /** Cast a bare open mark at a plane point — one click, no field, no name. */
+  /** Cast a bare open mark — the menu's lack choice; no field, no name. */
   const castMark = useCallback(
     (x: number, y: number) => {
       const target: MarkTarget = { type: "spot", x, y };
