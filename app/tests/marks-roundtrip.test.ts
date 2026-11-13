@@ -15,6 +15,11 @@ import {
   type MarkTarget,
 } from "../src/map/marks";
 import { distanceKey } from "../src/map/distances";
+import {
+  dropMarksTouching,
+  recoinWireMarks,
+  rewriteMarkEndpoints,
+} from "../src/map/patches";
 
 /**
  * Story-1 guarantee, automated: `map/marks.jsonl` round-trips canonically with
@@ -253,5 +258,195 @@ describe("orphans are surfaced, not hidden", () => {
       new Set([distanceKey("a", "b", "feeds")]),
     );
     expect(orphans).toEqual([sea, needs]);
+  });
+});
+
+describe("rename, remove and re-coin rewrite the file's bytes", () => {
+  /** Apply one atomic patch to a marks document and write it back. */
+  function patch(text: string, apply: (marks: Mark[]) => Mark[]): string {
+    const parsed = parseMarks(text);
+    return serializeMarks(apply(parsed.marks), parsed.malformed);
+  }
+
+  test("rename follows `on`, wire endpoints and both ends of a self-wire", () => {
+    const before = serializeMarks(
+      [
+        mark({ target: word("old"), extra: { rank: 1 } }),
+        mark({ target: wire("old", "b", "feeds") }),
+        mark({ target: wire("old", "old", "loops") }),
+        mark({ target: wire("a", "b", "old") }),
+        mark({ target: spot(1, 2) }),
+      ],
+      ["{hand edit"],
+    );
+
+    const after = patch(before, (marks) => rewriteMarkEndpoints(marks, "old", "new"));
+
+    // Collision rule: untouched marks first, rewritten ones last, so a stale
+    // mark already sitting on the new slug loses to the app's renamed mark.
+    expect(after).toBe(
+      [
+        '{"from":"a","kind":"open","to":"b","word":"old"}',
+        '{"kind":"open","x":1,"y":2}',
+        '{"kind":"open","on":"new","rank":1}',
+        '{"from":"new","kind":"open","to":"b","word":"feeds"}',
+        '{"from":"new","kind":"open","to":"new","word":"loops"}',
+        "{hand edit",
+        "",
+      ].join("\n"),
+    );
+    // A wire word that spells the old slug is not an endpoint: the coin is the
+    // person's word and a rename never rewrites it (ADR-0005, ADR-0009).
+    expect(after).toContain('{"from":"a","kind":"open","to":"b","word":"old"}');
+    // The malformed line is exactly the bytes nobody can read.
+    expect(parseMarks(after).malformed).toEqual(["{hand edit"]);
+    // Canonical: re-reading the rewritten file rewrites nothing.
+    const reread = parseMarks(after);
+    expect(serializeMarks(reread.marks, reread.malformed)).toBe(after);
+  });
+
+  test("remove drops every touching mark; bare spots and malformed lines stay byte-identical", () => {
+    const before = serializeMarks(
+      [
+        mark({ target: word("old") }),
+        mark({ target: wire("old", "b", "feeds") }),
+        mark({ target: wire("c", "old", "reads") }),
+        mark({ target: wire("a", "b", "old") }),
+        mark({ target: spot(3, 4) }),
+        mark({ target: word("sea") }),
+      ],
+      ["{bad json"],
+    );
+
+    const after = patch(before, (marks) => dropMarksTouching(marks, "old"));
+
+    expect(after).toBe(
+      [
+        '{"from":"a","kind":"open","to":"b","word":"old"}',
+        '{"kind":"open","x":3,"y":4}',
+        '{"kind":"open","on":"sea"}',
+        "{bad json",
+        "",
+      ].join("\n"),
+    );
+    // A wire whose word simply spells the removed slug is untouched, and the
+    // malformed line survives the patch verbatim.
+    expect(after).toContain('{"from":"a","kind":"open","to":"b","word":"old"}');
+    expect(parseMarks(after).malformed).toEqual(["{bad json"]);
+  });
+
+  test("a free re-coin follows the relation and leaves the sibling on the pair", () => {
+    const before = serializeMarks([
+      mark({ target: wire("a", "b", "w1"), extra: { rank: 1 } }),
+      mark({ target: wire("a", "b", "w2") }),
+    ]);
+
+    const after = patch(before, (marks) =>
+      recoinWireMarks(marks, "a", "b", "w1", "w3", false),
+    );
+
+    expect(after).toBe(
+      [
+        '{"from":"a","kind":"open","to":"b","word":"w2"}',
+        '{"from":"a","kind":"open","rank":1,"to":"b","word":"w3"}',
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("a colliding re-coin pins the re-coined line and drops the collided mark", () => {
+    const before = serializeMarks([
+      mark({ target: wire("a", "b", "w1"), extra: { rank: 1 } }),
+      mark({ target: wire("a", "b", "w2"), extra: { rank: 2 } }),
+    ]);
+
+    const after = patch(before, (marks) =>
+      recoinWireMarks(marks, "a", "b", "w1", "w2", true),
+    );
+
+    expect(after).toBe(
+      '{"from":"a","kind":"open","rank":1,"to":"b","word":"w2"}\n',
+    );
+    expect(after).not.toContain('"rank":2');
+  });
+});
+
+describe("the first write is canonical; an absent file is no marks", () => {
+  test("an absent or empty file parses as no marks", () => {
+    // `loadMarks` maps the fs bridge's missing-file null to this same empty
+    // parse; the bridge itself needs Tauri, so the pure half is asserted here.
+    expect(parseMarks("")).toEqual({ marks: [], malformed: [] });
+    expect(parseMarks("\n")).toEqual({ marks: [], malformed: [] });
+    expect(parseMarks("\r\n")).toEqual({ marks: [], malformed: [] });
+  });
+
+  test("the first cast writes one canonical line with a trailing newline", () => {
+    const first = serializeMarks([mark({ target: spot(12, -3.5) })]);
+    expect(first).toBe('{"kind":"open","x":12,"y":-3.5}\n');
+    // And the document the app would write again is the same bytes.
+    expect(serializeMarks(parseMarks(first).marks)).toBe(first);
+  });
+
+  test("an empty marks document is a lone newline (the canonical empty JSONL)", () => {
+    expect(serializeMarks([])).toBe("\n");
+    expect(parseMarks(serializeMarks([])).marks).toEqual([]);
+  });
+});
+
+describe("the file keeps one line per natural key", () => {
+  test("ordered pair, reversed pair and a sibling on one pair are three lines", () => {
+    const text = serializeMarks([
+      mark({ target: wire("a", "b", "feeds") }),
+      mark({ target: wire("b", "a", "feeds") }),
+      mark({ target: wire("a", "b", "needs") }),
+    ]);
+    expect(text.split("\n").filter(Boolean)).toHaveLength(3);
+    expect(serializeMarks(parseMarks(text).marks)).toBe(text);
+  });
+
+  test("re-casting the same mark in the file rewrites its only line", () => {
+    const first = serializeMarks([mark({ extra: { rank: 1 } })]);
+    const recast = serializeMarks(
+      withMark(parseMarks(first).marks, mark({ extra: { rank: 2 } })),
+    );
+    expect(recast).toBe('{"kind":"open","on":"rain","rank":2}\n');
+  });
+});
+
+describe("orphans are preserved and only hand-edit accidents are exposed", () => {
+  test("orphan lines survive an unrelated save byte-for-byte", () => {
+    const wordOrphan = serializeMarkLine(
+      mark({ target: word("gone"), extra: { note: "why" } }),
+    );
+    const wireOrphan = serializeMarkLine(mark({ target: wire("gone", "away", "feeds") }));
+    const text = `${wordOrphan}\n${wireOrphan}\n`;
+
+    const parsed = parseMarks(text);
+    const after = serializeMarks(
+      withMark(parsed.marks, { kind: "open", target: word("rain"), extra: {} }),
+    );
+
+    expect(after).toContain(wordOrphan);
+    expect(after).toContain(wireOrphan);
+    const reread = parseMarks(after);
+    expect(reread.malformed).toEqual([]);
+    expect(serializeMarks(reread.marks)).toBe(after);
+    // Only the two hand-edited leftovers are exposed; the app's new mark is not.
+    expect(
+      findOrphanMarks(reread.marks, new Set(["rain"]), new Set())
+        .map(serializeMarkLine)
+        .sort(),
+    ).toEqual([wireOrphan, wordOrphan].sort());
+  });
+
+  test("a hand-edited known line keeps its content, in the app's canonical style", () => {
+    // AGENTS.md: hand edits are welcome and come back in canonical style;
+    // verbatim bytes are the guarantee only for lines the app cannot parse.
+    const handEdited = '{ "kind": "open", "on": "gone", "note": "x" }';
+    const parsed = parseMarks(handEdited);
+    expect(parsed.malformed).toEqual([]);
+    expect(serializeMarks(parsed.marks)).toBe(
+      '{"kind":"open","note":"x","on":"gone"}\n',
+    );
   });
 });
