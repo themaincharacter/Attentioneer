@@ -1,4 +1,5 @@
 import { createDirAll, pathExists, writeTextFile } from "./fs";
+import { DEFAULT_SHELF_X } from "../map/shelf";
 
 /**
  * Canonical serialization (ADR-0004, rule 4): this module owns all
@@ -125,6 +126,9 @@ export function workspaceYml(): string {
   return [
     "# Attentioneer workspace — the format key below marks the on-disk schema.",
     `format: ${FORMAT_KEY}`,
+    "# The shelf is a world-space margin past this x, per ADR-0010.",
+    "# A reference whose word centre is at or past it is set aside.",
+    `shelf_x: ${DEFAULT_SHELF_X}`,
     "",
   ].join("\n");
 }
@@ -138,7 +142,8 @@ export function agentsMd(workspaceName: string): string {
     "",
     "## What is here",
     "",
-    "- `workspace.yml` — workspace marker and format key; keep it.",
+    "- `workspace.yml` — workspace marker, format key, and the shelf's fold",
+    "  (`shelf_x`); keep it.",
     "- `map/references/` — one Markdown file per reference: its coined name, its",
     "  place on the plane, and its optional memory (prose).",
     "- `map/distances.jsonl` — one line per distance: its two endpoints and the",
@@ -147,6 +152,18 @@ export function agentsMd(workspaceName: string): string {
     "  word, on a distance, or on a bare spot of the plane.",
     "- `notes/` — working notes from before the map; kept untouched, no longer shown.",
     "- `ontology/` arrives in later efforts.",
+    "",
+    "## The shelf",
+    "",
+    `The map has a quiet fold at \`shelf_x\` (in \`workspace.yml\`; ${DEFAULT_SHELF_X} when the`,
+    "key is absent). A reference whose word's centre is at or past that x is set",
+    "aside on the world-space margin beyond the fold. Position is the only",
+    "record — there is no shelf flag, folder, or field. A set-aside reference",
+    "carrying an open mark is deferred; one without a mark is rejected.",
+    "",
+    "In a reference file `x` is the word's left edge, so `x` at or past `shelf_x`",
+    "always means \"on the shelf\"; move it clearly below to bring it back. Change",
+    "`shelf_x` only when the user asks to move the fold.",
     "",
     "## Ground rules",
     "",

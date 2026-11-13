@@ -48,6 +48,11 @@ export interface ConnectDraft {
  * question-word (`growMark`), and settle it (`withdrawMark`). Mark state lives
  * in `marksRef` as well as React state so a burst of casts/drags can never
  * read a stale list and lose the earlier write.
+ *
+ * Story 3's shelf adds one composed write, `reject`: settle + set aside in one
+ * user move. The shelf itself is not a state — it is derived from a
+ * reference's position past the workspace fold (`map/shelf.ts`), so the map
+ * model only ever writes x/y and marks.
  */
 export function useMap(workspacePath: string) {
   const [refs, setRefs] = useState<Reference[]>([]);
@@ -293,6 +298,37 @@ export function useMap(workspacePath: string) {
     [workspacePath, persistMarks],
   );
 
+  /**
+   * Reject a reference: settle (withdraw its open mark) + set aside, in one
+   * user move (ADR-0010). `spot` is the shelf point the canvas derived from the
+   * fold; `null` means the word is already set aside, so the settle alone
+   * completes the move. Nothing is stored about the rejection — the word is
+   * kept, its position past the fold is the whole record.
+   *
+   * Write order: the reference's x/y first, the mark line second. A crash
+   * between the two leaves the word on the shelf still carrying its open mark:
+   * deferred, visible, one ring-click from settled. The reverse order (settle
+   * first) would leave a settled word in the live map with the rejection
+   * silently half-applied. Neither order can lose the word or leave a mark the
+   * user cannot see.
+   */
+  const reject = useCallback(
+    (ref: Reference, spot: { x: number; y: number } | null) => {
+      const settle = () => {
+        if (ref.slug !== null) withdrawMark({ type: "word", slug: ref.slug });
+      };
+      if (!spot) {
+        settle();
+        return;
+      }
+      saveReference(workspacePath, { ...ref, x: spot.x, y: spot.y }).then((saved) => {
+        setRefs((list) => list.map((r) => (r.id === ref.id ? saved : r)));
+        settle();
+      });
+    },
+    [workspacePath, withdrawMark],
+  );
+
   /** Begin a distance draw from `fromSlug` at a world point. */
   const beginConnect = useCallback((fromSlug: string, x: number, y: number) => {
     setConnect({ from: fromSlug, x, y });
@@ -394,6 +430,7 @@ export function useMap(workspacePath: string) {
     withdrawMark,
     moveMark,
     growMark,
+    reject,
     beginConnect,
     moveConnect,
     dropConnect,

@@ -19,6 +19,8 @@ interface DistanceWireProps {
   onRemove: (distance: Distance) => void;
   /** True while this wire carries an open mark (ADR-0009/0010). */
   marked: boolean;
+  /** True when either endpoint is set aside past the shelf's fold (story 3). */
+  shelved?: boolean;
   /** Cast or settle this wire's open mark (story 1's provisional affordance). */
   onToggleMark: () => void;
   /**
@@ -37,6 +39,8 @@ interface DistanceWireProps {
  * wire stays. The word is revised in place: re-coin = a new word (a new key);
  * remove = one click, no ceremony. A wire carrying an open mark renders dashed
  * and ringed (ADR-0009/0010), and the ring is the cast/settle affordance.
+ * A wire touching a set-aside word renders quieter (story 3) — it is still on
+ * the map, anchored to its words; wires themselves have no shelf.
  *
  * The line is a 1px element stretched with `scaleX`, so following a dragged
  * word costs a compositor transform rather than a layout pass. A marked wire
@@ -50,6 +54,7 @@ export function DistanceWire({
   onChange,
   onRemove,
   marked,
+  shelved = false,
   onToggleMark,
   onMarkRingDrag,
   labelOffset = 0,
@@ -121,7 +126,7 @@ export function DistanceWire({
   }
 
   return (
-    <div className="distance">
+    <div className={`distance${shelved ? " shelved" : ""}`}>
       <div
         className={`distance-line${marked ? " open" : ""}`}
         style={

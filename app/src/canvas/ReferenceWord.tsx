@@ -32,6 +32,14 @@ interface ReferenceWordProps {
   onDropConnect: (toSlug: string) => void;
   /** True while this word carries an open mark (ADR-0009). */
   marked: boolean;
+  /** True while this word sits past the shelf's fold — set aside (ADR-0010). */
+  shelved: boolean;
+  /**
+   * Reject this word: withdraw its open mark and set it aside in one composed
+   * move (ADR-0010). Offered only while the word carries an open mark and is
+   * not mid-edit, so ordinary coining and dragging are not burdened.
+   */
+  onReject: () => void;
   /** Cast or settle this word's open mark (story 1's provisional affordance). */
   onToggleMark: () => void;
   /**
@@ -61,7 +69,10 @@ interface DragState {
  * Escape dismisses it. Double-clicking the name renames it (story 3), a ×
  * removes it, a connect handle starts a distance draw, and the hollow ring
  * casts or settles an open mark (ADR-0009; story 1's provisional affordance) —
- * dragging that ring binds the mark elsewhere (story 2).
+ * dragging that ring binds the mark elsewhere (story 2). A marked word also
+ * offers a quiet reject arrow (story 3): one move settles it and sets it
+ * aside (ADR-0010). A set-aside word wears `.shelved` (quieter, not disabled):
+ * the position past the fold is the whole record.
  *
  * Dragging is reported upward every animation frame (`onDragMove`) so the
  * word's wires track the pointer instead of snapping on drop.
@@ -79,6 +90,8 @@ export function ReferenceWord({
   connectTarget,
   onDropConnect,
   marked,
+  shelved,
+  onReject,
   onToggleMark,
   onMarkRingDrag,
 }: ReferenceWordProps) {
@@ -229,6 +242,8 @@ export function ReferenceWord({
     const target = e.target as HTMLElement;
     if (target.closest(".memory-dot")) return;
     if (target.closest(".word-remove")) return;
+    // The reject arrow is a plain click (settle + set aside), never a drag.
+    if (target.closest(".word-reject")) return;
     // The mark ring toggles on click and drags to bind (story 2); it must not
     // start a word drag or a centering. Only a ring that already carries the
     // mark can be dragged — an unmarked hover ring just casts on click.
@@ -374,7 +389,7 @@ export function ReferenceWord({
     <div
       ref={wordRef}
       data-slug={word.slug ?? undefined}
-      className={`word${marked ? " open" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}`}
+      className={`word${marked ? " open" : ""}${shelved ? " shelved" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}`}
       style={{ transform }}
       onBlur={handleBlur}
       onMouseUp={handleDropMouseUp}
@@ -415,6 +430,17 @@ export function ReferenceWord({
           aria-label="draw a distance"
           title="drag to another word"
         />
+        {marked && !renaming && !revealing && (
+          <button
+            type="button"
+            className="word-reject"
+            aria-label="reject — settle and set aside"
+            title="reject — settle and set aside"
+            onClick={onReject}
+          >
+            →
+          </button>
+        )}
         <button
           type="button"
           className="word-remove"

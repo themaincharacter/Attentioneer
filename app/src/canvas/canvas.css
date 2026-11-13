@@ -82,6 +82,46 @@ body {
   will-change: transform;
 }
 
+/* The shelf (ADR-0010): a world-space margin past a quiet fold. It is drawn
+   inside .plane-inner, so it pans and zooms with the map — a destination, not
+   a viewport panel. The shade fades out instead of ending in an edge (the
+   plane is unbounded). No counts, badges, or nudges on the shelf. */
+
+.shelf {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.shelf-shade {
+  position: absolute;
+  background: linear-gradient(
+    90deg,
+    rgba(141, 136, 124, 0.07),
+    rgba(141, 136, 124, 0.015) 65%,
+    rgba(141, 136, 124, 0)
+  );
+}
+
+.shelf-fold {
+  position: absolute;
+  width: 0;
+  border-left: 1px dashed #d2ccc0;
+}
+
+.shelf-label {
+  position: absolute;
+  top: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .zoom-chip {
   position: absolute;
   top: 14px;
@@ -121,6 +161,7 @@ body {
   user-select: none;
   will-change: transform;
   animation: fade-in 180ms ease-out;
+  transition: opacity 160ms ease;
 }
 
 .word:active {
@@ -174,6 +215,17 @@ body {
   text-decoration: underline dashed;
   text-decoration-color: rgba(141, 136, 124, 0.6);
   text-underline-offset: 3px;
+}
+
+/* A set-aside word (story 3, ADR-0010): quieter, never disabled. The mark still
+   tells deferred (ghosted + ring) from rejected (settled, ringless); hover
+   restores it enough to pick up and drag back across the fold. */
+.word.shelved {
+  opacity: 0.5;
+}
+
+.word.shelved:hover {
+  opacity: 0.85;
 }
 
 /* The mark ring: the hollow glyph, always visible while open and a quiet
@@ -299,6 +351,12 @@ body {
   top: 0;
   z-index: 1;
   pointer-events: none;
+}
+
+/* A wire anchored to a set-aside word is quieter too, but it stays on the
+   map: wires are anchored to two references and have no shelf (ADR-0010). */
+.distance.shelved {
+  opacity: 0.4;
 }
 
 .distance-line {
@@ -508,6 +566,32 @@ body {
 
 .distance-coinfield input::placeholder {
   color: #c4beb1;
+}
+
+/* Epic 3 story 3, the reject arrow on a tentative word: one move settles it
+   and sets it aside (ADR-0010). Quiet and hover-only, and offered only on a
+   marked word so ordinary words keep their uncluttered row. */
+.word-reject {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 0 1px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.word:hover .word-reject {
+  opacity: 1;
+}
+
+.word-reject:hover {
+  color: #6b675e;
 }
 
 /* Story 3: rename (double-click the word) and remove (a ×, no ceremony). */

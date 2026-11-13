@@ -12,10 +12,12 @@ import { LackMark } from "./canvas/LackMark";
 import { resolveMarkDrop, type WireHit, type WordHit } from "./canvas/markTargets";
 import { useRingDrag } from "./canvas/ringDrag";
 import { ReferenceWord } from "./canvas/ReferenceWord";
+import { ShelfFold } from "./canvas/ShelfFold";
 import { useCamera } from "./canvas/useCamera";
 import { useMap } from "./canvas/useMap";
 import { markTargetKey, type Mark, type MarkTarget } from "./map/marks";
 import type { Reference } from "./map/refs";
+import { DEFAULT_SHELF_X, isShelved, rejectSpot } from "./map/shelf";
 import { WorkspaceGate } from "./workspace/WorkspaceGate";
 import type { Workspace } from "./workspace/lifecycle";
 
@@ -49,6 +51,7 @@ function App() {
     discardReference,
     rename,
     remove,
+    reject,
     toggleWordMark,
     toggleWireMark,
     castMark,
@@ -63,6 +66,9 @@ function App() {
     recoinDistance,
     removeDistance,
   } = map;
+
+  // The shelf's fold (ADR-0010): a workspace-level convention, provisional.
+  const shelfX = workspace?.shelfX ?? DEFAULT_SHELF_X;
 
   // Live positions (slug → plane point) while a word is being dragged, and
   // measured word boxes, so wires can attach to the word's edges.
@@ -130,6 +136,32 @@ function App() {
   const centerOfWord = useCallback(
     (word: Reference): Point => centerOf(posOf(word), boxOf(word)),
     [posOf, boxOf],
+  );
+
+  // Is this word set aside? Derived from where its centre sits past the fold —
+  // no shelf flag, no stored state (ADR-0010). It is live during a drag (the
+  // live position updates every frame), so the word quiets as it crosses.
+  const shelvedOf = useCallback(
+    (word: Reference): boolean =>
+      word.slug !== null && isShelved(posOf(word).x, boxOf(word).w, shelfX),
+    [posOf, boxOf, shelfX],
+  );
+
+  /**
+   * Reject = settle + set aside in one move (ADR-0010): the word lands in the
+   * shelf column past the fold, or keeps its place when it is already set
+   * aside (then the settle alone finishes the rejection). The composed write
+   * and its crash posture live in `useMap.reject`.
+   */
+  const rejectWord = useCallback(
+    (word: Reference) => {
+      const spot = rejectSpot(
+        { x: posOf(word).x, y: posOf(word).y, width: boxOf(word).w },
+        shelfX,
+      );
+      reject(word, spot);
+    },
+    [posOf, boxOf, shelfX, reject],
   );
 
   // Client point → plane point, for drops and camera-relative gestures.
@@ -254,6 +286,9 @@ function App() {
         onPlaneClick={handlePlaneClick}
         onPlaneDoubleClick={handlePlaneDoubleClick}
       >
+        {/* the shelf's fold and margin: a place in world space (story 3) */}
+        <ShelfFold shelfX={shelfX} />
+
         {/* bare lacks: one quiet ring per open spot (story 2) */}
         {openSpots.map((spot) => (
           <LackMark
@@ -299,6 +334,8 @@ function App() {
             onMarkRingDrag={(slug, e) =>
               markDrag.begin({ type: "word", slug }, e)
             }
+            shelved={shelvedOf(word)}
+            onReject={() => rejectWord(word)}
           />
         ))}
 
@@ -324,6 +361,7 @@ function App() {
               marked={openTargets.has(
                 markTargetKey({ type: "wire", from: d.from, to: d.to, word: d.word }),
               )}
+              shelved={shelvedOf(f) || shelvedOf(t)}
               onToggleMark={() => {
                 if (markDrag.isClickSuppressed()) return;
                 toggleWireMark(d);

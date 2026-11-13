@@ -295,6 +295,7 @@ export function CanvasPlane({
         <div className="zoom-chip">{Math.round(camera.zoom * 100)}%</div>
         <div className="plane-hint">
           drag to pan · scroll to zoom · click to leave a lack · double-click to coin a word
+          · drag past the fold to set aside
         </div>
       </div>
     </PlaneContext.Provider>
