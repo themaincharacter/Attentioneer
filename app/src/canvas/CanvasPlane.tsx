@@ -26,7 +26,7 @@ import "./canvas.css";
  * The dot grid tracks the camera so even an empty plane shows motion.
  *
  * Creation lives on the double-click (Epic 3 feedback): a double-click on
- * empty plane reports its point, and the app opens the word/lack ring menu
+ * empty plane reports its point, and the app opens the word/lack menu
  * there. A single click does nothing at all; a pan is inert. The press
  * counter guards the gesture — both of the double-click's presses must have
  * landed on empty plane, so a hurried double-click on a word (which centers

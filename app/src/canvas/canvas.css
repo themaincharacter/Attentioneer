@@ -759,66 +759,177 @@ body {
   color: #c4beb1;
 }
 
-/* The double-click creation menu (Epic 3 feedback): a small dark ring at the
-   plane point, carrying two quiet choices — word or lack — and a center dot
-   on the anchor. Single clicks create nothing, so this is the only creation
-   door. It lives inside .plane-inner and renders above words and wires; one
-   accent (the paper dot), no counts, no captions, no gimmicks. */
+/* The double-click creation menu (Epic 3 feedback): a small floating bubble
+   cluster at the plane point. Two frosted warm-white bubbles — word above,
+   lack below — hang off a single inked anchor dot, each on a hairline stem so
+   the cluster visibly belongs to its point. Single clicks create nothing, so
+   this is the only creation door. It lives inside .plane-inner and renders
+   above words and wires; one accent (the anchor dot), no counts, no captions,
+   no gimmicks. Motion is a short pop — fade + 0.92→1 scale with a 4px upward
+   drift, 180ms ease-out, a 28ms stagger between the choices — plus a 1.5px
+   hover lift. Every animation is duration-based, so the global
+   prefers-reduced-motion rule below neutralises it. */
+
+@keyframes plane-menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes plane-menu-dot-in {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
 
 .plane-menu {
+  /* No panel of its own: the two bubbles and the anchor dot are the menu. The
+     box still catches presses in the gaps (never a pan, never a plane press,
+     never a close). */
   position: absolute;
   z-index: 9;
-  width: 124px;
-  height: 124px;
-  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: 1px solid rgba(255, 253, 248, 0.12);
-  border-radius: 50%;
-  background: #26282c;
-  box-shadow: 0 10px 30px rgba(30, 25, 20, 0.24);
-  color: #f2f0ec;
+  gap: 9px;
+  transform: translate(-50%, -50%);
   user-select: none;
-  animation: fade-in 130ms ease-out;
 }
 
+/* The one accent: the dot that marks the exact plane point. Its centre is the
+   root's centre, so it stays on the anchor at every zoom. */
 .plane-menu-dot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: #f2f0ec;
-  opacity: 0.85;
+  background: #6b675e;
+  box-shadow: 0 0 0 3px rgba(141, 136, 124, 0.14);
+  animation: plane-menu-dot-in 130ms ease-out backwards;
 }
 
+/* Each choice is its own frosted bubble, not a slice of one panel: warm white,
+   thin warm border, layered soft shadow, dark warm text. */
 .plane-menu-option {
+  position: relative;
   font: inherit;
   font-size: 13px;
   font-weight: 500;
+  line-height: 18px;
   letter-spacing: 0.01em;
-  color: #dedad2;
-  background: transparent;
-  border: 0;
+  color: #4c4a44;
+  box-sizing: border-box;
+  min-width: 68px;
+  padding: 5px 14px;
+  background: rgba(255, 253, 248, 0.82);
+  border: 1px solid rgba(141, 136, 124, 0.24);
   border-radius: 999px;
-  padding: 3px 12px;
+  -webkit-appearance: none;
+  appearance: none;
+  overflow: visible;
+  box-shadow:
+    0 1px 2px rgba(40, 35, 25, 0.06),
+    0 4px 12px rgba(40, 35, 25, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
   cursor: pointer;
+  animation: plane-menu-pop 180ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
   transition:
-    color 140ms ease,
-    background-color 140ms ease;
+    transform 150ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 140ms ease;
+}
+
+/* A hairline stem ties each bubble to the anchor dot. */
+.plane-menu-option::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 1px;
+  height: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.plane-menu-option:first-of-type::after {
+  bottom: -9px;
+  background: linear-gradient(
+    to bottom,
+    rgba(141, 136, 124, 0.34),
+    rgba(141, 136, 124, 0.1)
+  );
+}
+
+.plane-menu-option:last-of-type::after {
+  top: -9px;
+  background: linear-gradient(
+    to top,
+    rgba(141, 136, 124, 0.34),
+    rgba(141, 136, 124, 0.1)
+  );
+}
+
+/* Stagger: the upper choice leads, the lower follows a beat later. */
+.plane-menu-option:last-of-type {
+  animation-delay: 28ms;
 }
 
 .plane-menu-option:hover {
-  color: #fffdf8;
-  background: rgba(255, 253, 248, 0.09);
+  color: #1e2126;
+  background: rgba(255, 253, 248, 0.92);
+  border-color: rgba(141, 136, 124, 0.38);
+  transform: translateY(-1.5px);
+  box-shadow:
+    0 2px 4px rgba(40, 35, 25, 0.07),
+    0 8px 20px rgba(40, 35, 25, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.plane-menu-option:active {
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 2px rgba(40, 35, 25, 0.08),
+    0 4px 12px rgba(40, 35, 25, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 .plane-menu-option:focus-visible {
-  color: #fffdf8;
-  background: rgba(255, 253, 248, 0.09);
-  outline: 1px solid rgba(255, 253, 248, 0.55);
+  color: #1e2126;
+  outline: 1.5px solid #6b675e;
   outline-offset: 2px;
+}
+
+/* Frost where the webview can do it; the opaque-ish base above still reads as
+   floating paper when backdrop-filter is unsupported. */
+@supports ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .plane-menu-option {
+    background: rgba(255, 253, 248, 0.66);
+    -webkit-backdrop-filter: blur(9px) saturate(1.08);
+    backdrop-filter: blur(9px) saturate(1.08);
+  }
+
+  .plane-menu-option:hover {
+    background: rgba(255, 253, 248, 0.8);
+  }
+}
+
+/* The pop is duration-based and the global reduced-motion rule below already
+   collapses it; this only drops the stagger so a choice is never left hidden
+   for its delay. */
+@media (prefers-reduced-motion: reduce) {
+  .plane-menu-option {
+    animation-delay: 0ms !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

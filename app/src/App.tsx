@@ -31,7 +31,7 @@ const WIRE_DROP_PX = 12;
  * quietened by open marks (Epic 3, ADR-0009).
  *
  * Creation lives on the double-click (Epic 3 feedback): a double-click on
- * empty plane opens a small word/lack ring menu there; choosing word coins in
+ * empty plane opens a small word/lack menu there; choosing word coins in
  * place, choosing lack casts a bare open mark. A single click creates nothing.
  * The mark's own gestures are story 2's: the ring drags to bind/unbind, a
  * double-click on a bare ring grows it into a named question-word, and its ×
@@ -218,7 +218,7 @@ function App() {
 
   const markDrag = useRingDrag(handleRingDrop, toWorld);
 
-  /** A double-click on empty plane opens the word/lack ring menu at that point. */
+  /** A double-click on empty plane opens the word/lack menu at that point. */
   const handlePlaneDoubleClick = useCallback((point: Point) => {
     setMenuAt(point);
   }, []);

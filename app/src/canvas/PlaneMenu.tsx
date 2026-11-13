@@ -14,19 +14,22 @@ interface PlaneMenuProps {
 }
 
 /**
- * The double-click creation menu (Epic 3 feedback): a small ring at the plane
- * point with two quiet choices — coin a word, or cast a bare lack. Story 2's
- * single-click cast is gone; creation begins only here, so a stray click can
- * no longer leave a mark behind.
+ * The double-click creation menu (Epic 3 feedback): a small floating bubble
+ * cluster at the plane point with two quiet choices — coin a word, or cast a
+ * bare lack. Story 2's single-click cast is gone; creation begins only here,
+ * so a stray click can no longer leave a mark behind.
  *
- * The ring is a dark quiet panel on the paper plane; the center dot marks the
- * exact anchor. It lives inside `.plane-inner`, so it follows the map the way
- * the coin fields do and renders above words and wires; it counter-scales
- * against the camera so a choice stays readable at every zoom. Esc or a press
- * anywhere outside dismisses it; both choices are real buttons, reachable by
- * Tab and activated by Enter or Space. The raw mousedown listener keeps the
- * press from reaching d3-zoom (no pan) and the plane's press counter (the
- * d3-zoom discipline in ringDrag.ts).
+ * The cluster is two frosted warm-white bubbles hanging off an inked anchor
+ * dot (word above, lack below, each on a hairline stem), so it reads as a
+ * small menu floating over the paper plane rather than a slab on it. The dot
+ * marks the exact anchor. It lives inside `.plane-inner`, so it follows the
+ * map the way the coin fields do and renders above words and wires; it
+ * counter-scales against the camera so a choice stays readable at every zoom.
+ * Esc or a press anywhere outside dismisses it; both choices are real buttons,
+ * reachable by Tab and activated by Enter or Space. The raw mousedown listener
+ * keeps the press from reaching d3-zoom (no pan) and the plane's press counter
+ * (the d3-zoom discipline in ringDrag.ts). The opening pop and hover lift are
+ * look-only; reduced motion collapses them.
  */
 export function PlaneMenu({ x, y, onWord, onLack, onClose }: PlaneMenuProps) {
   const { camera } = usePlane();
@@ -41,7 +44,7 @@ export function PlaneMenu({ x, y, onWord, onLack, onClose }: PlaneMenuProps) {
 
   // Click-away in the capture phase: d3-zoom stops propagation on the plane's
   // mousedown, so a bubble-phase document listener would never hear a plane
-  // press. A press inside the ring is not an away-press.
+  // press. A press inside the cluster is not an away-press.
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const root = rootRef.current;
@@ -79,8 +82,10 @@ export function PlaneMenu({ x, y, onWord, onLack, onClose }: PlaneMenuProps) {
       style={{
         left: x,
         top: y,
-        // The plane-inner is scaled by the camera; undo that so the ring stays
-        // a readable screen-size menu while its center dot stays on the anchor.
+        // The plane-inner is scaled by the camera; undo that so the bubble
+        // cluster stays readable screen-size while its anchor dot stays on the
+        // plane point (the dot is the root's centre, so scaling about that
+        // centre keeps it there).
         transform: `translate(-50%, -50%) scale(${1 / camera.zoom})`,
       }}
       role="group"
