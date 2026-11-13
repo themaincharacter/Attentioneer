@@ -9,9 +9,11 @@ import {
   type Distance,
 } from "../map/distances";
 import {
+  dedupeMarks,
   findOrphanMarks,
   hasMark,
   loadMarks,
+  retargetMark as retargetMarkRecord,
   saveMarks,
   withMark,
   withoutMark,
@@ -36,10 +38,16 @@ export interface ConnectDraft {
 
 /**
  * One workspace's map: references (bare words), distances (wires) and marks
- * (open annotations on either), loaded from disk, plus the connect gesture
- * (drag a word onto another, dashed preview), the in-place coin of the
- * distance word, the mark/settle toggle, and the rename/remove atomic patches
- * (ADRs 0005/0007/0009).
+ * (open annotations on a word, a wire or a bare spot), loaded from disk, plus
+ * the connect gesture (drag a word onto another, dashed preview), the in-place
+ * coin of the distance word, the mark gestures and the rename/remove atomic
+ * patches (ADRs 0005/0007/0009).
+ *
+ * Story 2's moves are the mark's single-target retargets: cast a bare lack,
+ * bind/unbind by dragging its ring (`moveMark`), grow it into a named
+ * question-word (`growMark`), and settle it (`withdrawMark`). Mark state lives
+ * in `marksRef` as well as React state so a burst of casts/drags can never
+ * read a stale list and lose the earlier write.
  */
 export function useMap(workspacePath: string) {
   const [refs, setRefs] = useState<Reference[]>([]);
@@ -50,6 +58,9 @@ export function useMap(workspacePath: string) {
   const [loaded, setLoaded] = useState(false);
   const [connect, setConnect] = useState<ConnectDraft | null>(null);
   const draftCount = useRef(0);
+  const marksRef = useRef<Mark[]>([]);
+  const malformedMarksRef = useRef<string[]>([]);
+  const marksWriteRef = useRef<Promise<void>>(Promise.resolve());
 
   /** Re-read every map file (first load and after an atomic patch). */
   const reloadMap = useCallback(async () => {
@@ -61,6 +72,8 @@ export function useMap(workspacePath: string) {
     setRefs(referenceList);
     setDistances(parsedDistances.distances);
     setMalformed(parsedDistances.malformed);
+    marksRef.current = parsedMarks.marks;
+    malformedMarksRef.current = parsedMarks.malformed;
     setMarks(parsedMarks.marks);
     setMalformedMarks(parsedMarks.malformed);
     setLoaded(true);
@@ -72,6 +85,12 @@ export function useMap(workspacePath: string) {
     void reloadMap();
   }, [workspacePath, reloadMap]);
 
+  // Keep the synchronous mirror in step when marks change from a reload (all
+  // other writers below set it themselves before handing the list to React).
+  useEffect(() => {
+    marksRef.current = marks;
+  }, [marks]);
+
   /** Persist the distance file after each mutation (deduped by key). */
   const persistDistances = useCallback(
     (next: Distance[]) => {
@@ -81,13 +100,26 @@ export function useMap(workspacePath: string) {
     [workspacePath, malformed],
   );
 
-  /** Persist the marks file after each mutation (deduped by natural key). */
+  /**
+   * Persist the marks file after each mutation (deduped by natural key). Also
+   * the synchronous mirror's write point: exactly one line per key (ADR-0009).
+   * Malformed lines ride along from a ref, so an in-flight move can never write
+   * a stale preserved-line list.
+   */
   const persistMarks = useCallback(
-    (next: Mark[]) => {
-      setMarks(next);
-      void saveMarks(workspacePath, next, malformedMarks);
+    (next: readonly Mark[]) => {
+      const deduped = dedupeMarks(next);
+      marksRef.current = deduped;
+      setMarks(deduped);
+      const malformedLines = [...malformedMarksRef.current];
+      // One marks writer at a time: the cast a slower double-click made and the
+      // coin that consumes it must land in order, never as the stale spot line
+      // reappearing under the new word.
+      marksWriteRef.current = marksWriteRef.current
+        .catch(() => undefined)
+        .then(() => saveMarks(workspacePath, deduped, malformedLines));
     },
-    [workspacePath, malformedMarks],
+    [workspacePath],
   );
 
   /**
@@ -156,12 +188,13 @@ export function useMap(workspacePath: string) {
   const toggleWordMark = useCallback(
     (slug: string) => {
       const target: MarkTarget = { type: "word", slug };
-      const next = hasMark(marks, "open", target)
-        ? withoutMark(marks, "open", target)
-        : withMark(marks, { kind: "open", target, extra: {} });
+      const current = marksRef.current;
+      const next = hasMark(current, "open", target)
+        ? withoutMark(current, "open", target)
+        : withMark(current, { kind: "open", target, extra: {} });
       persistMarks(next);
     },
-    [marks, persistMarks],
+    [persistMarks],
   );
 
   /** Cast or settle an open mark on a wire (story 1's provisional affordance). */
@@ -173,12 +206,91 @@ export function useMap(workspacePath: string) {
         to: distance.to,
         word: distance.word,
       };
-      const next = hasMark(marks, "open", target)
-        ? withoutMark(marks, "open", target)
-        : withMark(marks, { kind: "open", target, extra: {} });
+      const current = marksRef.current;
+      const next = hasMark(current, "open", target)
+        ? withoutMark(current, "open", target)
+        : withMark(current, { kind: "open", target, extra: {} });
       persistMarks(next);
     },
-    [marks, persistMarks],
+    [persistMarks],
+  );
+
+  /** Cast a bare open mark at a plane point — one click, no field, no name. */
+  const castMark = useCallback(
+    (x: number, y: number) => {
+      const target: MarkTarget = { type: "spot", x, y };
+      const current = marksRef.current;
+      // Re-casting the identical spot is the same line, not a second mark.
+      if (hasMark(current, "open", target)) return;
+      persistMarks(withMark(current, { kind: "open", target, extra: {} }));
+    },
+    [persistMarks],
+  );
+
+  /** Withdraw (settle) the open mark at a target: the line goes, no tombstone. */
+  const withdrawMark = useCallback(
+    (target: MarkTarget) => {
+      const current = marksRef.current;
+      if (!hasMark(current, "open", target)) return;
+      persistMarks(withoutMark(current, "open", target));
+    },
+    [persistMarks],
+  );
+
+  /**
+   * Move one open mark to a new target (bind / unbind by dragging its ring).
+   * One write: the source line's address becomes the target's (ADR-0009), and
+   * the target's natural key is the survivor if two addresses collide.
+   */
+  const moveMark = useCallback(
+    (source: MarkTarget, target: MarkTarget) => {
+      const next = retargetMarkRecord(marksRef.current, source, target);
+      if (next === marksRef.current) return;
+      persistMarks(next);
+    },
+    [persistMarks],
+  );
+
+  /**
+   * Grow a bare lack into a named question-word (ticket 03): coin the reference
+   * at the spot and retarget the spot line to an `on` line — one user move.
+   *
+   * Write order: the reference file first, the mark second. A crash between the
+   * two leaves the coined word *and* the still-bare lack: both visible, the
+   * lack still withdrawable, nothing silently lost. The reverse order would
+   * leave a mark naming a reference that never reached disk — an orphan could
+   * be surfaced, but the typed name would be gone (invisible loss).
+   */
+  const growMark = useCallback(
+    (spot: { x: number; y: number }, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const source: MarkTarget = { type: "spot", x: spot.x, y: spot.y };
+      if (!hasMark(marksRef.current, "open", source)) return;
+
+      draftCount.current += 1;
+      const draft: Reference = {
+        id: `grow-${draftCount.current}`,
+        slug: null,
+        name: trimmed,
+        x: spot.x,
+        y: spot.y,
+        body: "",
+        extra: {},
+      };
+
+      void (async () => {
+        const saved = await saveReference(workspacePath, draft);
+        if (!saved.slug) return;
+        setRefs((list) => [...list, saved]);
+        const next = retargetMarkRecord(marksRef.current, source, {
+          type: "word",
+          slug: saved.slug,
+        });
+        if (next !== marksRef.current) persistMarks(next);
+      })();
+    },
+    [workspacePath, persistMarks],
   );
 
   /** Begin a distance draw from `fromSlug` at a world point. */
@@ -231,7 +343,7 @@ export function useMap(workspacePath: string) {
         trimmed,
       );
       const nextMarks = recoinWireMarks(
-        marks,
+        marksRef.current,
         distance.from,
         distance.to,
         distance.word,
@@ -241,7 +353,7 @@ export function useMap(workspacePath: string) {
       persistDistances(nextDistances);
       persistMarks(nextMarks);
     },
-    [distances, marks, persistDistances, persistMarks],
+    [distances, persistDistances, persistMarks],
   );
 
   /** Remove a distance (one click, no ceremony) and the marks targeting it. */
@@ -251,11 +363,16 @@ export function useMap(workspacePath: string) {
       const nextDistances = distances.filter(
         (d) => distanceKey(d.from, d.to, d.word) !== key,
       );
-      const nextMarks = dropWireMarks(marks, distance.from, distance.to, distance.word);
+      const nextMarks = dropWireMarks(
+        marksRef.current,
+        distance.from,
+        distance.to,
+        distance.word,
+      );
       persistDistances(nextDistances);
       persistMarks(nextMarks);
     },
-    [distances, marks, persistDistances, persistMarks],
+    [distances, persistDistances, persistMarks],
   );
 
   return {
@@ -273,6 +390,10 @@ export function useMap(workspacePath: string) {
     remove,
     toggleWordMark,
     toggleWireMark,
+    castMark,
+    withdrawMark,
+    moveMark,
+    growMark,
     beginConnect,
     moveConnect,
     dropConnect,

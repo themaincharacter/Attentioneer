@@ -8,6 +8,9 @@ import {
   type Box,
   type Point,
 } from "./canvas/geometry";
+import { LackMark } from "./canvas/LackMark";
+import { resolveMarkDrop, type WireHit, type WordHit } from "./canvas/markTargets";
+import { useRingDrag } from "./canvas/ringDrag";
 import { ReferenceWord } from "./canvas/ReferenceWord";
 import { useCamera } from "./canvas/useCamera";
 import { useMap } from "./canvas/useMap";
@@ -16,14 +19,19 @@ import type { Reference } from "./map/refs";
 import { WorkspaceGate } from "./workspace/WorkspaceGate";
 import type { Workspace } from "./workspace/lifecycle";
 
+/** World-unit reach around a wire at 100% zoom (kept screen-sized while zooming). */
+const WIRE_DROP_PX = 12;
+
 /**
  * One workspace per window (ADR-0002): the gate or an open workspace's canvas,
  * carrying references as bare words and distances as plain wires (Epic 2),
  * quietened by open marks (Epic 3, ADR-0009).
  *
- * Wire geometry is derived from *live* word positions: a word being dragged
- * reports its position up here every frame, so its wires follow the pointer
- * instead of snapping into place on drop.
+ * Story 2 gives the mark its own gestures: a plain click casts a bare lack,
+ * the ring drags to bind/unbind, a double-click on a bare ring grows it into a
+ * named question-word, and its × withdraws it. Wire geometry is derived from
+ * *live* word positions, so a dragged word's wires follow the pointer instead
+ * of snapping into place on drop.
  */
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -43,6 +51,10 @@ function App() {
     remove,
     toggleWordMark,
     toggleWireMark,
+    castMark,
+    withdrawMark,
+    moveMark,
+    growMark,
     beginConnect,
     moveConnect,
     dropConnect,
@@ -56,6 +68,8 @@ function App() {
   // measured word boxes, so wires can attach to the word's edges.
   const [livePos, setLivePos] = useState<Record<string, Point>>({});
   const [boxes, setBoxes] = useState<Record<string, Box>>({});
+  // The bare lack whose name field is open (double-clicked ring), if any.
+  const [growAt, setGrowAt] = useState<Point | null>(null);
 
   const handleDragMove = useCallback((slug: string, x: number, y: number) => {
     setLivePos((prev) => {
@@ -86,13 +100,106 @@ function App() {
     [marks],
   );
 
-  const posOf = (word: Reference): Point => {
-    const live = word.slug !== null ? livePos[word.slug] : undefined;
-    return live ?? { x: word.x, y: word.y };
-  };
-  const boxOf = (word: Reference): Box =>
-    (word.slug !== null ? boxes[word.slug] : undefined) ?? DEFAULT_BOX;
-  const centerOfWord = (word: Reference): Point => centerOf(posOf(word), boxOf(word));
+  // The bare lacks (spot targets), one ring each, deduped by natural key so a
+  // hand-duplicated line never stacks two rings.
+  const openSpots = useMemo(() => {
+    const seen = new Set<string>();
+    const spots: Array<{ x: number; y: number; key: string }> = [];
+    for (const mark of marks) {
+      if (mark.kind !== "open" || mark.target.type !== "spot") continue;
+      const key = markTargetKey(mark.target);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      spots.push({ x: mark.target.x, y: mark.target.y, key });
+    }
+    return spots;
+  }, [marks]);
+
+  const posOf = useCallback(
+    (word: Reference): Point => {
+      const live = word.slug !== null ? livePos[word.slug] : undefined;
+      return live ?? { x: word.x, y: word.y };
+    },
+    [livePos],
+  );
+  const boxOf = useCallback(
+    (word: Reference): Box =>
+      (word.slug !== null ? boxes[word.slug] : undefined) ?? DEFAULT_BOX,
+    [boxes],
+  );
+  const centerOfWord = useCallback(
+    (word: Reference): Point => centerOf(posOf(word), boxOf(word)),
+    [posOf, boxOf],
+  );
+
+  // Client point → plane point, for drops and camera-relative gestures.
+  const toWorld = useCallback(
+    (clientX: number, clientY: number): Point | null => {
+      const el = document.querySelector<HTMLDivElement>(".plane");
+      if (!el) return null;
+      const rect = el.getBoundingClientRect();
+      return {
+        x: (clientX - rect.left - camera.x) / camera.zoom,
+        y: (clientY - rect.top - camera.y) / camera.zoom,
+      };
+    },
+    [camera],
+  );
+
+  /**
+   * Resolve a dropped ring (story 2): a word wins, then a wire, else the mark
+   * stays bare at the drop point. Dropping on the mark's own target is a quiet
+   * no-op; anything else moves the one mark in one write.
+   */
+  const handleRingDrop = useCallback(
+    (source: MarkTarget, point: Point) => {
+      const words: WordHit[] = [];
+      for (const word of refs) {
+        if (word.slug === null) continue;
+        words.push({ slug: word.slug, pos: posOf(word), box: boxOf(word) });
+      }
+      const wires: WireHit[] = [];
+      for (const distance of distances) {
+        const from = refs.find((r) => r.slug === distance.from);
+        const to = refs.find((r) => r.slug === distance.to);
+        if (!from || !to) continue;
+        wires.push({
+          from: distance.from,
+          to: distance.to,
+          word: distance.word,
+          fromPoint: centerOfWord(from),
+          toPoint: centerOfWord(to),
+        });
+      }
+      const target = resolveMarkDrop(point, words, wires, WIRE_DROP_PX / camera.zoom);
+      if (markTargetKey(target) === markTargetKey(source)) return;
+      moveMark(source, target);
+    },
+    [refs, distances, posOf, boxOf, centerOfWord, camera.zoom, moveMark],
+  );
+
+  const markDrag = useRingDrag(handleRingDrop, toWorld);
+
+  /** A plain click on empty plane casts a bare lack at that spot (deferred). */
+  const handlePlaneClick = useCallback(
+    (point: Point) => castMark(point.x, point.y),
+    [castMark],
+  );
+
+  /**
+   * Double-click on empty plane still coins a word (ADR-0007). If the coin's
+   * first click had already cast its deferred lack (a slower double-click),
+   * the coin consumes that exact spot line: coining leaves no stray mark.
+   */
+  const handlePlaneDoubleClick = useCallback(
+    (point: Point, consumedSpot?: Point) => {
+      if (consumedSpot) {
+        withdrawMark({ type: "spot", x: consumedSpot.x, y: consumedSpot.y });
+      }
+      coinReference(point.x, point.y);
+    },
+    [withdrawMark, coinReference],
+  );
 
   // Track the pointer live during a connect draw so the dashed preview follows,
   // and end the draw when the pointer is released off a target word.
@@ -144,8 +251,28 @@ function App() {
       <CanvasPlane
         camera={camera}
         intents={intents}
-        onPlaneDoubleClick={(point) => coinReference(point.x, point.y)}
+        onPlaneClick={handlePlaneClick}
+        onPlaneDoubleClick={handlePlaneDoubleClick}
       >
+        {/* bare lacks: one quiet ring per open spot (story 2) */}
+        {openSpots.map((spot) => (
+          <LackMark
+            key={spot.key}
+            x={spot.x}
+            y={spot.y}
+            onWithdraw={() => {
+              withdrawMark({ type: "spot", x: spot.x, y: spot.y });
+            }}
+            onGrow={() => {
+              setGrowAt({ x: spot.x, y: spot.y });
+            }}
+            onDragStart={(e) => {
+              setGrowAt(null);
+              markDrag.begin({ type: "spot", x: spot.x, y: spot.y }, e);
+            }}
+          />
+        ))}
+
         {/* words */}
         {refs.map((word) => (
           <ReferenceWord
@@ -166,8 +293,12 @@ function App() {
               openTargets.has(markTargetKey({ type: "word", slug: word.slug }))
             }
             onToggleMark={() => {
+              if (markDrag.isClickSuppressed()) return;
               if (word.slug !== null) toggleWordMark(word.slug);
             }}
+            onMarkRingDrag={(slug, e) =>
+              markDrag.begin({ type: "word", slug }, e)
+            }
           />
         ))}
 
@@ -193,11 +324,34 @@ function App() {
               marked={openTargets.has(
                 markTargetKey({ type: "wire", from: d.from, to: d.to, word: d.word }),
               )}
-              onToggleMark={() => toggleWireMark(d)}
+              onToggleMark={() => {
+                if (markDrag.isClickSuppressed()) return;
+                toggleWireMark(d);
+              }}
+              onMarkRingDrag={(wire, e) =>
+                markDrag.begin(
+                  { type: "wire", from: wire.from, to: wire.to, word: wire.word },
+                  e,
+                )
+              }
               labelOffset={siblingIndex * 24}
             />
           );
         })}
+
+        {/* the in-place grow field: name the lack, or cancel and leave it bare */}
+        {growAt && (
+          <GrowField
+            x={growAt.x}
+            y={growAt.y}
+            onGrow={(name) => {
+              const spot = growAt;
+              setGrowAt(null);
+              if (spot) growMark(spot, name);
+            }}
+            onCancel={() => setGrowAt(null)}
+          />
+        )}
 
         {/* dashed preview while drawing */}
         {previewFrom && connect && !connect.to && (
@@ -217,6 +371,14 @@ function App() {
 
       {/* Orphan and unreadable marks: preserved, surfaced quietly (ADR-0009). */}
       <MarkNotices malformed={malformedMarks} orphans={orphanMarks} />
+
+      {/* the ring in flight while its mark is being bound (story 2) */}
+      {markDrag.ghost && (
+        <div
+          className="mark-ghost"
+          style={{ left: markDrag.ghost.x, top: markDrag.ghost.y }}
+        />
+      )}
     </>
   );
 }
@@ -259,6 +421,68 @@ function describeMarkTarget(target: MarkTarget): string {
     case "spot":
       return "a bare spot";
   }
+}
+
+/**
+ * The grow field (map ticket 03): double-clicking a bare ring names it in
+ * place. Enter coins the question-word at the spot and retargets the mark to
+ * it; Escape (or leaving the field) changes nothing — the bare lack stays
+ * exactly as it was. A `done` latch makes Escape + blur a single outcome (the
+ * double-commit lesson from the note-card era).
+ */
+function GrowField({
+  x,
+  y,
+  onGrow,
+  onCancel,
+}: {
+  x: number;
+  y: number;
+  onGrow: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState("");
+  const doneRef = useRef(false);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  function commit() {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    const trimmed = draft.trim();
+    if (trimmed) onGrow(trimmed);
+    else onCancel();
+  }
+
+  function cancel() {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onCancel();
+  }
+
+  return (
+    <div className="grow-field" style={{ left: x, top: y }}>
+      <input
+        ref={inputRef}
+        value={draft}
+        placeholder="name the question…"
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        onBlur={cancel}
+      />
+    </div>
+  );
 }
 
 function ConnectPreview({ from, to }: { from: Point; to: Point }) {

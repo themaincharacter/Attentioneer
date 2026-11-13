@@ -15,9 +15,10 @@ import { distanceKey } from "./distances";
  * marks.
  *
  * Provisional: `kind` has one value, `"open"` — it names the mark's flavor,
- * never a lifecycle (absence is the only settled state, ADR-0009). Bare-spot
- * rendering arrives with Epic 3 story 2; the record carries all three target
- * forms from day one.
+ * never a lifecycle (absence is the only settled state, ADR-0009). The record
+ * carries all three target forms: a bare spot is cast, named (grow) and bound
+ * by the canvas's ring gestures (story 2), and `retargetMark` is their one
+ * pure write.
  *
  * Canonical serialization is serialize.ts's job (ADR-0004); this module only
  * turns the file's bytes into records and back.
@@ -221,6 +222,28 @@ export function withoutMark(
 ): Mark[] {
   const key = `${kind}\u0000${markTargetKey(target)}`;
   return marks.filter((mark) => markKey(mark) !== key);
+}
+
+/**
+ * Retarget one mark (bind / unbind / grow): the line's address moves from
+ * `source` to `target` in one write, the record itself carrying over — a mark
+ * is one annotation, not a copy, so its unknown keys follow (ADR-0009). The
+ * target's natural key wins: if another mark already sits there, the app's
+ * move is the survivor, exactly as a re-coin pins its line. No source mark, or
+ * a drop on the source itself, is a no-op and returns the same array, so the
+ * caller can skip the write.
+ */
+export function retargetMark(
+  marks: readonly Mark[],
+  source: MarkTarget,
+  target: MarkTarget,
+  kind = "open",
+): readonly Mark[] {
+  if (markTargetKey(source) === markTargetKey(target)) return marks;
+  const sourceKey = `${kind}\u0000${markTargetKey(source)}`;
+  const existing = marks.find((mark) => markKey(mark) === sourceKey);
+  if (!existing) return marks;
+  return withMark(withoutMark(marks, kind, source), { ...existing, target });
 }
 
 /**

@@ -34,6 +34,11 @@ interface ReferenceWordProps {
   marked: boolean;
   /** Cast or settle this word's open mark (story 1's provisional affordance). */
   onToggleMark: () => void;
+  /**
+   * Start a bind drag from this word's open ring (story 2; raw mousedown,
+   * because d3-zoom stops React's synthetic mouse events).
+   */
+  onMarkRingDrag?: (slug: string, e: MouseEvent) => void;
 }
 
 /** Screen pixels of movement before a mousedown becomes a drag. */
@@ -55,7 +60,8 @@ interface DragState {
  * An uncoined draft (slug null) is the in-place coin field — Enter coins it,
  * Escape dismisses it. Double-clicking the name renames it (story 3), a ×
  * removes it, a connect handle starts a distance draw, and the hollow ring
- * casts or settles an open mark (ADR-0009; story 1's provisional affordance).
+ * casts or settles an open mark (ADR-0009; story 1's provisional affordance) —
+ * dragging that ring binds the mark elsewhere (story 2).
  *
  * Dragging is reported upward every animation frame (`onDragMove`) so the
  * word's wires track the pointer instead of snapping on drop.
@@ -74,6 +80,7 @@ export function ReferenceWord({
   onDropConnect,
   marked,
   onToggleMark,
+  onMarkRingDrag,
 }: ReferenceWordProps) {
   const { camera, centerOn } = usePlane();
   const wordRef = useRef<HTMLDivElement>(null);
@@ -222,8 +229,13 @@ export function ReferenceWord({
     const target = e.target as HTMLElement;
     if (target.closest(".memory-dot")) return;
     if (target.closest(".word-remove")) return;
-    // The mark ring toggles on click; it must not start a drag or a centering.
-    if (target.closest(".word-mark")) return;
+    // The mark ring toggles on click and drags to bind (story 2); it must not
+    // start a word drag or a centering. Only a ring that already carries the
+    // mark can be dragged — an unmarked hover ring just casts on click.
+    if (target.closest(".word-mark")) {
+      if (marked && word.slug !== null) onMarkRingDrag?.(word.slug, e);
+      return;
+    }
 
     // The connect handle starts a distance draw.
     if (target.closest(".connect-handle")) {

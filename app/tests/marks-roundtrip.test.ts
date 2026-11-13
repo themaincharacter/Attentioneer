@@ -6,6 +6,7 @@ import {
   markTargetKey,
   parseMarkLine,
   parseMarks,
+  retargetMark,
   serializeMarkLine,
   serializeMarks,
   withMark,
@@ -152,6 +153,58 @@ describe("the natural key names one mark", () => {
     const open = mark();
     const other = mark({ kind: "later" });
     expect(withoutMark([open, other], "open", word("rain"))).toEqual([other]);
+  });
+});
+
+describe("retargetMark moves the one mark (bind / unbind / grow)", () => {
+  test("a bare spot line becomes the word's line, record and extras carried over", () => {
+    const original = mark({ target: spot(12, -3.5), extra: { rank: 2 } });
+    const next = retargetMark([original], spot(12, -3.5), word("why"));
+    expect(next).toHaveLength(1);
+    expect(next[0].target).toEqual(word("why"));
+    expect(next[0].extra).toEqual({ rank: 2 });
+    expect(serializeMarks(next)).toBe('{"kind":"open","on":"why","rank":2}\n');
+  });
+
+  test("moving onto an already-marked target leaves one line per key", () => {
+    const next = retargetMark(
+      [
+        mark({ target: word("a"), extra: { rank: 1 } }),
+        mark({ target: word("b"), extra: { rank: 2 } }),
+      ],
+      word("a"),
+      word("b"),
+    );
+    expect(next).toHaveLength(1);
+    // The app's move is the survivor (the re-coin collision rule).
+    expect(next[0]).toEqual(mark({ target: word("b"), extra: { rank: 1 } }));
+    expect(serializeMarks(next)).toBe('{"kind":"open","on":"b","rank":1}\n');
+  });
+
+  test("dropping on the source itself is a no-op (the same list)", () => {
+    const marks = [mark()];
+    expect(retargetMark(marks, word("rain"), word("rain"))).toBe(marks);
+  });
+
+  test("a missing source mark is a no-op", () => {
+    const marks = [mark({ target: word("sea") })];
+    expect(retargetMark(marks, word("rain"), word("sea"))).toBe(marks);
+  });
+
+  test("bind and unbind are the same move: word→wire and wire→spot", () => {
+    const onWord = mark({ target: word("rain") });
+    const onWire = retargetMark([onWord], word("rain"), wire("rain", "soil", "soaks"));
+    expect(onWire.map((m) => m.target)).toEqual([wire("rain", "soil", "soaks")]);
+    const bare = retargetMark(onWire, wire("rain", "soil", "soaks"), spot(10, 20));
+    expect(bare.map((m) => m.target)).toEqual([spot(10, 20)]);
+    expect(serializeMarks(bare)).toBe('{"kind":"open","x":10,"y":20}\n');
+  });
+
+  test("a mark of another kind is not the one moved", () => {
+    const marks = [mark(), mark({ kind: "later", target: word("sea") })];
+    const next = retargetMark(marks, word("rain"), word("sea"));
+    expect(next).toHaveLength(2);
+    expect(next.some((m) => m.kind === "open" && m.target.type === "word" && m.target.slug === "sea")).toBe(true);
   });
 });
 

@@ -572,6 +572,109 @@ body {
   animation: fade-in 180ms ease-out;
 }
 
+/* Story 2, the bare lack (ADR-0009/0010; map ticket 03): one quiet hollow ring
+   at a spot of plane — the same glyph as an attached mark, no field, no name,
+   no count, no pulse, no glow. It is content, so it stays until moved. */
+
+.lack-mark {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 1.3px solid #8d887c;
+  border-radius: 50%;
+  background: transparent;
+  cursor: grab;
+  z-index: 4;
+  animation: fade-in 150ms ease-out;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.lack-mark:hover {
+  border-color: #6b675e;
+}
+
+.lack-mark:active {
+  cursor: grabbing;
+}
+
+/* Withdrawal is the same hover × as words and wires: settle = delete the line,
+   no archive or tombstone (ADR-0009). */
+.lack-withdraw {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 12px;
+  color: #8d887c;
+  background: #fffdf8;
+  border: 1px solid #ddd7cc;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease;
+}
+
+.lack-mark:hover .lack-withdraw {
+  opacity: 1;
+}
+
+.lack-withdraw:hover {
+  color: #b33;
+}
+
+/* The ring in flight while its mark is being dragged to a new target. */
+.mark-ghost {
+  position: fixed;
+  width: 14px;
+  height: 14px;
+  border: 1.3px solid #8d887c;
+  border-radius: 50%;
+  background: transparent;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 40;
+  opacity: 0.85;
+}
+
+/* The in-place grow field: name the bare lack in place. Escape (or leaving the
+   field) leaves the lack untouched. */
+.grow-field {
+  position: absolute;
+  z-index: 7;
+  transform: translate(-50%, 12px);
+  background: #fffdf8;
+  border: 1px solid #c9c2b4;
+  border-radius: 7px;
+  box-shadow: 0 4px 18px rgba(40, 35, 25, 0.14);
+  padding: 4px 9px;
+  animation: fade-in 150ms ease-out;
+}
+
+.grow-field input {
+  font: inherit;
+  font-size: 14px;
+  color: #1e2126;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  min-width: 200px;
+}
+
+.grow-field input::placeholder {
+  color: #c4beb1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

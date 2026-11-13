@@ -6,6 +6,7 @@ import {
 } from "react";
 import type { Distance } from "../map/distances";
 import { usePlane } from "./CanvasPlane";
+import { useRingMouseDown } from "./ringDrag";
 import { distanceLabelVisible } from "./zoomBands";
 
 interface DistanceWireProps {
@@ -20,6 +21,11 @@ interface DistanceWireProps {
   marked: boolean;
   /** Cast or settle this wire's open mark (story 1's provisional affordance). */
   onToggleMark: () => void;
+  /**
+   * Start a bind drag from this wire's open ring (story 2; raw mousedown,
+   * because d3-zoom stops React's synthetic mouse events).
+   */
+  onMarkRingDrag?: (distance: Distance, e: MouseEvent) => void;
   /** Vertical spacing when several distances share a pair, so labels don't stack. */
   labelOffset?: number;
 }
@@ -45,6 +51,7 @@ export function DistanceWire({
   onRemove,
   marked,
   onToggleMark,
+  onMarkRingDrag,
   labelOffset = 0,
 }: DistanceWireProps) {
   const { camera } = usePlane();
@@ -58,7 +65,21 @@ export function DistanceWire({
     if (editing) inputRef.current?.focus();
   }, [editing]);
 
+  // Raw ring mousedown: d3-zoom stops synthetic mouse events, and the press
+  // must not pan or re-coin. A marked ring can be dragged onto another target.
   const labelVisible = distanceLabelVisible(camera.zoom);
+  const handleRingDown = (e: MouseEvent) => {
+    e.stopPropagation();
+    if (marked) onMarkRingDrag?.(distance, e);
+  };
+  const labelMarkRef = useRingMouseDown<HTMLButtonElement>(
+    handleRingDown,
+    marked && labelVisible,
+  );
+  const bandRingRef = useRingMouseDown<HTMLButtonElement>(
+    handleRingDown,
+    marked && !labelVisible,
+  );
 
   const mx = (fromPoint.x + toPoint.x) / 2;
   const my = (fromPoint.y + toPoint.y) / 2;
@@ -122,6 +143,7 @@ export function DistanceWire({
         >
           {!editing && (
             <button
+              ref={labelMarkRef}
               type="button"
               className={`distance-mark${marked ? " open" : ""}`}
               aria-label={marked ? "settle (withdraw the open mark)" : "mark tentative"}
@@ -165,6 +187,7 @@ export function DistanceWire({
           keep its ring on the wire's midpoint (ADR-0009). */}
       {!labelVisible && marked && (
         <button
+          ref={bandRingRef}
           type="button"
           className="distance-ring"
           style={{ left: mx, top: my + labelOffset }}
