@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CanvasPlane } from "./canvas/CanvasPlane";
 import { DistanceWire } from "./canvas/DistanceWire";
 import {
@@ -11,13 +11,15 @@ import {
 import { ReferenceWord } from "./canvas/ReferenceWord";
 import { useCamera } from "./canvas/useCamera";
 import { useMap } from "./canvas/useMap";
+import { markTargetKey, type Mark, type MarkTarget } from "./map/marks";
 import type { Reference } from "./map/refs";
 import { WorkspaceGate } from "./workspace/WorkspaceGate";
 import type { Workspace } from "./workspace/lifecycle";
 
 /**
  * One workspace per window (ADR-0002): the gate or an open workspace's canvas,
- * carrying references as bare words and distances as plain wires (Epic 2).
+ * carrying references as bare words and distances as plain wires (Epic 2),
+ * quietened by open marks (Epic 3, ADR-0009).
  *
  * Wire geometry is derived from *live* word positions: a word being dragged
  * reports its position up here every frame, so its wires follow the pointer
@@ -30,12 +32,17 @@ function App() {
   const {
     refs,
     distances,
+    marks,
+    malformedMarks,
+    orphanMarks,
     connect,
     coinReference,
     updateReference,
     discardReference,
     rename,
     remove,
+    toggleWordMark,
+    toggleWireMark,
     beginConnect,
     moveConnect,
     dropConnect,
@@ -67,6 +74,17 @@ function App() {
       return { ...prev, [slug]: { w, h } };
     });
   }, []);
+
+  // Which targets carry an open mark right now — one hollow ring each.
+  const openTargets = useMemo(
+    () =>
+      new Set(
+        marks
+          .filter((mark) => mark.kind === "open")
+          .map((mark) => markTargetKey(mark.target)),
+      ),
+    [marks],
+  );
 
   const posOf = (word: Reference): Point => {
     const live = word.slug !== null ? livePos[word.slug] : undefined;
@@ -117,65 +135,130 @@ function App() {
       ? edgePoint(centerOfWord(fromRef), boxOf(fromRef), connect)
       : null;
 
+  // Several distances may share a pair (ADR-0006); stagger their labels so a
+  // second one is visible rather than stacked exactly on the first.
+  const pairCounts = new Map<string, number>();
+
   return (
-    <CanvasPlane
-      camera={camera}
-      intents={intents}
-      onPlaneDoubleClick={(point) => coinReference(point.x, point.y)}
-    >
-      {/* words */}
-      {refs.map((word) => (
-        <ReferenceWord
-          key={word.id}
-          word={word}
-          position={posOf(word)}
-          onChange={updateReference}
-          onDiscard={discardReference}
-          onRename={rename}
-          onRemove={remove}
-          onConnectFrom={(slug, c) => beginConnect(slug, c.x, c.y)}
-          onDragMove={handleDragMove}
-          onMeasure={handleMeasure}
-          connectTarget={connect !== null && connect.from !== word.slug}
-          onDropConnect={dropConnect}
-        />
-      ))}
-
-      {/* wires */}
-      {distances.map((d) => {
-        const f = refs.find((r) => r.slug === d.from);
-        const t = refs.find((r) => r.slug === d.to);
-        if (!f || !t) return null;
-        const fCenter = centerOfWord(f);
-        const tCenter = centerOfWord(t);
-        return (
-          <DistanceWire
-            key={`${d.from}\u0000${d.to}\u0000${d.word}`}
-            distance={d}
-            fromPoint={edgePoint(fCenter, boxOf(f), tCenter)}
-            toPoint={edgePoint(tCenter, boxOf(t), fCenter)}
-            onChange={recoinDistance}
-            onRemove={removeDistance}
+    <>
+      <CanvasPlane
+        camera={camera}
+        intents={intents}
+        onPlaneDoubleClick={(point) => coinReference(point.x, point.y)}
+      >
+        {/* words */}
+        {refs.map((word) => (
+          <ReferenceWord
+            key={word.id}
+            word={word}
+            position={posOf(word)}
+            onChange={updateReference}
+            onDiscard={discardReference}
+            onRename={rename}
+            onRemove={remove}
+            onConnectFrom={(slug, c) => beginConnect(slug, c.x, c.y)}
+            onDragMove={handleDragMove}
+            onMeasure={handleMeasure}
+            connectTarget={connect !== null && connect.from !== word.slug}
+            onDropConnect={dropConnect}
+            marked={
+              word.slug !== null &&
+              openTargets.has(markTargetKey({ type: "word", slug: word.slug }))
+            }
+            onToggleMark={() => {
+              if (word.slug !== null) toggleWordMark(word.slug);
+            }}
           />
-        );
-      })}
+        ))}
 
-      {/* dashed preview while drawing */}
-      {previewFrom && connect && !connect.to && (
-        <ConnectPreview from={previewFrom} to={connect} />
-      )}
+        {/* wires */}
+        {distances.map((d) => {
+          const f = refs.find((r) => r.slug === d.from);
+          const t = refs.find((r) => r.slug === d.to);
+          if (!f || !t) return null;
+          const pairKey =
+            d.from < d.to ? `${d.from}\u0000${d.to}` : `${d.to}\u0000${d.from}`;
+          const siblingIndex = pairCounts.get(pairKey) ?? 0;
+          pairCounts.set(pairKey, siblingIndex + 1);
+          const fCenter = centerOfWord(f);
+          const tCenter = centerOfWord(t);
+          return (
+            <DistanceWire
+              key={`${d.from}\u0000${d.to}\u0000${d.word}`}
+              distance={d}
+              fromPoint={edgePoint(fCenter, boxOf(f), tCenter)}
+              toPoint={edgePoint(tCenter, boxOf(t), fCenter)}
+              onChange={recoinDistance}
+              onRemove={removeDistance}
+              marked={openTargets.has(
+                markTargetKey({ type: "wire", from: d.from, to: d.to, word: d.word }),
+              )}
+              onToggleMark={() => toggleWireMark(d)}
+              labelOffset={siblingIndex * 24}
+            />
+          );
+        })}
 
-      {/* coin-in-place field once the pair is fixed */}
-      {connect && connect.to && fromRef && toRef && (
-        <DistanceCoinField
-          fromCenter={centerOfWord(fromRef)}
-          toCenter={centerOfWord(toRef)}
-          onCoin={coinConnect}
-          onCancel={cancelConnect}
-        />
-      )}
-    </CanvasPlane>
+        {/* dashed preview while drawing */}
+        {previewFrom && connect && !connect.to && (
+          <ConnectPreview from={previewFrom} to={connect} />
+        )}
+
+        {/* coin-in-place field once the pair is fixed */}
+        {connect && connect.to && fromRef && toRef && (
+          <DistanceCoinField
+            fromCenter={centerOfWord(fromRef)}
+            toCenter={centerOfWord(toRef)}
+            onCoin={coinConnect}
+            onCancel={cancelConnect}
+          />
+        )}
+      </CanvasPlane>
+
+      {/* Orphan and unreadable marks: preserved, surfaced quietly (ADR-0009). */}
+      <MarkNotices malformed={malformedMarks} orphans={orphanMarks} />
+    </>
   );
+}
+
+/**
+ * A quiet line of small text for mark lines the app keeps but cannot place
+ * (orphans) or cannot read (malformed). No counts, badges, or panels — the
+ * line is the whole surface (ADR-0009's "surfaced, not silently hidden").
+ */
+function MarkNotices({
+  malformed,
+  orphans,
+}: {
+  malformed: readonly string[];
+  orphans: readonly Mark[];
+}) {
+  if (malformed.length === 0 && orphans.length === 0) return null;
+  return (
+    <div className="mark-notices">
+      {orphans.map((mark, index) => (
+        <div className="mark-notice" key={`orphan-${index}`}>
+          unattached mark on {describeMarkTarget(mark.target)} — kept in map/marks.jsonl
+        </div>
+      ))}
+      {malformed.map((line, index) => (
+        <div className="mark-notice" key={`malformed-${index}`}>
+          unreadable line in map/marks.jsonl: {line}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function describeMarkTarget(target: MarkTarget): string {
+  switch (target.type) {
+    case "word":
+      return `“${target.slug}”`;
+    case "wire":
+      return `the wire ${target.from} → ${target.to} · “${target.word}”`;
+    case "spot":
+      return "a bare spot";
+  }
 }
 
 function ConnectPreview({ from, to }: { from: Point; to: Point }) {

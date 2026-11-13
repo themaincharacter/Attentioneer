@@ -16,6 +16,12 @@ interface DistanceWireProps {
   toPoint: { x: number; y: number };
   onChange: (distance: Distance, word: string) => void;
   onRemove: (distance: Distance) => void;
+  /** True while this wire carries an open mark (ADR-0009/0010). */
+  marked: boolean;
+  /** Cast or settle this wire's open mark (story 1's provisional affordance). */
+  onToggleMark: () => void;
+  /** Vertical spacing when several distances share a pair, so labels don't stack. */
+  labelOffset?: number;
 }
 
 /**
@@ -23,10 +29,13 @@ interface DistanceWireProps {
  * order lives in the record, not the pixels) plus its coined word at the
  * midpoint. The word hides below the configurable band (zoomBands) while the
  * wire stays. The word is revised in place: re-coin = a new word (a new key);
- * remove = one click, no ceremony.
+ * remove = one click, no ceremony. A wire carrying an open mark renders dashed
+ * and ringed (ADR-0009/0010), and the ring is the cast/settle affordance.
  *
  * The line is a 1px element stretched with `scaleX`, so following a dragged
- * word costs a compositor transform rather than a layout pass.
+ * word costs a compositor transform rather than a layout pass. A marked wire
+ * cannot use that trick — `scaleX` would stretch its dashes — so only marked
+ * wires set a width (few, and still one element).
  */
 export function DistanceWire({
   distance,
@@ -34,6 +43,9 @@ export function DistanceWire({
   toPoint,
   onChange,
   onRemove,
+  marked,
+  onToggleMark,
+  labelOffset = 0,
 }: DistanceWireProps) {
   const { camera } = usePlane();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -90,17 +102,37 @@ export function DistanceWire({
   return (
     <div className="distance">
       <div
-        className="distance-line"
-        style={{
-          transform: `translate3d(${fromPoint.x}px, ${fromPoint.y}px, 0) rotate(${angle}deg) scaleX(${length})`,
-        }}
+        className={`distance-line${marked ? " open" : ""}`}
+        style={
+          marked
+            ? {
+                width: length,
+                transform: `translate3d(${fromPoint.x}px, ${fromPoint.y}px, 0) rotate(${angle}deg)`,
+              }
+            : {
+                transform: `translate3d(${fromPoint.x}px, ${fromPoint.y}px, 0) rotate(${angle}deg) scaleX(${length})`,
+              }
+        }
       />
       {labelVisible && (
         <div
-          className="distance-label"
-          style={{ left: mx, top: my, transform: "translate(-50%, -50%)" }}
+          className={`distance-label${marked ? " open" : ""}`}
+          style={{ left: mx, top: my + labelOffset, transform: "translate(-50%, -50%)" }}
           onDoubleClick={beginEdit}
         >
+          {!editing && (
+            <button
+              type="button"
+              className={`distance-mark${marked ? " open" : ""}`}
+              aria-label={marked ? "settle (withdraw the open mark)" : "mark tentative"}
+              title={marked ? "settle" : "mark tentative"}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleMark();
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
+            />
+          )}
           {editing ? (
             <input
               ref={inputRef}
@@ -128,6 +160,21 @@ export function DistanceWire({
             ×
           </button>
         </div>
+      )}
+      {/* Below the label band the word hides, but an open mark stays content:
+          keep its ring on the wire's midpoint (ADR-0009). */}
+      {!labelVisible && marked && (
+        <button
+          type="button"
+          className="distance-ring"
+          style={{ left: mx, top: my + labelOffset }}
+          aria-label="settle (withdraw the open mark)"
+          title="settle"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleMark();
+          }}
+        />
       )}
     </div>
   );

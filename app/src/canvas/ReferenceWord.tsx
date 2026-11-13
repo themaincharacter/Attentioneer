@@ -30,6 +30,10 @@ interface ReferenceWordProps {
   connectTarget: boolean;
   /** Complete a draw onto this word (its slug). */
   onDropConnect: (toSlug: string) => void;
+  /** True while this word carries an open mark (ADR-0009). */
+  marked: boolean;
+  /** Cast or settle this word's open mark (story 1's provisional affordance). */
+  onToggleMark: () => void;
 }
 
 /** Screen pixels of movement before a mousedown becomes a drag. */
@@ -50,7 +54,8 @@ interface DragState {
  * click to center at readable zoom, the optional memory tucked behind a dot.
  * An uncoined draft (slug null) is the in-place coin field — Enter coins it,
  * Escape dismisses it. Double-clicking the name renames it (story 3), a ×
- * removes it, and a connect handle starts a distance draw.
+ * removes it, a connect handle starts a distance draw, and the hollow ring
+ * casts or settles an open mark (ADR-0009; story 1's provisional affordance).
  *
  * Dragging is reported upward every animation frame (`onDragMove`) so the
  * word's wires track the pointer instead of snapping on drop.
@@ -67,6 +72,8 @@ export function ReferenceWord({
   onMeasure,
   connectTarget,
   onDropConnect,
+  marked,
+  onToggleMark,
 }: ReferenceWordProps) {
   const { camera, centerOn } = usePlane();
   const wordRef = useRef<HTMLDivElement>(null);
@@ -215,6 +222,8 @@ export function ReferenceWord({
     const target = e.target as HTMLElement;
     if (target.closest(".memory-dot")) return;
     if (target.closest(".word-remove")) return;
+    // The mark ring toggles on click; it must not start a drag or a centering.
+    if (target.closest(".word-mark")) return;
 
     // The connect handle starts a distance draw.
     if (target.closest(".connect-handle")) {
@@ -353,12 +362,21 @@ export function ReferenceWord({
     <div
       ref={wordRef}
       data-slug={word.slug ?? undefined}
-      className={`word${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}`}
+      className={`word${marked ? " open" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}`}
       style={{ transform }}
       onBlur={handleBlur}
       onMouseUp={handleDropMouseUp}
     >
       <div className="word-row">
+        {!renaming && (
+          <button
+            type="button"
+            className={`word-mark${marked ? " open" : ""}`}
+            aria-label={marked ? "settle (withdraw the open mark)" : "mark tentative"}
+            title={marked ? "settle" : "mark tentative"}
+            onClick={onToggleMark}
+          />
+        )}
         {renaming ? (
           <input
             ref={renameRef}

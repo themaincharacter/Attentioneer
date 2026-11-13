@@ -66,6 +66,16 @@ export function canonicalJsonl(entries: readonly unknown[]): string {
 }
 
 /**
+ * A JSONL document from lines that are already bytes-to-be: known records
+ * through `canonicalJsonlLine`, malformed/unknown lines verbatim. This is the
+ * only way a writer may mix canonical records with preserved raw lines —
+ * `canonicalJsonl` would JSON-encode the strings a second time.
+ */
+export function canonicalJsonlLines(lines: readonly string[]): string {
+  return canonicalText(lines.join("\n"));
+}
+
+/**
  * YAML for flat frontmatter maps: keys sorted, one `key: value` per line,
  * string values JSON-quoted (valid YAML), trailing newline.
  */
@@ -131,8 +141,12 @@ export function agentsMd(workspaceName: string): string {
     "- `workspace.yml` — workspace marker and format key; keep it.",
     "- `map/references/` — one Markdown file per reference: its coined name, its",
     "  place on the plane, and its optional memory (prose).",
+    "- `map/distances.jsonl` — one line per distance: its two endpoints and the",
+    "  coined word (from, to, word).",
+    "- `map/marks.jsonl` — one line per open mark: an anonymous annotation on a",
+    "  word, on a distance, or on a bare spot of the plane.",
     "- `notes/` — working notes from before the map; kept untouched, no longer shown.",
-    "- `map/distances.jsonl` and `ontology/` arrive in later efforts.",
+    "- `ontology/` arrives in later efforts.",
     "",
     "## Ground rules",
     "",
@@ -144,9 +158,10 @@ export function agentsMd(workspaceName: string): string {
     "",
     "## Machine files",
     "",
-    "Machine-written files (`workspace.yml`, later `distances.jsonl` and the ontology)",
-    "use one canonical style: LF newlines, 2-space indent, sorted keys, trailing",
-    "newline. Hand edits are welcome; the app returns them in that style.",
+    "Machine-written files (`workspace.yml`, `map/distances.jsonl`,",
+    "`map/marks.jsonl`, and later the ontology) use one canonical style: LF newlines,",
+    "2-space indent, sorted keys, trailing newline. Hand edits are welcome; the app",
+    "returns them in that style.",
     "",
   ].join("\n");
 }

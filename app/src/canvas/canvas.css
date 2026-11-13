@@ -166,6 +166,53 @@ body {
   cursor: grab;
 }
 
+/* A word carrying an open mark is the same word, quieter (ADR-0009/0010):
+   pale, italic, dashed underline, and the hollow ring. Never disabled. */
+.word.open .word-name {
+  color: #8a8477;
+  font-style: italic;
+  text-decoration: underline dashed;
+  text-decoration-color: rgba(141, 136, 124, 0.6);
+  text-underline-offset: 3px;
+}
+
+/* The mark ring: the hollow glyph, always visible while open and a quiet
+   affordance on hover otherwise. Story 1's provisional cast/settle gesture. */
+.word-mark,
+.distance-mark {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1.2px solid #b5ad9e;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 150ms ease,
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.word:hover .word-mark,
+.distance-label:hover .distance-mark {
+  opacity: 0.55;
+}
+
+.word-mark:hover,
+.distance-mark:hover {
+  opacity: 1;
+  border-color: #6b675e;
+  transform: scale(1.2);
+}
+
+.word-mark.open,
+.distance-mark.open {
+  opacity: 1;
+  border-color: #8d887c;
+}
+
 .memory-dot {
   width: 6px;
   height: 6px;
@@ -299,6 +346,47 @@ body {
   border: 0;
   padding: 0;
   cursor: text;
+}
+
+/* A wire carrying an open mark reads tentative: dashed line, dashed label,
+   ringed at its word (ADR-0009/0010). */
+.distance-line.open {
+  border-top-style: dashed;
+  border-top-color: #a49c8d;
+}
+
+.distance-label.open {
+  border-style: dashed;
+}
+
+.distance-label.open .distance-word {
+  color: #8a8477;
+  font-style: italic;
+  text-decoration: underline dashed;
+  text-decoration-color: rgba(141, 136, 124, 0.6);
+  text-underline-offset: 2px;
+}
+
+/* The open ring on a wire whose label is hidden below the zoom band: the wire
+   keeps showing that something is unsettled even when its word hides. */
+.distance-ring {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  border: 1.2px solid #8d887c;
+  border-radius: 50%;
+  background: #f7f6f3;
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  animation: fade-in 160ms ease-out;
+  transition: border-color 150ms ease;
+}
+
+.distance-ring:hover {
+  border-color: #6b675e;
 }
 
 .distance-coin {
@@ -458,6 +546,30 @@ body {
 
 .word-remove:hover {
   color: #b33;
+}
+
+/* Orphan and unreadable mark lines: small quiet text, never a panel, badge,
+   or count (ADR-0009: surfaced, not silently hidden). */
+.mark-notices {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: min(42ch, 42vw);
+  pointer-events: none;
+}
+
+.mark-notice {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #8d887c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: fade-in 180ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
