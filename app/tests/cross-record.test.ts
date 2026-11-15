@@ -63,6 +63,16 @@ import {
   rewritePointerOwners,
 } from "../src/map/patches";
 import { parseReference, serializeReference, type Reference } from "../src/map/refs";
+import { BAND_ZOOM, GROUND_FROM } from "../src/canvas/zoomBands";
+import { createLevelPin, shouldPinLevel } from "../src/canvas/gates";
+import { workspaceYml } from "../src/lib/serialize";
+import {
+  DEFAULT_LEVEL,
+  levelOfText,
+  withLevel,
+  type Level,
+} from "../src/workspace/level";
+import { createLevelHandoff } from "../src/workspace/levelHandoff";
 
 /**
  * Story-5 cross-record hardening: the four records (model, links, loops,
@@ -870,5 +880,222 @@ describe("malformed, orphan and duplicate lines surface across records", () => {
     // The rename changes name/slug only; a re-serialization keeps the body.
     const renamed = { ...parsed, id: "woodchip", slug: "woodchip", name: "woodchip" };
     expect(parseReference("woodchip", "woodchip", serializeReference(renamed)).body).toBe(body);
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * Epic 6 story 4: the level key and the strict handoff, over the same records.
+ *
+ * The level is NOT a record (ADR-0018): the band is the game at runtime and
+ * workspace.yml's level line is the resume hint. This suite pins the interplay
+ * the per-record suites cannot: ONE write trigger (a settled crossing and a
+ * deliberate jump; an open-restore never), the writes QUEUED so a slow first
+ * read-modify-write holds the second's read, a hand-edited key honored on open
+ * and rewritten canonically on the first crossing (every other byte kept), and
+ * a pinned crossing holding the key with the camera. Through it all the seven
+ * records' bytes never move: a crossing is the level file's business alone.
+ * ---------------------------------------------------------------------- */
+
+describe("the level key and the handoff interplay (Epic 6, ADR-0018)", () => {
+  const WS = "/home/maps/garden";
+  const YML = WS + "/workspace.yml";
+
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  /** The level line's value, or null when the key is absent. */
+  function keyOf(text: string): Level | null {
+    return /^\s*level\s*:/m.test(text) ? levelOfText(text) : null;
+  }
+
+  /** A workspace on disk: the level file plus real map records to watch. */
+  interface Disk {
+    files: Map<string, string>;
+    saved: Level[];
+    reads: Array<Level | null>;
+    gate: Promise<void>;
+    open: () => void;
+  }
+
+  function disk(level?: Level): Disk {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return {
+      files: new Map<string, string>([
+        [
+          YML,
+          level === undefined ? workspaceYml() : withLevel(workspaceYml(), level),
+        ],
+        ...Object.entries(recordBytes(base())),
+      ]),
+      saved: [],
+      reads: [],
+      gate,
+      open,
+    };
+  }
+
+  /**
+   * The handoff wired to the disk, with saveWorkspaceLevel's own body: read the
+   * file NOW, rewrite its level line, write it back. The first write can be
+   * slowed to prove the queue (not luck) keeps read-modify-writes in order.
+   */
+  function handoffOn(d: Disk, slowFirst = false) {
+    let first = true;
+    return createLevelHandoff(DEFAULT_LEVEL, {
+      onSwitch: () => undefined,
+      moveCamera: () => undefined,
+      save: async (level) => {
+        const text = d.files.get(YML)!;
+        d.reads.push(keyOf(text));
+        if (slowFirst && first) {
+          first = false;
+          await d.gate;
+        }
+        d.files.set(YML, withLevel(text, level));
+        d.saved.push(level);
+      },
+    });
+  }
+
+  test("one trigger: a settled crossing and a deliberate jump write; a restore never", async () => {
+    const d = disk();
+    const handoff = handoffOn(d);
+    expect(handoff.level()).toBe(DEFAULT_LEVEL);
+
+    handoff.jump("ground");
+    await handoff.idle();
+    expect(d.saved).toEqual(["ground"]);
+    expect(d.files.get(YML)).toBe(withLevel(workspaceYml(), "ground"));
+
+    handoff.settle(BAND_ZOOM.concept);
+    await handoff.idle();
+    expect(d.saved).toEqual(["ground", "concept"]);
+    expect(d.files.get(YML)).toBe(withLevel(workspaceYml(), "concept"));
+
+    // Open-restore moves the camera into its band and writes NOTHING.
+    const before = d.files.get(YML)!;
+    handoff.restore("concept");
+    await handoff.idle();
+    expect(d.saved).toEqual(["ground", "concept"]);
+    expect(d.files.get(YML)).toBe(before);
+    // Every comment, the format key and the fold stay exactly as shipped.
+    expect(before).toBe(withLevel(workspaceYml(), "concept"));
+    expect(before.startsWith(workspaceYml())).toBe(true);
+  });
+
+  test("queued: a slow first crossing holds the second's read (no lost update)", async () => {
+    const d = disk();
+    const handoff = handoffOn(d, true);
+    handoff.jump("ground");
+    handoff.settle(BAND_ZOOM.concept);
+    await sleep(0); // the first save starts and stalls on the gate
+    expect(d.saved).toEqual([]);
+    expect(d.reads).toEqual([null]);
+
+    d.open();
+    await handoff.idle();
+    // The second read happened AFTER the first write: the queue serialized the
+    // two read-modify-writes, so no stale base can reappear.
+    expect(d.reads).toEqual([null, "ground"]);
+    expect(d.saved).toEqual(["ground", "concept"]);
+    expect(d.files.get(YML)).toBe(withLevel(workspaceYml(), "concept"));
+  });
+
+  test("a hand-edited key is honored on open and rewritten on the first crossing", async () => {
+    const handEdited = [
+      "# a hand-edited workspace.yml",
+      'format: "attentioneer-workspace/1"',
+      "shelf_x: 1200",
+      'where: "garden"',
+      'level: "ground"',
+      "",
+    ].join("\n");
+    const d = disk();
+    d.files.set(YML, handEdited);
+    const handoff = handoffOn(d);
+
+    // Opening: the key sets the camera into its band, writes nothing.
+    handoff.restore(levelOfText(handEdited));
+    await handoff.idle();
+    expect(d.saved).toEqual([]);
+    expect(d.files.get(YML)).toBe(handEdited);
+    expect(handoff.level()).toBe("ground");
+
+    // The first settled crossing rewrites the line canonically; the comment,
+    // the format key, the fold and the unknown key keep their bytes.
+    handoff.settle(BAND_ZOOM.concept);
+    await handoff.idle();
+    expect(d.saved).toEqual(["concept"]);
+    const after = d.files.get(YML)!;
+    expect(after).toBe(withLevel(handEdited, "concept"));
+    expect(after).toContain("# a hand-edited workspace.yml");
+    expect(after).toContain('where: "garden"');
+    expect(after).toContain('level: "concept"');
+    expect(after.split("\n").length).toBe(handEdited.split("\n").length);
+  });
+
+  test("the pin holds the key with the camera: a held crossing writes nothing, the release writes once", async () => {
+    const d = disk();
+    const handoff = handoffOn(d);
+    const pin = createLevelPin();
+    const settleThroughPin = (zoom: number, pinned: boolean): void => {
+      const next = pin.settle(zoom, pinned);
+      if (next !== null) handoff.settle(next);
+    };
+
+    // An armed gesture and a focused field both hold the crossing.
+    settleThroughPin(GROUND_FROM + 0.1, shouldPinLevel("selector", "none"));
+    settleThroughPin(GROUND_FROM + 0.2, shouldPinLevel("idle", "text"));
+    await handoff.idle();
+    expect(pin.held()).toBe(true);
+    expect(d.saved).toEqual([]);
+    expect(d.files.get(YML)).toBe(workspaceYml());
+    expect(handoff.level()).toBe(DEFAULT_LEVEL);
+
+    // The pin lifts: the band re-derives from the zoom the camera ended on,
+    // and the ONE trigger writes exactly once.
+    handoff.settle(pin.release(GROUND_FROM + 0.2));
+    await handoff.idle();
+    expect(d.saved).toEqual(["ground"]);
+    expect(d.files.get(YML)).toBe(withLevel(workspaceYml(), "ground"));
+  });
+
+  test("a crossing leaves all seven records byte-exact (the level is not a record)", async () => {
+    const bytes = recordBytes(base());
+    const d = disk();
+    const handoff = handoffOn(d);
+    handoff.jump("ground");
+    handoff.settle(BAND_ZOOM.concept);
+    await handoff.idle();
+
+    for (const [path, text] of Object.entries(bytes)) {
+      expect(d.files.get(path)).toBe(text);
+    }
+    expect(d.files.get(YML)).toBe(withLevel(workspaceYml(), "concept"));
+    // The trigger's read is the level file only: no record enters the queue.
+    expect(d.reads).toEqual([null, "ground"]);
+  });
+
+  test("the handoff owns the one queue and the one save call; a restore never reaches it", () => {
+    const source = readFileSync(
+      new URL("../src/workspace/levelHandoff.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("createWriteQueue()");
+    expect(source).toContain("queue.push(");
+    expect(source.match(/deps\.save\(/g)?.length).toBe(1);
+    // The restore implementation moves the camera and nothing else.
+    const restoreStart = source.lastIndexOf("restore(next) {");
+    expect(restoreStart).toBeGreaterThan(-1);
+    const restore = source.slice(
+      restoreStart,
+      source.indexOf("idle: () => queue.idle()", restoreStart),
+    );
+    expect(restore).toContain("deps.moveCamera(next)");
+    expect(restore).not.toContain("write(");
+    expect(restore).not.toContain("deps.save");
   });
 });

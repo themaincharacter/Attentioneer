@@ -123,6 +123,14 @@ describe("the new workspace scaffold gains the Level 2 orientation", () => {
     expect(md).toContain("The band writes it when a zoom gesture settles");
     expect(md).toContain("NOTHING is written");
     expect(md).toContain("rewritten only on the first settled crossing");
+    // Story 2's pin rides the same contract: a crossing under an armed gesture
+    // or a focused text field moves the camera and holds the game, so no
+    // surface closes and typed text survives until the pin lifts (ADR-0018
+    // decision 3).
+    expect(md).toContain("While a gesture is armed or a text field holds focus");
+    expect(md).toContain("the camera and holds the game");
+    expect(md).toContain("typed text survives");
+    expect(md).toContain("the crossing applies when the pin lifts");
   });
 
   test("the reading rule: polarity, exact direction, rotation, exact matching", () => {
@@ -384,6 +392,10 @@ describe("the zoom/level contract amendment is write-once (ADR-0018)", () => {
     expect(agentsMd("garden")).not.toContain("Zoom never changes it");
     expect(agentsMd("garden")).not.toContain("the only source of the active game");
     expect(agentsMd("garden")).toContain("Zoom is the level");
+    // Story 2's pin is part of the amendment too: the old contract's bytes
+    // never gained it, and only a NEW workspace is offered the sentence.
+    expect(agentsMd("garden")).toContain("typed text survives");
+    expect(PRE_BINDING_AGENTS_MD).not.toContain("typed text survives");
   });
 
   test("an existing AGENTS.md is never in the offered writes", () => {

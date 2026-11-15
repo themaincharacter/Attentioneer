@@ -157,7 +157,10 @@ export function workspaceYml(): string {
  * render map, the three level values with garbage tolerance, the pointer forms
  * and their resolution, and the window's snapshot wording. Epic 6 story 1
  * amends the zoom/level contract in place (ADR-0018): the zoom band is the
- * game and the `level` key is the resume hint, not the source. The scaffold is
+ * game and the `level` key is the resume hint, not the source. Story 2's pin
+ * joins that contract (ADR-0018 decision 3): a crossing made while a gesture is
+ * armed or a text field holds focus moves the camera and holds the game, so no
+ * surface closes and typed text survives until the pin lifts. The scaffold is
  * WRITE-ONCE (ADR-0004): `scaffoldWorkspace`
  * writes only files that are missing, so an existing workspace keeps its own
  * text and only a NEW workspace gets this one — a story never rewrites the
@@ -220,6 +223,9 @@ export function agentsMd(workspaceName: string): string {
     "reach, below). The band writes it when a zoom gesture settles; on open the",
     "key sets the camera into its band and NOTHING is written, so a hand-edited",
     "key is honored on open and rewritten only on the first settled crossing.",
+    "While a gesture is armed or a text field holds focus, a zoom crossing moves",
+    "the camera and holds the game — nothing closes and typed text survives —",
+    "and the crossing applies when the pin lifts.",
     "Move between games by zooming, or with the level control's jump. Level 2 is",
     "a quiet mode over the same plane, and its records",
     "are the playing set (`map/model.json`, required before the model is read)",
