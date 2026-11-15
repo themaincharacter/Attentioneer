@@ -11,9 +11,19 @@
  * a selector's elements join `WORD_CONTROL_CLASSES` too — the same early-return
  * list the word handler uses for the memory dot and the connect handle.
  *
+ * Story 4's assumption presence joins both lists: the hollow diamond in a
+ * target's hover row (a word's row, a link's head, a loop's name pill, or a
+ * bare spot) and its quiet overlay are content and own their presses, so a
+ * press on either can never pan the plane, create anything or start a word
+ * gesture. The overlay's lines, text buttons, inputs and × are on the same
+ * lists. Level 1 renders none of them (assumptions are Level 2 content), so
+ * its behavior is untouched.
+ *
  * Pure: no DOM, no React. `ClassListLike` is satisfied by a DOMTokenList, so
  * the handlers can pass the real thing and tests can pass a plain stub.
  */
+
+import type { Level } from "../workspace/level";
 
 /** How a gesture is armed right now. Idle is the plain canvas. */
 export type GestureMode = "idle" | "selector" | "path" | "sign-choice";
@@ -65,6 +75,18 @@ export const CONTENT_CLASSES = [
   "walk-gap",
   "walk-verdict",
   "walk-close",
+  // Story 4's assumptions: the hollow diamond at a target (a word's hover row,
+  // a link's head, a loop's name pill, a bare spot), its quiet overlay, and
+  // every element inside the overlay. The overlay never grows a word's box, so
+  // wires never move; a press on any of it is content, never a plane gesture.
+  "assumption-diamond",
+  "assumption-spot",
+  "assumption-overlay",
+  "assumption-line",
+  "assumption-text",
+  "assumption-input",
+  "assumption-remove",
+  "assumption-close",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */
@@ -107,7 +129,34 @@ export const WORD_CONTROL_CLASSES = [
   "path-collect",
   "path-word",
   "walk",
+  // Story 4: the diamond and the overlay own their presses. The diamond is a
+  // word-row affordance (beside the memory dot and the connect handle), so it
+  // must never start a word drag or a click-to-center; the overlay's lines,
+  // inputs and × are the quiet surface while it is open.
+  "assumption-diamond",
+  "assumption-spot",
+  "assumption-overlay",
+  "assumption-line",
+  "assumption-text",
+  "assumption-input",
+  "assumption-remove",
+  "assumption-close",
 ] as const;
+
+/**
+ * The double-click creation menu's kinds (ADR-0011, ADR-0016). At Level 1 the
+ * ring menu offers word and lack exactly as it always has; at Level 2 it grows
+ * a THIRD kind, `assumption`, which states a claim about a bare spot of plane
+ * (ADR-0011's open decision, decided in story 4). The list is the menu's whole
+ * contract, so the look and the ordering stay rendering's business.
+ */
+export type CreationKind = "word" | "lack" | "assumption";
+
+export function creationKinds(level: Level): readonly CreationKind[] {
+  return level === "dynamics"
+    ? ["word", "lack", "assumption"]
+    : ["word", "lack"];
+}
 
 /** Is any gesture armed? */
 export function isGestureArmed(mode: GestureMode): boolean {

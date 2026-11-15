@@ -25,23 +25,37 @@ import {
 import {
   canonicalPath,
   loadLoops,
+  loopSlug,
   saveLoops,
   type Loop,
 } from "./loops";
+import {
+  assumptionKey,
+  loadAssumptions,
+  saveAssumptions,
+  type Assumption,
+  type AssumptionTarget,
+} from "./assumptions";
 
 /**
- * Atomic patches (ADR-0005, ADR-0007, ADR-0009, ADR-0012, ADR-0013, ADR-0014):
- * rename and remove are single, all-or-nothing app operations — a file plus
- * `name` plus every `distances.jsonl` endpoint, every `links.jsonl` pair, every
- * touching mark, every `loops.jsonl` path slug and the playing set's member
- * slug (rename), or a file plus every touching distance, link, mark, loop line
- * and membership (remove). Prose memory is never rewritten (byte-faithful). No
+ * Atomic patches (ADR-0005, ADR-0007, ADR-0009, ADR-0012, ADR-0013,
+ * ADR-0014): rename and remove are single, all-or-nothing app operations — a
+ * file plus `name` plus every `distances.jsonl` endpoint, every `links.jsonl`
+ * pair, every touching mark, every `loops.jsonl` path slug, every
+ * `assumptions.jsonl` target and the playing set's member slug (rename), or a
+ * file plus every touching distance, link, mark, loop line, assumption line and
+ * membership (remove). Prose memory is never rewritten (byte-faithful). No
  * other module hand-strings these edits; `distances.ts`/`links.ts`/
- * `marks.ts`/`loops.ts`/`model.ts`/`serialize.ts` own the bytes.
+ * `marks.ts`/`loops.ts`/`assumptions.ts`/`model.ts`/`serialize.ts` own the
+ * bytes.
  *
  * Write order (the crash rule): references -> distances -> links -> marks ->
- * loops -> membership -> the old file. Story 4 grows a loop -> assumption step
- * between loops and membership (the marked seams below say where).
+ * loops -> assumptions -> membership -> the old file. Story 4 grows the
+ * loop -> assumption steps between loops and membership (the marked seams
+ * below say where): a reference rename rewrites word- and link-targeted
+ * assumptions, a reference remove drops them (and a loop's own lines when the
+ * same batch removes the loop), and a loop rename/remove rewrites or drops
+ * `loop` targets.
  *
  * Crash rule: the durable thing is written first. The reference's file is
  * written before the records that name the slug, and those records are
@@ -325,6 +339,150 @@ export function dropLoopsTouching(
   return loops.filter((loop) => !loop.path.includes(slug));
 }
 
+/**
+ * Re-write a target in one pass, resolving the collisions the rewrite creates.
+ * The app's rewrite is the survivor: if a rewritten line lands on a key that an
+ * untouched line already holds (a hand-edited orphan on the new target), the
+ * untouched line is dropped and the rewritten one keeps its index; if two
+ * rewritten lines land on one key, the later line in file order wins. Untouched
+ * duplicate keys elsewhere are NEVER collapsed — the read preserves them
+ * (ADR-0012 decision 4), and only the keys the app actually rewrote resolve.
+ */
+function rewriteAssumptionTargetsWhere(
+  assumptions: readonly Assumption[],
+  retarget: (target: AssumptionTarget) => AssumptionTarget | null,
+): Assumption[] {
+  const rewrittenKeys = new Map<string, number>();
+  const next = assumptions.map((assumption, index) => {
+    const target = retarget(assumption.target);
+    if (target === null) return assumption;
+    const record: Assumption = { ...assumption, target };
+    rewrittenKeys.set(assumptionKey(record), index);
+    return record;
+  });
+  if (rewrittenKeys.size === 0) return [...assumptions];
+  const drop = new Set<number>();
+  next.forEach((assumption, index) => {
+    const survivor = rewrittenKeys.get(assumptionKey(assumption));
+    if (survivor === undefined) return;
+    if (index !== survivor) drop.add(index);
+  });
+  return next.filter((_, index) => !drop.has(index));
+}
+
+/**
+ * Re-write every assumption target touching `oldSlug` (reference rename,
+ * ADR-0012 decision 6): a word target's `on`, and a link target's wordless
+ * pair endpoints. The text and unknown keys are untouched — a rename changes
+ * the address, never the claim. `loop` targets name a loop, not a word, so
+ * they are the loop's own batch; a bare spot has no endpoint and stays.
+ */
+export function rewriteAssumptionTargets(
+  assumptions: readonly Assumption[],
+  oldSlug: string,
+  newSlug: string,
+): Assumption[] {
+  if (oldSlug === newSlug) return [...assumptions];
+  return rewriteAssumptionTargetsWhere(assumptions, (target) => {
+    if (target.type === "word" && target.slug === oldSlug) {
+      return { type: "word", slug: newSlug };
+    }
+    if (
+      target.type === "link" &&
+      (target.from === oldSlug || target.to === oldSlug)
+    ) {
+      return {
+        type: "link",
+        from: target.from === oldSlug ? newSlug : target.from,
+        to: target.to === oldSlug ? newSlug : target.to,
+      };
+    }
+    return null;
+  });
+}
+
+/**
+ * Drop every assumption targeting the removed word or a link touching it
+ * (reference remove, die-with-target): the word's lines and the lines on its
+ * links go with the word. Bare-spot assumptions outlive the words around them
+ * (a spot is its own target), and `loop` targets are the loop's own batch.
+ * Line order and every surviving line's bytes are untouched.
+ */
+export function dropAssumptionsTouching(
+  assumptions: readonly Assumption[],
+  slug: string,
+): Assumption[] {
+  return assumptions.filter((assumption) => {
+    if (assumption.target.type === "word") {
+      return assumption.target.slug !== slug;
+    }
+    if (assumption.target.type === "link") {
+      return assumption.target.from !== slug && assumption.target.to !== slug;
+    }
+    return true;
+  });
+}
+
+/**
+ * Removing a link drops the assumption lines on its ordered pair — die-with-
+ * target. The reverse pair's lines are a different link and stay; a sign flip
+ * needs no step at all, because a link's key carries no sign (ADR-0014).
+ */
+export function dropLinkAssumptions(
+  assumptions: readonly Assumption[],
+  from: string,
+  to: string,
+): Assumption[] {
+  return assumptions.filter(
+    (assumption) =>
+      !(
+        assumption.target.type === "link" &&
+        assumption.target.from === from &&
+        assumption.target.to === to
+      ),
+  );
+}
+
+/**
+ * Re-write every assumption whose target is the renamed loop's slug (loop
+ * rename, ADR-0012 decisions 3 and 6): one in-place rewrite of the claims'
+ * address, text and unknown keys untouched, order kept. `newLoopSlug` is the
+ * caller's RESOLVED slug, so the collision suffix a rename mints flows straight
+ * into the targets. Word, link and spot targets are untouched.
+ */
+export function rewriteAssumptionLoopTargets(
+  assumptions: readonly Assumption[],
+  oldLoopSlug: string,
+  newLoopSlug: string,
+): Assumption[] {
+  if (oldLoopSlug === newLoopSlug) return [...assumptions];
+  return rewriteAssumptionTargetsWhere(assumptions, (target) =>
+    target.type === "loop" && target.slug === oldLoopSlug
+      ? { type: "loop", slug: newLoopSlug }
+      : null,
+  );
+}
+
+/**
+ * Drop every assumption whose target is a removed loop's slug — die-with-
+ * target, ADR-0012 decision 6: a claim about a loop goes with the loop. One
+ * slug or a batch (a reference remove can take several loops with it); every
+ * other target kind is untouched.
+ */
+export function dropLoopAssumptions(
+  assumptions: readonly Assumption[],
+  loopSlugs: string | readonly string[],
+): Assumption[] {
+  const dropped = new Set(
+    typeof loopSlugs === "string" ? [loopSlugs] : loopSlugs,
+  );
+  if (dropped.size === 0) return [...assumptions];
+  return assumptions.filter(
+    (assumption) =>
+      !(assumption.target.type === "loop" && dropped.has(assumption.target.slug)),
+  );
+}
+
 /** Rename a reference: write the renamed file, rewrite endpoints, drop the old file. */
 export async function renameReference(
   workspacePath: string,
@@ -379,12 +537,19 @@ export async function renameReference(
     parsedLoops.malformed,
   );
 
-  // STORY 4 SEAM — loop -> assumption steps. Story 4 grows this batch here: a
-  // loop rename rewrites the assumption lines whose target is that loop's slug
-  // (ADR-0012 decision 6), in this same ordered write, between loops and
-  // membership. Nothing targets a loop yet.
+  // 2d. Follow the rename in the assumptions in this same batch (ADR-0012
+  //     decision 6): a word-target's `on` and a link-target's wordless pair are
+  //     rewritten, text and unknown keys untouched. `loop` targets are the
+  //     loop's own rename step (the loop's slug did not change here), and a
+  //     bare spot has no endpoint to follow.
+  const parsedAssumptions = await loadAssumptions(workspacePath);
+  await saveAssumptions(
+    workspacePath,
+    rewriteAssumptionTargets(parsedAssumptions.assumptions, oldSlug, newSlug),
+    parsedAssumptions.malformed,
+  );
 
-  // 2d. Follow the rename in the playing set (ADR-0013). The renamed file —
+  // 2e. Follow the rename in the playing set (ADR-0013). The renamed file —
   //     the durable thing — is already on disk, so a crash here leaves a stale
   //     member name in map/model.json (visible, fixable by re-running the
   //     selector), never a member that names no word. An unreadable model file
@@ -411,53 +576,69 @@ export async function removeReference(
   ref: Reference,
 ): Promise<void> {
   if (ref.slug === null) return;
+  const slug = ref.slug;
 
   // 1. Drop every line and mark touching the slug (write first: a crash leaves
   //    the word, never a dangling line or mark).
   const { distances, malformed } = await loadDistances(workspacePath);
-  await saveDistances(workspacePath, dropTouching(distances, ref.slug), malformed);
+  await saveDistances(workspacePath, dropTouching(distances, slug), malformed);
 
   // 1a. Drop the signed links touching the word (ADR-0012/0014) — before the
   //     marks, so no mark is ever left naming a pair the same batch removed.
   const parsedLinks = await loadLinks(workspacePath);
   await saveLinks(
     workspacePath,
-    dropTouchingLinks(parsedLinks.links, ref.slug),
+    dropTouchingLinks(parsedLinks.links, slug),
     parsedLinks.malformed,
   );
 
   const parsedMarks = await loadMarks(workspacePath);
   await saveMarks(
     workspacePath,
-    dropMarksTouching(parsedMarks.marks, ref.slug),
+    dropMarksTouching(parsedMarks.marks, slug),
     parsedMarks.malformed,
   );
 
   // 1b. Drop the loop lines whose path names the word — die-with-target
   //     (ADR-0012 decision 6) — before the file goes, so no path is ever left
   //     naming a word the same batch removed. A loop is a path over the map, not
-  //     an annotation on the word, so only the loops that name it go.
+  //     an annotation on the word, so only the loops that name it go. Remember
+  //     their slugs: their assumption lines die in the next step, so no claim is
+  //     left about a loop this batch removed.
   const parsedLoops = await loadLoops(workspacePath);
+  const deadLoopSlugs = parsedLoops.loops
+    .filter((loop) => loop.path.includes(slug))
+    .map((loop) => loopSlug(loop.name));
   await saveLoops(
     workspacePath,
-    dropLoopsTouching(parsedLoops.loops, ref.slug),
+    dropLoopsTouching(parsedLoops.loops, slug),
     parsedLoops.malformed,
   );
 
-  // STORY 4 SEAM — a loop's assumption lines die with the loop (die-with-target,
-  // ADR-0009) when a loop is removed from the canvas; today no assumption
-  // record exists, so this batch has no such step.
+  // 1b2. Drop the assumption lines targeting the word, its links, or a loop
+  //      that went with it — die-with-target (ADR-0012 decision 6). Bare-spot
+  //      assumptions stay: a spot is its own target. Written before the file
+  //      goes, so no line is ever left naming a word the same batch removed.
+  const parsedAssumptions = await loadAssumptions(workspacePath);
+  await saveAssumptions(
+    workspacePath,
+    dropLoopAssumptions(
+      dropAssumptionsTouching(parsedAssumptions.assumptions, slug),
+      deadLoopSlugs,
+    ),
+    parsedAssumptions.malformed,
+  );
 
   // 1c. Drop the word's membership before the file goes (ADR-0013). Same
   //     crash rule: a crash after this write leaves the word on the map, not
   //     in play — visible, and one accept away from being put back.
   const parsedModel = await loadModel(workspacePath);
   if (parsedModel.model) {
-    await saveModel(workspacePath, dropMembership(parsedModel.model, ref.slug));
+    await saveModel(workspacePath, dropMembership(parsedModel.model, slug));
   }
 
   // 2. Delete the file.
-  await removeFile(referencePath(workspacePath, ref.slug));
+  await removeFile(referencePath(workspacePath, slug));
 }
 
 /**

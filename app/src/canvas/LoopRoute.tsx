@@ -5,6 +5,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { loopSlug, type Loop } from "../map/loops";
+import { AssumptionDiamond } from "./AssumptionDiamond";
 import type { Point } from "./geometry";
 
 /** World units the coined name sits above the route's middle (provisional). */
@@ -22,6 +23,14 @@ interface LoopRouteProps {
   onRename: (name: string) => void;
   /** Remove the loop — ammo, one click, no ceremony (ADR-0012). */
   onRemove: () => void;
+  /** True when this loop's slug carries at least one assumption (story 4). */
+  hasAssumptions?: boolean;
+  /**
+   * Open the loop's quiet assumption overlay, anchored beside the name pill —
+   * the loop's own presence, opened from the same place the walk and rename
+   * live (story 4).
+   */
+  onOpenAssumptions?: (anchor: Point) => void;
 }
 
 /**
@@ -34,7 +43,10 @@ interface LoopRouteProps {
  * The route and the name are the loop's presence: selecting either opens the
  * walk (the read, derived on every change). Double-clicking the name renames in
  * place (one rewrite of the line: name + key + path bytes); the hover × removes
- * the loop — ammo, like every other removal on the plane. Both the route and
+ * the loop — ammo, like every other removal on the plane. Story 4's hollow
+ * assumption diamond rides in the name pill (the route keeps opening the walk,
+ * so a press there is never ambiguous); its overlay is rendered at App level,
+ * so the route and name never move. Both the route and
  * the name are content elements and the name's controls are word-handler
  * controls (gates.ts), so a press here can never pan the plane, create
  * anything or start a word gesture.
@@ -49,8 +61,11 @@ export function LoopRoute({
   onOpen,
   onRename,
   onRemove,
+  hasAssumptions = false,
+  onOpenAssumptions,
 }: LoopRouteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const nameRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef(false);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(loop.name);
@@ -112,6 +127,7 @@ export function LoopRoute({
         <polygon className="loop-route-hit" points={polygon} onClick={onOpen} />
       </svg>
       <div
+        ref={nameRef}
         className="loop-name"
         style={{
           left: nameAt.x,
@@ -149,6 +165,26 @@ export function LoopRoute({
           >
             {loop.name}
           </button>
+        )}
+        {/* Story 4's presence: the hollow diamond in the name pill opens the
+            loop's quiet overlay (its claims, revisable in place); the overlay
+            is rendered at App level, so the route and name never move. */}
+        {onOpenAssumptions && (
+          <AssumptionDiamond
+            has={hasAssumptions}
+            onPress={() =>
+              // Just past the pill's right edge, so the diamond stays
+              // reachable while the overlay is open and the card never covers
+              // the name the person is reading.
+              onOpenAssumptions({
+                x:
+                  nameAt.x +
+                  (nameRef.current?.offsetWidth ?? 0) / 2 +
+                  12,
+                y: nameAt.y - LOOP_NAME_LIFT,
+              })
+            }
+          />
         )}
         <button
           type="button"

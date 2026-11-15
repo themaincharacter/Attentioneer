@@ -1730,3 +1730,220 @@ body {
 .plane.gesture-armed .loop-name {
   pointer-events: none;
 }
+
+/* Epic 4 story 4 — assumptions (ADR-0012 decision 4 / ADR-0016).
+   Provisional: the diamond's size, the overlay's card and its anchoring
+   (ADR-0003's rendering seam). Three glyphs now read at a glance and never
+   collide: filled dot = memory, hollow ring = mark, hollow diamond =
+   assumption. The diamond is presence (one per target, never a count); the
+   overlay is the quiet reveal — world-anchored and counter-scaled against the
+   camera, so it is an overlay and never grows a word's box or shifts a wire.
+   Motion stays short, soft and ease-out; the global reduced-motion rule above
+   collapses it. */
+
+.assumption-diamond {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1.2px solid #b5ad9e;
+  border-radius: 1px;
+  background: transparent;
+  transform: rotate(45deg);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 150ms ease,
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+/* The affordance appears in the target's hover row, with the memory dot, the
+   × and the connect handle; a target that carries a claim keeps its diamond
+   faintly visible so the map says "something is stated here" without a badge. */
+.word:hover .assumption-diamond,
+.link:hover .assumption-diamond,
+.link-head:hover .assumption-diamond,
+.loop-name:hover .assumption-diamond {
+  opacity: 0.5;
+}
+
+.assumption-diamond:hover {
+  opacity: 1;
+  border-color: #6b675e;
+  transform: rotate(45deg) scale(1.2);
+}
+
+.assumption-diamond.has-assumptions {
+  opacity: 0.8;
+  border-color: #8d887c;
+}
+
+.assumption-diamond.has-assumptions:hover {
+  opacity: 1;
+}
+
+/* A bare spot's diamond (a spot has no row of its own): the same hollow glyph,
+   world-sized like the lack's ring, centred on the spot. */
+.assumption-diamond.assumption-spot {
+  position: absolute;
+  z-index: 4;
+  /* Just right of the spot's mark ring, so a spot that carries both an open
+     mark and a claim reads as two distinct glyphs instead of one overlap. */
+  margin: -3.5px 0 0 8px;
+  opacity: 0.8;
+  animation: fade-in 150ms ease-out;
+}
+
+/* The quiet overlay: a small warm-white card, a column of claims in file
+   order, a bottom field for a new or rival line. Counter-scaled inline against
+   the camera (so it stays readable at every zoom) and anchored in world space
+   beside its target. */
+.assumption-overlay {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 130px;
+  max-width: 240px;
+  padding: 7px 20px 7px 9px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 9px;
+  box-shadow:
+    0 1px 2px rgba(40, 35, 25, 0.05),
+    0 5px 18px rgba(40, 35, 25, 0.11);
+  user-select: text;
+  animation: rise-in 150ms ease-out;
+}
+
+@supports ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .assumption-overlay {
+    background: rgba(255, 253, 248, 0.8);
+    -webkit-backdrop-filter: blur(8px) saturate(1.05);
+    backdrop-filter: blur(8px) saturate(1.05);
+  }
+}
+
+.assumption-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.assumption-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #4c4a44;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 1px 3px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.assumption-text:hover {
+  color: #1e2126;
+  background: rgba(30, 33, 38, 0.05);
+}
+
+.assumption-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 150px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #1e2126;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 1px 3px;
+}
+
+.assumption-input::placeholder {
+  color: #c4beb1;
+}
+
+/* The new/rival field sits under a hairline, quiet until typed into. */
+.assumption-line.new {
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(141, 136, 124, 0.16);
+}
+
+/* Removal is ammo: one quiet × per line, visible on the line's hover. */
+.assumption-remove {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 1px 2px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.assumption-line:hover .assumption-remove,
+.assumption-remove:focus-visible {
+  opacity: 1;
+}
+
+.assumption-remove:hover {
+  color: #b33;
+}
+
+/* The card's own quiet close (Esc and a press outside do the same). */
+.assumption-close {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.assumption-overlay:hover .assumption-close,
+.assumption-close:focus-visible {
+  opacity: 0.55;
+}
+
+.assumption-close:hover {
+  opacity: 1;
+  color: #6b675e;
+}
+
+/* While a gesture is armed the armed gesture owns the pointer (ADR-0016): the
+   assumption presence stands still too, exactly as the loops' route and name
+   do. The overlay's own controls stay live when it is open in idle. */
+.plane.gesture-armed .assumption-diamond,
+.plane.gesture-armed .assumption-overlay {
+  pointer-events: none;
+}

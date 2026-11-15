@@ -1,14 +1,23 @@
 import { useEffect, useRef } from "react";
 import { usePlane } from "./CanvasPlane";
+import type { CreationKind } from "./gates";
 
 interface PlaneMenuProps {
   /** Plane point the menu is anchored to; its center dot sits exactly there. */
   x: number;
   y: number;
+  /**
+   * The kinds to offer (ADR-0011, ADR-0016): word and lack at Level 1; Level 2
+   * grows the third, `assumption`, at a bare spot. Defaulted to Level 1's pair
+   * so the menu's look and markup are unchanged there.
+   */
+  kinds?: readonly CreationKind[];
   /** Coin a word at the point — the in-place coin field takes over. */
   onWord: () => void;
   /** Cast a bare open mark (a lack) at the point — the quiet ring. */
   onLack: () => void;
+  /** State an assumption about the bare spot — the quiet text field opens. */
+  onAssumption?: () => void;
   /** Dismiss without creating anything (Esc or a press outside the ring). */
   onClose: () => void;
 }
@@ -17,7 +26,9 @@ interface PlaneMenuProps {
  * The double-click creation menu (Epic 3 feedback): a small floating bubble
  * cluster at the plane point with two quiet choices — coin a word, or cast a
  * bare lack. Story 2's single-click cast is gone; creation begins only here,
- * so a stray click can no longer leave a mark behind.
+ * so a stray click can no longer leave a mark behind. Level 2 grows a third
+ * quiet choice below them — state an assumption about this bare spot
+ * (ADR-0011's open decision, ADR-0016) — and Level 1 renders exactly as before.
  *
  * The cluster is two frosted warm-white bubbles hanging off an inked anchor
  * dot (word above, lack below, each on a hairline stem), so it reads as a
@@ -31,7 +42,15 @@ interface PlaneMenuProps {
  * (the d3-zoom discipline in ringDrag.ts). The opening pop and hover lift are
  * look-only; reduced motion collapses them.
  */
-export function PlaneMenu({ x, y, onWord, onLack, onClose }: PlaneMenuProps) {
+export function PlaneMenu({
+  x,
+  y,
+  kinds = ["word", "lack"],
+  onWord,
+  onLack,
+  onAssumption,
+  onClose,
+}: PlaneMenuProps) {
   const { camera } = usePlane();
   const rootRef = useRef<HTMLDivElement>(null);
   const wordRef = useRef<HTMLButtonElement>(null);
@@ -111,6 +130,20 @@ export function PlaneMenu({ x, y, onWord, onLack, onClose }: PlaneMenuProps) {
       >
         lack
       </button>
+      {/* Level 2's third kind (ADR-0011's open decision, ADR-0016): state an
+          assumption about this bare spot. Rendered only when the level offers
+          it, so Level 1's menu is exactly the word/lack pair it always was. */}
+      {kinds.includes("assumption") && onAssumption && (
+        <button
+          type="button"
+          className="plane-menu-option plane-menu-third"
+          aria-label="state an assumption about this spot"
+          title="state an assumption about this spot"
+          onClick={onAssumption}
+        >
+          assumption
+        </button>
+      )}
     </div>
   );
 }

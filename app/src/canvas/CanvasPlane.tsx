@@ -84,6 +84,11 @@ interface CanvasPlaneProps {
    * suspend (the interaction-mode gate); idle is the plain canvas.
    */
   gestureMode?: GestureMode;
+  /**
+   * The quiet hint's creation clause (story 4): Level 1 keeps the word/lack
+   * wording byte-identically; Level 2 names its third kind.
+   */
+  creationHint?: string;
   /** True while the playing-set selector's draw tool is armed (story 1). */
   lassoArmed?: boolean;
   /**
@@ -102,6 +107,7 @@ export function CanvasPlane({
   intents,
   onPlaneDoubleClick,
   gestureMode = "idle",
+  creationHint = "double-click: word or lack",
   lassoArmed = false,
   picking = false,
   onLasso,
@@ -334,8 +340,8 @@ export function CanvasPlane({
         </div>
         <div className="zoom-chip">{Math.round(camera.zoom * 100)}%</div>
         <div className="plane-hint">
-          drag to pan · scroll to zoom · double-click: word or lack · drag past the fold
-          to set aside
+          drag to pan · scroll to zoom · {creationHint} · drag past the fold to
+          set aside
         </div>
       </div>
     </PlaneContext.Provider>

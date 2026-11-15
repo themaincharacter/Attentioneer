@@ -7,6 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type { Reference } from "../map/refs";
+import { AssumptionDiamond } from "./AssumptionDiamond";
 import { usePlane } from "./CanvasPlane";
 import {
   isGestureArmed,
@@ -59,6 +60,16 @@ interface ReferenceWordProps {
    * because d3-zoom stops React's synthetic mouse events).
    */
   onMarkRingDrag?: (slug: string, e: MouseEvent) => void;
+  /**
+   * True at Level 2: the assumption diamond sits in the word's hover row,
+   * beside the memory dot (story 4). Level 1 renders no diamond at all, so its
+   * markup is exactly what it was.
+   */
+  showAssumptions?: boolean;
+  /** True when this word carries at least one assumption (the diamond reads). */
+  hasAssumptions?: boolean;
+  /** Open this word's quiet assumption overlay, anchored beside the row. */
+  onOpenAssumptions?: (anchor: Point) => void;
 }
 
 /** Screen pixels of movement before a mousedown becomes a drag. */
@@ -84,7 +95,10 @@ interface DragState {
  * dragging that ring binds the mark elsewhere (story 2). A marked word also
  * offers a quiet reject arrow (story 3): one move settles it and sets it
  * aside (ADR-0010). A set-aside word wears `.shelved` (quieter, not disabled):
- * the position past the fold is the whole record.
+ * the position past the fold is the whole record. At Level 2 the row also
+ * carries the hollow assumption diamond (story 4), whose overlay is rendered
+ * at App level so the word's box never grows and wires never move; Level 1
+ * renders no diamond at all.
  *
  * Dragging is reported upward every animation frame (`onDragMove`) so the
  * word's wires track the pointer instead of snapping on drop.
@@ -108,6 +122,9 @@ export function ReferenceWord({
   onReject,
   onToggleMark,
   onMarkRingDrag,
+  showAssumptions = false,
+  hasAssumptions = false,
+  onOpenAssumptions,
 }: ReferenceWordProps) {
   const { camera, centerOn } = usePlane();
   const wordRef = useRef<HTMLDivElement>(null);
@@ -444,6 +461,22 @@ export function ReferenceWord({
           aria-label={word.body ? "memory" : "add memory"}
           onClick={toggleReveal}
         />
+        {/* Story 4's presence at Level 2: the hollow diamond beside the memory
+            dot, in the same hover row. It opens the quiet overlay to the
+            word's right; the overlay is rendered at App level, so the word's
+            box (and every wire's anchor) never moves. */}
+        {showAssumptions && onOpenAssumptions && !renaming && (
+          <AssumptionDiamond
+            has={hasAssumptions}
+            onPress={() => {
+              const el = wordRef.current;
+              onOpenAssumptions({
+                x: x + (el?.offsetWidth ?? 0) + 10,
+                y: y + (el?.offsetHeight ?? 0) / 2,
+              });
+            }}
+          />
+        )}
         <button
           type="button"
           className="connect-handle"

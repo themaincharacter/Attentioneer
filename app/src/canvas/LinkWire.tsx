@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Link } from "../map/links";
+import { AssumptionDiamond } from "./AssumptionDiamond";
 import { LINK_HEAD_BACK, pointToward, type Point } from "./geometry";
 import { useRingMouseDown } from "./ringDrag";
 
@@ -24,6 +25,10 @@ interface LinkWireProps {
    * d3-zoom stops React's synthetic mouse events — see ringDrag.ts).
    */
   onMarkRingDrag?: (e: MouseEvent) => void;
+  /** True when this link's pair carries at least one assumption (story 4). */
+  hasAssumptions?: boolean;
+  /** Open the link's quiet assumption overlay, anchored beside the head. */
+  onOpenAssumptions?: (anchor: Point) => void;
 }
 
 /**
@@ -39,6 +44,9 @@ interface LinkWireProps {
  *   instead: the mark says the sign is unsettled, so no stored sign is drawn
  *   beside the ring (mark precedence to pixels);
  * - the ring casts or settles the mark and drags to bind it elsewhere;
+ * - story 4's hollow diamond opens the pair's quiet assumption overlay, and
+ *   lives on this directed wire's head, so the pair's direction is simply the
+ *   element under the pointer;
  * - the × appears on hover and removes the link (ammo, no confirmation).
  *
  * Level 1 renders none of this: a link is Level 2 content and the level decides
@@ -57,6 +65,8 @@ export function LinkWire({
   onRemove,
   onToggleMark,
   onMarkRingDrag,
+  hasAssumptions = false,
+  onOpenAssumptions,
 }: LinkWireProps) {
   const headRef = useRef<HTMLDivElement>(null);
 
@@ -150,6 +160,23 @@ export function LinkWire({
           >
             {link.sign}
           </button>
+        )}
+        {/* Story 4's presence: the hollow diamond in the head cluster opens
+            the pair's quiet overlay; the overlay is rendered at App level, so
+            the head — and the wire it anchors — never moves. */}
+        {onOpenAssumptions && (
+          <AssumptionDiamond
+            has={hasAssumptions}
+            onPress={() =>
+              // To the right of the whole head cluster, so the diamond stays
+              // reachable while the overlay is open (press it again for a
+              // rival) and the card never covers the link's own controls.
+              onOpenAssumptions({
+                x: head.x + (headRef.current?.offsetWidth ?? 0) / 2 + 12,
+                y: head.y,
+              })
+            }
+          />
         )}
         <button
           type="button"

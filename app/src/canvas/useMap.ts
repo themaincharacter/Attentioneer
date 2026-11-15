@@ -40,6 +40,7 @@ import {
 } from "../map/model";
 import {
   loadLoops,
+  loopKey,
   nameLoop as nameLoopRecord,
   removeLoop as removeLoopRecord,
   renameLoop as renameLoopRecord,
@@ -48,11 +49,25 @@ import {
   type Loop,
 } from "../map/loops";
 import {
+  addAssumption as addAssumptionRecord,
+  findDuplicateAssumptions,
+  findOrphanAssumptions,
+  loadAssumptions,
+  removeAssumption as removeAssumptionRecord,
+  reviseAssumption as reviseAssumptionRecord,
+  saveAssumptions,
+  type Assumption,
+  type AssumptionTarget,
+} from "../map/assumptions";
+import {
+  dropLinkAssumptions,
   dropLinkMarks,
+  dropLoopAssumptions,
   dropWireMarks,
   recoinWireMarks,
   removeReference,
   renameReference,
+  rewriteAssumptionLoopTargets,
 } from "../map/patches";
 
 /** A distance draw in flight: origin slug + the pointer's live world position. */
@@ -106,6 +121,15 @@ export interface ConnectDraft {
  * the read in the same breath and no verdict is ever stored. Creating a loop
  * does not touch the playing set — ADR-0013 decision 4 lets a loop name a
  * non-member and surfaces that at read time.
+ *
+ * Epic 4 story 4 adds assumptions (ADR-0012 decision 4): `map/assumptions.jsonl`
+ * loaded with the rest, one line per claim on a word, a link pair, a loop slug
+ * or a bare spot. Stating one, stating a rival (the same move again), revising
+ * a line in place and removing a line are ordinary quiet moves through the
+ * same in-order queue. The read never dedupes hand-edited duplicates — they are
+ * preserved and surfaced — and every target rename/removal follows in the same
+ * atomic batch (the loop rename's resolved slug flows into `loop` targets; a
+ * removed loop or link takes its claims with it, die-with-target).
  */
 export interface UseMapOptions {
   /**
@@ -132,6 +156,10 @@ export function useMap(
   const [malformedModel, setMalformedModel] = useState<string | null>(null);
   const [loops, setLoops] = useState<Loop[]>([]);
   const [malformedLoops, setMalformedLoops] = useState<string[]>([]);
+  const [assumptions, setAssumptions] = useState<Assumption[]>([]);
+  const [malformedAssumptions, setMalformedAssumptions] = useState<string[]>(
+    [],
+  );
   const [loaded, setLoaded] = useState(false);
   const [connect, setConnect] = useState<ConnectDraft | null>(null);
   const draftCount = useRef(0);
@@ -145,6 +173,9 @@ export function useMap(
   const loopsRef = useRef<Loop[]>([]);
   const malformedLoopsRef = useRef<string[]>([]);
   const loopsWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const assumptionsRef = useRef<Assumption[]>([]);
+  const malformedAssumptionsRef = useRef<string[]>([]);
+  const assumptionsWriteRef = useRef<Promise<void>>(Promise.resolve());
 
   /** Re-read every map file (first load and after an atomic patch). */
   const reloadMap = useCallback(async () => {
@@ -155,6 +186,7 @@ export function useMap(
       parsedLinks,
       parsedModel,
       parsedLoops,
+      parsedAssumptions,
     ] = await Promise.all([
       loadReferences(workspacePath),
       loadDistances(workspacePath),
@@ -162,6 +194,7 @@ export function useMap(
       loadLinks(workspacePath),
       loadModel(workspacePath),
       loadLoops(workspacePath),
+      loadAssumptions(workspacePath),
     ]);
     setRefs(referenceList);
     setDistances(parsedDistances.distances);
@@ -181,6 +214,10 @@ export function useMap(
     malformedLoopsRef.current = parsedLoops.malformed;
     setLoops(parsedLoops.loops);
     setMalformedLoops(parsedLoops.malformed);
+    assumptionsRef.current = parsedAssumptions.assumptions;
+    malformedAssumptionsRef.current = parsedAssumptions.malformed;
+    setAssumptions(parsedAssumptions.assumptions);
+    setMalformedAssumptions(parsedAssumptions.malformed);
     setLoaded(true);
   }, [workspacePath]);
 
@@ -211,6 +248,12 @@ export function useMap(
   useEffect(() => {
     loopsRef.current = loops;
   }, [loops]);
+
+  // Assumptions follow the same mirror rule: a stated rival can land right
+  // after a revise, so the queue must never read a stale line list.
+  useEffect(() => {
+    assumptionsRef.current = assumptions;
+  }, [assumptions]);
 
   /** Persist the distance file after each mutation (deduped by key). */
   const persistDistances = useCallback(
@@ -273,6 +316,25 @@ export function useMap(
       loopsWriteRef.current = loopsWriteRef.current
         .catch(() => undefined)
         .then(() => saveLoops(workspacePath, next, malformedLines));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * Persist the assumptions file after each quiet move. Same in-order queue: a
+   * rival stated behind a revision must land in the order the person made
+   * them, never as an older line reappearing under a newer one. Every line —
+   * hand-duplicated keys included — is written in file order: the read rule
+   * says the app never dedupes them (ADR-0012 decision 4).
+   */
+  const persistAssumptions = useCallback(
+    (next: readonly Assumption[]) => {
+      assumptionsRef.current = [...next];
+      setAssumptions([...next]);
+      const malformedLines = [...malformedAssumptionsRef.current];
+      assumptionsWriteRef.current = assumptionsWriteRef.current
+        .catch(() => undefined)
+        .then(() => saveAssumptions(workspacePath, next, malformedLines));
     },
     [workspacePath],
   );
@@ -354,6 +416,37 @@ export function useMap(
     );
     return unusedLoopSlugs(loops, slugs);
   }, [loaded, loops, refs]);
+
+  /**
+   * Assumptions whose target is not on the map (hand edit, partial write): a
+   * word that is gone, a link pair that is gone or a loop slug no loop carries.
+   * Preserved in the file and surfaced quietly, never dropped on an unrelated
+   * write — the same no-validation posture as marks and loops. A bare spot is
+   * its own target, so it is never an orphan.
+   */
+  const orphanAssumptions = useMemo(() => {
+    if (!loaded) return [];
+    const wordSlugs = new Set(
+      refs.map((ref) => ref.slug).filter((slug): slug is string => slug !== null),
+    );
+    const linkKeys = new Set(links.map((link) => linkKey(link.from, link.to)));
+    const loopKeys = new Set(loops.map((loop) => loopKey(loop)));
+    return findOrphanAssumptions(
+      assumptions,
+      wordSlugs,
+      linkKeys,
+      loopKeys,
+    );
+  }, [loaded, refs, links, loops, assumptions]);
+
+  /**
+   * Lines whose natural key a hand edit duplicated: preserved, never deduped,
+   * and surfaced by the notices (ADR-0012 decision 4's read rule).
+   */
+  const duplicateAssumptions = useMemo(
+    () => findDuplicateAssumptions(assumptions),
+    [assumptions],
+  );
 
   /**
    * Accept the selector's set: one explicit write of `map/model.json`
@@ -497,16 +590,21 @@ export function useMap(
   );
 
   /**
-   * Remove a link (ammo, one click) and the marks targeting it — die-with-
-   * target (ADR-0009's amendment). No distance is touched: the two families
-   * share only the pair (ADR-0014 decision 2).
+   * Remove a link (ammo, one click) and the marks and assumption lines
+   * targeting it — die-with-target (ADR-0009's amendment, ADR-0012 decision
+   * 6). No distance is touched: the two families share only the pair
+   * (ADR-0014 decision 2). A sign flip reaches none of this: neither key
+   * carries a sign.
    */
   const removeLink = useCallback(
     (from: string, to: string) => {
       persistLinks(removeLinkRecord(linksRef.current, from, to));
       persistMarks(dropLinkMarks(marksRef.current, from, to));
+      persistAssumptions(
+        dropLinkAssumptions(assumptionsRef.current, from, to),
+      );
     },
-    [persistLinks, persistMarks],
+    [persistLinks, persistMarks, persistAssumptions],
   );
 
   /** Cast a bare open mark — the menu's lack choice; no field, no name. */
@@ -716,22 +814,89 @@ export function useMap(
 
   /**
    * Rename a loop: one in-place rewrite of its line — name, key and path bytes
-   * in one atomic move, unknown keys riding along (ADR-0012 decision 3). Story 4
-   * grows the assumption loop-targets step; nothing targets a loop yet.
+   * in one atomic move, unknown keys riding along (ADR-0012 decision 3). The
+   * loop's line is the durable record and is written first; the assumption
+   * lines targeting its slug follow in the same user move — the RESOLVED slug
+   * (a collision suffix included) flows into the targets (story 4). A quiet
+   * no-op rename writes nothing more.
    */
   const renameLoop = useCallback(
     (loop: Loop, newName: string) => {
-      persistLoops(renameLoopRecord(loopsRef.current, loop, newName));
+      const current = loopsRef.current;
+      const oldKey = loopKey(loop);
+      const next = renameLoopRecord(current, loop, newName);
+      persistLoops(next);
+      const index = current.findIndex(
+        (candidate) => loopKey(candidate) === oldKey,
+      );
+      const renamed = index === -1 ? undefined : next[index];
+      if (!renamed) return;
+      const newKey = loopKey(renamed);
+      if (newKey === oldKey) return;
+      persistAssumptions(
+        rewriteAssumptionLoopTargets(assumptionsRef.current, oldKey, newKey),
+      );
     },
-    [persistLoops],
+    [persistLoops, persistAssumptions],
   );
 
-  /** Remove a loop — ammo, one click, no ceremony; only its line goes. */
+  /**
+   * Remove a loop — ammo, one click, no ceremony; only its line goes, and the
+   * assumption lines targeting its slug die with it (die-with-target, story 4).
+   * A removal is no place to keep a claim about a loop that is gone.
+   */
   const removeLoop = useCallback(
     (loop: Loop) => {
       persistLoops(removeLoopRecord(loopsRef.current, loop));
+      persistAssumptions(
+        dropLoopAssumptions(assumptionsRef.current, loopKey(loop)),
+      );
     },
-    [persistLoops],
+    [persistLoops, persistAssumptions],
+  );
+
+  /**
+   * State a claim about a target (story 4): one new line, appended in file
+   * order. Stating a rival is the SAME move — another line on the same target
+   * — and stating the identical claim again rewrites its one line in place.
+   * The software never reads the text (World B); only the person states one.
+   */
+  const addAssumption = useCallback(
+    (target: AssumptionTarget, text: string) => {
+      persistAssumptions(
+        addAssumptionRecord(assumptionsRef.current, text, target),
+      );
+    },
+    [persistAssumptions],
+  );
+
+  /**
+   * Revise one line's text in place (never append), with edit-convergence: if
+   * the new text equals another line's on the same target, that colliding line
+   * is dropped in the same quiet edit and the edited line survives with its own
+   * unknown keys. The line is addressed by OBJECT identity, which the pure
+   * steps preserve for untouched lines — so an edit can never act on a line a
+   * converging edit shifted. A line that is no longer present is a quiet no-op.
+   */
+  const reviseAssumption = useCallback(
+    (assumption: Assumption, text: string) => {
+      const index = assumptionsRef.current.indexOf(assumption);
+      if (index === -1) return;
+      persistAssumptions(
+        reviseAssumptionRecord(assumptionsRef.current, index, text),
+      );
+    },
+    [persistAssumptions],
+  );
+
+  /** Remove one assumption line — ammo, one quiet ×, no tombstone. */
+  const removeAssumption = useCallback(
+    (assumption: Assumption) => {
+      const index = assumptionsRef.current.indexOf(assumption);
+      if (index === -1) return;
+      persistAssumptions(removeAssumptionRecord(assumptionsRef.current, index));
+    },
+    [persistAssumptions],
   );
 
   return {
@@ -750,6 +915,10 @@ export function useMap(
     loops,
     malformedLoops,
     orphanLoops,
+    assumptions,
+    malformedAssumptions,
+    duplicateAssumptions,
+    orphanAssumptions,
     loaded,
     acceptPlayingSet,
     connect,
@@ -779,5 +948,8 @@ export function useMap(
     createLoop,
     renameLoop,
     removeLoop,
+    addAssumption,
+    reviseAssumption,
+    removeAssumption,
   };
 }

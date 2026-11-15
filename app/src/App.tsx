@@ -13,7 +13,9 @@ import {
   type Box,
   type Point,
 } from "./canvas/geometry";
-import type { GestureMode } from "./canvas/gates";
+import { AssumptionDiamond } from "./canvas/AssumptionDiamond";
+import { AssumptionOverlay } from "./canvas/AssumptionOverlay";
+import { creationKinds, type GestureMode } from "./canvas/gates";
 import { LevelControl } from "./canvas/LevelControl";
 import { LackMark } from "./canvas/LackMark";
 import { LinkWire } from "./canvas/LinkWire";
@@ -36,6 +38,13 @@ import { ShelfFold } from "./canvas/ShelfFold";
 import { SignChoice } from "./canvas/SignChoice";
 import { useCamera } from "./canvas/useCamera";
 import { useMap } from "./canvas/useMap";
+import {
+  assumptionTargetKey,
+  findAssumptions,
+  targetsWithAssumptions,
+  type Assumption,
+  type AssumptionTarget,
+} from "./map/assumptions";
 import { linkKey, type LinkSign } from "./map/links";
 import { readLoop } from "./map/loopRead";
 import { findLoop, isClosedPath, loopSlug, type Loop } from "./map/loops";
@@ -88,6 +97,10 @@ function App() {
     loops,
     malformedLoops,
     orphanLoops,
+    assumptions,
+    malformedAssumptions,
+    duplicateAssumptions,
+    orphanAssumptions,
     loaded,
     acceptPlayingSet,
     connect,
@@ -117,6 +130,9 @@ function App() {
     createLoop,
     renameLoop,
     removeLoop,
+    addAssumption,
+    reviseAssumption,
+    removeAssumption,
   } = map;
 
   // The shelf's fold (ADR-0010): a workspace-level convention, provisional.
@@ -141,8 +157,38 @@ function App() {
   // and the loop whose walk is open (null = no walk).
   const [pathSession, setPathSession] = useState<PathSession | null>(null);
   const [walkSlug, setWalkSlug] = useState<string | null>(null);
+  // The open assumption overlay (story 4): the target it speaks about and the
+  // world point it hangs off, or null. One overlay at a time, rendered here at
+  // App level so it never grows a word's box or shifts a wire's anchors.
+  const [assumptionAt, setAssumptionAt] = useState<{
+    target: AssumptionTarget;
+    anchor: Point;
+  } | null>(null);
   // A workspace that resumed in dynamics with no set prompts the selector once.
   const autoPromptedRef = useRef<string | null>(null);
+
+  /** Open the quiet assumption overlay for one target at a world anchor. */
+  const openAssumptions = useCallback(
+    (target: AssumptionTarget, anchor: Point) => {
+      setAssumptionAt({ target, anchor });
+    },
+    [],
+  );
+
+  const closeAssumptions = useCallback(() => setAssumptionAt(null), []);
+
+  /**
+   * Close the overlay if it speaks about this target — called when a rename or
+   * a removal invalidates the target's address, so an open overlay can never
+   * write a claim about something the same move removed.
+   */
+  const closeAssumptionsFor = useCallback((target: AssumptionTarget) => {
+    setAssumptionAt((current) =>
+      current && assumptionTargetKey(current.target) === assumptionTargetKey(target)
+        ? null
+        : current,
+    );
+  }, []);
 
   const handleDragMove = useCallback((slug: string, x: number, y: number) => {
     setLivePos((prev) => {
@@ -172,6 +218,39 @@ function App() {
       ),
     [marks],
   );
+
+  // Which targets carry at least one assumption (story 4) — one hollow diamond
+  // each, however many claims sit on it; the diamond's presence, never a count.
+  const assumptionTargets = useMemo(
+    () =>
+      new Set(
+        targetsWithAssumptions(assumptions).map(assumptionTargetKey),
+      ),
+    [assumptions],
+  );
+
+  // Bare spots carrying assumptions: each needs its own quiet diamond on the
+  // plane (a word's, a link's and a loop's ride in their own rows).
+  const spotAssumptionTargets = useMemo(
+    () =>
+      targetsWithAssumptions(assumptions).filter(
+        (
+          target,
+        ): target is Extract<AssumptionTarget, { type: "spot" }> =>
+          target.type === "spot",
+      ),
+    [assumptions],
+  );
+
+  // The open overlay's lines, in FILE ORDER, recomputed from the records so a
+  // revise/removal (and an edit-convergence drop) shows in the same breath.
+  const assumptionPanel = useMemo(() => {
+    if (!assumptionAt) return null;
+    return {
+      ...assumptionAt,
+      lines: findAssumptions(assumptions, assumptionAt.target),
+    };
+  }, [assumptionAt, assumptions]);
 
   // Every coined word's slug: the read's "is this path word on the map?".
   const wordSlugs = useMemo(
@@ -314,6 +393,7 @@ function App() {
     setSelectorOpen(false);
     setLassoArmed(false);
     setPathSession(endPathSession());
+    setAssumptionAt(null);
     cancelConnect();
   }, [cancelConnect]);
 
@@ -583,6 +663,21 @@ function App() {
     castMark(spot.x, spot.y);
   }, [menuAt, castMark]);
 
+  /**
+   * The menu's Level 2 THIRD kind (story 4, ADR-0011's open decision): state an
+   * assumption about this bare spot. The quiet overlay opens right here with
+   * its field ready; nothing is written until Enter.
+   */
+  const chooseAssumption = useCallback(() => {
+    const spot = menuAt;
+    if (!spot) return;
+    setMenuAt(null);
+    openAssumptions(
+      { type: "spot", x: spot.x, y: spot.y },
+      { x: spot.x + 22, y: spot.y },
+    );
+  }, [menuAt, openAssumptions]);
+
   // Track the pointer live during a connect draw so the dashed preview follows,
   // and end the draw when the pointer is released off a target word.
   //
@@ -650,6 +745,11 @@ function App() {
         intents={intents}
         onPlaneDoubleClick={handlePlaneDoubleClick}
         gestureMode={gestureMode}
+        creationHint={
+          level === "dynamics"
+            ? "double-click: word, lack or assumption"
+            : undefined
+        }
         lassoArmed={selectorOpen && lassoArmed}
         picking={markDrag.ghost !== null}
         onLasso={handleLasso}
@@ -668,11 +768,24 @@ function App() {
             points={points}
             nameAt={nameAt}
             onOpen={() => openWalk(loopSlug(loop.name))}
-            onRename={(name) => renameLoop(loop, name)}
+            onRename={(name) => {
+              closeAssumptionsFor({ type: "loop", slug: loopSlug(loop.name) });
+              renameLoop(loop, name);
+            }}
             onRemove={() => {
+              closeAssumptionsFor({ type: "loop", slug: loopSlug(loop.name) });
               if (walkSlug === loopSlug(loop.name)) closeWalk();
               removeLoop(loop);
             }}
+            hasAssumptions={assumptionTargets.has(
+              assumptionTargetKey({ type: "loop", slug: loopSlug(loop.name) }),
+            )}
+            onOpenAssumptions={(anchor) =>
+              openAssumptions(
+                { type: "loop", slug: loopSlug(loop.name) },
+                anchor,
+              )
+            }
           />
         ))}
 
@@ -695,6 +808,24 @@ function App() {
           />
         ))}
 
+        {/* bare-spot assumptions (story 4): one quiet diamond per spot that
+            carries a claim; pressing it opens the quiet overlay. Level 2 only. */}
+        {level === "dynamics" &&
+          spotAssumptionTargets.map((spot) => (
+            <AssumptionDiamond
+              key={`assumption-spot-${spot.x}-${spot.y}`}
+              has
+              className="assumption-spot"
+              style={{ left: spot.x, top: spot.y }}
+              onPress={() =>
+                openAssumptions(
+                  { type: "spot", x: spot.x, y: spot.y },
+                  { x: spot.x + 22, y: spot.y },
+                )
+              }
+            />
+          ))}
+
         {/* words */}
         {refs.map((word) => (
           <ReferenceWord
@@ -703,8 +834,20 @@ function App() {
             position={posOf(word)}
             onChange={updateReference}
             onDiscard={discardReference}
-            onRename={rename}
-            onRemove={remove}
+            onRename={(candidate, newName) => {
+              // A reference rename rewrites assumption targets for the word
+              // and its links in one batch: any open overlay may speak about
+              // an address that batch just changed, so it closes here.
+              closeAssumptions();
+              rename(candidate, newName);
+            }}
+            onRemove={(candidate) => {
+              // Removing a word can drop its links and loops, and with them
+              // their assumption lines: the open overlay may be about any of
+              // them, so it closes before the batch runs.
+              closeAssumptions();
+              remove(candidate);
+            }}
             onConnectFrom={(slug, c) => beginConnect(slug, c.x, c.y)}
             onDragMove={handleDragMove}
             onMeasure={handleMeasure}
@@ -725,6 +868,17 @@ function App() {
             outOfSet={isOutOfSet(word)}
             interactionMode={gestureMode}
             onReject={() => rejectWord(word)}
+            showAssumptions={level === "dynamics"}
+            hasAssumptions={
+              word.slug !== null &&
+              assumptionTargets.has(
+                assumptionTargetKey({ type: "word", slug: word.slug }),
+              )
+            }
+            onOpenAssumptions={(anchor) => {
+              if (word.slug === null) return;
+              openAssumptions({ type: "word", slug: word.slug }, anchor);
+            }}
           />
         ))}
 
@@ -808,7 +962,14 @@ function App() {
                 )}
                 shelved={shelvedOf(f) || shelvedOf(t)}
                 onFlip={() => flipSign(link.from, link.to)}
-                onRemove={() => removeLink(link.from, link.to)}
+                onRemove={() => {
+                  closeAssumptionsFor({
+                    type: "link",
+                    from: link.from,
+                    to: link.to,
+                  });
+                  removeLink(link.from, link.to);
+                }}
                 onToggleMark={() => {
                   if (markDrag.isClickSuppressed()) return;
                   toggleLinkMark(link.from, link.to);
@@ -817,6 +978,19 @@ function App() {
                   markDrag.begin(
                     { type: "link", from: link.from, to: link.to },
                     e,
+                  )
+                }
+                hasAssumptions={assumptionTargets.has(
+                  assumptionTargetKey({
+                    type: "link",
+                    from: link.from,
+                    to: link.to,
+                  }),
+                )}
+                onOpenAssumptions={(anchor) =>
+                  openAssumptions(
+                    { type: "link", from: link.from, to: link.to },
+                    anchor,
                   )
                 }
               />
@@ -897,14 +1071,35 @@ function App() {
           )
         )}
 
-        {/* the double-click creation menu: word or lack, at the point */}
+        {/* the double-click creation menu: word or lack at Level 1; Level 2
+            grows the third kind, assumption, about the bare spot (story 4) */}
         {menuAt && (
           <PlaneMenu
             x={menuAt.x}
             y={menuAt.y}
+            kinds={creationKinds(level)}
             onWord={chooseWord}
             onLack={chooseLack}
+            onAssumption={chooseAssumption}
             onClose={closePlaneMenu}
+          />
+        )}
+
+        {/* the assumptions' quiet overlay (story 4), in world space beside its
+            target and counter-scaled: the claims in file order, each revisable
+            in place and removable, plus the field for a new or rival line. It
+            never grows a target's box or shifts a wire's anchor. */}
+        {level === "dynamics" && assumptionPanel && (
+          <AssumptionOverlay
+            anchor={assumptionPanel.anchor}
+            lines={assumptionPanel.lines}
+            targetLabel={describeAssumptionTarget(assumptionPanel.target)}
+            onAdd={(text) => addAssumption(assumptionPanel.target, text)}
+            onRevise={(assumption, text) =>
+              reviseAssumption(assumption, text)
+            }
+            onRemove={(assumption) => removeAssumption(assumption)}
+            onClose={closeAssumptions}
           />
         )}
       </CanvasPlane>
@@ -944,6 +1139,9 @@ function App() {
         orphanMembers={orphanMembers}
         malformedLoops={malformedLoops}
         orphanLoops={orphanLoops}
+        malformedAssumptions={malformedAssumptions}
+        duplicateAssumptions={duplicateAssumptions}
+        orphanAssumptions={orphanAssumptions}
       />
 
       {/* the walk (story 3): the selected loop's derived read — steps, signs,
@@ -976,6 +1174,9 @@ function MarkNotices({
   orphanMembers,
   malformedLoops,
   orphanLoops,
+  malformedAssumptions,
+  duplicateAssumptions,
+  orphanAssumptions,
 }: {
   malformed: readonly string[];
   orphans: readonly Mark[];
@@ -985,6 +1186,10 @@ function MarkNotices({
   orphanMembers: readonly string[];
   malformedLoops: readonly string[];
   orphanLoops: readonly string[];
+  malformedAssumptions: readonly string[];
+  /** Hand-edited duplicate keys: preserved, never deduped (story 4). */
+  duplicateAssumptions: readonly Assumption[];
+  orphanAssumptions: readonly Assumption[];
 }) {
   if (
     malformed.length === 0 &&
@@ -994,7 +1199,10 @@ function MarkNotices({
     malformedModel === null &&
     orphanMembers.length === 0 &&
     malformedLoops.length === 0 &&
-    orphanLoops.length === 0
+    orphanLoops.length === 0 &&
+    malformedAssumptions.length === 0 &&
+    duplicateAssumptions.length === 0 &&
+    orphanAssumptions.length === 0
   ) {
     return null;
   }
@@ -1041,6 +1249,24 @@ function MarkNotices({
           unreadable line in map/loops.jsonl: {line}
         </div>
       ))}
+      {orphanAssumptions.map((assumption, index) => (
+        <div className="mark-notice" key={`orphan-assumption-${index}`}>
+          an assumption on {describeAssumptionTarget(assumption.target)} — not on
+          the map, kept in map/assumptions.jsonl
+        </div>
+      ))}
+      {malformedAssumptions.map((line, index) => (
+        <div className="mark-notice" key={`malformed-assumption-${index}`}>
+          unreadable line in map/assumptions.jsonl: {line}
+        </div>
+      ))}
+      {duplicateAssumptions.map((assumption, index) => (
+        <div className="mark-notice" key={`duplicate-assumption-${index}`}>
+          a duplicate assumption line says “{assumption.text}” on{" "}
+          {describeAssumptionTarget(assumption.target)} — kept in
+          map/assumptions.jsonl
+        </div>
+      ))}
     </div>
   );
 }
@@ -1053,6 +1279,20 @@ function describeMarkTarget(target: MarkTarget): string {
       return `the wire ${target.from} → ${target.to} · “${target.word}”`;
     case "link":
       return `the link ${target.from} → ${target.to}`;
+    case "spot":
+      return "a bare spot";
+  }
+}
+
+/** A quiet name for what an assumption is about (notices and the overlay's aria). */
+function describeAssumptionTarget(target: AssumptionTarget): string {
+  switch (target.type) {
+    case "word":
+      return `“${target.slug}”`;
+    case "link":
+      return `the link ${target.from} → ${target.to}`;
+    case "loop":
+      return `the loop “${target.slug}”`;
     case "spot":
       return "a bare spot";
   }
