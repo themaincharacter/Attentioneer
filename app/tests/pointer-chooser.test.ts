@@ -42,7 +42,8 @@ import type { Pointer } from "../src/map/pointers";
  *   are one cue;
  * - a level switch closes every transient, and focus returns to the word on a
  *   dismissal, to the level control on a switch;
- * - rows carry NO open action in this story (story 2 adds it).
+ * - rows carry their open action (story 2 added it): a quiet button per row that
+ *   opens the pointer's window — never a webview link.
  */
 
 const cl = (...names: string[]): ClassListLike => ({
@@ -65,6 +66,8 @@ const REACH_ELEMENTS = [
   "pointer-pick",
   "pointer-add-input",
   "pointer-close",
+  // Story 2's row open action lives in the chooser too.
+  "pointer-open",
 ];
 
 function pointer(on: string, form: "path" | "at" | "url", value: string): Pointer {
@@ -259,14 +262,17 @@ describe("closing: transients and focus", () => {
     expect(chooserLabel("rain")).toContain("rain");
   });
 
-  test("the chooser's own source carries no open action (story 2's addition)", () => {
+  test("each row carries its open action (story 2), never a webview link", () => {
     const source = readFileSync(
       new URL("../src/canvas/PointerChooser.tsx", import.meta.url),
       "utf8",
     );
-    // Rows have a ring, an edit and a remove — and no open/launch control.
-    expect(source).not.toContain("onOpen");
-    expect(source).not.toContain("pointer-open");
+    // Rows have a ring, an edit, an open ↗ and a remove ×; the open action is
+    // the pointer's window door, wired up through the app (IPC/JS opener).
+    expect(source).toContain("onOpen");
+    expect(source).toContain("pointer-open");
+    expect(source).toContain("onOpen(pointer)");
+    // An <a href> would be a webview navigation, not an OS open.
     expect(source).not.toContain("<a ");
     expect(source).not.toContain("href=");
     // The form pick is initialized UNPICKED (no default authored form).

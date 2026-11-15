@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+mod head;
+
 /// Thin byte-level fs bridge. What machine files say and how they serialize
 /// is owned by the frontend's `serialize.ts` (ADR-0004); this side only
 /// moves bytes.
@@ -66,6 +68,17 @@ fn remove_file(path: String) -> Result<(), String> {
     }
 }
 
+/// The window's bounded glimpse of a text file (Epic 5 story 2, ADR-0017's
+/// amendment): a read-only head plus the identity facts, for a pointer's
+/// `path` or `at`. The implementation and its guards live in `head.rs`;
+/// the arbitrary-path reach there is documented as a convention boundary,
+/// not enforcement (app commands are not capability-gated). Read-only by
+/// construction: there is no writer on this path.
+#[tauri::command]
+fn read_text_head(path: String, max_lines: usize, max_bytes: usize) -> Result<head::TextHead, String> {
+    head::read(&path, max_lines, max_bytes)
+}
+
 /// The app-side config file (ADR-0002: the only app-side persistence).
 #[tauri::command]
 fn config_path() -> Result<String, String> {
@@ -87,6 +100,7 @@ pub fn run() {
             list_dir,
             rename_file,
             remove_file,
+            read_text_head,
             config_path
         ])
         .run(tauri::generate_context!())

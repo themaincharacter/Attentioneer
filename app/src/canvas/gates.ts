@@ -26,6 +26,14 @@
  * is the only live surface. The handle, the chooser and every element inside it
  * join both class lists, exactly as every Epic 4 element did.
  *
+ * Epic 5 story 2's window (code name peek) is a transient of the ground game,
+ * not a new armed gesture: opening a pointer's window closes the chooser, and a
+ * level switch closes the window through the same `cancelPendingGestures`
+ * path that closes every transient. Its card, its identity handle and its two
+ * quiet actions join both lists like every element before them, so a press on
+ * the glimpse can never pan the plane, create anything or start a word gesture;
+ * a press outside it is the click-away that closes it.
+ *
  * Pure: no DOM, no React. `ClassListLike` is satisfied by a DOMTokenList, so
  * the handlers can pass the real thing and tests can pass a plain stub.
  */
@@ -117,6 +125,18 @@ export const CONTENT_CLASSES = [
   "pointer-pick",
   "pointer-add-input",
   "pointer-close",
+  // Epic 5 story 2: the row's quiet open action, and the window it opens (the
+  // card, its selectable identity handle, its plain stats/head/note lines and
+  // its open/reveal/close controls). Every one of them is content.
+  "pointer-open",
+  "outward-window",
+  "outward-handle",
+  "outward-stats",
+  "outward-head",
+  "outward-note",
+  "outward-open",
+  "outward-reveal",
+  "outward-close",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */
@@ -197,6 +217,17 @@ export const WORD_CONTROL_CLASSES = [
   "pointer-pick",
   "pointer-add-input",
   "pointer-close",
+  // Epic 5 story 2: the row's open action and the window's card lines/controls
+  // own their presses (plain buttons and text, never a word gesture).
+  "pointer-open",
+  "outward-window",
+  "outward-handle",
+  "outward-stats",
+  "outward-head",
+  "outward-note",
+  "outward-open",
+  "outward-reveal",
+  "outward-close",
 ] as const;
 
 /**

@@ -30,6 +30,12 @@ import { LoopRoute } from "./canvas/LoopRoute";
 import { LoopWalk } from "./canvas/LoopWalk";
 import { resolveElementPick, type PickedElement } from "./canvas/markTargets";
 import { countsAsOneFlip } from "./canvas/planePress";
+import {
+  focusAfterPeekClose,
+  peekFocusSelector,
+  type PeekCloseReason,
+} from "./canvas/outwardRules";
+import { OutwardWindow } from "./canvas/OutwardWindow";
 import { PlaneMenu } from "./canvas/PlaneMenu";
 import {
   chooserFocusSelector,
@@ -191,6 +197,18 @@ function App() {
   // The word the chooser belongs to, kept for the focus return after it closes
   // (the chooser's own state goes with it).
   const pointerSlugRef = useRef<string | null>(null);
+  // The open window (Epic 5 story 2, code name peek): the authored pointer it
+  // speaks about, its word and the world point it hangs off, or null. ONE at a
+  // time; opening it closes the chooser (one live surface). It is a SNAPSHOT of
+  // the open moment — reopening is how it refreshes — and it is rendered here
+  // so it never grows a word's box or shifts a wire's anchor.
+  const [peekAt, setPeekAt] = useState<{
+    on: string;
+    pointer: Pointer;
+    anchor: Point;
+  } | null>(null);
+  // The word the window belongs to, kept for the focus return after it closes.
+  const peekSlugRef = useRef<string | null>(null);
   // A workspace that resumed in dynamics with no set prompts the selector once.
   const autoPromptedRef = useRef<string | null>(null);
 
@@ -205,19 +223,35 @@ function App() {
   const closeAssumptions = useCallback(() => setAssumptionAt(null), []);
 
   /**
+   * Close the window WITHOUT moving focus: a rename, a removal, a level switch
+   * or an atomic patch's reload may take its word (or its line) away, and
+   * focusing a handle that is gone would be a lie. The dismissal paths use
+   * `closePeek`, which returns focus to the word's reach handle.
+   */
+  const closePeekQuietly = useCallback(() => {
+    peekSlugRef.current = null;
+    setPeekAt(null);
+  }, []);
+
+  /**
    * Open the quiet pointer chooser for one word (ground, story 1). Opening it
    * arms the interaction-mode gate (the `pointer` mode), so word presses, pan
    * and creation stand still while it is the only live surface.
    */
-  const openPointers = useCallback((on: string, anchor: Point) => {
-    // The chooser is the only live surface while it is open (the gate arms):
-    // a creation menu or a grow field left open behind it would stand still and
-    // be unreachable, so both close here.
-    setMenuAt(null);
-    setGrowAt(null);
-    pointerSlugRef.current = on;
-    setPointerAt({ on, anchor });
-  }, []);
+  const openPointers = useCallback(
+    (on: string, anchor: Point) => {
+      // The chooser is the only live surface while it is open (the gate arms):
+      // a creation menu or a grow field left open behind it would stand still
+      // and be unreachable, so both close here. A window open on another line
+      // closes too: one transient at a time.
+      setMenuAt(null);
+      setGrowAt(null);
+      closePeekQuietly();
+      pointerSlugRef.current = on;
+      setPointerAt({ on, anchor });
+    },
+    [closePeekQuietly],
+  );
 
   /**
    * Close the chooser, then put focus back on the word that opened it (its
@@ -328,6 +362,61 @@ function App() {
     if (!pointerAt) return null;
     return { ...pointerAt, rows: findPointers(pointers, pointerAt.on) };
   }, [pointerAt, pointers]);
+
+  /**
+   * Open one pointer's window (Epic 5 story 2): a read-only glimpse of the open
+   * moment, anchored at the reach handle's world point (beside its word). ONE
+   * at a time — opening replaces any window — and the chooser closes, so the
+   * window is the live surface. The pointer line keeps its authored form and
+   * verbatim value; nothing here interprets the target (World B).
+   */
+  const openPeek = useCallback(
+    (pointer: Pointer) => {
+      const anchor = pointerAt?.anchor ?? { x: 0, y: 0 };
+      setMenuAt(null);
+      setGrowAt(null);
+      setAssumptionAt(null);
+      peekSlugRef.current = pointer.on;
+      setPeekAt({ on: pointer.on, pointer, anchor });
+      closePointersQuietly();
+    },
+    [pointerAt, closePointersQuietly],
+  );
+
+  /**
+   * Close the window and return focus to its word's reach handle (the window is
+   * its word's). A level SWITCH never focuses a word: the switch puts focus on
+   * the level control itself, exactly as the chooser's close does.
+   */
+  const closePeek = useCallback((reason: PeekCloseReason = "dismiss") => {
+    const slug = peekSlugRef.current;
+    peekSlugRef.current = null;
+    setPeekAt(null);
+    const selector = peekFocusSelector(focusAfterPeekClose(reason), slug);
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(selector)?.focus();
+    });
+  }, []);
+
+  /**
+   * Close the window if it speaks about this word — the `closeAssumptionsFor`
+   * mirror. A renamed word's slug changes and a removed word is gone, so the
+   * window can never outlive the address it was opened on.
+   */
+  const closePeekFor = useCallback((on: string) => {
+    if (peekSlugRef.current !== on) return;
+    peekSlugRef.current = null;
+    setPeekAt(null);
+  }, []);
+
+  // A window is a snapshot of ONE authored line: if that line is removed (or
+  // rewritten by an atomic patch's reload), there is nothing left to speak
+  // about, so the window closes quietly rather than showing a stale reach.
+  useEffect(() => {
+    if (peekAt === null) return;
+    if (pointers.some((pointer) => pointer === peekAt.pointer)) return;
+    closePeekQuietly();
+  }, [peekAt, pointers, closePeekQuietly]);
 
   // The open pointer marks' keys: byte-identical hand duplicates share a key,
   // so every row on that reach reads marked (a presence, never a count).
@@ -489,8 +578,9 @@ function App() {
     setPathSession(endPathSession());
     setAssumptionAt(null);
     closePointersQuietly();
+    closePeekQuietly();
     cancelConnect();
-  }, [cancelConnect, closePointersQuietly]);
+  }, [cancelConnect, closePointersQuietly, closePeekQuietly]);
 
   /**
    * Open the selector, pre-filled (ADR-0013): every current word on first
@@ -943,6 +1033,7 @@ function App() {
               // a handle whose word is moving).
               closeAssumptions();
               closePointersQuietly();
+              if (candidate.slug !== null) closePeekFor(candidate.slug);
               rename(candidate, newName);
             }}
             onRemove={(candidate) => {
@@ -952,6 +1043,7 @@ function App() {
               // goes with the word's pointer lines (die-with-target).
               closeAssumptions();
               closePointersQuietly();
+              if (candidate.slug !== null) closePeekFor(candidate.slug);
               remove(candidate);
             }}
             onConnectFrom={(slug, c) => beginConnect(slug, c.x, c.y)}
@@ -1219,10 +1311,10 @@ function App() {
 
         {/* the ground game's quiet pointer chooser (Epic 5 story 1), in world
             space beside its word and counter-scaled: the reaches in FILE ORDER,
-            each with its ring, its in-place edit and its ×, plus the add entry
-            whose form pick starts UNPICKED (no pick, no write). Rows carry no
-            open action in this story (story 2 adds it). It never grows a word's
-            box or shifts a wire's anchor; opening it arms the `pointer` gate. */}
+            each with its ring, its in-place edit, its open ↗ (story 2: the
+            pointer's window) and its ×, plus the add entry whose form pick
+            starts UNPICKED (no pick, no write). It never grows a word's box or
+            shifts a wire's anchor; opening it arms the `pointer` gate. */}
         {level === "ground" && pointerPanel && (
           <PointerChooser
             anchor={pointerPanel.anchor}
@@ -1235,7 +1327,24 @@ function App() {
             }
             onRemove={(pointer) => removePointer(pointer)}
             onToggleMark={(pointer) => togglePointerMark(pointer)}
+            onOpen={(pointer) => openPeek(pointer)}
             onClose={() => closePointers("dismiss")}
+          />
+        )}
+
+        {/* the ground game's window (Epic 5 story 2, code name peek): ONE at a
+            time, world-anchored beside its word and counter-scaled. Identity
+            first: the handle verbatim and selectable, then a bounded head with
+            "truncated" said plainly — or a quiet "cannot read" + reveal; a url
+            shows its handle and the explicit open action. No scroll, no
+            drag-select on the head, write-free. Opening it closed the chooser
+            (one live surface); Esc / × / click-away / a level switch close it. */}
+        {level === "ground" && peekAt && (
+          <OutwardWindow
+            anchor={peekAt.anchor}
+            pointer={peekAt.pointer}
+            workspacePath={workspace.path}
+            onClose={() => closePeek("dismiss")}
           />
         )}
       </CanvasPlane>

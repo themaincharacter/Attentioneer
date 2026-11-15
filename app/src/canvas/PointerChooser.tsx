@@ -33,6 +33,8 @@ interface PointerChooserProps {
   onRemove: (pointer: Pointer) => void;
   /** Cast or settle one line's open mark (the ring toggle). */
   onToggleMark: (pointer: Pointer) => void;
+  /** Open this line's window (one at a time; story 2's outward look). */
+  onOpen: (pointer: Pointer) => void;
   /** Esc, a press outside, or the card's own ×: nothing more is written. */
   onClose: () => void;
 }
@@ -40,11 +42,12 @@ interface PointerChooserProps {
 /**
  * The ground game's quiet chooser (ADR-0017, Epic 5 story 1): a word's reaches
  * OUTSIDE the map, in FILE ORDER, one row per authored pointer line. A row
- * shows its form and its value verbatim, and carries exactly three quiet
- * controls — a ring (cast/settle the open mark on this reach), an edit (reopen
- * the value field; the line is replaced in place, never delete+recast) and a
- * remove × (ammo). ROWS CARRY NO OPEN ACTION IN THIS STORY: story 2's window
- * adds it.
+ * shows its form and its value verbatim, and carries its quiet controls — a
+ * ring (cast/settle the open mark on this reach), an edit (reopen the value
+ * field; the line is replaced in place, never delete+recast), an open ↗ (story
+ * 2: the pointer's window — a read-only glimpse of the open moment) and a
+ * remove × (ammo). The open action goes through the app's IPC/JS opener, never
+ * a webview link and never a Rust-side bypass.
  *
  * Under the rows sits the "add a pointer" entry. Its FORM PICK STARTS
  * UNPICKED — no pick, no write (World B: the person picks the form, the app
@@ -72,6 +75,7 @@ export function PointerChooser({
   onEdit,
   onRemove,
   onToggleMark,
+  onOpen,
   onClose,
 }: PointerChooserProps) {
   const { camera } = usePlane();
@@ -255,6 +259,19 @@ export function PointerChooser({
                 {pointer.value}
               </button>
             )}
+            <button
+              type="button"
+              className="pointer-open"
+              aria-label="open this pointer"
+              title="open"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (editing === pointer) cancelEdit();
+                onOpen(pointer);
+              }}
+            >
+              ↗
+            </button>
             <button
               type="button"
               className={"pointer-ring" + (marked ? " open" : "")}

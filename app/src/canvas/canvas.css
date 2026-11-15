@@ -2273,3 +2273,191 @@ body {
   opacity: 1;
   color: #6b675e;
 }
+
+/* Epic 5 story 2 — the window (code name peek, ADR-0017's amendment).
+   Provisional: the card's geometry, spacing and typography (ADR-0003's seam).
+   A glimpse, not a reading surface: the identity handle first (selectable, so
+   it can be copied), then a bounded head with NO scroll and no drag-select,
+   and the quiet open/reveal + close buttons. No entrance motion (the ticket's
+   rule); the global reduced-motion rule collapses every transition below. */
+
+/* The row's quiet open action: the outward ↗ beside the ring and the ×. */
+.pointer-open {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  padding: 1px 2px;
+  cursor: pointer;
+  opacity: 0.45;
+  transition:
+    opacity 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.pointer-row:hover .pointer-open,
+.pointer-open:focus-visible {
+  opacity: 0.85;
+}
+
+.pointer-open:hover,
+.pointer-open:focus,
+.pointer-open:focus-visible {
+  opacity: 1;
+  color: #1e2126;
+  border-color: #ddd7cc;
+  outline: none;
+}
+
+/* The window: world-anchored beside its word, counter-scaled inline. It never
+   grows a word's box and is never draggable or resizable. */
+.outward-window {
+  position: absolute;
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 190px;
+  max-width: 340px;
+  max-height: 400px;
+  padding: 8px 22px 8px 10px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 9px;
+  box-shadow:
+    0 1px 2px rgba(40, 35, 25, 0.05),
+    0 6px 20px rgba(40, 35, 25, 0.12);
+  overflow: hidden;
+  user-select: none;
+}
+
+.outward-window:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 2px;
+}
+
+@supports ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .outward-window {
+    background: rgba(255, 253, 248, 0.84);
+    -webkit-backdrop-filter: blur(8px) saturate(1.05);
+    backdrop-filter: blur(8px) saturate(1.05);
+  }
+}
+
+/* Identity first: the authored handle exactly as written, selectable to copy.
+   The glimpse below is explicitly NOT selectable (no drag-select) and never
+   scrolls. */
+.outward-handle {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #1e2126;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+  user-select: text;
+}
+
+.outward-stats {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #8d887c;
+}
+
+.outward-head {
+  margin-top: 1px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(141, 136, 124, 0.16);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: #4c4a44;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: hidden;
+  user-select: none;
+}
+
+.outward-note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #8d887c;
+  font-style: italic;
+}
+
+.outward-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The two quiet actions. They report what actually happened — a failure says
+   "cannot open" / "cannot reveal" in a note; nothing promises a launch. */
+.outward-open,
+.outward-reveal {
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  color: #6b675e;
+  background: transparent;
+  border: 1px solid #ddd7cc;
+  border-radius: 999px;
+  padding: 2px 9px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.outward-open:hover,
+.outward-reveal:hover,
+.outward-open:focus-visible,
+.outward-reveal:focus-visible {
+  color: #1e2126;
+  border-color: #8d887c;
+  background: rgba(141, 136, 124, 0.08);
+  outline: none;
+}
+
+/* The window's own quiet close (Esc and a press outside do the same). */
+.outward-close {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.outward-window:hover .outward-close,
+.outward-close:focus-visible {
+  opacity: 0.8;
+}
+
+.outward-close:hover {
+  opacity: 1;
+  color: #6b675e;
+}
+
+/* While a gesture is armed the armed gesture owns the pointer (ADR-0016): the
+   glimpse stands still exactly as the assumptions' overlay does. */
+.plane.gesture-armed .outward-window {
+  pointer-events: none;
+}
