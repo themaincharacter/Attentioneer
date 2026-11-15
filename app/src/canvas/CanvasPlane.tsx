@@ -26,6 +26,7 @@ import {
 import type { Point } from "./geometry";
 import { MAX_ZOOM, MIN_ZOOM, type Camera, type CameraIntents } from "./useCamera";
 import { closesPair, DOUBLE_CLICK_MS, type PlanePress } from "./planePress";
+import { centeringZoom } from "../workspace/level";
 import "./canvas.css";
 
 /**
@@ -39,6 +40,11 @@ import "./canvas.css";
  * counter guards the gesture — both of the double-click's presses must have
  * landed on empty plane, so a hurried double-click on a word (which centers
  * it) can never create. `planePress.ts` holds the pure pair rule.
+ *
+ * A zoom gesture's settle is REPORTED (onZoomSettle): the zoom band is the
+ * level at runtime (ADR-0018), so the input layer is where a band change is
+ * observed — the app's handoff derives the game and decides whether to write.
+ * The plane itself writes nothing.
  *
  * Provisional: grid size and zoom-band behavior are not settled by any ADR yet.
  */
@@ -57,7 +63,12 @@ function isContentTarget(target: EventTarget | null): boolean {
 /** What content components can see and do through the plane (ADR-0003). */
 export interface PlaneApi {
   camera: Camera;
-  /** Center the plane point (px, py) in the viewport at `zoom` (default: keep). */
+  /**
+   * Center the plane point (px, py) in the viewport. Without `zoom` it lands
+   * at the current BAND's landing zoom, so a click-to-center can never flip
+   * the game as a side effect (ADR-0018 decision 4); pass `zoom` to land
+   * exactly somewhere.
+   */
   centerOn: (px: number, py: number, zoom?: number) => void;
 }
 
@@ -99,6 +110,14 @@ interface CanvasPlaneProps {
   picking?: boolean;
   /** Called with the lasso's world path when the draw tool is released. */
   onLasso?: (path: readonly Point[]) => void;
+  /**
+   * Called when a zoom gesture SETTLES (d3's `end`) with the zoom it settled
+   * on. The zoom is the level at runtime (ADR-0018): the app's handoff derives
+   * the band from it and, on a crossing, writes the level key. A pan settles
+   * too, with the same zoom — the derived band is unchanged, so nothing is
+   * written.
+   */
+  onZoomSettle?: (zoom: number) => void;
   children?: ReactNode;
 }
 
@@ -111,6 +130,7 @@ export function CanvasPlane({
   lassoArmed = false,
   picking = false,
   onLasso,
+  onZoomSettle,
   children,
 }: CanvasPlaneProps) {
   const planeRef = useRef<HTMLDivElement>(null);
@@ -126,6 +146,8 @@ export function CanvasPlane({
   lassoArmedRef.current = lassoArmed;
   const onLassoRef = useRef(onLasso);
   onLassoRef.current = onLasso;
+  const onZoomSettleRef = useRef(onZoomSettle);
+  onZoomSettleRef.current = onZoomSettle;
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
 
@@ -135,7 +157,15 @@ export function CanvasPlane({
       centerOn: (px, py, zoom) => {
         const el = planeRef.current;
         if (!el) return;
-        intents.centerOn(px, py, el.clientWidth / 2, el.clientHeight / 2, zoom);
+        // No explicit zoom: land at the current band's landing zoom, so the
+        // click stays in the game it began in (ADR-0018 decision 4).
+        intents.centerOn(
+          px,
+          py,
+          el.clientWidth / 2,
+          el.clientHeight / 2,
+          zoom ?? centeringZoom(camera.zoom),
+        );
       },
     }),
     [camera, intents],
@@ -211,8 +241,17 @@ export function CanvasPlane({
       .on("start.cursor", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
         if (event.sourceEvent?.type === "mousedown") el.classList.add("dragging");
       })
-      .on("end.cursor", () => {
+      .on("end.camera", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
         el.classList.remove("dragging");
+        // A REAL gesture settled (wheel, pinch or pan). Programmatic camera
+        // moves — the jump, the open-restore, a centering — also emit an end
+        // (d3-zoom dispatches it for zoom.transform too), but they carry no
+        // sourceEvent and must never be read as a band change: the handoff
+        // itself moved them.
+        if (!event.sourceEvent) return;
+        // The wheel's crossing is the band change (ADR-0018); a pan reports
+        // the same zoom and derives the same band, so it writes nothing.
+        onZoomSettleRef.current?.(event.transform.k);
       });
 
     // Record plane presses before attaching d3 (d3 stops immediate propagation

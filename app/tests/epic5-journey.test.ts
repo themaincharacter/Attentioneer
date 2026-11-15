@@ -258,7 +258,7 @@ function write(journey: Journey): Files {
  */
 function reopen(files: Files): Journey {
   const level = levelOfText(files["workspace.yml"]);
-  // The level key is the sole source and re-writing it changes no byte.
+  // The key is the resume hint (ADR-0018); re-writing it changes no byte.
   expect(withLevel(files["workspace.yml"], level)).toBe(files["workspace.yml"]);
 
   const refs: Reference[] = [];

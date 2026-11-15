@@ -1,12 +1,29 @@
 import { readTextFile } from "../lib/fs";
 import { parseYamlFields, workspaceYml, writeMachineFile } from "../lib/serialize";
+import {
+  atOrAbove,
+  BAND_ZOOM,
+  DYNAMICS_FROM,
+  GROUND_FROM,
+} from "../canvas/zoomBands";
 
 /**
- * The level (ADR-0016, amended by Epic 5): the game is a quiet mode over the
- * same plane, and the workspace's `level` key in `workspace.yml` is its one
- * source — `"concept"`, `"dynamics"` or `"ground"`; absent (or unreadable, or
- * garbage) means concept, so an older workspace opens exactly as before. Zoom
- * never changes it.
+ * The level's RECORD (ADR-0016, amended by ADR-0018): the game is a quiet band
+ * over the same plane, and `workspace.yml`'s `level` key is its RESUME HINT —
+ * `"concept"`, `"dynamics"` or `"ground"`; absent (or unreadable, or garbage)
+ * means concept, so an older workspace opens exactly as before.
+ *
+ * THE strict handoff (ADR-0018 decision 2, `levelHandoff.ts`): the zoom band is
+ * the game at runtime and WRITES this key when a zoom gesture settles or a
+ * deliberate jump lands — through the workspace's in-order write queue, never an
+ * unqueued read-modify-write. On open the key SETS the camera into its band and
+ * never writes, so a hand-edited key is honored on open and rewritten only on
+ * the first settled crossing. The band and the key cannot disagree while
+ * running: one source of behavior, one source of record, one direction each.
+ *
+ * `levelFromZoom` is the derivation that makes the band the game: it reads the
+ * band constants from `canvas/zoomBands.ts` through the one shared comparison
+ * (`atOrAbove`, inclusive), so the strictness of every boundary is stated once.
  *
  * THE HONEST PARTITION (ADR-0016's amendment) — the render map, one source:
  *   - every game renders words, distances, marks and the shelf;
@@ -35,6 +52,42 @@ export const LEVELS: readonly Level[] = ["concept", "dynamics", "ground"];
 export const LEVEL_KEY = "level";
 
 export const DEFAULT_LEVEL: Level = "concept";
+
+/**
+ * The game a zoom sits in (ADR-0018 decision 1): concept below
+ * `DYNAMICS_FROM`, dynamics from `DYNAMICS_FROM` up to (not including)
+ * `GROUND_FROM`, ground at or above `GROUND_FROM`. The LOWER bound of each
+ * band is INCLUSIVE and the upper bound is EXCLUSIVE — the one shared
+ * `atOrAbove` reading, stated once for bands and labels alike.
+ *
+ * Garbage (NaN, ±Infinity) is the default level: a camera can never produce
+ * it, and the key's read is tolerant the same way (absent or garbage in
+ * `workspace.yml` means concept, ADR-0016). Provisional: the boundary values
+ * are the band constants' (ADR-0003's seam, tuned at the slice).
+ */
+export function levelFromZoom(zoom: number): Level {
+  if (!Number.isFinite(zoom)) return DEFAULT_LEVEL;
+  if (atOrAbove(zoom, GROUND_FROM)) return "ground";
+  if (atOrAbove(zoom, DYNAMICS_FROM)) return "dynamics";
+  return "concept";
+}
+
+/**
+ * The zoom a click-to-center lands on: its band's landing zoom. Centering can
+ * never flip the game as a side effect (ADR-0018 decision 4 — the old
+ * `centerOn(..., 1)` landed in dynamics from every concept zoom).
+ */
+export function centeringZoom(zoom: number): number {
+  return BAND_ZOOM[levelFromZoom(zoom)];
+}
+
+/**
+ * The default camera's zoom — ONE shared constant: the default level's landing
+ * zoom, so the opening camera and the opening game can never disagree
+ * (ADR-0018 decision 4). The old hard-coded 100% sat in the dynamics band while
+ * the default level was concept.
+ */
+export const DEFAULT_CAMERA_ZOOM = BAND_ZOOM[DEFAULT_LEVEL];
 
 /**
  * The render map (ADR-0016's amendment): which records each game draws. Words,
@@ -109,6 +162,10 @@ export function withLevel(text: string, level: Level): string {
  * Persist the level in the workspace's own file. The workspace must already
  * exist; if the file somehow reads empty the canonical scaffold stands in, so
  * the format key is never dropped.
+ *
+ * This is a READ-MODIFY-WRITE (it keeps every other byte), so it is only ever
+ * reached through the level handoff's write queue (`levelHandoff.ts`) — never
+ * called unqueued from a handler. Opening a workspace never calls it.
  */
 export async function saveWorkspaceLevel(
   workspacePath: string,

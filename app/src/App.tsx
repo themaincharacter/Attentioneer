@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { CanvasPlane } from "./canvas/CanvasPlane";
 import { DistanceWire } from "./canvas/DistanceWire";
 import {
@@ -68,6 +75,12 @@ import { findPointers, type Pointer } from "./map/pointers";
 import type { Reference } from "./map/refs";
 import { DEFAULT_SHELF_X, isShelved, rejectSpot } from "./map/shelf";
 import { saveWorkspaceLevel, DEFAULT_LEVEL, type Level } from "./workspace/level";
+import {
+  createLevelHandoff,
+  type HandoffCause,
+  type LevelHandoff,
+  type LevelHandoffDeps,
+} from "./workspace/levelHandoff";
 import { WorkspaceGate } from "./workspace/WorkspaceGate";
 import type { Workspace } from "./workspace/lifecycle";
 
@@ -85,17 +98,27 @@ import type { Workspace } from "./workspace/lifecycle";
  * dragged word's wires follow the pointer instead of snapping into place on
  * drop.
  *
- * Epic 4 story 1 adds the second game (ADR-0016): a quiet level control
- * switches concept / dynamics, the playing-set selector writes map/model.json
- * (ADR-0013), and the interaction-mode gate suspends the plane's own gestures
- * while the selector is open. The dynamics moves themselves arrive in stories
- * 2–4; here the mode and the set persist and the out-of-set words merely dim.
+ * Epic 4 story 1 adds the second game (ADR-0016): a quiet level control,
+ * the playing-set selector writing map/model.json (ADR-0013), and the
+ * interaction-mode gate suspending the plane's own gestures while the selector
+ * is open.
+ *
+ * Epic 6 story 1 binds zoom to the game (ADR-0018): the ZOOM BAND is the game at
+ * runtime, and `workspace.yml`'s `level` key is the resume hint in a strict
+ * handoff. A settled zoom crossing (d3's `end`) and a deliberate jump both
+ * write the key through ONE queued trigger (`workspace/levelHandoff.ts`); on
+ * open the key sets the camera into its band and nothing is written. The level
+ * control is the indicator of the derived game and the jumper between bands;
+ * every camera intent stays inside the band it began in.
  */
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const { camera, intents } = useCamera();
-  // The active game (ADR-0016): workspace.yml's level key is the sole source.
-  const level: Level = workspace?.level ?? DEFAULT_LEVEL;
+  // The running game (ADR-0018): the zoom band is the level at runtime. This
+  // state follows the band as the handoff samples it — a settled crossing or a
+  // deliberate jump. The workspace's `level` key is only the resume hint, read
+  // on open; it never sets this state by itself.
+  const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
   const map = useMap(workspace?.path ?? "", { playing: level === "dynamics" });
   const {
     refs,
@@ -640,27 +663,100 @@ function App() {
   const toggleLasso = useCallback(() => setLassoArmed((armed) => !armed), []);
 
   /**
-   * Change the game (ADR-0016): cancel pending gestures, write the level key
-   * canonically, and ask for a playing set when dynamics is entered without
-   * one. Reopening the workspace resumes the saved level.
+   * The switch path (ADR-0016's amendment, ADR-0018 decision 1): a settled band
+   * crossing or a deliberate jump closes every transient, ends the walk and
+   * settles focus. A crossing caused by the WHEEL never yanks focus to the
+   * control (ADR-0018 decision 5 — the person is scrolling, not reaching for
+   * it); a deliberate jump is the control's own act, so focus returns there. An
+   * open-restore runs no switch path: on open there is no transient to close.
+   *
+   * Only a deliberate entry asks for a playing set. A wheel crossing into
+   * dynamics with no set does not prompt (story 2 names the cost: the set stays
+   * required at authoring, and the control's "edit the playing set" is there).
    */
-  const changeLevel = useCallback(
-    (next: Level) => {
-      if (!workspace || workspace.level === next) return;
+  const switchLevel = useCallback(
+    (next: Level, cause: HandoffCause) => {
+      setLevel(next);
+      if (cause === "restore") return;
       cancelPendingGestures();
       setWalkSlug(null);
-      setWorkspace({ ...workspace, level: next });
-      void saveWorkspaceLevel(workspace.path, next);
-      // A switch closes every transient (above) and returns focus to the level
-      // control — the new game's button. The word's chooser/handle may not exist
-      // in the next game, so the switch never focuses a word (ADR-0016's
-      // amendment); the pure rule owns that choice, this call applies it.
-      closePointers("switch-level");
-      if (next === "dynamics" && model === null) {
+      if (cause === "jump") closePointers("switch-level");
+      else closePointersQuietly();
+      if (cause === "jump" && next === "dynamics" && model === null) {
         openSelector();
       }
     },
-    [workspace, model, cancelPendingGestures, closePointers, openSelector],
+    [
+      cancelPendingGestures,
+      closePointers,
+      closePointersQuietly,
+      model,
+      openSelector,
+    ],
+  );
+
+  /**
+   * Move the camera INTO a band, keeping the view's centre in place: the jump
+   * intent the level control and the open-restore share. No recentre (no world
+   * point is brought to the centre) and no position yank (position is never
+   * persisted); the landing zoom is the band's own.
+   */
+  const moveCameraToBand = useCallback(
+    (next: Level) => {
+      const el = document.querySelector<HTMLDivElement>(".plane");
+      intents.setZoomBand(
+        next,
+        el ? el.clientWidth / 2 : undefined,
+        el ? el.clientHeight / 2 : undefined,
+      );
+    },
+    [intents],
+  );
+
+  // The strict handoff (ADR-0018 decision 2) owns the running level and the
+  // key's ONE write queue, so it is created once. Its three callbacks read the
+  // app's latest values through this ref, so no stale closure can ever write an
+  // old workspace path or skip a transient close; the queue itself survives
+  // every render.
+  const handoffDeps = useRef<LevelHandoffDeps>({
+    onSwitch: () => undefined,
+    moveCamera: () => undefined,
+    save: async () => undefined,
+  });
+  handoffDeps.current = {
+    onSwitch: switchLevel,
+    moveCamera: moveCameraToBand,
+    save: async (next) => {
+      if (workspace) await saveWorkspaceLevel(workspace.path, next);
+    },
+  };
+  const handoffRef = useRef<LevelHandoff | null>(null);
+  if (handoffRef.current === null) {
+    handoffRef.current = createLevelHandoff(DEFAULT_LEVEL, {
+      onSwitch: (next, cause) => handoffDeps.current.onSwitch(next, cause),
+      moveCamera: (next) => handoffDeps.current.moveCamera(next),
+      save: (next) => handoffDeps.current.save(next),
+    });
+  }
+  const handoff = handoffRef.current;
+
+  /**
+   * Open-restore (ADR-0018 decision 2): the resume hint sets the camera into its
+   * band on open. It NEVER writes — a hand-edited key is honored here and
+   * rewritten only on the first settled crossing. A layout effect, so the first
+   * painted frame is already the resumed band (no concept flash before ground).
+   */
+  const restoredRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!workspace || restoredRef.current === workspace.path) return;
+    restoredRef.current = workspace.path;
+    handoff.restore(workspace.resumeLevel);
+  }, [workspace, handoff]);
+
+  /** A zoom gesture settled: derive the band; a crossing switches and writes. */
+  const handleZoomSettle = useCallback(
+    (zoom: number) => handoff.settle(zoom),
+    [handoff],
   );
 
   /**
@@ -905,7 +1001,7 @@ function App() {
   // workspace — closing the selector is a choice, not a prompt to repeat.
   useEffect(() => {
     if (!workspace || !loaded) return;
-    if (workspace.level !== "dynamics" || model !== null) return;
+    if (workspace.resumeLevel !== "dynamics" || model !== null) return;
     if (autoPromptedRef.current === workspace.path) return;
     autoPromptedRef.current = workspace.path;
     openSelector();
@@ -943,6 +1039,7 @@ function App() {
         lassoArmed={selectorOpen && lassoArmed}
         picking={markDrag.ghost !== null}
         onLasso={handleLasso}
+        onZoomSettle={handleZoomSettle}
       >
         {/* the shelf's fold and margin: a place in world space (story 3) */}
         <ShelfFold shelfX={shelfX} />
@@ -1349,10 +1446,11 @@ function App() {
         )}
       </CanvasPlane>
 
-      {/* the quiet level control (ADR-0016): concept / dynamics, one switch */}
+      {/* the quiet level control (ADR-0018): an indicator of the band's game
+          and a jumper between bands — the wheel is the other way */}
       <LevelControl
         level={level}
-        onChange={changeLevel}
+        onJump={(next) => handoff.jump(next)}
         onEditPlayingSet={openSelector}
         onCoinLoop={beginLoop}
       />

@@ -267,9 +267,11 @@ export function ReferenceWord({
   }
 
   function center() {
-    const el = wordRef.current;
-    if (!el) return;
-    centerOn(position.x + el.offsetWidth / 2, position.y + el.offsetHeight / 2, 1);
+    // No explicit zoom: the plane lands at the current band's landing zoom, so
+    // centering never flips the game (ADR-0018 decision 4). The old hard-coded
+    // `1` sat in the dynamics band from every concept zoom.
+    const at = anchor();
+    centerOn(at.x, at.y);
   }
 
   // Raw listener: d3-zoom stops mousedown at the plane (stopImmediatePropagation),

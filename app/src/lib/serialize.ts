@@ -155,7 +155,9 @@ export function workspaceYml(): string {
  * rotation-canonical paths, exact-direction matching, named gaps) and the
  * no-label rule; Level 3's orientation (Epic 5 story 3) adds the reach: the
  * render map, the three level values with garbage tolerance, the pointer forms
- * and their resolution, and the window's snapshot wording. The scaffold is
+ * and their resolution, and the window's snapshot wording. Epic 6 story 1
+ * amends the zoom/level contract in place (ADR-0018): the zoom band is the
+ * game and the `level` key is the resume hint, not the source. The scaffold is
  * WRITE-ONCE (ADR-0004): `scaffoldWorkspace`
  * writes only files that are missing, so an existing workspace keeps its own
  * text and only a NEW workspace gets this one — a story never rewrites the
@@ -170,8 +172,8 @@ export function agentsMd(workspaceName: string): string {
     "",
     "## What is here",
     "",
-    "- `workspace.yml` — workspace marker, format key, and the shelf's fold",
-    "  (`shelf_x`); keep it.",
+    "- `workspace.yml` — workspace marker, format key, the shelf's fold",
+    "  (`shelf_x`) and the level's resume hint (`level`); keep it.",
     "- `map/references/` — one Markdown file per reference: its coined name, its",
     "  place on the plane, and its optional memory (prose).",
     "- `map/distances.jsonl` — one line per distance: its two endpoints and the",
@@ -210,9 +212,15 @@ export function agentsMd(workspaceName: string): string {
     "",
     "## Level 2 — the dynamics model",
     "",
-    "`workspace.yml`'s `level` key is the only source of the active game:",
-    "`\"concept\"` (Level 1 — absent means this), `\"dynamics\"` (Level 2) or",
-    "`\"ground\"` (Level 3 — the reach, below). Zoom never changes it. Level 2 is",
+    "Zoom is the level. The zoom band is the active game AT RUNTIME: wide is",
+    "concept, the middle band is dynamics, close is ground (the boundaries are",
+    "provisional and the app owns them). `workspace.yml`'s `level` key is the",
+    "RESUME HINT, not the switch: it holds `\"concept\"` (Level 1 — absent or any",
+    "garbage means this), `\"dynamics\"` (Level 2) or `\"ground\"` (Level 3 — the",
+    "reach, below). The band writes it when a zoom gesture settles; on open the",
+    "key sets the camera into its band and NOTHING is written, so a hand-edited",
+    "key is honored on open and rewritten only on the first settled crossing.",
+    "Move between games by zooming, or with the level control's jump. Level 2 is",
     "a quiet mode over the same plane, and its records",
     "are the playing set (`map/model.json`, required before the model is read)",
     "plus `map/links.jsonl`, `map/loops.jsonl` and `map/assumptions.jsonl`.",
@@ -242,9 +250,10 @@ export function agentsMd(workspaceName: string): string {
     "",
     "`workspace.yml`'s `level` has a third value, `\"ground\"` (Level 3). The three",
     "games are `\"concept\"` (Level 1), `\"dynamics\"` (Level 2) and `\"ground\"`",
-    "(Level 3); absent, empty, unreadable or any other value means concept. The",
-    "app never fails to open over a garbage value and never asks twice — an old",
-    "workspace opens exactly as before.",
+    "(Level 3); absent, empty, unreadable or any other value means concept — the",
+    "key is only the resume hint the zoom band writes (above). The app never",
+    "fails to open over a garbage value and never asks twice — an old workspace",
+    "opens exactly as before.",
     "",
     "The render map is additive, never exclusive. Every game draws the words,",
     "distances, marks and the shelf; the dynamics game adds the links, loops,",

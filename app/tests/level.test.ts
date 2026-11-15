@@ -9,12 +9,13 @@ import {
 } from "../src/workspace/level";
 
 /**
- * The level key (ADR-0016): workspace.yml's provisional `level` is the sole
- * source of the active game — absent, garbage or unreadable means concept, so
- * an older workspace opens exactly as before. The key is written canonically
- * on change, in place, without touching comments or unknown keys; reopening
- * reads it back. The fs bridge half is the human/app pass, per the repo's
- * record-level test convention.
+ * The level key (ADR-0016, amended by ADR-0018): workspace.yml's provisional
+ * `level` is the RESUME HINT — the zoom band is the game at runtime — and a
+ * missing, garbage or unreadable value means concept, so an older workspace
+ * opens exactly as before. The key is written canonically on change, in place,
+ * without touching comments or unknown keys; reopening reads it back. The fs
+ * bridge half is the human/app pass, per the repo's record-level test
+ * convention.
  */
 
 describe("the default is concept, tolerantly", () => {
@@ -67,7 +68,7 @@ describe("the level is written canonically on change", () => {
     expect(after.includes("\r")).toBe(false);
   });
 
-  test("reopening reads the persisted level (the key is the sole source)", () => {
+  test("reopening reads the persisted level (the key is the resume hint)", () => {
     for (const level of ["concept", "dynamics"] as const) {
       const written = withLevel(workspaceYml(), level);
       expect(levelOf(parseYamlFields(written))).toBe(level);

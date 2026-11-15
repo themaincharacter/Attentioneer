@@ -15,9 +15,13 @@ import {
  * Level 1's orientation text stays exactly as it was. Epic 5 story 3 adds
  * Level 3's orientation (the render map, the three `level` values with garbage
  * tolerance, the pointer forms and their resolution, the window's snapshot
- * wording) the same way: only NEW workspaces get it. The scaffold is
- * WRITE-ONCE: only files that are missing are written, so an old workspace
- * keeps its own bytes and only a NEW workspace gets the new orientation.
+ * wording) the same way: only NEW workspaces get it. Epic 6 story 1 AMENDS the
+ * zoom/level contract in place (ADR-0018): the shipped "the only source of the
+ * active game / Zoom never changes it" text is replaced by the strict handoff
+ * — the band is the game, the key is the resume hint — and the assertion below
+ * is updated in the same story, deliberately. The scaffold is WRITE-ONCE: only
+ * files that are missing are written, so an old workspace keeps its own bytes
+ * (the old contract included) and only a NEW workspace gets the new text.
  *
  * `scaffoldWorkspace` crosses the Tauri fs bridge, which no unit test has; the
  * scaffold's content and its write-once rule are pure here (`workspaceScaffold`,
@@ -29,6 +33,19 @@ const OLD_AGENTS_MD = [
   "# garden — agent orientation",
   "",
   "The pre-Epic-4 orientation text a workspace created by an older app holds.",
+  "",
+].join("\n");
+
+/** A workspace created by the Epic 5 app: the pre-ADR-0018 zoom/level contract. */
+const PRE_BINDING_AGENTS_MD = [
+  "# garden — agent orientation",
+  "",
+  "## Level 2 — the dynamics model",
+  "",
+  "This workspace was created before zoom became the level (Epic 6 story 1).",
+  "`workspace.yml`'s `level` key is the only source of the active game:",
+  '`"concept"` (Level 1 — absent means this), `"dynamics"` (Level 2) or',
+  '`"ground"` (Level 3 — the reach, below). Zoom never changes it.',
   "",
 ].join("\n");
 
@@ -91,11 +108,21 @@ describe("the new workspace scaffold gains the Level 2 orientation", () => {
     expect(md).toContain("`from`/`to` link pair");
   });
 
-  test("the level key is the one source of the active game", () => {
+  test("the zoom band is the game; the level key is the resume hint", () => {
     expect(md).toContain("`workspace.yml`'s `level` key");
     expect(md).toContain('"concept"');
     expect(md).toContain('"dynamics"');
-    expect(md).toContain("the only source of the active game");
+    // ADR-0018 amends the shipped "one source" contract (the story's deliberate
+    // test update): the band is the game at runtime, the key is the hint, and
+    // opening never writes it.
+    expect(md).not.toContain("the only source of the active game");
+    expect(md).not.toContain("Zoom never changes it");
+    expect(md).toContain("Zoom is the level");
+    expect(md).toContain("The zoom band is the active game AT RUNTIME");
+    expect(md).toContain("RESUME HINT, not the switch");
+    expect(md).toContain("The band writes it when a zoom gesture settles");
+    expect(md).toContain("NOTHING is written");
+    expect(md).toContain("rewritten only on the first settled crossing");
   });
 
   test("the reading rule: polarity, exact direction, rotation, exact matching", () => {
@@ -189,6 +216,9 @@ describe("the new workspace scaffold gains the Level 3 orientation", () => {
     expect(md).toContain("absent, empty, unreadable or any other value means concept");
     expect(md).toContain("never asks twice");
     expect(md).toContain("opens exactly as before");
+    // Level 3's section carries the same handoff: the key is the hint the band
+    // writes, not the switch.
+    expect(md).toContain("key is only the resume hint the zoom band writes");
   });
 
   test("the pointer forms and their resolution rules", () => {
@@ -328,5 +358,89 @@ describe("the scaffold is write-once (an older workspace keeps its text)", () =>
     // Create is the only door that scaffolds, and it is the write-once one.
     const create = functionBody(source, "createWorkspace");
     expect(create).toContain("scaffoldWorkspace(");
+  });
+});
+describe("the zoom/level contract amendment is write-once (ADR-0018)", () => {
+  test("an Epic 5-era workspace keeps its old contract bytes on open", () => {
+    const disk = new Map<string, string>([
+      [`${WS}/workspace.yml`, workspaceYml()],
+      [`${WS}/AGENTS.md`, PRE_BINDING_AGENTS_MD],
+    ]);
+    const writes = scaffoldWrites(
+      workspaceScaffold(WS, "garden"),
+      new Set(disk.keys()),
+    );
+
+    // Nothing is offered, so no write path can touch the old text: the old
+    // "only source / Zoom never changes it" contract stands exactly as it was.
+    expect(writes).toEqual([]);
+    expect(disk.get(`${WS}/AGENTS.md`)).toBe(PRE_BINDING_AGENTS_MD);
+    expect(disk.get(`${WS}/AGENTS.md`)).toContain(
+      "the only source of the active game",
+    );
+    expect(disk.get(`${WS}/AGENTS.md`)).toContain("Zoom never changes it");
+
+    // Only a workspace created NOW receives the amended text.
+    expect(agentsMd("garden")).not.toContain("Zoom never changes it");
+    expect(agentsMd("garden")).not.toContain("the only source of the active game");
+    expect(agentsMd("garden")).toContain("Zoom is the level");
+  });
+
+  test("an existing AGENTS.md is never in the offered writes", () => {
+    const offered = scaffoldWrites(
+      workspaceScaffold(WS, "garden"),
+      new Set([`${WS}/AGENTS.md`]),
+    );
+    expect(offered.map((file) => file.path)).toEqual([`${WS}/workspace.yml`]);
+  });
+});
+
+describe("the same contract lands in the code (ADR-0018)", () => {
+  const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+
+  test("level.ts names the handoff, not a sole source", () => {
+    const levelSource = source("../src/workspace/level.ts");
+    expect(levelSource).toContain("RESUME HINT");
+    expect(levelSource).toContain("levelHandoff.ts");
+    expect(levelSource).toContain("in-order write queue");
+    expect(levelSource).toContain("read-modify-write");
+    expect(levelSource).not.toContain("Zoom never changes it");
+    expect(levelSource).not.toContain("sole source");
+  });
+
+  test("lifecycle.ts reads the key on open and calls it the resume hint", () => {
+    const lifecycleSource = source("../src/workspace/lifecycle.ts");
+    expect(lifecycleSource).toContain("resumeLevel");
+    expect(lifecycleSource).toContain("RESUME HINT");
+    expect(lifecycleSource).not.toContain("sole source");
+    // Opening never writes the key: the body has no save path at all.
+    expect(functionBody(lifecycleSource, "openWorkspace")).not.toContain(
+      "saveWorkspaceLevel",
+    );
+  });
+
+  test("the control names the derived game and jumps; it never writes", () => {
+    const controlSource = source("../src/canvas/LevelControl.tsx");
+    expect(controlSource).toContain("INDICATOR and a");
+    expect(controlSource).toContain("onJump(game)");
+    expect(controlSource).toContain("derived level");
+    expect(controlSource).not.toContain("zoom never changes the game");
+    expect(controlSource).not.toContain("saveWorkspaceLevel");
+  });
+
+  test("App has ONE level write path: the handoff's queued trigger", () => {
+    const appSource = source("../src/App.tsx");
+    expect(appSource).toContain("createLevelHandoff(");
+    expect(appSource).toContain("handoff.settle(");
+    expect(appSource).toContain("handoff.jump(");
+    expect(appSource).toContain("handoff.restore(");
+    // Exactly one call site: the handoff's save dependency.
+    expect(appSource.match(/saveWorkspaceLevel\(/g)?.length).toBe(1);
+    expect(appSource).not.toContain("sole source");
+    // Open-restore reads the resume hint and only moves the camera; the
+    // control renders the DERIVED level, never the key.
+    expect(appSource).toContain("handoff.restore(workspace.resumeLevel)");
+    expect(appSource).toContain("level={level}");
+    expect(appSource).not.toContain("level={workspace.resumeLevel}");
   });
 });

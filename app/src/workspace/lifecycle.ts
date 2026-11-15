@@ -17,11 +17,14 @@ export interface Workspace {
    */
   shelfX: number;
   /**
-   * The active game (ADR-0016): `workspace.yml`'s provisional `level` key is
-   * the sole source — absent, garbage or unreadable means concept, so an older
-   * workspace opens exactly as before. Reopening resumes the saved level.
+   * The level's RESUME HINT (ADR-0016, amended by ADR-0018): `workspace.yml`'s
+   * provisional `level` key, read once on open — absent, garbage or unreadable
+   * means concept, so an older workspace opens exactly as before. The zoom band
+   * is the game at runtime (`levelHandoff.ts`): opening sets the camera into
+   * this band and writes nothing, and the band writes the key back on the first
+   * settled crossing.
    */
-  level: Level;
+  resumeLevel: Level;
 }
 
 export function workspaceName(path: string): string {
@@ -51,18 +54,19 @@ async function readWorkspace(path: string): Promise<Workspace> {
     path,
     name: workspaceName(path),
     shelfX: fields.shelf_x === undefined ? DEFAULT_SHELF_X : shelfXOf(fields),
-    level: fields.level === undefined ? DEFAULT_LEVEL : levelOf(fields),
+    resumeLevel: fields.level === undefined ? DEFAULT_LEVEL : levelOf(fields),
   };
 }
 
 /**
  * Create: scaffold the folder into a workspace and remember it. The scaffold's
  * orientation text — Level 1's map/shelf sections, Level 2's four records and
- * the loop-reading rule, and Level 3's reach (the render map, the three level
- * values, the pointer forms and the window's snapshot wording) — is `agentsMd`
- * in `lib/serialize.ts`. The scaffold is WRITE-ONCE (`scaffoldWorkspace` writes
- * only missing files), so only a NEW workspace gets the current text; an
- * existing workspace's `AGENTS.md` is never rewritten.
+ * the loop-reading rule, Level 3's reach (the render map, the three level
+ * values, the pointer forms and the window's snapshot wording), and the
+ * zoom/level contract (the band is the game; the key is the resume hint) — is
+ * `agentsMd` in `lib/serialize.ts`. The scaffold is WRITE-ONCE
+ * (`scaffoldWorkspace` writes only missing files), so only a NEW workspace gets
+ * the current text; an existing workspace's `AGENTS.md` is never rewritten.
  */
 export async function createWorkspace(path: string): Promise<Workspace> {
   await scaffoldWorkspace(path, workspaceName(path));
@@ -75,8 +79,9 @@ export async function createWorkspace(path: string): Promise<Workspace> {
 
 /**
  * Open: an existing workspace (one that has `workspace.yml`). Opening reads
- * only — it never scaffolds and never rewrites `workspace.yml` or
- * `AGENTS.md` — so an older workspace keeps its own orientation text.
+ * only — it never scaffolds, never rewrites `workspace.yml` or `AGENTS.md`, and
+ * never writes the `level` key — so an older workspace keeps its own
+ * orientation text and a hand-edited level is honored (ADR-0018 decision 2).
  * Returns null — writing nothing — when the folder is not a workspace.
  */
 export async function openWorkspace(path: string): Promise<Workspace | null> {
