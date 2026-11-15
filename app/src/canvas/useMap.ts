@@ -20,6 +20,7 @@ import {
   type Mark,
   type MarkTarget,
 } from "../map/marks";
+import { dedupe, loadModel, saveModel, type PlayingSet } from "../map/model";
 import {
   dropWireMarks,
   recoinWireMarks,
@@ -53,6 +54,12 @@ export interface ConnectDraft {
  * user move. The shelf itself is not a state — it is derived from a
  * reference's position past the workspace fold (`map/shelf.ts`), so the map
  * model only ever writes x/y and marks.
+ *
+ * Epic 4 story 1 adds the playing set (ADR-0013): `map/model.json` loaded with
+ * the rest of the map, and one explicit write — `acceptPlayingSet` — when the
+ * selector's accept is pressed. Membership is read, never validated against
+ * another record; hand-edited member names that no longer exist on the map are
+ * surfaced, not repaired.
  */
 export function useMap(workspacePath: string) {
   const [refs, setRefs] = useState<Reference[]>([]);
@@ -60,6 +67,8 @@ export function useMap(workspacePath: string) {
   const [malformed, setMalformed] = useState<string[]>([]);
   const [marks, setMarks] = useState<Mark[]>([]);
   const [malformedMarks, setMalformedMarks] = useState<string[]>([]);
+  const [model, setModel] = useState<PlayingSet | null>(null);
+  const [malformedModel, setMalformedModel] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [connect, setConnect] = useState<ConnectDraft | null>(null);
   const draftCount = useRef(0);
@@ -69,11 +78,13 @@ export function useMap(workspacePath: string) {
 
   /** Re-read every map file (first load and after an atomic patch). */
   const reloadMap = useCallback(async () => {
-    const [referenceList, parsedDistances, parsedMarks] = await Promise.all([
-      loadReferences(workspacePath),
-      loadDistances(workspacePath),
-      loadMarks(workspacePath),
-    ]);
+    const [referenceList, parsedDistances, parsedMarks, parsedModel] =
+      await Promise.all([
+        loadReferences(workspacePath),
+        loadDistances(workspacePath),
+        loadMarks(workspacePath),
+        loadModel(workspacePath),
+      ]);
     setRefs(referenceList);
     setDistances(parsedDistances.distances);
     setMalformed(parsedDistances.malformed);
@@ -81,6 +92,8 @@ export function useMap(workspacePath: string) {
     malformedMarksRef.current = parsedMarks.malformed;
     setMarks(parsedMarks.marks);
     setMalformedMarks(parsedMarks.malformed);
+    setModel(parsedModel.model);
+    setMalformedModel(parsedModel.malformed);
     setLoaded(true);
   }, [workspacePath]);
 
@@ -141,6 +154,37 @@ export function useMap(workspacePath: string) {
     );
     return findOrphanMarks(marks, wordSlugs, wireKeys);
   }, [loaded, refs, distances, marks]);
+
+  /**
+   * The playing set names words that are no longer on the map (a hand edit):
+   * preserved in the record and surfaced quietly, never dropped on an
+   * unrelated write (ADR-0013's no-validation posture, ADR-0009's precedent).
+   */
+  const orphanMembers = useMemo(() => {
+    if (!loaded || model === null) return [];
+    const slugs = new Set(
+      refs.map((ref) => ref.slug).filter((slug): slug is string => slug !== null),
+    );
+    return model.words.filter((slug) => !slugs.has(slug));
+  }, [loaded, model, refs]);
+
+  /**
+   * Accept the selector's set: one explicit write of `map/model.json`
+   * (ADR-0013). Re-running rewrites the record — no history, no confirmation;
+   * a formerly unreadable file is replaced here because the person said so.
+   */
+  const acceptPlayingSet = useCallback(
+    (slugs: readonly string[]) => {
+      const next: PlayingSet = {
+        words: dedupe(slugs),
+        extra: model?.extra ?? {},
+      };
+      setModel(next);
+      setMalformedModel(null);
+      void saveModel(workspacePath, next);
+    },
+    [workspacePath, model],
+  );
 
   /** Open a blank word to coin at a plane point. */
   const coinReference = useCallback((x: number, y: number) => {
@@ -417,6 +461,11 @@ export function useMap(workspacePath: string) {
     malformed,
     malformedMarks,
     orphanMarks,
+    model,
+    malformedModel,
+    orphanMembers,
+    loaded,
+    acceptPlayingSet,
     connect,
     coinReference,
     updateReference,

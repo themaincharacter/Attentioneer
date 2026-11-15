@@ -5,20 +5,26 @@ import {
   centerOf,
   DEFAULT_BOX,
   edgePoint,
+  wordsInPolygon,
   type Box,
   type Point,
 } from "./canvas/geometry";
+import type { GestureMode } from "./canvas/gates";
+import { LevelControl } from "./canvas/LevelControl";
 import { LackMark } from "./canvas/LackMark";
 import { resolveMarkDrop, type WireHit, type WordHit } from "./canvas/markTargets";
 import { PlaneMenu } from "./canvas/PlaneMenu";
+import { PlayingSetBar, PlayingSetWords } from "./canvas/PlayingSetSelector";
 import { useRingDrag } from "./canvas/ringDrag";
 import { ReferenceWord } from "./canvas/ReferenceWord";
 import { ShelfFold } from "./canvas/ShelfFold";
 import { useCamera } from "./canvas/useCamera";
 import { useMap } from "./canvas/useMap";
 import { markTargetKey, type Mark, type MarkTarget } from "./map/marks";
+import { hasWord, prefilledSelection } from "./map/model";
 import type { Reference } from "./map/refs";
 import { DEFAULT_SHELF_X, isShelved, rejectSpot } from "./map/shelf";
+import { saveWorkspaceLevel, DEFAULT_LEVEL, type Level } from "./workspace/level";
 import { WorkspaceGate } from "./workspace/WorkspaceGate";
 import type { Workspace } from "./workspace/lifecycle";
 
@@ -38,6 +44,12 @@ const WIRE_DROP_PX = 12;
  * withdraws it. Wire geometry is derived from *live* word positions, so a
  * dragged word's wires follow the pointer instead of snapping into place on
  * drop.
+ *
+ * Epic 4 story 1 adds the second game (ADR-0016): a quiet level control
+ * switches concept / dynamics, the playing-set selector writes map/model.json
+ * (ADR-0013), and the interaction-mode gate suspends the plane's own gestures
+ * while the selector is open. The dynamics moves themselves arrive in stories
+ * 2–4; here the mode and the set persist and the out-of-set words merely dim.
  */
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -49,6 +61,11 @@ function App() {
     marks,
     malformedMarks,
     orphanMarks,
+    model,
+    malformedModel,
+    orphanMembers,
+    loaded,
+    acceptPlayingSet,
     connect,
     coinReference,
     updateReference,
@@ -82,6 +99,15 @@ function App() {
   const [growAt, setGrowAt] = useState<Point | null>(null);
   // The plane point where the double-click creation menu is open, if any.
   const [menuAt, setMenuAt] = useState<Point | null>(null);
+  // The playing-set selector (Epic 4 story 1, ADR-0013): its draft selection
+  // and the draw tool's armed state. The gate arms while it is open.
+  const [selectorOpen, setSelectorOpen] = useState(false);
+  const [selectorDraft, setSelectorDraft] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const [lassoArmed, setLassoArmed] = useState(false);
+  // A workspace that resumed in dynamics with no set prompts the selector once.
+  const autoPromptedRef = useRef<string | null>(null);
 
   const handleDragMove = useCallback((slug: string, x: number, y: number) => {
     setLivePos((prev) => {
@@ -151,6 +177,125 @@ function App() {
     (word: Reference): boolean =>
       word.slug !== null && isShelved(posOf(word).x, boxOf(word).w, shelfX),
     [posOf, boxOf, shelfX],
+  );
+
+  // The active game (ADR-0016): workspace.yml's level key is the sole source.
+  const level: Level = workspace?.level ?? DEFAULT_LEVEL;
+  // The interaction-mode gate: the selector is the first armed gesture. Later
+  // stories arm path collection and the sign choice through the same value.
+  const gestureMode: GestureMode = selectorOpen ? "selector" : "idle";
+
+  // Every coined word, as the selector's world-space layer needs it.
+  const selectorWords = useMemo(
+    () =>
+      refs
+        .filter(
+          (word): word is Reference & { slug: string } => word.slug !== null,
+        )
+        .map((word) => ({
+          slug: word.slug,
+          name: word.name,
+          pos: posOf(word),
+          box: boxOf(word),
+        })),
+    [refs, posOf, boxOf],
+  );
+
+  // Out of play at Level 2: dimmed but fully live (ADR-0013, story 1). In
+  // concept mode — or before a set exists — every word renders unchanged.
+  // A word coined while playing joins the set in story 2's composed move; until
+  // then a fresh word reads out of play until the selector is re-run.
+  const isOutOfSet = useCallback(
+    (word: Reference): boolean =>
+      level === "dynamics" &&
+      model !== null &&
+      word.slug !== null &&
+      !hasWord(model, word.slug),
+    [level, model],
+  );
+
+  /** Switching games cancels any pending gesture (ADR-0016). */
+  const cancelPendingGestures = useCallback(() => {
+    setMenuAt(null);
+    setGrowAt(null);
+    setSelectorOpen(false);
+    setLassoArmed(false);
+    cancelConnect();
+  }, [cancelConnect]);
+
+  /**
+   * Open the selector, pre-filled (ADR-0013): every current word on first
+   * entry, the accepted set on a re-run. It is also the level control's
+   * "edit the playing set".
+   */
+  const openSelector = useCallback(() => {
+    cancelPendingGestures();
+    setSelectorDraft(
+      new Set(
+        prefilledSelection(
+          model,
+          selectorWords.map((word) => word.slug),
+        ),
+      ),
+    );
+    setSelectorOpen(true);
+  }, [cancelPendingGestures, model, selectorWords]);
+
+  /** Click a word: leave it out, or bring it back. */
+  const toggleSelectorWord = useCallback((slug: string) => {
+    setSelectorDraft((current) => {
+      const next = new Set(current);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  }, []);
+
+  /** Select-all keeps everything — shelved words included (the shelf is a place). */
+  const selectAllSelectorWords = useCallback(() => {
+    setSelectorDraft(new Set(selectorWords.map((word) => word.slug)));
+  }, [selectorWords]);
+
+  /** Accept: write map/model.json, rewriting any previous set (no history). */
+  const acceptSelector = useCallback(() => {
+    acceptPlayingSet([...selectorDraft]);
+    setSelectorOpen(false);
+    setLassoArmed(false);
+  }, [acceptPlayingSet, selectorDraft]);
+
+  const closeSelector = useCallback(() => {
+    setSelectorOpen(false);
+    setLassoArmed(false);
+  }, []);
+
+  /** The lasso's release: its enclosed words become the draft set (narrowing). */
+  const handleLasso = useCallback(
+    (path: readonly Point[]) => {
+      const inside = wordsInPolygon(path, selectorWords);
+      setSelectorDraft(new Set(inside.map((word) => word.slug)));
+      setLassoArmed(false);
+    },
+    [selectorWords],
+  );
+
+  const toggleLasso = useCallback(() => setLassoArmed((armed) => !armed), []);
+
+  /**
+   * Change the game (ADR-0016): cancel pending gestures, write the level key
+   * canonically, and ask for a playing set when dynamics is entered without
+   * one. Reopening the workspace resumes the saved level.
+   */
+  const changeLevel = useCallback(
+    (next: Level) => {
+      if (!workspace || workspace.level === next) return;
+      cancelPendingGestures();
+      setWorkspace({ ...workspace, level: next });
+      void saveWorkspaceLevel(workspace.path, next);
+      if (next === "dynamics" && model === null) {
+        openSelector();
+      }
+    },
+    [workspace, model, cancelPendingGestures, openSelector],
   );
 
   /**
@@ -269,6 +414,17 @@ function App() {
     };
   }, [connect, camera, moveConnect, cancelConnect]);
 
+  // A workspace that resumes in dynamics without an accepted set asks for one
+  // on open (ADR-0013: the playing set is required before play). Once per
+  // workspace — closing the selector is a choice, not a prompt to repeat.
+  useEffect(() => {
+    if (!workspace || !loaded) return;
+    if (workspace.level !== "dynamics" || model !== null) return;
+    if (autoPromptedRef.current === workspace.path) return;
+    autoPromptedRef.current = workspace.path;
+    openSelector();
+  }, [workspace, loaded, model, openSelector]);
+
   if (!workspace) {
     return <WorkspaceGate onOpen={setWorkspace} />;
   }
@@ -292,6 +448,9 @@ function App() {
         camera={camera}
         intents={intents}
         onPlaneDoubleClick={handlePlaneDoubleClick}
+        gestureMode={gestureMode}
+        lassoArmed={selectorOpen && lassoArmed}
+        onLasso={handleLasso}
       >
         {/* the shelf's fold and margin: a place in world space (story 3) */}
         <ShelfFold shelfX={shelfX} />
@@ -342,6 +501,8 @@ function App() {
               markDrag.begin({ type: "word", slug }, e)
             }
             shelved={shelvedOf(word)}
+            outOfSet={isOutOfSet(word)}
+            interactionMode={gestureMode}
             onReject={() => rejectWord(word)}
           />
         ))}
@@ -384,6 +545,17 @@ function App() {
           );
         })}
 
+        {/* the playing-set selector's world layer (story 1): one quiet button
+            over each word; excluded words wear a dashed hollow ring, never
+            the remove × */}
+        {selectorOpen && (
+          <PlayingSetWords
+            words={selectorWords}
+            selected={selectorDraft}
+            onToggle={toggleSelectorWord}
+          />
+        )}
+
         {/* the in-place grow field: name the lack, or cancel and leave it bare */}
         {growAt && (
           <GrowField
@@ -425,8 +597,31 @@ function App() {
         )}
       </CanvasPlane>
 
-      {/* Orphan and unreadable marks: preserved, surfaced quietly (ADR-0009). */}
-      <MarkNotices malformed={malformedMarks} orphans={orphanMarks} />
+      {/* the quiet level control (ADR-0016): concept / dynamics, one switch */}
+      <LevelControl
+        level={level}
+        onChange={changeLevel}
+        onEditPlayingSet={openSelector}
+      />
+
+      {/* the selector's controls, in screen space while it is open (story 1) */}
+      {selectorOpen && (
+        <PlayingSetBar
+          lassoArmed={lassoArmed}
+          onToggleLasso={toggleLasso}
+          onSelectAll={selectAllSelectorWords}
+          onAccept={acceptSelector}
+          onClose={closeSelector}
+        />
+      )}
+
+      {/* Orphan and unreadable records: preserved, surfaced quietly (ADR-0009/0013). */}
+      <MarkNotices
+        malformed={malformedMarks}
+        orphans={orphanMarks}
+        malformedModel={malformedModel}
+        orphanMembers={orphanMembers}
+      />
 
       {/* the ring in flight while its mark is being bound (story 2) */}
       {markDrag.ghost && (
@@ -440,18 +635,30 @@ function App() {
 }
 
 /**
- * A quiet line of small text for mark lines the app keeps but cannot place
- * (orphans) or cannot read (malformed). No counts, badges, or panels — the
- * line is the whole surface (ADR-0009's "surfaced, not silently hidden").
+ * A quiet line of small text for record lines the app keeps but cannot place
+ * (mark orphans, a playing set naming words that are gone) or cannot read
+ * (malformed marks, a malformed model.json). No counts, badges, or panels —
+ * the line is the whole surface (ADR-0009's "surfaced, not silently hidden").
  */
 function MarkNotices({
   malformed,
   orphans,
+  malformedModel,
+  orphanMembers,
 }: {
   malformed: readonly string[];
   orphans: readonly Mark[];
+  malformedModel: string | null;
+  orphanMembers: readonly string[];
 }) {
-  if (malformed.length === 0 && orphans.length === 0) return null;
+  if (
+    malformed.length === 0 &&
+    orphans.length === 0 &&
+    malformedModel === null &&
+    orphanMembers.length === 0
+  ) {
+    return null;
+  }
   return (
     <div className="mark-notices">
       {orphans.map((mark, index) => (
@@ -464,6 +671,16 @@ function MarkNotices({
           unreadable line in map/marks.jsonl: {line}
         </div>
       ))}
+      {orphanMembers.map((slug) => (
+        <div className="mark-notice" key={`member-${slug}`}>
+          playing set names “{slug}” — not on the map, kept in map/model.json
+        </div>
+      ))}
+      {malformedModel !== null && (
+        <div className="mark-notice">
+          unreadable map/model.json — kept as is until a playing set is accepted
+        </div>
+      )}
     </div>
   );
 }

@@ -1,14 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import {
   dropMarksTouching,
+  dropMembership,
   dropTouching,
   dropWireMarks,
   recoinWireMarks,
   rewriteEndpoints,
   rewriteMarkEndpoints,
+  rewriteMembership,
 } from "../src/map/patches";
 import type { Distance } from "../src/map/distances";
 import { markTargetKey, type Mark, type MarkTarget } from "../src/map/marks";
+import type { PlayingSet } from "../src/map/model";
 
 function d(from: string, to: string, word: string): Distance {
   return { from, to, word, extra: {} };
@@ -196,5 +199,56 @@ describe("re-coin moves a wire mark and pins the collision survivor", () => {
     expect(markTargetKey(wire("a", "b", "feeds"))).toBe(
       markTargetKey({ type: "wire", from: "a", to: "b", word: "feeds" }),
     );
+  });
+});
+describe("the playing set follows a rename and a remove (ADR-0013)", () => {
+  const play = (words: string[], extra: Record<string, unknown> = {}): PlayingSet => ({
+    words,
+    extra,
+  });
+
+  test("rename rewrites the member slug and keeps sorted order and unknown keys", () => {
+    const model = play(["rain", "soil"], { note: "why" });
+    expect(rewriteMembership(model, "rain", "showers")).toEqual({
+      words: ["showers", "soil"],
+      extra: { note: "why" },
+    });
+    // Sorted order is the record's canonical member order, not draw order.
+    expect(rewriteMembership(model, "soil", "air").words).toEqual(["air", "rain"]);
+  });
+
+  test("renaming a non-member is a no-op (the same record)", () => {
+    const model = play(["rain"]);
+    expect(rewriteMembership(model, "gone", "there")).toBe(model);
+    expect(rewriteMembership(model, "rain", "rain")).toBe(model);
+  });
+
+  test("renaming onto an existing member collapses to one slug", () => {
+    expect(rewriteMembership(play(["a", "b"]), "b", "a").words).toEqual(["a"]);
+  });
+
+  test("remove drops the membership line and leaves the rest", () => {
+    const model = play(["rain", "soil", "mulch"], { note: "why" });
+    expect(dropMembership(model, "soil")).toEqual({
+      words: ["mulch", "rain"],
+      extra: { note: "why" },
+    });
+  });
+
+  test("removing a non-member is a no-op (no membership line exists)", () => {
+    const model = play(["rain"]);
+    expect(dropMembership(model, "gone")).toBe(model);
+  });
+
+  test("the batch's crash order keeps the word: membership is the pure step, the file is durable", () => {
+    // removeReference writes the membership drop before deleting the file, so
+    // a crash leaves the word on the map and out of play (visible, one accept
+    // from being put back). renameReference writes the renamed file before the
+    // membership rewrite, so a crash leaves a stale member name — visible, and
+    // rewritten by the selector — never a member naming no word. This pins the
+    // pure semantics the ordered batch relies on.
+    const renamed = rewriteMembership(play(["rain"]), "rain", "showers");
+    expect(renamed.words).toEqual(["showers"]);
+    expect(dropMembership(renamed, "showers").words).toEqual([]);
   });
 });

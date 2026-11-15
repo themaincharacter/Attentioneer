@@ -1,6 +1,7 @@
 import { pathExists, readTextFile } from "../lib/fs";
 import { parseYamlFields, scaffoldWorkspace } from "../lib/serialize";
 import { DEFAULT_SHELF_X, shelfXOf } from "../map/shelf";
+import { DEFAULT_LEVEL, levelOf, type Level } from "./level";
 import { pushRecent } from "./recents";
 
 /** An open workspace: a user-owned folder (ADR-0002, ADR-0004). */
@@ -15,6 +16,12 @@ export interface Workspace {
    * `shelf_x`; a workspace without the key gets the default.
    */
   shelfX: number;
+  /**
+   * The active game (ADR-0016): `workspace.yml`'s provisional `level` key is
+   * the sole source — absent, garbage or unreadable means concept, so an older
+   * workspace opens exactly as before. Reopening resumes the saved level.
+   */
+  level: Level;
 }
 
 export function workspaceName(path: string): string {
@@ -23,30 +30,39 @@ export function workspaceName(path: string): string {
 }
 
 /**
- * The workspace's fold, from `workspace.yml`. Tolerant on read: a missing key,
- * an unreadable value, or an unreadable file all fall back to the default, so
- * an older workspace opens cleanly with a shelf (ADR-0010).
+ * `workspace.yml`'s parsed fields, tolerant: a missing or unreadable file (or
+ * a non-UTF-8 hand edit) reads as no fields, so the app's defaults take over.
+ * The fold and the level are conventions here, never gates on opening.
  */
-async function readShelfX(path: string): Promise<number> {
+async function readWorkspaceFields(
+  path: string,
+): Promise<Record<string, string | number>> {
   try {
     const text = await readTextFile(`${path}/workspace.yml`);
-    return text === null ? DEFAULT_SHELF_X : shelfXOf(parseYamlFields(text));
+    return text === null ? {} : parseYamlFields(text);
   } catch {
-    // An unreadable (or non-UTF-8) workspace.yml never blocks opening — the
-    // fold is a convention, not a gate; the default takes over.
-    return DEFAULT_SHELF_X;
+    return {};
   }
+}
+
+async function readWorkspace(path: string): Promise<Workspace> {
+  const fields = await readWorkspaceFields(path);
+  return {
+    path,
+    name: workspaceName(path),
+    shelfX: fields.shelf_x === undefined ? DEFAULT_SHELF_X : shelfXOf(fields),
+    level: fields.level === undefined ? DEFAULT_LEVEL : levelOf(fields),
+  };
 }
 
 /** Create: scaffold the folder into a workspace and remember it. */
 export async function createWorkspace(path: string): Promise<Workspace> {
-  const name = workspaceName(path);
-  await scaffoldWorkspace(path, name);
-  // Read back rather than assume the default: an existing workspace.yml in the
-  // chosen folder is left as it is (ADR-0004), fold included.
-  const shelfX = await readShelfX(path);
+  await scaffoldWorkspace(path, workspaceName(path));
+  // Read back rather than assume the defaults: an existing workspace.yml in the
+  // chosen folder is left as it is (ADR-0004), fold and level included.
+  const workspace = await readWorkspace(path);
   await pushRecent(path);
-  return { path, name, shelfX };
+  return workspace;
 }
 
 /**
@@ -57,7 +73,7 @@ export async function openWorkspace(path: string): Promise<Workspace | null> {
   if (!(await pathExists(`${path}/workspace.yml`))) {
     return null;
   }
-  const shelfX = await readShelfX(path);
+  const workspace = await readWorkspace(path);
   await pushRecent(path);
-  return { path, name: workspaceName(path), shelfX };
+  return workspace;
 }

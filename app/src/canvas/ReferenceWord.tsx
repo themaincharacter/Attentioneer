@@ -8,6 +8,11 @@ import {
 } from "react";
 import type { Reference } from "../map/refs";
 import { usePlane } from "./CanvasPlane";
+import {
+  isGestureArmed,
+  shouldStartWordPress,
+  type GestureMode,
+} from "./gates";
 import type { Point } from "./geometry";
 
 interface ReferenceWordProps {
@@ -34,6 +39,13 @@ interface ReferenceWordProps {
   marked: boolean;
   /** True while this word sits past the shelf's fold — set aside (ADR-0010). */
   shelved: boolean;
+  /**
+   * True while this word is outside the playing set in dynamics mode (story 1,
+   * ADR-0013): dimmed but fully live, and unchanged in concept mode.
+   */
+  outOfSet?: boolean;
+  /** How a gesture is armed right now — the interaction-mode gate (ADR-0016). */
+  interactionMode?: GestureMode;
   /**
    * Reject this word: withdraw its open mark and set it aside in one composed
    * move (ADR-0010). Offered only while the word carries an open mark and is
@@ -91,6 +103,8 @@ export function ReferenceWord({
   onDropConnect,
   marked,
   shelved,
+  outOfSet = false,
+  interactionMode = "idle",
   onReject,
   onToggleMark,
   onMarkRingDrag,
@@ -238,12 +252,11 @@ export function ReferenceWord({
     if (e.button !== 0) return;
     e.stopPropagation(); // never let the plane pan from inside a word
     if (isDraft || revealing || renaming) return;
+    // While a gesture is armed every word press behavior stands still — drag,
+    // click-to-center, the ring, the connect handle (ADR-0016's gate).
+    if (isGestureArmed(interactionMode)) return;
 
     const target = e.target as HTMLElement;
-    if (target.closest(".memory-dot")) return;
-    if (target.closest(".word-remove")) return;
-    // The reject arrow is a plain click (settle + set aside), never a drag.
-    if (target.closest(".word-reject")) return;
     // The mark ring toggles on click and drags to bind (story 2); it must not
     // start a word drag or a centering. Only a ring that already carries the
     // mark can be dragged — an unmarked hover ring just casts on click.
@@ -258,6 +271,11 @@ export function ReferenceWord({
       onConnectFrom(word.slug, anchor());
       return;
     }
+
+    // The gate's early-return list: the memory dot, the remove ×, the reject
+    // arrow and the selector's elements own their own presses; none of them
+    // ever starts a word drag or a centering (gates.ts).
+    if (!shouldStartWordPress(interactionMode, target.classList)) return;
 
     const state: DragState = {
       pointerX: e.clientX,
@@ -316,6 +334,8 @@ export function ReferenceWord({
 
   function onNameDoubleClick(e: ReactMouseEvent<HTMLSpanElement>) {
     e.stopPropagation();
+    // Renaming suspends while a gesture is armed (ADR-0016's gate).
+    if (isGestureArmed(interactionMode)) return;
     beginRename();
   }
 
@@ -389,7 +409,7 @@ export function ReferenceWord({
     <div
       ref={wordRef}
       data-slug={word.slug ?? undefined}
-      className={`word${marked ? " open" : ""}${shelved ? " shelved" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}`}
+      className={`word${marked ? " open" : ""}${shelved ? " shelved" : ""}${outOfSet ? " out-of-set" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}`}
       style={{ transform }}
       onBlur={handleBlur}
       onMouseUp={handleDropMouseUp}

@@ -941,3 +941,244 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+/* Epic 4 story 1 — the playing set and the mode (ADR-0013 / ADR-0016).
+   Provisional: the level control's look, the selector's strip, the lasso and
+   the exclusion marker (a dashed hollow ring at the word's corner — never the
+   remove × glyph). Three distinct quiets now read at a glance: marked =
+   ghosted, out-of-set = dimmed but live, shelved = past the fold. Every motion
+   stays short, soft and ease-out; the global reduced-motion rule above
+   collapses it. */
+
+.level-control {
+  position: fixed;
+  top: 14px;
+  left: 16px;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 4px;
+  background: rgba(255, 253, 248, 0.84);
+  border: 1px solid #e4dfd4;
+  border-radius: 999px;
+  box-shadow: 0 1px 5px rgba(40, 35, 25, 0.06);
+  animation: fade-in 180ms ease-out;
+}
+
+.level-game {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 11px;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+.level-game:hover {
+  color: #1e2126;
+}
+
+.level-game.active {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.16);
+}
+
+.level-game:focus-visible,
+.level-edit:focus-visible,
+.playing-set-bar button:focus-visible,
+.playing-set-word:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+/* "edit the playing set": the same control's quiet re-run of the selector. */
+.level-edit {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid #e4dfd4;
+  border-radius: 0 999px 999px 0;
+  padding: 5px 10px;
+  margin-left: 2px;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.level-edit:hover {
+  color: #1e2126;
+}
+
+/* The selector's strip, fixed in screen space (readable at any zoom). Quiet
+   buttons; the accepted set writes on "accept", and Esc/close writes nothing. */
+.playing-set-bar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 4px;
+  background: rgba(255, 253, 248, 0.88);
+  border: 1px solid #e4dfd4;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(40, 35, 25, 0.08);
+  transform: translateX(-50%);
+  animation: fade-in 160ms ease-out;
+}
+
+.playing-set-bar button {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: #6b675e;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 11px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background-color 160ms ease;
+}
+
+.playing-set-bar button:hover {
+  color: #1e2126;
+  background: rgba(30, 33, 38, 0.05);
+}
+
+.playing-set-bar button[aria-pressed="true"] {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.16);
+}
+
+.playing-set-bar .playing-set-accept {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.18);
+}
+
+.playing-set-bar .playing-set-accept:hover {
+  background: rgba(141, 136, 124, 0.27);
+}
+
+/* The selector's world layer: one transparent button over each word. A kept
+   word reads through untouched; an excluded one sits behind a pale wash with
+   its dashed hollow ring. Content, never a plane gesture. */
+.playing-set {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 6;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.playing-set-word {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 1px dashed transparent;
+  border-radius: 7px;
+  pointer-events: auto;
+  cursor: pointer;
+  transition:
+    opacity 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.playing-set-word:hover {
+  background: rgba(255, 253, 248, 0.5);
+  border-color: rgba(141, 136, 124, 0.45);
+}
+
+.playing-set-word.out {
+  opacity: 0.62;
+  background: rgba(247, 246, 243, 0.66);
+  border-color: rgba(141, 136, 124, 0.4);
+}
+
+.playing-set-word.out:hover {
+  opacity: 0.9;
+  background: rgba(247, 246, 243, 0.32);
+}
+
+/* The exclusion marker: a dashed hollow ring, the lack's quiet family and
+   explicitly not the remove ×. */
+.playing-set-word.out::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 10px;
+  height: 10px;
+  border: 1.2px dashed #8d887c;
+  border-radius: 50%;
+  background: #f7f6f3;
+}
+
+/* The lasso in flight (story 1): a faint dashed world-space polygon, never a
+   press target. */
+/* The armed plane does not pan, so it must not promise a grab. */
+.plane.gesture-armed:not(.lasso-armed) {
+  cursor: default;
+}
+
+.plane.lasso-armed {
+  cursor: crosshair;
+}
+
+.lasso {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 8;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.lasso polygon {
+  fill: rgba(141, 136, 124, 0.08);
+  stroke: #a49c8d;
+  stroke-width: 1.2;
+  stroke-dasharray: 5 5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* While a gesture is armed (ADR-0016's gate) the plane's content stands
+   still: the armed gesture owns the pointer, and the selector's layer above
+   is the only live surface. Existing Level 1 gestures are untouched in idle. */
+.plane.gesture-armed .word,
+.plane.gesture-armed .distance-label,
+.plane.gesture-armed .distance-ring,
+.plane.gesture-armed .lack-mark {
+  pointer-events: none;
+}
+
+/* Out of play at Level 2 (ADR-0013): dimmed but live. Hover un-quiets it and
+   every Level 1 gesture still works — this is never a disabled state. In
+   concept mode the class is absent, so Level 1 reads exactly as before. */
+.word.out-of-set {
+  opacity: 0.42;
+}
+
+.word.out-of-set:hover {
+  opacity: 1;
+}

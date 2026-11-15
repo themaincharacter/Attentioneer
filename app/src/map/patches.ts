@@ -3,6 +3,12 @@ import { slugName } from "../lib/serialize";
 import { referencePath, serializeReference, type Reference } from "./refs";
 import { loadDistances, saveDistances, type Distance } from "./distances";
 import {
+  dedupe,
+  loadModel,
+  saveModel,
+  type PlayingSet,
+} from "./model";
+import {
   dedupeMarks,
   loadMarks,
   markTargetKey,
@@ -12,12 +18,19 @@ import {
 } from "./marks";
 
 /**
- * Atomic patches (ADR-0005, ADR-0007, ADR-0009): rename and remove are single,
- * all-or-nothing app operations — a file plus `name` plus every
- * `distances.jsonl` endpoint and every touching mark (rename), or a file plus
- * every touching line and mark (remove). Prose memory is never rewritten
- * (byte-faithful). No other module hand-strings these edits;
- * `distances.ts`/`marks.ts`/`serialize.ts` own the bytes.
+ * Atomic patches (ADR-0005, ADR-0007, ADR-0009, ADR-0013): rename and remove are
+ * single, all-or-nothing app operations — a file plus `name` plus every
+ * `distances.jsonl` endpoint, every touching mark and the playing set's member
+ * slug (rename), or a file plus every touching line, mark and membership
+ * (remove). Prose memory is never rewritten (byte-faithful). No other module
+ * hand-strings these edits; `distances.ts`/`marks.ts`/`model.ts`/
+ * `serialize.ts` own the bytes.
+ *
+ * Crash rule: the durable thing is written first. The reference's file is
+ * written before the records that name the slug, and those records are
+ * rewritten before the old file is dropped / after the word is known to exist,
+ * so a crash always leaves something visible (a word, or a stale member name
+ * the selector can rewrite) rather than a dangling reference to nothing.
  */
 
 /**
@@ -46,6 +59,37 @@ export function dropTouching(
   slug: string,
 ): Distance[] {
   return distances.filter((d) => d.from !== slug && d.to !== slug);
+}
+
+/**
+ * Re-write the playing set's member slug (rename, ADR-0013): the set names
+ * words by slug like every other record, so a rename follows here too and the
+ * canonical sorted order is restored. Renaming a non-member is a no-op.
+ */
+export function rewriteMembership(
+  model: PlayingSet,
+  oldSlug: string,
+  newSlug: string,
+): PlayingSet {
+  if (oldSlug === newSlug || !model.words.includes(oldSlug)) return model;
+  return {
+    ...model,
+    words: dedupe(model.words.map((slug) => (slug === oldSlug ? newSlug : slug))),
+  };
+}
+
+/**
+ * Drop the word's membership (remove, ADR-0013): absence is exclusion, so the
+ * settle is simply the slug leaving the set — no tombstone, and a malformed
+ * `map/model.json` is never touched (the caller skips the write when the file
+ * could not be read).
+ */
+export function dropMembership(model: PlayingSet, slug: string): PlayingSet {
+  if (!model.words.includes(slug)) return model;
+  return {
+    ...model,
+    words: dedupe(model.words.filter((word) => word !== slug)),
+  };
 }
 
 /**
@@ -186,6 +230,19 @@ export async function renameReference(
     parsedMarks.malformed,
   );
 
+  // 2c. Follow the rename in the playing set (ADR-0013). The renamed file —
+  //     the durable thing — is already on disk, so a crash here leaves a stale
+  //     member name in map/model.json (visible, fixable by re-running the
+  //     selector), never a member that names no word. An unreadable model file
+  //     is skipped and keeps its bytes exactly.
+  const parsedModel = await loadModel(workspacePath);
+  if (parsedModel.model) {
+    await saveModel(
+      workspacePath,
+      rewriteMembership(parsedModel.model, oldSlug, newSlug),
+    );
+  }
+
   // 3. Drop the old file.
   if (oldSlug !== newSlug) {
     await removeFile(referencePath(workspacePath, oldSlug));
@@ -212,6 +269,14 @@ export async function removeReference(
     dropMarksTouching(parsedMarks.marks, ref.slug),
     parsedMarks.malformed,
   );
+
+  // 1b. Drop the word's membership before the file goes (ADR-0013). Same
+  //     crash rule: a crash after this write leaves the word on the map, not
+  //     in play — visible, and one accept away from being put back.
+  const parsedModel = await loadModel(workspacePath);
+  if (parsedModel.model) {
+    await saveModel(workspacePath, dropMembership(parsedModel.model, ref.slug));
+  }
 
   // 2. Delete the file.
   await removeFile(referencePath(workspacePath, ref.slug));

@@ -4,6 +4,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -16,6 +17,13 @@ import {
   type ZoomBehavior,
   type ZoomTransform,
 } from "d3-zoom";
+import {
+  CONTENT_SELECTOR,
+  isGestureArmed,
+  shouldCreate,
+  type GestureMode,
+} from "./gates";
+import type { Point } from "./geometry";
 import { MAX_ZOOM, MIN_ZOOM, type Camera, type CameraIntents } from "./useCamera";
 import { closesPair, DOUBLE_CLICK_MS, type PlanePress } from "./planePress";
 import "./canvas.css";
@@ -38,11 +46,10 @@ import "./canvas.css";
 /** Space between grid dots at 100% zoom. */
 const GRID = 28;
 
-/** Ring/word/field/menu targets whose clicks never reach the plane's gestures. */
-const CONTENT_SELECTOR =
-  ".word, .lack-mark, .distance-label, .distance-ring, .distance-coinfield, .grow-field, .plane-menu";
+/** Screen pixels between lasso samples (keeps the path small and smooth). */
+const LASSO_STEP_PX = 3;
 
-/** Is this event target one of the content elements above? */
+/** Is this event target one of the content elements (gates.ts's list)? */
 function isContentTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(CONTENT_SELECTOR) !== null;
 }
@@ -72,6 +79,15 @@ interface CanvasPlaneProps {
    * The app opens its word/lack creation menu at that point.
    */
   onPlaneDoubleClick?: (point: { x: number; y: number }) => void;
+  /**
+   * How a gesture is armed right now (ADR-0016). While armed, pan and creation
+   * suspend (the interaction-mode gate); idle is the plain canvas.
+   */
+  gestureMode?: GestureMode;
+  /** True while the playing-set selector's draw tool is armed (story 1). */
+  lassoArmed?: boolean;
+  /** Called with the lasso's world path when the draw tool is released. */
+  onLasso?: (path: readonly Point[]) => void;
   children?: ReactNode;
 }
 
@@ -79,11 +95,26 @@ export function CanvasPlane({
   camera,
   intents,
   onPlaneDoubleClick,
+  gestureMode = "idle",
+  lassoArmed = false,
+  onLasso,
   children,
 }: CanvasPlaneProps) {
   const planeRef = useRef<HTMLDivElement>(null);
   const behaviorRef = useRef<ZoomBehavior<HTMLDivElement, unknown> | null>(null);
   const pressesRef = useRef<PlanePress[]>([]);
+  const [lassoPath, setLassoPath] = useState<Point[] | null>(null);
+
+  // Latest-value refs for the raw listeners and d3's filter, which are
+  // attached once and must always see the current mode, camera and callback.
+  const modeRef = useRef<GestureMode>(gestureMode);
+  modeRef.current = gestureMode;
+  const lassoArmedRef = useRef(lassoArmed);
+  lassoArmedRef.current = lassoArmed;
+  const onLassoRef = useRef(onLasso);
+  onLassoRef.current = onLasso;
+  const cameraRef = useRef(camera);
+  cameraRef.current = camera;
 
   const planeApi = useMemo<PlaneApi>(
     () => ({
@@ -111,6 +142,8 @@ export function CanvasPlane({
   }
 
   function handleDoubleClick(e: ReactMouseEvent<HTMLDivElement>) {
+    // Creation suspends while any gesture is armed (ADR-0016's gate).
+    if (!shouldCreate(gestureMode)) return;
     if (isContentTarget(e.target)) return;
     const now = Date.now();
     const recent = pressesRef.current.filter((press) => now - press.t <= DOUBLE_CLICK_MS);
@@ -145,7 +178,19 @@ export function CanvasPlane({
       unknown
     >()
       .scaleExtent([MIN_ZOOM, MAX_ZOOM])
-      .filter((event: any) => event.type !== "dblclick" && !event.button)
+      .filter((event: any) => {
+        if (event.type === "dblclick") return false;
+        // While a gesture is armed the left drag belongs to that gesture, never
+        // to the pan (ADR-0016); the wheel still zooms, so a selector can reach
+        // words out of view.
+        if (
+          isGestureArmed(modeRef.current) &&
+          (event.type === "mousedown" || event.type === "touchstart")
+        ) {
+          return false;
+        }
+        return !event.button;
+      })
       .on("zoom.camera", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
         const t: ZoomTransform = event.transform;
         intents.setTransform({ x: t.x, y: t.y, zoom: t.k });
@@ -160,8 +205,10 @@ export function CanvasPlane({
     // Record plane presses before attaching d3 (d3 stops immediate propagation
     // on mousedown, so later same-element listeners never run). Content presses
     // are filtered by target as well as by their own stopPropagation, so the
-    // pair below is always two presses on empty plane.
+    // pair below is always two presses on empty plane. Creation suspends while
+    // a gesture is armed (ADR-0016's gate).
     const countPlanePress = (event: MouseEvent) => {
+      if (!shouldCreate(modeRef.current)) return;
       if (event.button !== 0 || isContentTarget(event.target)) return;
       const now = Date.now();
       const recent = pressesRef.current.filter((press) => now - press.t <= DOUBLE_CLICK_MS);
@@ -170,12 +217,61 @@ export function CanvasPlane({
     };
     el.addEventListener("mousedown", countPlanePress);
 
+    // The selector's draw tool (story 1): a left drag on empty plane draws a
+    // world-space lasso. With the gate armed d3's filter refuses the pan, so
+    // the press is the lasso's; the path is reported on release and the
+    // selection rule (words only) lives in geometry.ts. A press on content is
+    // never a lasso, and a click with no drag encloses nothing.
+    let path: Point[] | null = null;
+    const lassoDown = (event: MouseEvent) => {
+      if (event.button !== 0 || !lassoArmedRef.current) return;
+      if (isContentTarget(event.target)) return;
+      const el2 = planeRef.current;
+      if (!el2) return;
+      event.preventDefault();
+      const rect = el2.getBoundingClientRect();
+      // The camera can still change by wheel zoom mid-lasso, so read it per
+      // sample rather than capturing it at the press.
+      const toWorld = (clientX: number, clientY: number): Point => {
+        const cam = cameraRef.current;
+        return {
+          x: (clientX - rect.left - cam.x) / cam.zoom,
+          y: (clientY - rect.top - cam.y) / cam.zoom,
+        };
+      };
+      path = [toWorld(event.clientX, event.clientY)];
+      setLassoPath([...path]);
+      let lastX = event.clientX;
+      let lastY = event.clientY;
+
+      const onMove = (ev: MouseEvent) => {
+        if (!path) return;
+        if (Math.hypot(ev.clientX - lastX, ev.clientY - lastY) < LASSO_STEP_PX) return;
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+        path.push(toWorld(ev.clientX, ev.clientY));
+        setLassoPath([...path]);
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        const drawn = path ?? [];
+        path = null;
+        setLassoPath(null);
+        if (drawn.length >= 3) onLassoRef.current?.(drawn);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+    el.addEventListener("mousedown", lassoDown);
+
     const sel = select(el);
     sel.call(behavior);
     behaviorRef.current = behavior;
 
     return () => {
       el.removeEventListener("mousedown", countPlanePress);
+      el.removeEventListener("mousedown", lassoDown);
       sel.on(".zoom", null);
       behaviorRef.current = null;
     };
@@ -210,7 +306,7 @@ export function CanvasPlane({
     <PlaneContext.Provider value={planeApi}>
       <div
         ref={planeRef}
-        className="plane"
+        className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}`}
         style={gridStyle}
         onDoubleClick={handleDoubleClick}
       >
@@ -221,6 +317,13 @@ export function CanvasPlane({
           }}
         >
           {children}
+          {lassoPath && lassoPath.length > 1 && (
+            <svg className="lasso" aria-hidden="true">
+              <polygon
+                points={lassoPath.map((point) => `${point.x},${point.y}`).join(" ")}
+              />
+            </svg>
+          )}
         </div>
         <div className="zoom-chip">{Math.round(camera.zoom * 100)}%</div>
         <div className="plane-hint">
