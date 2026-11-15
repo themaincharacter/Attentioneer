@@ -2,6 +2,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import type { Assumption, FoundAssumption } from "../map/assumptions";
@@ -30,8 +31,15 @@ interface AssumptionOverlayProps {
  * on one target, in FILE ORDER, each revisable in place, each with its own
  * quiet ×; the bottom field states another claim on the same target (a rival
  * is just the next line, never a second glyph or a panel). Enter commits and
- * keeps the field ready; Esc or a press outside dismisses the card and nothing
- * more is written.
+ * keeps the field ready; Esc, a press outside or leaving the field dismisses
+ * the card and nothing more is written.
+ *
+ * THE BLUR RULE (Epic 6 story 3, the residual story 2's pin left): a visible
+ * draft must not outlive its pin — if the add field loses focus (a Tab away, a
+ * click elsewhere), the draft is discarded and the card closes, exactly as Esc
+ * does. Enter is the only commit. A hop to a control INSIDE the card is not
+ * leaving: the claim you clicked is still yours to edit. (The SignChoice
+ * precedent: Esc/blur discards, Enter commits.)
  *
  * It is an OVERLAY: absolutely positioned in world space and counter-scaled
  * against the camera, so it stays readable at every zoom and never grows the
@@ -122,6 +130,25 @@ export function AssumptionOverlay({
     onAdd(claim);
     setDraft("");
     addRef.current?.focus();
+  }
+
+  /**
+   * The add field's blur (story 3): leave the field and the draft goes with it
+   * — nothing visible outlives the pin. Enter never reaches here (commitNew
+   * re-focuses the same field), and a hop to another control inside the card
+   * is not leaving, so editing a claim does not discard the new line.
+   */
+  function handleAddBlur(e: ReactFocusEvent<HTMLInputElement>) {
+    const root = rootRef.current;
+    if (
+      root &&
+      e.relatedTarget instanceof Node &&
+      root.contains(e.relatedTarget)
+    ) {
+      return;
+    }
+    setDraft("");
+    onClose();
   }
 
   function beginEdit(found: FoundAssumption) {
@@ -219,6 +246,7 @@ export function AssumptionOverlay({
           placeholder="state an assumption…"
           aria-label="state an assumption"
           onChange={(e) => setDraft(e.target.value)}
+          onBlur={handleAddBlur}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();

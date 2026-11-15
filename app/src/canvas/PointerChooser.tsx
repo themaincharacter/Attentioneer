@@ -21,8 +21,8 @@ interface PointerChooserProps {
   anchor: Point;
   /** Every pointer line on this word, in FILE ORDER, with its file index. */
   rows: readonly FoundPointer[];
-  /** The word's slug (aria and the quiet heading). */
-  slug: string;
+  /** The word's coined NAME (aria; the slug stays in the records — story 3). */
+  name: string;
   /** The open marks' pointer target keys (the per-row ring reads this). */
   markedKeys: ReadonlySet<string>;
   /** Write the add entry's authored form + value. */
@@ -69,7 +69,7 @@ interface PointerChooserProps {
 export function PointerChooser({
   anchor,
   rows,
-  slug,
+  name,
   markedKeys,
   onAdd,
   onEdit,
@@ -221,7 +221,7 @@ export function PointerChooser({
         transformOrigin: "left center",
       }}
       role="group"
-      aria-label={chooserLabel(slug)}
+      aria-label={chooserLabel(name)}
     >
       {rows.map((found) => {
         const pointer = found.pointer;

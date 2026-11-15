@@ -71,3 +71,81 @@ export function rejectSpot(
   if (isShelved(word.x, word.width, shelfX)) return null;
   return { x: shelfX + SHELF_MARGIN, y: word.y };
 }
+
+/* ------------------------------------------------------------------------- *
+ * The fold's rendered extent (Epic 6 story 3). The shelf is a place in world
+ * space (ADR-0010), and the plane is unbounded — so the drawn fold has to
+ * REACH the shelf it marks. Before this story the fold was drawn a fixed
+ * 10000 world units either side of the origin: a word set aside far below sat
+ * beside no line and no caption, and stopped reading as set aside. The extent
+ * now grows to cover every word on the map (set aside or not) plus a margin,
+ * never shrinking below the old minimum reach. The place-label still sits at
+ * its familiar top spot; when the extent grows past the minimum, a caption is
+ * repeated at the far end, so a person down there reads the place too.
+ *
+ * Provisional: the minimum reach, the margin and the caption's end offset
+ * (ADR-0003's rendering seam). The rule is pure so the geometry is asserted
+ * without a DOM.
+ * ------------------------------------------------------------------------- */
+
+/** World-unit half-extent of the drawn fold at minimum (the plane is unbounded). */
+export const FOLD_REACH = 10000;
+
+/** World units of margin past the outermost word the fold must reach. */
+export const FOLD_PAD = 400;
+
+/** World y of the fold's familiar place-label ("set aside"). */
+export const FOLD_LABEL_TOP = 6;
+
+/** How far above the extent's bottom the repeated caption sits. */
+export const FOLD_LABEL_END_OFFSET = 30;
+
+/** One word's vertical extent in world space (its top, its rendered height). */
+export interface FoldBox {
+  y: number;
+  h: number;
+}
+
+/** The vertical span the fold and its shade are drawn across, in world units. */
+export interface FoldExtent {
+  top: number;
+  bottom: number;
+  height: number;
+}
+
+/**
+ * The fold's vertical extent: at least the minimum reach either side of the
+ * origin, grown to cover every word's box plus a margin. A garbage height is
+ * ignored (a word reads as a line), so no NaN can reach the renderer.
+ */
+export function foldExtent(
+  boxes: readonly FoldBox[],
+  reach: number = FOLD_REACH,
+  pad: number = FOLD_PAD,
+): FoldExtent {
+  let top = -Math.abs(reach);
+  let bottom = Math.abs(reach);
+  for (const box of boxes) {
+    if (!Number.isFinite(box.y)) continue;
+    const h = Number.isFinite(box.h) && box.h > 0 ? box.h : 0;
+    top = Math.min(top, box.y - pad);
+    bottom = Math.max(bottom, box.y + h + pad);
+  }
+  return { top, bottom, height: bottom - top };
+}
+
+/**
+ * Where the "set aside" captions sit, in world y: the familiar top label
+ * always, plus one at the far end when the extent has grown past the minimum
+ * reach (a word set aside far below still reads as set aside where it sits).
+ */
+export function foldCaptionTops(extent: FoldExtent): number[] {
+  const tops = [FOLD_LABEL_TOP];
+  if (extent.bottom > FOLD_REACH) {
+    tops.push(extent.bottom - FOLD_LABEL_END_OFFSET);
+  }
+  if (extent.top < -FOLD_REACH) {
+    tops.push(extent.top + FOLD_LABEL_TOP);
+  }
+  return [...new Set(tops)].sort((a, b) => a - b);
+}

@@ -1,3 +1,4 @@
+import type { Point } from "../canvas/geometry";
 import { createWriteQueue, type WriteQueue } from "../lib/writeQueue";
 import { levelFromZoom, type Level } from "./level";
 
@@ -23,6 +24,13 @@ import { levelFromZoom, type Level } from "./level";
  * gesture's pinning is the interaction-mode gate's job (story 2) — this module
  * only rules on a SETTLED reading.
  *
+ * A JUMP may carry an ANCHOR (Epic 6 story 3): the level control jumps about
+ * the viewport's centre, while a word's follow jumps about the word's own
+ * screen point, keeping that word under the eye. The anchor is passed straight
+ * to the camera intent (`setZoomBand(level, sx, sy)`) and changes nothing about
+ * the handoff's write rule — a deliberate jump is still the one deliberate
+ * cause.
+ *
  * Pure apart from its injected callbacks and the queue it owns, so the three
  * causes and their write behavior are asserted without a window.
  */
@@ -39,9 +47,11 @@ export interface LevelHandoffDeps {
   onSwitch: (next: Level, cause: HandoffCause) => void;
   /**
    * Move the camera INTO a band — the shared jump intent. No recentre and no
-   * position yank: it never writes the key and never persists position.
+   * position yank: it never writes the key and never persists position. An
+   * optional `screen` anchor keeps that screen point fixed across the jump
+   * (the word's follow, story 3); without one the viewport's centre is used.
    */
-  moveCamera: (next: Level) => void;
+  moveCamera: (next: Level, screen?: Point) => void;
   /**
    * The key's one write: rewrite `workspace.yml`'s level line. The handoff
    * queues it, so this must be the read-modify-write body, never a bare write.
@@ -60,11 +70,12 @@ export interface LevelHandoff {
    */
   settle: (zoom: number) => void;
   /**
-   * A deliberate jump to a game (the level control): move the camera into the
-   * band's landing zoom, and when the game changed, switch and queue the write.
-   * Jumping to the game already running only moves the camera.
+   * A deliberate jump to a game (the level control, or a word's follow): move
+   * the camera into the band's landing zoom — about `screen` when given, keeping
+   * that point under the eye — and when the game changed, switch and queue the
+   * write. Jumping to the game already running only moves the camera.
    */
-  jump: (next: Level) => void;
+  jump: (next: Level, screen?: Point) => void;
   /**
    * Open-restore: the key sets the camera into its band. It NEVER writes —
    * opening is a read (ADR-0018 decision 2).
@@ -103,10 +114,11 @@ export function createLevelHandoff(
     settle(zoom) {
       enter(levelFromZoom(zoom), "settle");
     },
-    jump(next) {
+    jump(next, screen) {
       // The camera moves into the band first: the jump IS the direct-movement
-      // vehicle, and the band it lands in is the game it switches to.
-      deps.moveCamera(next);
+      // vehicle, and the band it lands in is the game it switches to. The
+      // anchor (when a word's follow gives one) keeps that word under the eye.
+      deps.moveCamera(next, screen);
       enter(next, "jump");
     },
     restore(next) {

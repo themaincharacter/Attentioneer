@@ -17,6 +17,11 @@ import {
 interface OutwardWindowProps {
   /** The world point the window hangs off (beside its word, never in it). */
   anchor: Point;
+  /**
+   * The word's coined NAME (aria; the slug stays in the pointer record —
+   * Epic 6 story 3's names-not-slugs rule).
+   */
+  name: string;
   /** The authored pointer this window speaks about (form + verbatim value). */
   pointer: Pointer;
   /** The workspace root a `path` resolves against, exactly as written. */
@@ -79,6 +84,7 @@ function viewportOf(): Viewport {
  */
 export function OutwardWindow({
   anchor,
+  name,
   pointer,
   workspacePath,
   onClose,
@@ -231,7 +237,7 @@ export function OutwardWindow({
       }}
       role="group"
       tabIndex={-1}
-      aria-label={peekLabel(pointer.on, pointer.form)}
+      aria-label={peekLabel(name, pointer.form)}
       title={PEEK_TOOLTIP}
     >
       {/* identity first: the handle exactly as authored, selectable to copy */}

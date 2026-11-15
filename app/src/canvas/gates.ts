@@ -34,6 +34,13 @@
  * the glimpse can never pan the plane, create anything or start a word gesture;
  * a press outside it is the click-away that closes it.
  *
+ * Epic 6 story 3 adds the per-word follow (ADR-0019): ONE quiet control on
+ * every word's row that jumps the band keeping the word under the eye. It is
+ * a word-row affordance like the memory dot or the reach handle, so it and its
+ * tiny two-game menu own their presses and join both lists — a press on the
+ * follow must never start a word drag or a click-to-center. The control reads
+ * no face, so it is in every row and the lists never vary with presence.
+ *
  * Epic 6 story 2 turns the gate into the level's PIN (ADR-0018 decision 3):
  * while an armed gesture holds the pointer, the game it began in is pinned, and
  * a FOCUSED TEXT FIELD pins it the same way — a wheel crossing moves the camera
@@ -149,6 +156,13 @@ export const CONTENT_CLASSES = [
   "outward-open",
   "outward-reveal",
   "outward-close",
+  // Epic 6 story 3: the per-word follow control and the tiny menu of the two
+  // other games it opens. A press on any of them is content, never a plane
+  // gesture.
+  "word-follow",
+  "word-follow-toggle",
+  "word-follow-menu",
+  "word-follow-game",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */
@@ -240,6 +254,14 @@ export const WORD_CONTROL_CLASSES = [
   "outward-open",
   "outward-reveal",
   "outward-close",
+  // Epic 6 story 3: the follow control is a word-row affordance (beside the
+  // memory dot, the diamond, the reach handle and the connect handle), so it
+  // must never start a word drag or a click-to-center; its menu's game choices
+  // own their presses the same way.
+  "word-follow",
+  "word-follow-toggle",
+  "word-follow-menu",
+  "word-follow-game",
 ] as const;
 
 /**

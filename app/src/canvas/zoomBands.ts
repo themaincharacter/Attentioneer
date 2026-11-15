@@ -59,6 +59,23 @@ export function distanceLabelVisible(zoom: number): boolean {
 }
 
 /**
+ * Do the signed link wires (and their head signs) render?
+ *
+ * THE LINKWIRE ZOOM-GATE DECISION (Epic 6 story 3): link wires are BAND-based —
+ * they render exactly while the dynamics game is active, and nowhere else. They
+ * are NOT tied to `COLLAPSE_BELOW` or `DISTANCE_LABEL_BELOW`: those thresholds
+ * stay label-only rules, and a wire's presence is a GAME question, not a label
+ * one. The consequence the decision cares about — no bare link pixels lingering
+ * below the label-collapse band — holds because the dynamics band's floor sits
+ * well above both label thresholds (a zoom that folds labels is concept, where
+ * no link renders at all). Provisional: the landing zooms and boundaries are
+ * tuned at the slice; the band gate itself is the decision.
+ */
+export function linkWiresVisible(level: Level): boolean {
+  return level === "dynamics";
+}
+
+/**
  * The zoom each band LANDS on (provisional): where its content reads best,
  * where a deliberate jump arrives, and where a click-to-center settles. The
  * concept one sits at the legible top of its band — above the label threshold

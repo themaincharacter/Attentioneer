@@ -170,7 +170,12 @@ export function chooserFocusSelector(
   return ".level-control .level-game.active";
 }
 
-/** The chooser's aria label for the word it speaks about (quiet wording). */
-export function chooserLabel(slug: string): string {
-  return "pointers on “" + slug + "”";
+/**
+ * The chooser's aria label for the word it speaks about (quiet wording). It
+ * takes the word's coined NAME, never the record's slug: person-facing strings
+ * speak names (Epic 6 story 3), and the slug stays in the record and in the
+ * markup's focus selector.
+ */
+export function chooserLabel(name: string): string {
+  return "pointers on “" + name + "”";
 }

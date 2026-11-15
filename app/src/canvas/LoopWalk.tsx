@@ -1,9 +1,21 @@
 import { useEffect } from "react";
 import type { LoopRead, WalkStep } from "../map/loopRead";
+import {
+  walkStepNote,
+  walkStepPair,
+  walkWordGapText,
+  type NameOf,
+} from "./notices";
 
 interface LoopWalkProps {
   /** The derived read — recomputed on every record change, never stored. */
   read: LoopRead;
+  /**
+   * The person's name for a slug (story 3): the walk READS the records by slug
+   * but speaks the words' coined names. A gone word falls back to its slug —
+   * the record is the only name left.
+   */
+  nameOf: NameOf;
   onClose: () => void;
 }
 
@@ -23,9 +35,13 @@ interface LoopWalkProps {
  * 7, the glossary's "never a score"). It is a display, not a form of its own;
  * Esc or the × closes it, and the records are untouched either way.
  *
+ * The read keeps slugs (world B: identity is the record); every sentence here
+ * goes through `nameOf`, so the person reads coins, not slugs (story 3's
+ * names-not-slugs rule).
+ *
  * Provisional: the layout and the copy (ADR-0003's seam).
  */
-export function LoopWalk({ read, onClose }: LoopWalkProps) {
+export function LoopWalk({ read, nameOf, onClose }: LoopWalkProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
@@ -61,15 +77,14 @@ export function LoopWalk({ read, onClose }: LoopWalkProps) {
       ))}
       {read.wordGaps.map((gap) => (
         <div className="walk-gap" key={`${gap.kind}-${gap.slug}`}>
-          {gap.kind === "dangling"
-            ? `word “${gap.slug}” is not on the map`
-            : `“${gap.slug}” is outside the playing set`}
+          {walkWordGapText(gap, nameOf)}
         </div>
       ))}
       {read.steps.map((step, index) => (
         <StepRow
           key={`${step.from}\u0000${step.to}\u0000${index}`}
           step={step}
+          nameOf={nameOf}
         />
       ))}
       {read.verdict !== null && (
@@ -80,34 +95,26 @@ export function LoopWalk({ read, onClose }: LoopWalkProps) {
 }
 
 /** One step: the pair first, then its sign or the gap that withheld it. */
-function StepRow({ step }: { step: WalkStep }) {
+function StepRow({ step, nameOf }: { step: WalkStep; nameOf: NameOf }) {
+  const pair = walkStepPair(step, nameOf);
+  const note = walkStepNote(step, nameOf);
   if (step.kind === "sign") {
     return (
       <div className="walk-step">
-        <span className="walk-pair">
-          {step.from} → {step.to}
-        </span>
+        <span className="walk-pair">{pair}</span>
         <span className="walk-sign">{step.sign}</span>
       </div>
     );
   }
   return (
     <div className="walk-step gap">
-      <span className="walk-pair">
-        {step.from} → {step.to}
-      </span>
+      <span className="walk-pair">{pair}</span>
       {step.gap.kind === "marked-link" ? (
         <span className="walk-sign unknown" title="sign unsettled">
           ?
         </span>
       ) : null}
-      <span className="walk-note">
-        {step.gap.kind === "marked-link"
-          ? "sign unsettled"
-          : step.gap.reverse
-            ? `missing link — runs the other way: ${step.to} → ${step.from} exists`
-            : "missing link"}
-      </span>
+      <span className="walk-note">{note}</span>
     </div>
   );
 }

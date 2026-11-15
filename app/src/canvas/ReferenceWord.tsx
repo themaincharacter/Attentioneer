@@ -15,6 +15,9 @@ import {
   type GestureMode,
 } from "./gates";
 import type { Point } from "./geometry";
+import { followTargets, screenPointOf } from "./followRules";
+import { reachHandleModifiers } from "./presenceRules";
+import type { Level } from "../workspace/level";
 
 interface ReferenceWordProps {
   word: Reference;
@@ -81,6 +84,19 @@ interface ReferenceWordProps {
   reachMarked?: boolean;
   /** Open this word's quiet pointer chooser, anchored beside the row. */
   onOpenPointers?: (anchor: Point) => void;
+  /**
+   * True when this word carries at least one authored pointer line (ground).
+   * The reach handle renders SOLID then and FAINT-but-addable otherwise — the
+   * diamond's `has-assumptions` precedent, within the band only (ADR-0019).
+   */
+  hasPointers?: boolean;
+  /** The game running now — the follow control offers the two OTHER games. */
+  game?: Level;
+  /**
+   * Jump to another game's band keeping THIS word under the eye: the shared
+   * jump intent, anchored at the word's own screen position (story 3).
+   */
+  onFollow?: (next: Level, screen: Point) => void;
 }
 
 /** Screen pixels of movement before a mousedown becomes a drag. */
@@ -112,7 +128,15 @@ interface DragState {
  * renders no diamond at all. At ground (Epic 5 story 1) the row instead carries
  * the one quiet reach handle — a fixed slot revealed on hover or keyboard
  * focus, with a small ring cue when any of the word's pointer lines is marked;
- * its quiet pointer chooser is likewise rendered at App level.
+ * its quiet pointer chooser is likewise rendered at App level. Story 3 makes
+ * the reach handle's presence read: SOLID when the word carries pointers,
+ * FAINT-but-addable when not (the diamond's precedent) — in ground only.
+ *
+ * Story 3 also lands the cross-band move (ADR-0019): EVERY word carries the
+ * follow control, in every game — one quiet glyph that opens a tiny menu of the
+ * two other games and jumps the band with this word as the camera's anchor, so
+ * the word stays under the eye. It is neutral by construction: its render reads
+ * the running game and no face at all.
  *
  * Dragging is reported upward every animation frame (`onDragMove`) so the
  * word's wires track the pointer instead of snapping on drop.
@@ -142,12 +166,17 @@ export function ReferenceWord({
   showReach = false,
   reachMarked = false,
   onOpenPointers,
+  hasPointers = false,
+  game = "concept",
+  onFollow,
 }: ReferenceWordProps) {
   const { camera, centerOn } = usePlane();
   const wordRef = useRef<HTMLDivElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const memoryRef = useRef<HTMLTextAreaElement>(null);
   const renameRef = useRef<HTMLInputElement>(null);
+  const followRef = useRef<HTMLDivElement>(null);
+  const followToggleRef = useRef<HTMLButtonElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const rafRef = useRef<number | null>(null);
   const pendingRef = useRef<Point | null>(null);
@@ -160,6 +189,8 @@ export function ReferenceWord({
   const [renameValue, setRenameValue] = useState(word.name);
   const [dragPos, setDragPos] = useState<Point | null>(null);
   const [dragging, setDragging] = useState(false);
+  // The follow control's tiny menu (the two other games), story 3.
+  const [followOpen, setFollowOpen] = useState(false);
   const coinDone = useRef(false);
   const memoryDone = useRef(false);
   const renameDone = useRef(false);
@@ -175,6 +206,21 @@ export function ReferenceWord({
   useEffect(() => {
     if (renaming) renameRef.current?.focus();
   }, [renaming]);
+
+  // Opening the follow menu lands on its first game: the quiet list is the
+  // control's own door, so Tab-then-Enter reaches a jump in one move.
+  useEffect(() => {
+    if (!followOpen) return;
+    followRef.current
+      ?.querySelector<HTMLButtonElement>(".word-follow-game")
+      ?.focus();
+  }, [followOpen]);
+
+  // A gesture arming takes the pointer (ADR-0016): the quiet follow menu goes
+  // with it, exactly as every other transient closes on the switch path.
+  useEffect(() => {
+    if (isGestureArmed(interactionMode)) setFollowOpen(false);
+  }, [interactionMode]);
 
   // Publish the rendered box so wires can meet the word's edges.
   useEffect(() => {
@@ -272,6 +318,42 @@ export function ReferenceWord({
     // `1` sat in the dynamics band from every concept zoom.
     const at = anchor();
     centerOn(at.x, at.y);
+  }
+
+  /**
+   * The follow control's own press (story 3, ADR-0019): ONE quiet control on
+   * every coined word, in every game, offering the two OTHER games. It reads
+   * no face — a word carrying pointers, assumptions or a loop must look and
+   * behave exactly like a bare one, because a face is follow-reachable once
+   * the word is found and NEVER announced across bands.
+   */
+  function toggleFollow() {
+    if (isGestureArmed(interactionMode)) return;
+    setFollowOpen((open) => !open);
+  }
+
+  /**
+   * The anchored jump: the word's centre is what the eye is on, so the jump
+   * keeps it there — the shared `setZoomBand(level, sx, sy)` intent with the
+   * word's own screen point as the anchor (ADR-0018 decision 4, ADR-0019).
+   */
+  function followTo(next: Level) {
+    setFollowOpen(false);
+    const el = wordRef.current;
+    const world = {
+      x: x + (el?.offsetWidth ?? 0) / 2,
+      y: y + (el?.offsetHeight ?? 0) / 2,
+    };
+    onFollow?.(next, screenPointOf(world, camera));
+  }
+
+  function handleFollowKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "Escape" || !followOpen) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setFollowOpen(false);
+    // The menu's focused game is gone; put focus back on the control.
+    followToggleRef.current?.focus();
   }
 
   // Raw listener: d3-zoom stops mousedown at the plane (stopImmediatePropagation),
@@ -410,6 +492,7 @@ export function ReferenceWord({
 
   function handleBlur(e: ReactFocusEvent<HTMLDivElement>) {
     if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    if (followOpen) setFollowOpen(false);
     if (isDraft) {
       coin();
     } else if (revealing) {
@@ -445,7 +528,7 @@ export function ReferenceWord({
     <div
       ref={wordRef}
       data-slug={word.slug ?? undefined}
-      className={`word${marked ? " open" : ""}${shelved ? " shelved" : ""}${outOfSet ? " out-of-set" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}`}
+      className={`word${marked ? " open" : ""}${shelved ? " shelved" : ""}${outOfSet ? " out-of-set" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}${followOpen ? " follow-open" : ""}`}
       style={{ transform }}
       onBlur={handleBlur}
       onMouseUp={handleDropMouseUp}
@@ -499,13 +582,17 @@ export function ReferenceWord({
         {/* Story 1 of Epic 5's reach (ground only): ONE quiet handle in a
             fixed slot. It is always in the row, so the word's box never grows
             and no wire anchor moves; hover, keyboard focus and being focused
-            reveal it. The small ring cue says one of this word's pointer lines
-            is marked — a presence, never a count. It opens the quiet chooser
-            at App level, so the chooser can never grow the word either. */}
+            reveal it. Story 3 gives it the in-band presence read: SOLID when
+            the word carries pointers, FAINT-but-addable when not (the diamond's
+            `has-assumptions` precedent) — and only ever at ground, because a
+            face is never announced across bands (ADR-0019). The small ring cue
+            says one of this word's pointer lines is marked — a presence, never
+            a count. It opens the quiet chooser at App level, so the chooser can
+            never grow the word either. */}
         {showReach && onOpenPointers && !renaming && (
           <button
             type="button"
-            className={"reach-handle" + (reachMarked ? " marked" : "")}
+            className={"reach-handle" + reachHandleModifiers(hasPointers, reachMarked)}
             aria-label={
               reachMarked
                 ? "reach — pointers on this word (one is marked)"
@@ -524,6 +611,59 @@ export function ReferenceWord({
             ↗
           </button>
         )}
+        {/* Story 3's follow (ADR-0019 decision 2): the cross-band vocabulary
+            is MOVEMENT. ONE quiet control on every coined word, in every game,
+            offering the two OTHER games; each jumps the band keeping this word
+            under the eye (the shared jump intent, anchored at the word's own
+            screen point). It is NEUTRAL by construction: it reads the running
+            game and nothing else, so a word with pointers, assumptions or a
+            loop looks exactly like a bare one — a face is follow-reachable
+            once the word is found, never announced. The tiny menu is rendered
+            inside the row, absolutely positioned, so it never grows the word's
+            box (every wire's anchor holds). Provisional: the glyph, the menu
+            and the two-other-games offer (ADR-0003's seam). */}
+        <div
+          ref={followRef}
+          className="word-follow"
+          onKeyDown={handleFollowKeyDown}
+        >
+          <button
+            ref={followToggleRef}
+            type="button"
+            className="word-follow-toggle"
+            aria-label="follow this word across the games"
+            title="follow — jump the band, keeping this word under the eye"
+            aria-expanded={followOpen}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleFollow();
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            ◎
+          </button>
+          {followOpen && (
+            <div
+              className="word-follow-menu"
+              role="group"
+              aria-label="jump, keeping this word under the eye"
+            >
+              {followTargets(game).map((target) => (
+                <button
+                  key={target}
+                  type="button"
+                  className="word-follow-game"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    followTo(target);
+                  }}
+                >
+                  {target}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button
           type="button"
           className="connect-handle"

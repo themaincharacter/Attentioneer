@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -82,10 +83,24 @@ import { linkKey, type LinkSign } from "./map/links";
 import { readLoop } from "./map/loopRead";
 import { findLoop, isClosedPath, loopSlug, type Loop } from "./map/loops";
 import { markTargetKey, type Mark, type MarkTarget } from "./map/marks";
+import {
+  describeAssumptionTarget,
+  describeMarkTarget,
+  noticeGroups,
+  type NameOf,
+  type NoticeFamily,
+} from "./canvas/notices";
 import { hasWord, prefilledSelection } from "./map/model";
 import { findPointers, type Pointer } from "./map/pointers";
 import type { Reference } from "./map/refs";
-import { DEFAULT_SHELF_X, isShelved, rejectSpot } from "./map/shelf";
+import {
+  DEFAULT_SHELF_X,
+  foldExtent,
+  isShelved,
+  rejectSpot,
+} from "./map/shelf";
+import { cueShownIn } from "./canvas/presenceRules";
+import { linkWiresVisible } from "./canvas/zoomBands";
 import { saveWorkspaceLevel, DEFAULT_LEVEL, type Level } from "./workspace/level";
 import {
   createLevelHandoff,
@@ -486,6 +501,30 @@ function App() {
     return owners;
   }, [pointers, pointerMarkedKeys]);
 
+  // Which words carry at least one authored pointer line — the reach handle's
+  // in-band SOLID read (story 3: solid when present, faint-but-addable when
+  // not). A Set, never a count: presence, inside ground only (ADR-0019).
+  const wordsWithPointers = useMemo(() => {
+    const owners = new Set<string>();
+    for (const pointer of pointers) owners.add(pointer.on);
+    return owners;
+  }, [pointers]);
+
+  /**
+   * The person's name for a slug (story 3): notices, the walk and the overlay's
+   * aria all speak NAMES; the slug stays in the record. A word wins over a loop
+   * of the same slug (a word's face is the word), and a slug whose owner is
+   * gone falls back to itself — the record is the only name left.
+   */
+  const nameOf = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const loop of loops) names.set(loopSlug(loop.name), loop.name);
+    for (const word of refs) {
+      if (word.slug !== null) names.set(word.slug, word.name);
+    }
+    return (slug: string): string => names.get(slug) ?? slug;
+  }, [refs, loops]);
+
   // Every coined word's slug: the read's "is this path word on the map?".
   const wordSlugs = useMemo(
     () =>
@@ -536,6 +575,18 @@ function App() {
     (word: Reference): boolean =>
       word.slug !== null && isShelved(posOf(word).x, boxOf(word).w, shelfX),
     [posOf, boxOf, shelfX],
+  );
+
+  // The fold's drawn extent (story 3): the shelf is a place in world space, so
+  // the line must REACH it. The words' own vertical span (live during a drag)
+  // grows the fold past its minimum reach, so a word set aside far below still
+  // sits beside its line and its repeated end caption. Provisional geometry.
+  const fold = useMemo(
+    () =>
+      foldExtent(
+        refs.map((word) => ({ y: posOf(word).y, h: boxOf(word).h })),
+      ),
+    [refs, posOf, boxOf],
   );
 
   // The interaction-mode gate (ADR-0016): the selector, the pending sign choice
@@ -732,17 +783,20 @@ function App() {
 
   /**
    * Move the camera INTO a band, keeping the view's centre in place: the jump
-   * intent the level control and the open-restore share. No recentre (no world
-   * point is brought to the centre) and no position yank (position is never
-   * persisted); the landing zoom is the band's own.
+   * intent the level control, a word's follow and the open-restore share. No
+   * recentre (no world point is brought to the centre by default) and no
+   * position yank (position is never persisted); the landing zoom is the
+   * band's own. A FOLLOW passes its screen anchor (story 3): the shared intent
+   * then keeps THAT point fixed, so the word stays under the eye across the
+   * jump (ADR-0019's movement vocabulary).
    */
   const moveCameraToBand = useCallback(
-    (next: Level) => {
+    (next: Level, screen?: Point) => {
       const el = document.querySelector<HTMLDivElement>(".plane");
       intents.setZoomBand(
         next,
-        el ? el.clientWidth / 2 : undefined,
-        el ? el.clientHeight / 2 : undefined,
+        screen?.x ?? (el ? el.clientWidth / 2 : undefined),
+        screen?.y ?? (el ? el.clientHeight / 2 : undefined),
       );
     },
     [intents],
@@ -1173,8 +1227,10 @@ function App() {
         onLasso={handleLasso}
         onZoomSettle={handleZoomSettle}
       >
-        {/* the shelf's fold and margin: a place in world space (story 3) */}
-        <ShelfFold shelfX={shelfX} />
+        {/* the shelf's fold and margin: a place in world space (story 3). Its
+            drawn extent covers the world's words (story 3 of Epic 6), so a word
+            set aside far below still reads as set aside. */}
+        <ShelfFold shelfX={shelfX} extent={fold} />
 
         {/* stored loops render at Level 2 only (story 3): a quiet closed route
             through each loop's words in path order, beneath the words so it
@@ -1295,7 +1351,7 @@ function App() {
             outOfSet={isOutOfSet(word)}
             interactionMode={gestureMode}
             onReject={() => rejectWord(word)}
-            showAssumptions={level === "dynamics"}
+            showAssumptions={cueShownIn("assumptions", level)}
             hasAssumptions={
               word.slug !== null &&
               assumptionTargets.has(
@@ -1306,14 +1362,19 @@ function App() {
               if (word.slug === null) return;
               openAssumptions({ type: "word", slug: word.slug }, anchor);
             }}
-            showReach={level === "ground"}
+            showReach={cueShownIn("reach", level)}
             reachMarked={
               word.slug !== null && wordsWithMarkedPointer.has(word.slug)
+            }
+            hasPointers={
+              word.slug !== null && wordsWithPointers.has(word.slug)
             }
             onOpenPointers={(anchor) => {
               if (word.slug === null) return;
               openPointers(word.slug, anchor);
             }}
+            game={level}
+            onFollow={(next, screen) => handoff.jump(next, screen)}
           />
         ))}
 
@@ -1359,7 +1420,7 @@ function App() {
             renders exactly as before. Each directed link is its own wire, on
             its direction's side of the pair's canonical chord, with the sign
             glyph at the target head. */}
-        {level === "dynamics" &&
+        {linkWiresVisible(level) &&
           links.map((link) => {
             const f = refs.find((r) => r.slug === link.from);
             const t = refs.find((r) => r.slug === link.to);
@@ -1528,7 +1589,10 @@ function App() {
           <AssumptionOverlay
             anchor={assumptionPanel.anchor}
             lines={assumptionPanel.lines}
-            targetLabel={describeAssumptionTarget(assumptionPanel.target)}
+            targetLabel={describeAssumptionTarget(
+              assumptionPanel.target,
+              nameOf,
+            )}
             onAdd={(text) => addAssumption(assumptionPanel.target, text)}
             onRevise={(assumption, text) =>
               reviseAssumption(assumption, text)
@@ -1548,7 +1612,7 @@ function App() {
           <PointerChooser
             anchor={pointerPanel.anchor}
             rows={pointerPanel.rows}
-            slug={pointerPanel.on}
+            name={nameOf(pointerPanel.on)}
             markedKeys={pointerMarkedKeys}
             onAdd={(form, value) => addPointer(pointerPanel.on, form, value)}
             onEdit={(pointer, form, value) =>
@@ -1571,6 +1635,7 @@ function App() {
         {level === "ground" && peekAt && (
           <OutwardWindow
             anchor={peekAt.anchor}
+            name={nameOf(peekAt.on)}
             pointer={peekAt.pointer}
             workspacePath={workspace.path}
             onClose={() => closePeek("dismiss")}
@@ -1606,6 +1671,8 @@ function App() {
 
       {/* Orphan and unreadable records: preserved, surfaced quietly (ADR-0009/0013). */}
       <MarkNotices
+        level={level}
+        nameOf={nameOf}
         malformed={malformedMarks}
         orphans={orphanMarks}
         malformedLinks={malformedLinks}
@@ -1624,7 +1691,9 @@ function App() {
 
       {/* the walk (story 3): the selected loop's derived read — steps, signs,
           named gaps and the verdict only when complete (ADR-0015) */}
-      {walkRead && <LoopWalk read={walkRead} onClose={closeWalk} />}
+      {walkRead && (
+        <LoopWalk read={walkRead} nameOf={nameOf} onClose={closeWalk} />
+      )}
 
       {/* the ring in flight while its mark is being bound (story 2) */}
       {markDrag.ghost && (
@@ -1638,12 +1707,28 @@ function App() {
 }
 
 /**
- * A quiet line of small text for record lines the app keeps but cannot place
- * (mark orphans, a playing set naming words that are gone) or cannot read
- * (malformed marks, a malformed model.json). No counts, badges, or panels —
- * the line is the whole surface (ADR-0009's "surfaced, not silently hidden").
+ * The notices strip (ADR-0009's "surfaced, not silently hidden"; Epic 6 story
+ * 3's band scoping). A quiet line of small text for record lines the app keeps
+ * but cannot place (orphans, a playing set naming words that are gone) or
+ * cannot read (malformed lines, a malformed model.json). No counts or badges —
+ * the line is the whole surface.
+ *
+ * THE STRIP IS BAND-SCOPED now: it used to be the one unbanded aggregator,
+ * naming every family's orphans whatever game the plane showed. It renders only
+ * the groups `noticeGroups(level)` hands it — the shared "every game" group
+ * (marks, which every game draws) plus the RUNNING game's own records. A
+ * dynamics record's notice never appears in concept or ground, a pointer's
+ * never in dynamics (ADR-0016's honest partition, ADR-0019's no-aggregation).
+ * Each group carries its game's name as a quiet heading.
+ *
+ * NAMES, NOT SLUGS: every target is described through `nameOf`, so a person
+ * reads the coined word (or loop) and the record's slug stays in the file.
+ * Provisional: grouping per game rather than prefixing each line (both satisfy
+ * the rule; the grouping is the quieter look), and the heading's wording/look.
  */
 function MarkNotices({
+  level,
+  nameOf,
   malformed,
   orphans,
   malformedLinks,
@@ -1659,6 +1744,10 @@ function MarkNotices({
   duplicatePointers,
   orphanPointers,
 }: {
+  /** The game running now: the strip speaks only this game's records. */
+  level: Level;
+  /** The person's name for a slug (names-not-slugs, story 3). */
+  nameOf: NameOf;
   malformed: readonly string[];
   orphans: readonly Mark[];
   malformedLinks: readonly string[];
@@ -1676,133 +1765,166 @@ function MarkNotices({
   duplicatePointers: readonly Pointer[];
   orphanPointers: readonly Pointer[];
 }) {
-  if (
-    malformed.length === 0 &&
-    orphans.length === 0 &&
-    malformedLinks.length === 0 &&
-    orphanLinks.length === 0 &&
-    malformedModel === null &&
-    orphanMembers.length === 0 &&
-    malformedLoops.length === 0 &&
-    orphanLoops.length === 0 &&
-    malformedAssumptions.length === 0 &&
-    duplicateAssumptions.length === 0 &&
-    orphanAssumptions.length === 0 &&
-    malformedPointers.length === 0 &&
-    duplicatePointers.length === 0 &&
-    orphanPointers.length === 0
-  ) {
-    return null;
+  // Which families actually have something to say right now.
+  const has: Record<NoticeFamily, boolean> = {
+    marks: malformed.length > 0 || orphans.length > 0,
+    links: malformedLinks.length > 0 || orphanLinks.length > 0,
+    model: malformedModel !== null || orphanMembers.length > 0,
+    loops: malformedLoops.length > 0 || orphanLoops.length > 0,
+    assumptions:
+      malformedAssumptions.length > 0 ||
+      duplicateAssumptions.length > 0 ||
+      orphanAssumptions.length > 0,
+    pointers:
+      malformedPointers.length > 0 ||
+      duplicatePointers.length > 0 ||
+      orphanPointers.length > 0,
+  };
+  // The running game's groups, with the empty families dropped; a group with
+  // nothing left is dropped too, so no bare heading ever renders.
+  const groups = noticeGroups(level)
+    .map((group) => ({
+      ...group,
+      families: group.families.filter((family) => has[family]),
+    }))
+    .filter((group) => group.families.length > 0);
+  if (groups.length === 0) return null;
+
+  function familyLines(family: NoticeFamily) {
+    switch (family) {
+      case "marks":
+        return (
+          <>
+            {orphans.map((mark, index) => (
+              <div className="mark-notice" key={`orphan-${index}`}>
+                unattached mark on {describeMarkTarget(mark.target, nameOf)} —
+                kept in map/marks.jsonl
+              </div>
+            ))}
+            {malformed.map((line, index) => (
+              <div className="mark-notice" key={`malformed-${index}`}>
+                unreadable line in map/marks.jsonl: {line}
+              </div>
+            ))}
+          </>
+        );
+      case "links":
+        return (
+          <>
+            {orphanLinks.map((link, index) => (
+              <div className="mark-notice" key={`link-${index}`}>
+                a link names “{nameOf(link.from)} → {nameOf(link.to)}” — not on
+                the map, kept in map/links.jsonl
+              </div>
+            ))}
+            {malformedLinks.map((line, index) => (
+              <div className="mark-notice" key={`malformed-link-${index}`}>
+                unreadable line in map/links.jsonl: {line}
+              </div>
+            ))}
+          </>
+        );
+      case "model":
+        return (
+          <>
+            {orphanMembers.map((slug) => (
+              <div className="mark-notice" key={`member-${slug}`}>
+                playing set names “{nameOf(slug)}” — not on the map, kept in
+                map/model.json
+              </div>
+            ))}
+            {malformedModel !== null && (
+              <div className="mark-notice">
+                unreadable map/model.json — kept as is until a playing set is
+                accepted
+              </div>
+            )}
+          </>
+        );
+      case "loops":
+        return (
+          <>
+            {orphanLoops.map((slug) => (
+              <div className="mark-notice" key={`loop-word-${slug}`}>
+                a loop's path names “{nameOf(slug)}” — not on the map, kept in
+                map/loops.jsonl
+              </div>
+            ))}
+            {malformedLoops.map((line, index) => (
+              <div className="mark-notice" key={`malformed-loop-${index}`}>
+                unreadable line in map/loops.jsonl: {line}
+              </div>
+            ))}
+          </>
+        );
+      case "assumptions":
+        return (
+          <>
+            {orphanAssumptions.map((assumption, index) => (
+              <div className="mark-notice" key={`orphan-assumption-${index}`}>
+                an assumption on{" "}
+                {describeAssumptionTarget(assumption.target, nameOf)} — not on
+                the map, kept in map/assumptions.jsonl
+              </div>
+            ))}
+            {malformedAssumptions.map((line, index) => (
+              <div className="mark-notice" key={`malformed-assumption-${index}`}>
+                unreadable line in map/assumptions.jsonl: {line}
+              </div>
+            ))}
+            {duplicateAssumptions.map((assumption, index) => (
+              <div
+                className="mark-notice"
+                key={`duplicate-assumption-${index}`}
+              >
+                a duplicate assumption line says “{assumption.text}” on{" "}
+                {describeAssumptionTarget(assumption.target, nameOf)} — kept in
+                map/assumptions.jsonl
+              </div>
+            ))}
+          </>
+        );
+      case "pointers":
+        return (
+          <>
+            {orphanPointers.map((pointer, index) => (
+              <div className="mark-notice" key={`orphan-pointer-${index}`}>
+                a pointer on “{nameOf(pointer.on)}” — not on the map, kept in
+                map/pointers.jsonl
+              </div>
+            ))}
+            {malformedPointers.map((line, index) => (
+              <div className="mark-notice" key={`malformed-pointer-${index}`}>
+                unreadable line in map/pointers.jsonl: {line}
+              </div>
+            ))}
+            {duplicatePointers.map((pointer, index) => (
+              <div className="mark-notice" key={`duplicate-pointer-${index}`}>
+                a duplicate pointer line on “{nameOf(pointer.on)}” (
+                {pointer.form}) — kept in map/pointers.jsonl
+              </div>
+            ))}
+          </>
+        );
+    }
   }
+
   return (
     <div className="mark-notices">
-      {orphans.map((mark, index) => (
-        <div className="mark-notice" key={`orphan-${index}`}>
-          unattached mark on {describeMarkTarget(mark.target)} — kept in map/marks.jsonl
-        </div>
-      ))}
-      {malformed.map((line, index) => (
-        <div className="mark-notice" key={`malformed-${index}`}>
-          unreadable line in map/marks.jsonl: {line}
-        </div>
-      ))}
-      {orphanLinks.map((link, index) => (
-        <div className="mark-notice" key={`link-${index}`}>
-          a link names “{link.from} → {link.to}” — not on the map, kept in
-          map/links.jsonl
-        </div>
-      ))}
-      {malformedLinks.map((line, index) => (
-        <div className="mark-notice" key={`malformed-link-${index}`}>
-          unreadable line in map/links.jsonl: {line}
-        </div>
-      ))}
-      {orphanMembers.map((slug) => (
-        <div className="mark-notice" key={`member-${slug}`}>
-          playing set names “{slug}” — not on the map, kept in map/model.json
-        </div>
-      ))}
-      {malformedModel !== null && (
-        <div className="mark-notice">
-          unreadable map/model.json — kept as is until a playing set is accepted
-        </div>
-      )}
-      {orphanLoops.map((slug) => (
-        <div className="mark-notice" key={`loop-word-${slug}`}>
-          a loop's path names “{slug}” — not on the map, kept in map/loops.jsonl
-        </div>
-      ))}
-      {malformedLoops.map((line, index) => (
-        <div className="mark-notice" key={`malformed-loop-${index}`}>
-          unreadable line in map/loops.jsonl: {line}
-        </div>
-      ))}
-      {orphanAssumptions.map((assumption, index) => (
-        <div className="mark-notice" key={`orphan-assumption-${index}`}>
-          an assumption on {describeAssumptionTarget(assumption.target)} — not on
-          the map, kept in map/assumptions.jsonl
-        </div>
-      ))}
-      {malformedAssumptions.map((line, index) => (
-        <div className="mark-notice" key={`malformed-assumption-${index}`}>
-          unreadable line in map/assumptions.jsonl: {line}
-        </div>
-      ))}
-      {duplicateAssumptions.map((assumption, index) => (
-        <div className="mark-notice" key={`duplicate-assumption-${index}`}>
-          a duplicate assumption line says “{assumption.text}” on{" "}
-          {describeAssumptionTarget(assumption.target)} — kept in
-          map/assumptions.jsonl
-        </div>
-      ))}
-      {orphanPointers.map((pointer, index) => (
-        <div className="mark-notice" key={`orphan-pointer-${index}`}>
-          a pointer on “{pointer.on}” — not on the map, kept in
-          map/pointers.jsonl
-        </div>
-      ))}
-      {malformedPointers.map((line, index) => (
-        <div className="mark-notice" key={`malformed-pointer-${index}`}>
-          unreadable line in map/pointers.jsonl: {line}
-        </div>
-      ))}
-      {duplicatePointers.map((pointer, index) => (
-        <div className="mark-notice" key={`duplicate-pointer-${index}`}>
-          a duplicate pointer line on “{pointer.on}” ({pointer.form}) — kept in
-          map/pointers.jsonl
+      {groups.map((group) => (
+        <div
+          className="mark-notice-group"
+          key={group.game}
+          data-game={group.game}
+        >
+          <div className="mark-notice-game">{group.label}</div>
+          {group.families.map((family) => (
+            <Fragment key={family}>{familyLines(family)}</Fragment>
+          ))}
         </div>
       ))}
     </div>
   );
-}
-
-function describeMarkTarget(target: MarkTarget): string {
-  switch (target.type) {
-    case "word":
-      return `“${target.slug}”`;
-    case "wire":
-      return `the wire ${target.from} → ${target.to} · “${target.word}”`;
-    case "link":
-      return `the link ${target.from} → ${target.to}`;
-    case "spot":
-      return "a bare spot";
-    case "pointer":
-      return `the reach ${target.on} · ${target.form} “${target.value}”`;
-  }
-}
-
-/** A quiet name for what an assumption is about (notices and the overlay's aria). */
-function describeAssumptionTarget(target: AssumptionTarget): string {
-  switch (target.type) {
-    case "word":
-      return `“${target.slug}”`;
-    case "link":
-      return `the link ${target.from} → ${target.to}`;
-    case "loop":
-      return `the loop “${target.slug}”`;
-    case "spot":
-      return "a bare spot";
-  }
 }
 
 /**

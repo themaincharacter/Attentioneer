@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   addAssumption,
   assumptionTargetKey,
@@ -160,5 +161,42 @@ describe("the Level 2 ring menu's third kind (ADR-0011's open decision)", () => 
     // The menu's contract is the kind list: with no assumption kind the
     // third choice does not exist, and Level 1 writes exactly as before.
     expect(creationKinds("concept")).toHaveLength(2);
+  });
+});
+
+describe("the add field closes on blur (story 3's residual)", () => {
+  const overlay = readFileSync(
+    new URL("../src/canvas/AssumptionOverlay.tsx", import.meta.url),
+    "utf8",
+  );
+
+  test("the field's blur discards the draft and closes the card", () => {
+    // Enter commits; Esc, a press outside and leaving the field all discard —
+    // no visible draft outlives its pin (the SignChoice precedent).
+    expect(overlay).toContain("onBlur={handleAddBlur}");
+    expect(overlay).toContain("function handleAddBlur(");
+    const handler = overlay.slice(
+      overlay.indexOf("function handleAddBlur("),
+    );
+    const body = handler.slice(0, handler.indexOf("\n  }"));
+    expect(body).toContain('setDraft("")');
+    expect(body).toContain("onClose()");
+  });
+
+  test("a hop to a control inside the card is not leaving", () => {
+    expect(overlay).toContain("root.contains(e.relatedTarget)");
+  });
+
+  test("Enter still commits and keeps the field ready (no blur on commit)", () => {
+    const commit = overlay.slice(overlay.indexOf("function commitNew()"));
+    expect(commit).toContain("onAdd(claim)");
+    expect(commit).toContain('setDraft("")');
+    expect(commit).toContain("addRef.current?.focus()");
+  });
+
+  test("Esc still discards the draft and closes", () => {
+    const escape = overlay.slice(overlay.indexOf('e.key === "Escape"'));
+    expect(escape).toContain('setDraft("")');
+    expect(escape).toContain("onClose()");
   });
 });

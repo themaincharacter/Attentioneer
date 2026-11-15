@@ -49,11 +49,16 @@ interface LinkWireProps {
  *   element under the pointer;
  * - the × appears on hover and removes the link (ammo, no confirmation).
  *
- * Level 1 renders none of this: a link is Level 2 content and the level decides
- * (ADR-0016), so concept mode reads exactly as it did before this story.
+ * THE ZOOM GATE (Epic 6 story 3): a link renders exactly while the DYNAMICS
+ * game is active — the band decides, through `linkWiresVisible` (zoomBands.ts).
+ * It is deliberately NOT tied to the label-collapse thresholds: those stay
+ * label-only rules. Because the dynamics band's floor sits above both label
+ * thresholds, no bare wire (or head sign) can linger in the folded-label zone —
+ * that zone is concept, which renders no link. Concept mode therefore still
+ * reads exactly as it did before links existed.
  *
  * Provisional: the wire offset, the chevron, the head placement and the ring's
- * look (ADR-0003's rendering seam).
+ * look (ADR-0003's rendering seam); the band gate is story 3's decision.
  */
 export function LinkWire({
   link,

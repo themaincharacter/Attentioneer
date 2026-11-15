@@ -137,9 +137,13 @@ export function peekTransientsClosedByLevelSwitch(): readonly PeekTransient[] {
   return PEEK_TRANSIENTS;
 }
 
-/** The window's aria label: what it is about, quietly. */
-export function peekLabel(on: string, form: PointerForm): string {
-  return "the window on “" + on + "” · " + form;
+/**
+ * The window's aria label: what it is about, quietly. It takes the word's
+ * coined NAME, never the record's slug — person-facing strings speak names
+ * (Epic 6 story 3); the slug stays in the pointer record.
+ */
+export function peekLabel(name: string, form: PointerForm): string {
+  return "the window on “" + name + "” · " + form;
 }
 
 /** A small, quiet size for the identity line (never a badge, just the fact). */

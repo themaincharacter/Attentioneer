@@ -661,6 +661,24 @@ body {
   animation: fade-in 180ms ease-out;
 }
 
+/* Epic 6 story 3: the strip is band-scoped — one group per game (plus the
+   "every game" group marks share), each headed by its game's name. The heading
+   is the quietest thing in the strip; a group with nothing to say never
+   renders. */
+.mark-notice-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mark-notice-game {
+  font-size: 9.5px;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
 /* Story 2, the bare lack (ADR-0009/0010; map ticket 03): one quiet hollow ring
    at a spot of plane — the same glyph as an attached mark, no field, no name,
    no count, no pulse, no glow. It is content, so it stays until moved. */
@@ -1999,6 +2017,24 @@ body {
   outline: none;
 }
 
+/* The in-band presence read (story 3, ADR-0019; the diamond's has-assumptions
+   precedent): SOLID when the word carries at least one pointer line,
+   FAINT-but-addable (the hover reveal above) when it carries none. Ground is
+   the only band that renders the handle at all, so no face is ever announced
+   across bands; one solid handle however many reaches. */
+.reach-handle.has-pointers {
+  opacity: 0.8;
+  color: #6b675e;
+  border-color: #ddd7cc;
+  pointer-events: auto;
+}
+
+.reach-handle.has-pointers:hover,
+.reach-handle.has-pointers:focus,
+.reach-handle.has-pointers:focus-visible {
+  opacity: 1;
+}
+
 /* The ring cue: ANY of this word's pointer lines is marked. One small hollow
    ring at the handle's corner — a presence, never a count, and the same hollow
    family as a mark's ring. */
@@ -2459,5 +2495,118 @@ body {
 /* While a gesture is armed the armed gesture owns the pointer (ADR-0016): the
    glimpse stands still exactly as the assumptions' overlay does. */
 .plane.gesture-armed .outward-window {
+  pointer-events: none;
+}
+
+
+/* Epic 6 story 3 — the follow (ADR-0019 decision 2).
+   Provisional: the glyph, the row slot and the tiny menu's look (ADR-0003's
+   seam). The cross-band vocabulary is movement: one quiet control on every
+   word, in every game, offering the two other games. It reads no face, so a
+   word with pointers, assumptions or a loop renders exactly like a bare one.
+   The menu is absolutely positioned inside the row, so it never grows the
+   word's box (no wire anchor moves). Motion stays short, soft and ease-out;
+   the global reduced-motion rule above collapses it. */
+
+.word-follow {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+/* The glyph: a small warm position indicator — always in the row, quiet but
+   visible (it is the cross-band move, so it must not hide behind hover alone
+   the way the face cues do). */
+.word-follow-toggle {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.32;
+  transition:
+    opacity 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.word:hover .word-follow-toggle,
+.word:focus-within .word-follow-toggle,
+.word-follow-toggle:focus,
+.word-follow-toggle:focus-visible {
+  opacity: 0.8;
+}
+
+.word-follow-toggle:hover,
+.word-follow-toggle:focus,
+.word-follow-toggle:focus-visible,
+.word-follow-toggle[aria-expanded="true"] {
+  opacity: 1;
+  color: #1e2126;
+  border-color: #ddd7cc;
+  outline: none;
+}
+
+/* The tiny menu: the two OTHER games, as the control's own quiet bubbles. It
+   is absolutely positioned under the glyph (the plain-menu idiom), so the
+   word's measured box is unchanged and every wire keeps its anchor. */
+.word-follow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid #e4dfd4;
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.1);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  animation: fade-in 140ms ease-out;
+}
+
+.word-follow-game {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #6b675e;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+
+.word-follow-game:hover,
+.word-follow-game:focus,
+.word-follow-game:focus-visible {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.16);
+  outline: none;
+}
+
+/* The row rises while its menu is open, so the bubbles are not buried under a
+   later word painted at the same depth. */
+.word.follow-open {
+  z-index: 6;
+}
+
+/* While a gesture is armed the armed gesture owns the pointer (ADR-0016): the
+   follow stands still like every other row affordance. */
+.plane.gesture-armed .word-follow {
   pointer-events: none;
 }
