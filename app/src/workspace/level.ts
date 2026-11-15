@@ -3,8 +3,10 @@ import { parseYamlFields, workspaceYml, writeMachineFile } from "../lib/serializ
 import {
   atOrAbove,
   BAND_ZOOM,
+  distanceLabelVisible,
   DYNAMICS_FROM,
   GROUND_FROM,
+  noteBand,
 } from "../canvas/zoomBands";
 
 /**
@@ -88,6 +90,45 @@ export function centeringZoom(zoom: number): number {
  * the default level was concept.
  */
 export const DEFAULT_CAMERA_ZOOM = BAND_ZOOM[DEFAULT_LEVEL];
+
+/**
+ * The zoom chip's read (story 2): the percent the chip may show WITHOUT
+ * contradicting what the plane is rendering. Rounding alone can lie at a
+ * boundary — a zoom of 0.846 rounds to "85%", the dynamics band's floor, while
+ * the game is still concept; a zoom of 0.549 rounds to "55%", the label
+ * thresholds' floor, while distance words are still folded. The chip's number
+ * therefore goes through the SAME readings the renderer uses — `levelFromZoom`
+ * for the band (itself the one `atOrAbove` reading) plus `noteBand` and
+ * `distanceLabelVisible` — and steps to the nearest whole percent that agrees
+ * with all of them. So the chip can never say 55% while the labels are folded,
+ * or 85% while the game is still concept.
+ *
+ * Provisional: the chip is one number (it does not name the band — that is the
+ * level control's job), and the percent is not persisted anywhere.
+ */
+export function zoomChipPercent(zoom: number): number {
+  if (!Number.isFinite(zoom)) return Math.round(DEFAULT_CAMERA_ZOOM * 100);
+  const band = levelFromZoom(zoom);
+  const labels = distanceLabelVisible(zoom);
+  const notes = noteBand(zoom);
+  const agrees = (candidate: number): boolean =>
+    levelFromZoom(candidate / 100) === band &&
+    noteBand(candidate / 100) === notes &&
+    distanceLabelVisible(candidate / 100) === labels;
+
+  const rounded = Math.round(zoom * 100);
+  if (agrees(rounded)) return rounded;
+  // The boundaries are provisional constants, so the search does not assume
+  // they sit on whole percents: with today's values the nearest agreeing
+  // percent is one step away, and the loop keeps that true if tuning moves.
+  for (let step = 1; step <= 100; step += 1) {
+    const down = rounded - step;
+    if (down >= 0 && agrees(down)) return down;
+    const up = rounded + step;
+    if (agrees(up)) return up;
+  }
+  return rounded;
+}
 
 /**
  * The render map (ADR-0016's amendment): which records each game draws. Words,

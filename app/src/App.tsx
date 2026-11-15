@@ -22,7 +22,19 @@ import {
 } from "./canvas/geometry";
 import { AssumptionDiamond } from "./canvas/AssumptionDiamond";
 import { AssumptionOverlay } from "./canvas/AssumptionOverlay";
-import { creationKinds, type GestureMode } from "./canvas/gates";
+import {
+  creationKinds,
+  createLevelPin,
+  didReleaseFocusPin,
+  focusStateOf,
+  isGestureArmed,
+  NO_FOCUS,
+  shouldPinLevel,
+  shouldPromptForSet,
+  type FocusState,
+  type GestureMode,
+  type LevelPin,
+} from "./canvas/gates";
 import { LevelControl } from "./canvas/LevelControl";
 import { LackMark } from "./canvas/LackMark";
 import { LinkWire } from "./canvas/LinkWire";
@@ -110,6 +122,15 @@ import type { Workspace } from "./workspace/lifecycle";
  * open the key sets the camera into its band and nothing is written. The level
  * control is the indicator of the derived game and the jumper between bands;
  * every camera intent stays inside the band it began in.
+ *
+ * Epic 6 story 2 pins the level (ADR-0018 decision 3): while a gesture is ARMED
+ * or a TEXT FIELD has focus, a wheel crossing moves the camera and nothing
+ * else — no armed surface closes and typed text survives (the gate's pure
+ * `shouldPinLevel` / `createLevelPin`). The pin's release (blur, commit,
+ * cancel, the gesture's end) re-derives the band from the zoom the camera ended
+ * on, and a real crossing then runs the full switch path. The selector's prompt
+ * is the pure `shouldPromptForSet`: a DELIBERATE entry asks for a missing
+ * playing set, a wheel crossing never does.
  */
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -119,6 +140,16 @@ function App() {
   // deliberate jump. The workspace's `level` key is only the resume hint, read
   // on open; it never sets this state by itself.
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
+  // Story 2's pin, focus half (ADR-0018 decision 3): a TEXT FIELD holding focus
+  // pins the level exactly like an armed gesture, so a wheel crossing can never
+  // close the field or discard what is being typed. The reading is the
+  // document's own (below), so no field has to know about levels; it is a ref
+  // because focus is a fact about the document, not a rendering input.
+  const focusStateRef = useRef<FocusState>(NO_FOCUS);
+  // The camera's latest zoom, for the settle path and the pin's release (no
+  // listener is re-attached on every wheel tick).
+  const cameraZoomRef = useRef(camera.zoom);
+  cameraZoomRef.current = camera.zoom;
   const map = useMap(workspace?.path ?? "", { playing: level === "dynamics" });
   const {
     refs,
@@ -522,6 +553,10 @@ function App() {
           : pathSession !== null
             ? "path"
             : "idle";
+  // The gate's mode, readable from the focus and release paths, which run
+  // outside render (a focusout microtask, a post-render focus refresh).
+  const gestureModeRef = useRef<GestureMode>(gestureMode);
+  gestureModeRef.current = gestureMode;
 
   // Every coined word, as the selector's world-space layer needs it.
   const selectorWords = useMemo(
@@ -670,9 +705,11 @@ function App() {
    * it); a deliberate jump is the control's own act, so focus returns there. An
    * open-restore runs no switch path: on open there is no transient to close.
    *
-   * Only a deliberate entry asks for a playing set. A wheel crossing into
-   * dynamics with no set does not prompt (story 2 names the cost: the set stays
-   * required at authoring, and the control's "edit the playing set" is there).
+   * The playing set is asked for through the PURE prompt rule
+   * (`shouldPromptForSet`, gates.ts): only a DELIBERATE entry asks, and a WHEEL
+   * crossing into dynamics with no set never does — the named cost is that the
+   * set stays required at authoring, and the control's "edit the playing set"
+   * is the door. The open that resumes the game asks through the same rule.
    */
   const switchLevel = useCallback(
     (next: Level, cause: HandoffCause) => {
@@ -682,9 +719,7 @@ function App() {
       setWalkSlug(null);
       if (cause === "jump") closePointers("switch-level");
       else closePointersQuietly();
-      if (cause === "jump" && next === "dynamics" && model === null) {
-        openSelector();
-      }
+      if (shouldPromptForSet(cause, next, model !== null)) openSelector();
     },
     [
       cancelPendingGestures,
@@ -740,6 +775,29 @@ function App() {
   }
   const handoff = handoffRef.current;
 
+  // The level pin's memory (gates.ts, pure): a settled crossing waits while the
+  // pin holds, and the CAMERA — not a queue — is what it remembers. ONE
+  // instance, like the handoff, so no render can forget a held crossing.
+  const levelPinRef = useRef<LevelPin | null>(null);
+  if (levelPinRef.current === null) levelPinRef.current = createLevelPin();
+  const levelPin = levelPinRef.current;
+
+  /**
+   * The pin's release (story 2): when the level stops being pinned — a blur, a
+   * commit, a cancel or the armed gesture's end — the band re-derives from the
+   * zoom the camera ended on. A crossing made under the pin runs the full
+   * switch path now, with the WHEEL's cause (so focus is never yanked); a wheel
+   * across and back settles the band it never left and writes nothing.
+   *
+   * With nothing held there is nothing to re-derive: while the level is NOT
+   * pinned, every settled crossing applies at once and every camera intent is
+   * band-preserving, so the band and the camera cannot disagree.
+   */
+  const releasePin = useCallback(() => {
+    if (!levelPin.held()) return;
+    handoff.settle(levelPin.release(cameraZoomRef.current));
+  }, [handoff, levelPin]);
+
   /**
    * Open-restore (ADR-0018 decision 2): the resume hint sets the camera into its
    * band on open. It NEVER writes — a hand-edited key is honored here and
@@ -753,10 +811,80 @@ function App() {
     handoff.restore(workspace.resumeLevel);
   }, [workspace, handoff]);
 
-  /** A zoom gesture settled: derive the band; a crossing switches and writes. */
+  /**
+   * The focus reading (story 2): whichever TEXT entry holds focus — a word's
+   * coin field or note, an assumption line, a pointer's value, a loop's name, a
+   * distance's word — pins the level, so a wheel crossing can never close it or
+   * discard what is being typed. Read from the document, so no field needs to
+   * learn about levels.
+   */
+  const readFocus = useCallback(() => {
+    const active = typeof document === "undefined" ? null : document.activeElement;
+    const next = focusStateOf(active instanceof HTMLElement ? active : null);
+    if (next === focusStateRef.current) return;
+    const before = focusStateRef.current;
+    focusStateRef.current = next;
+    // The field's life ended (blur, commit, cancel) and nothing else pins the
+    // level: the band re-derives NOW, so a crossing made while typing applies
+    // the moment the person leaves the field. An armed gesture keeps the pin —
+    // the gesture's own end releases it (the effect below).
+    if (didReleaseFocusPin(before, next, gestureModeRef.current)) releasePin();
+  }, [releasePin]);
+
+  // Focus moves: read on a microtask, so a hop between two fields is never seen
+  // as "nothing focused" in between (which would lift the pin mid-hop).
+  useEffect(() => {
+    const schedule = () => queueMicrotask(readFocus);
+    document.addEventListener("focusin", schedule);
+    document.addEventListener("focusout", schedule);
+    return () => {
+      document.removeEventListener("focusin", schedule);
+      document.removeEventListener("focusout", schedule);
+    };
+  }, [readFocus]);
+
+  // A field REMOVED while focused (Esc, a click-away, a commit that closes its
+  // card) loses focus without `focusout` in Chromium, so the reading is
+  // refreshed after every render too: focus is a fact about the document, not
+  // an event the app is always told about.
+  useLayoutEffect(() => {
+    readFocus();
+  });
+
+  /**
+   * The armed gesture's end releases the pin (story 2, ADR-0018 decision 3):
+   * on completion or cancel the band re-derives from the zoom the wheel left,
+   * and a real crossing runs the full switch path. A focused field keeps the
+   * pin alive — its text is still being typed.
+   */
+  const wasArmedRef = useRef(isGestureArmed(gestureMode));
+  useEffect(() => {
+    const armed = isGestureArmed(gestureMode);
+    if (
+      wasArmedRef.current &&
+      !armed &&
+      !shouldPinLevel(gestureMode, focusStateRef.current)
+    ) {
+      releasePin();
+    }
+    wasArmedRef.current = armed;
+  }, [gestureMode, releasePin]);
+
+  /**
+   * A zoom gesture settled (ADR-0018 decisions 3 and 5, story 2): while the
+   * level is PINNED — an armed gesture or a focused text field — the wheel
+   * moves the camera and nothing else. The crossing is HELD; the pin's release
+   * re-derives the band from the zoom the camera ended on.
+   */
   const handleZoomSettle = useCallback(
-    (zoom: number) => handoff.settle(zoom),
-    [handoff],
+    (zoom: number) => {
+      const next = levelPin.settle(
+        zoom,
+        shouldPinLevel(gestureMode, focusStateRef.current),
+      );
+      if (next !== null) handoff.settle(next);
+    },
+    [levelPin, gestureMode, handoff],
   );
 
   /**
@@ -996,12 +1124,16 @@ function App() {
     };
   }, [connect, camera, moveConnect, cancelConnect]);
 
-  // A workspace that resumes in dynamics without an accepted set asks for one
-  // on open (ADR-0013: the playing set is required before play). Once per
-  // workspace — closing the selector is a choice, not a prompt to repeat.
+  // A workspace that RESUMES in dynamics without an accepted set asks for one
+  // on open, through the SAME pure prompt rule (`shouldPromptForSet` with the
+  // restore cause — the resume hint is what the person left behind, so it is a
+  // deliberate entry). Once per workspace: closing the selector is a choice,
+  // not a prompt to repeat.
   useEffect(() => {
     if (!workspace || !loaded) return;
-    if (workspace.resumeLevel !== "dynamics" || model !== null) return;
+    if (!shouldPromptForSet("restore", workspace.resumeLevel, model !== null)) {
+      return;
+    }
     if (autoPromptedRef.current === workspace.path) return;
     autoPromptedRef.current = workspace.path;
     openSelector();

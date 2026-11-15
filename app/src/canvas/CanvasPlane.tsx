@@ -26,7 +26,7 @@ import {
 import type { Point } from "./geometry";
 import { MAX_ZOOM, MIN_ZOOM, type Camera, type CameraIntents } from "./useCamera";
 import { closesPair, DOUBLE_CLICK_MS, type PlanePress } from "./planePress";
-import { centeringZoom } from "../workspace/level";
+import { centeringZoom, zoomChipPercent } from "../workspace/level";
 import "./canvas.css";
 
 /**
@@ -45,6 +45,12 @@ import "./canvas.css";
  * level at runtime (ADR-0018), so the input layer is where a band change is
  * observed — the app's handoff derives the game and decides whether to write.
  * The plane itself writes nothing.
+ *
+ * The zoom chip's number is a BAND-AWARE read (story 2): it goes through the
+ * same `atOrAbove` readings the renderer uses (`zoomChipPercent`), so it can
+ * never show a rounded percent that names a game or a label state the plane is
+ * not in — "55%" while the distance words are still folded, or "85%" while the
+ * game is still concept.
  *
  * Provisional: grid size and zoom-band behavior are not settled by any ADR yet.
  */
@@ -377,7 +383,9 @@ export function CanvasPlane({
             </svg>
           )}
         </div>
-        <div className="zoom-chip">{Math.round(camera.zoom * 100)}%</div>
+        {/* The chip reads through the band helpers (story 2): never a rounded
+            percent that contradicts the level or the labels. */}
+        <div className="zoom-chip">{zoomChipPercent(camera.zoom)}%</div>
         <div className="plane-hint">
           drag to pan · scroll to zoom · {creationHint} · drag past the fold to
           set aside
