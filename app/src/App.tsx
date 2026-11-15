@@ -31,6 +31,14 @@ import { LoopWalk } from "./canvas/LoopWalk";
 import { resolveElementPick, type PickedElement } from "./canvas/markTargets";
 import { countsAsOneFlip } from "./canvas/planePress";
 import { PlaneMenu } from "./canvas/PlaneMenu";
+import {
+  chooserFocusSelector,
+  focusAfterChooserClose,
+  isPointerMarked,
+  markedPointerKeys,
+  type ChooserCloseReason,
+} from "./canvas/pointerRules";
+import { PointerChooser } from "./canvas/PointerChooser";
 import { PlayingSetBar, PlayingSetWords } from "./canvas/PlayingSetSelector";
 import { useRingDrag } from "./canvas/ringDrag";
 import { ReferenceWord } from "./canvas/ReferenceWord";
@@ -50,6 +58,7 @@ import { readLoop } from "./map/loopRead";
 import { findLoop, isClosedPath, loopSlug, type Loop } from "./map/loops";
 import { markTargetKey, type Mark, type MarkTarget } from "./map/marks";
 import { hasWord, prefilledSelection } from "./map/model";
+import { findPointers, type Pointer } from "./map/pointers";
 import type { Reference } from "./map/refs";
 import { DEFAULT_SHELF_X, isShelved, rejectSpot } from "./map/shelf";
 import { saveWorkspaceLevel, DEFAULT_LEVEL, type Level } from "./workspace/level";
@@ -101,6 +110,10 @@ function App() {
     malformedAssumptions,
     duplicateAssumptions,
     orphanAssumptions,
+    pointers,
+    malformedPointers,
+    duplicatePointers,
+    orphanPointers,
     loaded,
     acceptPlayingSet,
     connect,
@@ -133,6 +146,10 @@ function App() {
     addAssumption,
     reviseAssumption,
     removeAssumption,
+    addPointer,
+    editPointer,
+    removePointer,
+    togglePointerMark,
   } = map;
 
   // The shelf's fold (ADR-0010): a workspace-level convention, provisional.
@@ -164,6 +181,16 @@ function App() {
     target: AssumptionTarget;
     anchor: Point;
   } | null>(null);
+  // The open pointer chooser (Epic 5 story 1, ground only): the word it speaks
+  // about and the world point it hangs off, or null. One chooser at a time,
+  // rendered here at App level so it never grows a word's box.
+  const [pointerAt, setPointerAt] = useState<{
+    on: string;
+    anchor: Point;
+  } | null>(null);
+  // The word the chooser belongs to, kept for the focus return after it closes
+  // (the chooser's own state goes with it).
+  const pointerSlugRef = useRef<string | null>(null);
   // A workspace that resumed in dynamics with no set prompts the selector once.
   const autoPromptedRef = useRef<string | null>(null);
 
@@ -176,6 +203,49 @@ function App() {
   );
 
   const closeAssumptions = useCallback(() => setAssumptionAt(null), []);
+
+  /**
+   * Open the quiet pointer chooser for one word (ground, story 1). Opening it
+   * arms the interaction-mode gate (the `pointer` mode), so word presses, pan
+   * and creation stand still while it is the only live surface.
+   */
+  const openPointers = useCallback((on: string, anchor: Point) => {
+    // The chooser is the only live surface while it is open (the gate arms):
+    // a creation menu or a grow field left open behind it would stand still and
+    // be unreachable, so both close here.
+    setMenuAt(null);
+    setGrowAt(null);
+    pointerSlugRef.current = on;
+    setPointerAt({ on, anchor });
+  }, []);
+
+  /**
+   * Close the chooser, then put focus back on the word that opened it (its
+   * reach handle is the word's focusable slot). A level SWITCH closes without
+   * that focus: the word may carry no handle in the next game, so the switch
+   * puts focus on the level control instead (ADR-0016's amendment).
+   */
+  const closePointers = useCallback((reason: ChooserCloseReason = "dismiss") => {
+    const slug = pointerSlugRef.current;
+    pointerSlugRef.current = null;
+    setPointerAt(null);
+    const target = focusAfterChooserClose(reason);
+    if (target === "word" && slug === null) return;
+    const selector = chooserFocusSelector(target, slug);
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(selector)?.focus();
+    });
+  }, []);
+
+  /**
+   * Close the chooser WITHOUT moving focus — used when the word it speaks
+   * about is renamed or removed in the same move (its handle may be gone), and
+   * by a level switch, which focuses the level control itself.
+   */
+  const closePointersQuietly = useCallback(() => {
+    pointerSlugRef.current = null;
+    setPointerAt(null);
+  }, []);
 
   /**
    * Close the overlay if it speaks about this target — called when a rename or
@@ -252,6 +322,27 @@ function App() {
     };
   }, [assumptionAt, assumptions]);
 
+  // The open pointer chooser's rows, in FILE ORDER, recomputed from the
+  // records so an add/edit/remove shows in the same breath.
+  const pointerPanel = useMemo(() => {
+    if (!pointerAt) return null;
+    return { ...pointerAt, rows: findPointers(pointers, pointerAt.on) };
+  }, [pointerAt, pointers]);
+
+  // The open pointer marks' keys: byte-identical hand duplicates share a key,
+  // so every row on that reach reads marked (a presence, never a count).
+  const pointerMarkedKeys = useMemo(() => markedPointerKeys(marks), [marks]);
+
+  // Which words carry at least one marked pointer line — the reach handle's
+  // small ring cue, one cue per word, never a tally.
+  const wordsWithMarkedPointer = useMemo(() => {
+    const owners = new Set<string>();
+    for (const pointer of pointers) {
+      if (isPointerMarked(pointer, pointerMarkedKeys)) owners.add(pointer.on);
+    }
+    return owners;
+  }, [pointers, pointerMarkedKeys]);
+
   // Every coined word's slug: the read's "is this path word on the map?".
   const wordSlugs = useMemo(
     () =>
@@ -309,13 +400,16 @@ function App() {
   // live the words' own presses stand still, the plane does not pan and the
   // creation menu cannot open — the path layer is the only live surface.
   const signPending = level === "dynamics" && connect !== null && connect.to !== undefined;
-  const gestureMode: GestureMode = selectorOpen
-    ? "selector"
-    : signPending
-      ? "sign-choice"
-      : pathSession !== null
-        ? "path"
-        : "idle";
+  const gestureMode: GestureMode =
+    pointerAt !== null
+      ? "pointer"
+      : selectorOpen
+        ? "selector"
+        : signPending
+          ? "sign-choice"
+          : pathSession !== null
+            ? "path"
+            : "idle";
 
   // Every coined word, as the selector's world-space layer needs it.
   const selectorWords = useMemo(
@@ -394,8 +488,9 @@ function App() {
     setLassoArmed(false);
     setPathSession(endPathSession());
     setAssumptionAt(null);
+    closePointersQuietly();
     cancelConnect();
-  }, [cancelConnect]);
+  }, [cancelConnect, closePointersQuietly]);
 
   /**
    * Open the selector, pre-filled (ADR-0013): every current word on first
@@ -466,11 +561,16 @@ function App() {
       setWalkSlug(null);
       setWorkspace({ ...workspace, level: next });
       void saveWorkspaceLevel(workspace.path, next);
+      // A switch closes every transient (above) and returns focus to the level
+      // control — the new game's button. The word's chooser/handle may not exist
+      // in the next game, so the switch never focuses a word (ADR-0016's
+      // amendment); the pure rule owns that choice, this call applies it.
+      closePointers("switch-level");
       if (next === "dynamics" && model === null) {
         openSelector();
       }
     },
-    [workspace, model, cancelPendingGestures, openSelector],
+    [workspace, model, cancelPendingGestures, closePointers, openSelector],
   );
 
   /**
@@ -837,15 +937,21 @@ function App() {
             onRename={(candidate, newName) => {
               // A reference rename rewrites assumption targets for the word
               // and its links in one batch: any open overlay may speak about
-              // an address that batch just changed, so it closes here.
+              // an address that batch just changed, so it closes here. The
+              // pointer chooser speaks about the word by slug, which the same
+              // batch rewrites, so it closes too (quietly: focus would land on
+              // a handle whose word is moving).
               closeAssumptions();
+              closePointersQuietly();
               rename(candidate, newName);
             }}
             onRemove={(candidate) => {
               // Removing a word can drop its links and loops, and with them
               // their assumption lines: the open overlay may be about any of
-              // them, so it closes before the batch runs.
+              // them, so it closes before the batch runs. The pointer chooser
+              // goes with the word's pointer lines (die-with-target).
               closeAssumptions();
+              closePointersQuietly();
               remove(candidate);
             }}
             onConnectFrom={(slug, c) => beginConnect(slug, c.x, c.y)}
@@ -878,6 +984,14 @@ function App() {
             onOpenAssumptions={(anchor) => {
               if (word.slug === null) return;
               openAssumptions({ type: "word", slug: word.slug }, anchor);
+            }}
+            showReach={level === "ground"}
+            reachMarked={
+              word.slug !== null && wordsWithMarkedPointer.has(word.slug)
+            }
+            onOpenPointers={(anchor) => {
+              if (word.slug === null) return;
+              openPointers(word.slug, anchor);
             }}
           />
         ))}
@@ -1102,6 +1216,28 @@ function App() {
             onClose={closeAssumptions}
           />
         )}
+
+        {/* the ground game's quiet pointer chooser (Epic 5 story 1), in world
+            space beside its word and counter-scaled: the reaches in FILE ORDER,
+            each with its ring, its in-place edit and its ×, plus the add entry
+            whose form pick starts UNPICKED (no pick, no write). Rows carry no
+            open action in this story (story 2 adds it). It never grows a word's
+            box or shifts a wire's anchor; opening it arms the `pointer` gate. */}
+        {level === "ground" && pointerPanel && (
+          <PointerChooser
+            anchor={pointerPanel.anchor}
+            rows={pointerPanel.rows}
+            slug={pointerPanel.on}
+            markedKeys={pointerMarkedKeys}
+            onAdd={(form, value) => addPointer(pointerPanel.on, form, value)}
+            onEdit={(pointer, form, value) =>
+              editPointer(pointer, form, value)
+            }
+            onRemove={(pointer) => removePointer(pointer)}
+            onToggleMark={(pointer) => togglePointerMark(pointer)}
+            onClose={() => closePointers("dismiss")}
+          />
+        )}
       </CanvasPlane>
 
       {/* the quiet level control (ADR-0016): concept / dynamics, one switch */}
@@ -1142,6 +1278,9 @@ function App() {
         malformedAssumptions={malformedAssumptions}
         duplicateAssumptions={duplicateAssumptions}
         orphanAssumptions={orphanAssumptions}
+        malformedPointers={malformedPointers}
+        duplicatePointers={duplicatePointers}
+        orphanPointers={orphanPointers}
       />
 
       {/* the walk (story 3): the selected loop's derived read — steps, signs,
@@ -1177,6 +1316,9 @@ function MarkNotices({
   malformedAssumptions,
   duplicateAssumptions,
   orphanAssumptions,
+  malformedPointers,
+  duplicatePointers,
+  orphanPointers,
 }: {
   malformed: readonly string[];
   orphans: readonly Mark[];
@@ -1190,6 +1332,10 @@ function MarkNotices({
   /** Hand-edited duplicate keys: preserved, never deduped (story 4). */
   duplicateAssumptions: readonly Assumption[];
   orphanAssumptions: readonly Assumption[];
+  /** Pointers (Epic 5 story 1): unreadable lines, duplicate keys, lost owners. */
+  malformedPointers: readonly string[];
+  duplicatePointers: readonly Pointer[];
+  orphanPointers: readonly Pointer[];
 }) {
   if (
     malformed.length === 0 &&
@@ -1202,7 +1348,10 @@ function MarkNotices({
     orphanLoops.length === 0 &&
     malformedAssumptions.length === 0 &&
     duplicateAssumptions.length === 0 &&
-    orphanAssumptions.length === 0
+    orphanAssumptions.length === 0 &&
+    malformedPointers.length === 0 &&
+    duplicatePointers.length === 0 &&
+    orphanPointers.length === 0
   ) {
     return null;
   }
@@ -1267,6 +1416,23 @@ function MarkNotices({
           map/assumptions.jsonl
         </div>
       ))}
+      {orphanPointers.map((pointer, index) => (
+        <div className="mark-notice" key={`orphan-pointer-${index}`}>
+          a pointer on “{pointer.on}” — not on the map, kept in
+          map/pointers.jsonl
+        </div>
+      ))}
+      {malformedPointers.map((line, index) => (
+        <div className="mark-notice" key={`malformed-pointer-${index}`}>
+          unreadable line in map/pointers.jsonl: {line}
+        </div>
+      ))}
+      {duplicatePointers.map((pointer, index) => (
+        <div className="mark-notice" key={`duplicate-pointer-${index}`}>
+          a duplicate pointer line on “{pointer.on}” ({pointer.form}) — kept in
+          map/pointers.jsonl
+        </div>
+      ))}
     </div>
   );
 }
@@ -1281,6 +1447,8 @@ function describeMarkTarget(target: MarkTarget): string {
       return `the link ${target.from} → ${target.to}`;
     case "spot":
       return "a bare spot";
+    case "pointer":
+      return `the reach ${target.on} · ${target.form} “${target.value}”`;
   }
 }
 

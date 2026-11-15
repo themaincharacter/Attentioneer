@@ -1947,3 +1947,329 @@ body {
 .plane.gesture-armed .assumption-overlay {
   pointer-events: none;
 }
+
+/* Epic 5 story 1 — the ground game and its reach (ADR-0017 / ADR-0016's
+   amendment).
+   Provisional: the handle's glyph and slot, the ring cue, the chooser's card
+   and its rows. Ground is the third game over the same plane: words,
+   distances, marks and the shelf read exactly as before, and the reach is the
+   only addition (the honest partition). Every motion stays short, soft and
+   ease-out; the global reduced-motion rule above collapses it. */
+
+/* The word's ONE reach handle: a fixed slot in the row, ALWAYS present at
+   ground, so the word's box never grows and no wire anchor moves. It is
+   revealed on the word's hover, on keyboard focus (an element inside the word
+   focused) and while the handle itself is focused. */
+.reach-handle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.word:hover .reach-handle,
+.word:focus-within .reach-handle,
+.reach-handle:focus,
+.reach-handle:focus-visible {
+  opacity: 0.6;
+  pointer-events: auto;
+}
+
+.reach-handle:hover,
+.reach-handle:focus,
+.reach-handle:focus-visible {
+  opacity: 1;
+  color: #1e2126;
+  border-color: #ddd7cc;
+  outline: none;
+}
+
+/* The ring cue: ANY of this word's pointer lines is marked. One small hollow
+   ring at the handle's corner — a presence, never a count, and the same hollow
+   family as a mark's ring. */
+.reach-handle.marked::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 5px;
+  height: 5px;
+  border: 1.2px solid #8d887c;
+  border-radius: 50%;
+  background: #f7f6f3;
+  pointer-events: none;
+}
+
+/* The quiet chooser: a small warm-white card, the word's reaches in FILE
+   ORDER, the add entry under a hairline. Counter-scaled inline against the
+   camera (so it stays readable at every zoom) and anchored in world space
+   beside its word; it never grows the word's box. */
+.pointer-chooser {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 150px;
+  max-width: 300px;
+  padding: 7px 20px 7px 9px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 9px;
+  box-shadow:
+    0 1px 2px rgba(40, 35, 25, 0.05),
+    0 5px 18px rgba(40, 35, 25, 0.11);
+  user-select: text;
+  animation: rise-in 150ms ease-out;
+}
+
+@supports ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .pointer-chooser {
+    background: rgba(255, 253, 248, 0.8);
+    -webkit-backdrop-filter: blur(8px) saturate(1.05);
+    backdrop-filter: blur(8px) saturate(1.05);
+  }
+}
+
+.pointer-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The authored form, said quietly — the person picked it, the app never did. */
+.pointer-form {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+  padding: 2px 2px 0 1px;
+}
+
+/* The value, verbatim, and the edit control: pressing it reopens the field
+   (the line is replaced in place, never delete + recast). */
+.pointer-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #4c4a44;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 1px 3px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.pointer-value:hover {
+  color: #1e2126;
+  background: rgba(30, 33, 38, 0.05);
+}
+
+.pointer-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 170px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #1e2126;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 1px 3px;
+}
+
+/* The ring toggle on one line: cast or settle "this reach is open". The open
+   hint's ring carries the mark's own hollow glyph. */
+.pointer-ring {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  padding: 0;
+  border: 1.2px solid #b5ad9e;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.45;
+  transition:
+    opacity 150ms ease,
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.pointer-ring:hover,
+.pointer-ring:focus-visible {
+  opacity: 1;
+  border-color: #6b675e;
+  transform: scale(1.2);
+  outline: none;
+}
+
+.pointer-ring.open {
+  opacity: 1;
+  border-color: #8d887c;
+}
+
+/* Removal is ammo: one quiet × per line, visible on the line's hover. */
+.pointer-remove {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 1px 2px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.pointer-row:hover .pointer-remove,
+.pointer-remove:focus-visible {
+  opacity: 1;
+}
+
+.pointer-remove:hover {
+  color: #b33;
+}
+
+/* The add entry: form picks start UNPICKED (no pick, no write); the value field
+   appears only after a pick. It is focusable so Enter with nothing chosen can
+   discard quietly. */
+.pointer-add {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(141, 136, 124, 0.16);
+  border-radius: 5px;
+  outline: none;
+}
+
+.pointer-add:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 2px;
+}
+
+.pointer-add-hint {
+  font-size: 9.5px;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.pointer-picks {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pointer-pick {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #6b675e;
+  background: transparent;
+  border: 1px solid #ddd7cc;
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.pointer-pick:hover,
+.pointer-pick:focus-visible {
+  color: #1e2126;
+  border-color: #8d887c;
+  outline: none;
+}
+
+.pointer-pick.picked,
+.pointer-pick[aria-pressed="true"] {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.16);
+  border-color: #c9c2b4;
+}
+
+.pointer-add-input {
+  width: 200px;
+  max-width: 100%;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #1e2126;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 1px 3px;
+}
+
+.pointer-add-input::placeholder {
+  color: #c4beb1;
+}
+
+/* The card's own quiet close (Esc and a press outside do the same). */
+.pointer-close {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.pointer-chooser:hover .pointer-close,
+.pointer-close:focus-visible {
+  opacity: 0.55;
+}
+
+.pointer-close:hover {
+  opacity: 1;
+  color: #6b675e;
+}

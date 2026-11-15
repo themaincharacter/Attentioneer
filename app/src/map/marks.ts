@@ -1,6 +1,7 @@
 import { readTextFile, writeTextFile } from "../lib/fs";
 import { canonicalJsonlLine, canonicalJsonlLines } from "../lib/serialize";
 import { distanceKey } from "./distances";
+import { isPointerForm, pointerKey, POINTER_FORMS, type PointerForm } from "./pointers";
 import { linkKey } from "./links";
 
 /**
@@ -15,18 +16,24 @@ import { linkKey } from "./links";
  * rewrites; malformed lines are preserved verbatim; a missing file means no
  * marks.
  *
- * Four target forms now: a word, a distance wire (from, to, word), a signed
- * link's wordless pair (from, to — ADR-0009's 2026-11-15 amendment), and a bare
- * spot. The wordless pair and the wire triple are DISTINCT natural keys, so one
- * pair may carry a mark on its distance and another on its link. A link's key
- * has no sign: flipping the sign keeps the mark; removing the link drops it
- * (die-with-target).
+ * Five target forms now: a word, a distance wire (from, to, word), a signed
+ * link's wordless pair (from, to — ADR-0009's 2026-11-15 amendment), a bare
+ * spot, and a POINTER LINE (on + path/at/url — ADR-0009's tightened second
+ * amendment, Epic 5). The wordless pair and the wire triple are DISTINCT
+ * natural keys, so one pair may carry a mark on its distance and another on its
+ * link. A link's key has no sign: flipping the sign keeps the mark; removing
+ * the link drops it (die-with-target). The pointer-key form carries the
+ * pointer's own key fields, so it is distinct from the word form (an `on`
+ * alone): a mark on "the reach is open" is not a mark on the word. Byte-
+ * identical hand duplicates share the key and both render marked; a
+ * replace-in-place pointer edit carries its marks to the new key in the same
+ * batch, and the mark dies with its pointer line.
  *
  * Provisional: `kind` has one value, `"open"` — it names the mark's flavor,
  * never a lifecycle (absence is the only settled state, ADR-0009). The record
- * carries all four target forms: a bare spot is cast, named (grow) and bound
+ * carries all five target forms: a bare spot is cast, named (grow) and bound
  * by the canvas's ring gestures (story 2), and `retargetMark` is their one
- * pure write.
+ * pure write; the pointer-key form is cast from a pointer row (Epic 5).
  *
  * Canonical serialization is serialize.ts's job (ADR-0004); this module only
  * turns the file's bytes into records and back.
@@ -34,13 +41,16 @@ import { linkKey } from "./links";
 
 /**
  * What a mark sits on: a word slug, a distance wire's natural key, a signed
- * link's wordless pair (ADR-0009's amendment), or a bare spot.
+ * link's wordless pair (ADR-0009's amendment), a bare spot, or a pointer line
+ * (its owner plus the authored form and value — ADR-0009's tightened second
+ * amendment, Epic 5).
  */
 export type MarkTarget =
   | { type: "word"; slug: string }
   | { type: "wire"; from: string; to: string; word: string }
   | { type: "link"; from: string; to: string }
-  | { type: "spot"; x: number; y: number };
+  | { type: "spot"; x: number; y: number }
+  | { type: "pointer"; on: string; form: PointerForm; value: string };
 
 export interface Mark {
   /** The mark's flavor — provisional, single value `"open"` (ADR-0009). */
@@ -75,6 +85,11 @@ export function markTargetKey(target: MarkTarget): string {
       return `link\u0000${linkKey(target.from, target.to)}`;
     case "spot":
       return `spot\u0000${target.x}\u0000${target.y}`;
+    case "pointer":
+      // The pointer LINE is named exactly as the pointer record is (on + form
+      // + value, ADR-0017 rule 3) under its own prefix, so a mark on the word
+      // "rain" and a mark on rain's reach are two different marks.
+      return `pointer\u0000${pointerKey(target.on, target.form, target.value)}`;
   }
 }
 
@@ -88,6 +103,7 @@ export function markKey(mark: Mark): string {
  * `null`. A line must carry `kind` and exactly one target form — a line that
  * mixes forms or half-states a pair/spot is malformed, never guessed at. A
  * `from`/`to` pair WITHOUT a `word` is the wordless pair: a mark on a link.
+ * An `on` with exactly one of `path`/`at`/`url` is the pointer-key form.
  */
 export function parseMarkLine(line: string): Mark | null {
   let value: unknown;
@@ -105,8 +121,29 @@ export function parseMarkLine(line: string): Mark | null {
 
   if ("on" in rest) {
     if (typeof rest.on !== "string" || rest.on === "") return null;
+    // The pointer-key form (ADR-0009's tightened second amendment, Epic 5): an
+    // `on` plus EXACTLY ONE authored form key names a pointer LINE, not the
+    // word. A line mixing two forms, or carrying a form that is not a string,
+    // is malformed — the form is never guessed from the value (World B).
+    const forms = POINTER_FORMS.filter((form) => form in rest);
+    if (forms.length > 1) return null;
     if ("from" in rest || "to" in rest || "word" in rest || "x" in rest || "y" in rest) {
       return null;
+    }
+    if (forms.length === 1) {
+      const form = forms[0];
+      const value = rest[form];
+      if (typeof value !== "string" || value === "") return null;
+      const pointerExtra: Record<string, unknown> = {};
+      for (const key of Object.keys(rest)) {
+        if (key === "on" || isPointerForm(key)) continue;
+        pointerExtra[key] = rest[key];
+      }
+      return {
+        kind,
+        target: { type: "pointer", on: rest.on, form, value },
+        extra: pointerExtra,
+      };
     }
     const { on, ...extra } = rest;
     return { kind, target: { type: "word", slug: on }, extra };
@@ -161,6 +198,11 @@ function targetFields(target: MarkTarget): Record<string, string | number> {
       return { from: target.from, to: target.to };
     case "spot":
       return { x: target.x, y: target.y };
+    case "pointer": {
+      const fields: Record<string, string> = { on: target.on };
+      fields[target.form] = target.value;
+      return fields;
+    }
   }
 }
 
@@ -283,6 +325,7 @@ export function findOrphanMarks(
   wordSlugs: ReadonlySet<string>,
   wireKeys: ReadonlySet<string>,
   linkKeys: ReadonlySet<string> = new Set(),
+  pointerKeys: ReadonlySet<string> = new Set(),
 ): Mark[] {
   return marks.filter((mark) => {
     if (mark.target.type === "word") return !wordSlugs.has(mark.target.slug);
@@ -292,6 +335,12 @@ export function findOrphanMarks(
     }
     if (mark.target.type === "link") {
       return !linkKeys.has(linkKey(mark.target.from, mark.target.to));
+    }
+    if (mark.target.type === "pointer") {
+      // A pointer mark outlives nothing: no pointer line for its exact
+      // on + form + value means an orphan (a hand edit), surfaced quietly.
+      const { on, form, value } = mark.target;
+      return !pointerKeys.has(pointerKey(on, form, value));
     }
     return false;
   });

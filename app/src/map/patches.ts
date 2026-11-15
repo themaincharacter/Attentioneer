@@ -36,6 +36,12 @@ import {
   type Assumption,
   type AssumptionTarget,
 } from "./assumptions";
+import {
+  loadPointers,
+  pointerKeyOf,
+  savePointers,
+  type Pointer,
+} from "./pointers";
 
 /**
  * Atomic patches (ADR-0005, ADR-0007, ADR-0009, ADR-0012, ADR-0013,
@@ -50,12 +56,16 @@ import {
  * bytes.
  *
  * Write order (the crash rule): references -> distances -> links -> marks ->
- * loops -> assumptions -> membership -> the old file. Story 4 grows the
- * loop -> assumption steps between loops and membership (the marked seams
- * below say where): a reference rename rewrites word- and link-targeted
- * assumptions, a reference remove drops them (and a loop's own lines when the
- * same batch removes the loop), and a loop rename/remove rewrites or drops
- * `loop` targets.
+ * loops -> assumptions -> pointers -> pointer-marks -> membership -> the old file.
+ * Epic 4 story 4 grew the loop -> assumption steps between loops and
+ * membership; Epic 5 story 1 grows the pointer -> pointer-marks steps between
+ * assumptions and membership: the reach lines are written BEFORE their marks
+ * (a crash must never leave an app-authored dangling mark), and the
+ * pointer-key marks (ADR-0009's tightened second amendment) follow their
+ * lines in the same batch. A reference rename rewrites word- and link-targeted
+ * assumptions and the pointers' `on`; a reference remove drops them (and a
+ * loop's own lines when the same batch removes the loop), and a loop
+ * rename/remove rewrites or drops `loop` targets.
  *
  * Crash rule: the durable thing is written first. The reference's file is
  * written before the records that name the slug, and those records are
@@ -219,8 +229,159 @@ export function dropMarksTouching(marks: readonly Mark[], slug: string): Mark[] 
     if (mark.target.type === "link") {
       return mark.target.from !== slug && mark.target.to !== slug;
     }
+    // Pointer-key marks are the POINTER batch's, written after the pointer
+    // lines themselves (see `dropPointerMarksTouching`): the ordering rule
+    // "pointer lines before their marks" is kept even on a remove.
     return true;
   });
+}
+
+/**
+ * Re-write a pointer in one pass, resolving the collisions the rewrite
+ * creates. The app's rewrite is the survivor: if a rewritten line lands on a
+ * key that an untouched line already holds (a hand-edited duplicate on the new
+ * owner), the untouched line is dropped and the rewritten one keeps its index;
+ * if two rewritten lines land on one key, the later line in file order wins.
+ * Untouched duplicate keys elsewhere are NEVER collapsed — the read preserves
+ * them, and only the keys the app actually rewrote resolve.
+ */
+function rewritePointersWhere(
+  pointers: readonly Pointer[],
+  retarget: (pointer: Pointer) => Pointer | null,
+): Pointer[] {
+  const rewrittenKeys = new Map<string, number>();
+  const next = pointers.map((pointer, index) => {
+    const rewritten = retarget(pointer);
+    if (rewritten === null) return pointer;
+    rewrittenKeys.set(pointerKeyOf(rewritten), index);
+    return rewritten;
+  });
+  if (rewrittenKeys.size === 0) return [...pointers];
+  const drop = new Set<number>();
+  next.forEach((pointer, index) => {
+    const survivor = rewrittenKeys.get(pointerKeyOf(pointer));
+    if (survivor === undefined) return;
+    if (index !== survivor) drop.add(index);
+  });
+  return next.filter((_, index) => !drop.has(index));
+}
+
+/**
+ * Re-write every pointer's `on` to `newSlug` (reference rename, ADR-0017):
+ * the reach follows its word. The target strings are stored verbatim and are
+ * NEVER rewritten — a path that spells the old slug in prose stays exactly as
+ * written (the software never interprets a target). The form is untouched.
+ */
+export function rewritePointerOwners(
+  pointers: readonly Pointer[],
+  oldSlug: string,
+  newSlug: string,
+): Pointer[] {
+  if (oldSlug === newSlug) return [...pointers];
+  return rewritePointersWhere(pointers, (pointer) =>
+    pointer.on === oldSlug ? { ...pointer, on: newSlug } : null,
+  );
+}
+
+/**
+ * Drop every pointer whose owner is `slug` (reference remove): die-with-
+ * target (ADR-0017). The target strings and every other pointer line's bytes
+ * are untouched.
+ */
+export function dropPointersTouching(
+  pointers: readonly Pointer[],
+  slug: string,
+): Pointer[] {
+  return pointers.filter((pointer) => pointer.on !== slug);
+}
+
+/**
+ * Re-write the `on` of every POINTER-KEY mark touching `oldSlug` (rename,
+ * ADR-0009's tightened second amendment). A mark's target copies the pointer's
+ * key fields, so it must follow its line in the same batch — after the pointer
+ * lines are written. Collision rule: untouched marks are emitted first,
+ * rewritten ones last, so the app's rename beats a hand-edited duplicate.
+ */
+export function rewritePointerMarkOwners(
+  marks: readonly Mark[],
+  oldSlug: string,
+  newSlug: string,
+): Mark[] {
+  if (oldSlug === newSlug) return [...marks];
+  const untouched: Mark[] = [];
+  const rewritten: Mark[] = [];
+  for (const mark of marks) {
+    if (mark.target.type === "pointer" && mark.target.on === oldSlug) {
+      rewritten.push({ ...mark, target: { ...mark.target, on: newSlug } });
+    } else {
+      untouched.push(mark);
+    }
+  }
+  return dedupeMarks([...untouched, ...rewritten]);
+}
+
+/**
+ * Drop every pointer-key mark whose line is gone (reference remove): die-with-
+ * target, ADR-0009's tightened amendment. Written AFTER the pointer lines in
+ * the batch, so a pointer line is always written before its mark.
+ */
+export function dropPointerMarksTouching(
+  marks: readonly Mark[],
+  slug: string,
+): Mark[] {
+  return marks.filter(
+    (mark) => !(mark.target.type === "pointer" && mark.target.on === slug),
+  );
+}
+
+/** Drop the mark(s) on one pointer line, used when the line itself goes. */
+export function dropPointerMarksAt(
+  marks: readonly Mark[],
+  pointer: Pointer,
+): Mark[] {
+  const key = pointerKeyOf(pointer);
+  return marks.filter(
+    (mark) => !(mark.target.type === "pointer" && pointerKeyOf(mark.target) === key),
+  );
+}
+
+/**
+ * Carry a pointer's mark(s) to the edited line's new key (the replace-in-
+ * place edit, ADR-0009's tightened amendment): one quiet move in the same
+ * batch, after the pointer line is written. The app's move is the survivor if
+ * the new key already carried a mark (a hand-edited duplicate). With no mark
+ * on the old key this is a no-op and returns the same list, so the caller can
+ * skip the write.
+ */
+export function retargetPointerMarks(
+  marks: readonly Mark[],
+  source: Pointer,
+  target: Pointer,
+): readonly Mark[] {
+  const sourceKey = pointerKeyOf(source);
+  const targetKey = pointerKeyOf(target);
+  if (sourceKey === targetKey) return marks;
+  const moved = marks
+    .filter(
+      (mark) => mark.target.type === "pointer" && pointerKeyOf(mark.target) === sourceKey,
+    )
+    .map((mark) => ({
+      ...mark,
+      target: {
+        type: "pointer" as const,
+        on: target.on,
+        form: target.form,
+        value: target.value,
+      },
+    }));
+  if (moved.length === 0) return marks;
+  const remaining = marks.filter(
+    (mark) =>
+      mark.target.type !== "pointer" ||
+      (pointerKeyOf(mark.target) !== sourceKey &&
+        pointerKeyOf(mark.target) !== targetKey),
+  );
+  return dedupeMarks([...remaining, ...moved]);
 }
 
 /** The natural target of one wire, as marks name it. */
@@ -519,12 +680,11 @@ export async function renameReference(
 
   // 2b. Follow the rename in the marks in the same batch (ADR-0009). A link
   //     mark's wordless pair is rewritten here too, alongside its link line.
+  //     Pointer-key marks are the pointer step's (2e2): they follow their own
+  //     lines so a pointer line is always written before its mark.
   const parsedMarks = await loadMarks(workspacePath);
-  await saveMarks(
-    workspacePath,
-    rewriteMarkEndpoints(parsedMarks.marks, oldSlug, newSlug),
-    parsedMarks.malformed,
-  );
+  const renamedMarks = rewriteMarkEndpoints(parsedMarks.marks, oldSlug, newSlug);
+  await saveMarks(workspacePath, renamedMarks, parsedMarks.malformed);
 
   // 2c. Follow the rename in the loops' paths in the same batch (ADR-0012
   //     decision 6). The line is re-canonicalized: the smallest slug may have
@@ -549,7 +709,31 @@ export async function renameReference(
     parsedAssumptions.malformed,
   );
 
-  // 2e. Follow the rename in the playing set (ADR-0013). The renamed file —
+  // 2e. Follow the rename in the pointers in this same batch (ADR-0017): the
+  //     reach's `on` follows the word; the target strings stay byte-verbatim
+  //     (a path is not prose — the software never interprets it). The pointer
+  //     LINES are written BEFORE their marks (the crash rule: an app move must
+  //     never leave an app-authored dangling mark).
+  const parsedPointers = await loadPointers(workspacePath);
+  await savePointers(
+    workspacePath,
+    rewritePointerOwners(parsedPointers.pointers, oldSlug, newSlug),
+    parsedPointers.malformed,
+  );
+
+  // 2e2. The pointer-key marks follow their lines in the same batch
+  //      (ADR-0009's tightened second amendment): the mark's key copies the
+  //      pointer's fields, so the rename rewrites `on` again here — after the
+  //      pointer lines are on disk. A crash between 2e and 2e2 can only leave a
+  //      pointer mark naming the old owner (an orphan the app surfaces), never a
+  //      mark naming a line that was never written.
+  await saveMarks(
+    workspacePath,
+    rewritePointerMarkOwners(renamedMarks, oldSlug, newSlug),
+    parsedMarks.malformed,
+  );
+
+  // 2f. Follow the rename in the playing set (ADR-0013). The renamed file —
   //     the durable thing — is already on disk, so a crash here leaves a stale
   //     member name in map/model.json (visible, fixable by re-running the
   //     selector), never a member that names no word. An unreadable model file
@@ -593,11 +777,8 @@ export async function removeReference(
   );
 
   const parsedMarks = await loadMarks(workspacePath);
-  await saveMarks(
-    workspacePath,
-    dropMarksTouching(parsedMarks.marks, slug),
-    parsedMarks.malformed,
-  );
+  const remainingMarks = dropMarksTouching(parsedMarks.marks, slug);
+  await saveMarks(workspacePath, remainingMarks, parsedMarks.malformed);
 
   // 1b. Drop the loop lines whose path names the word — die-with-target
   //     (ADR-0012 decision 6) — before the file goes, so no path is ever left
@@ -627,6 +808,27 @@ export async function removeReference(
       deadLoopSlugs,
     ),
     parsedAssumptions.malformed,
+  );
+
+  // 1b3. Drop the pointer lines whose owner is the removed word — die-with-
+  //      target (ADR-0017) — BEFORE their marks, keeping the batch's order
+  //      (a pointer line is written before its mark). The target strings are
+  //      untouched: only the reach's owner dies.
+  const parsedPointers = await loadPointers(workspacePath);
+  await savePointers(
+    workspacePath,
+    dropPointersTouching(parsedPointers.pointers, slug),
+    parsedPointers.malformed,
+  );
+
+  // 1b4. Drop the pointer-key marks on those lines — after the lines, the same
+  //      order as a cast (ADR-0009's tightened second amendment). If the batch
+  //      stops between 1b3 and 1b4, the leftover mark names a line that is
+  //      gone: an orphan the app surfaces, never a silently repaired record.
+  await saveMarks(
+    workspacePath,
+    dropPointerMarksTouching(remainingMarks, slug),
+    parsedMarks.malformed,
   );
 
   // 1c. Drop the word's membership before the file goes (ADR-0013). Same

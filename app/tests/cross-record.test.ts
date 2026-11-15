@@ -213,7 +213,9 @@ function expectNoDanglingSlugs(batch: Batch): void {
 /**
  * The rename batch, in `renameReference`'s documented write order: the renamed
  * reference file first (the durable thing), then distances -> links -> marks ->
- * loops -> assumptions -> membership, then the old file goes.
+ * loops -> assumptions -> pointers -> pointer-marks -> membership, then the old
+ * file goes (Epic 5 inserted the pointer steps; this suite's batch predates
+ * the reach and leaves it out deliberately — the pointers' own suite covers it).
  */
 function renameThrough(batch: Batch, oldSlug: string, newName: string): Batch {
   // 1. the renamed file (prose byte-verbatim), old file dropped last.
@@ -433,7 +435,12 @@ describe("the batch's write order and crash-order comments", () => {
   test("the module doc states the order and the crash rule", () => {
     expect(source).toContain("Write order (the crash rule)");
     expect(source).toMatch(/references -> distances -> links -> marks ->/);
-    expect(source).toMatch(/loops -> assumptions -> membership -> the old file/);
+    // Epic 5 story 1 grows the pointer -> pointer-marks steps between the
+    // assumptions and the membership: the reach lines are written BEFORE their
+    // marks (ADR-0009's tightened second amendment).
+    expect(source).toMatch(
+      /loops -> assumptions -> pointers -> pointer-marks -> membership -> the old file/,
+    );
     expect(source).toContain("the durable thing is written first");
   });
 

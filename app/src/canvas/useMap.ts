@@ -60,13 +60,27 @@ import {
   type AssumptionTarget,
 } from "../map/assumptions";
 import {
+  addPointer as addPointerRecord,
+  convergePointerEdit,
+  findDuplicatePointers,
+  findOrphanPointers,
+  loadPointers,
+  pointerKey,
+  removePointerAt,
+  savePointers,
+  type Pointer,
+  type PointerForm,
+} from "../map/pointers";
+import {
   dropLinkAssumptions,
   dropLinkMarks,
   dropLoopAssumptions,
+  dropPointerMarksAt,
   dropWireMarks,
   recoinWireMarks,
   removeReference,
   renameReference,
+  retargetPointerMarks,
   rewriteAssumptionLoopTargets,
 } from "../map/patches";
 
@@ -130,6 +144,14 @@ export interface ConnectDraft {
  * preserved and surfaced — and every target rename/removal follows in the same
  * atomic batch (the loop rename's resolved slug flows into `loop` targets; a
  * removed loop or link takes its claims with it, die-with-target).
+ *
+ * Epic 5 story 1 adds the ground game's record (ADR-0017): `map/pointers.jsonl`
+ * loaded with the rest, one line per reach with its three authored forms
+ * (path / at / url, always the person's pick). Adding, editing in place (its
+ * marks carried to the new key in the same batch) and removing a line (its
+ * marks die with it) are quiet moves through the same in-order queue. The
+ * record layer never interprets a target string, never stats it and never
+ * repairs it: an `at` reach is machine-local and may dangle honestly.
  */
 export interface UseMapOptions {
   /**
@@ -160,6 +182,8 @@ export function useMap(
   const [malformedAssumptions, setMalformedAssumptions] = useState<string[]>(
     [],
   );
+  const [pointers, setPointers] = useState<Pointer[]>([]);
+  const [malformedPointers, setMalformedPointers] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [connect, setConnect] = useState<ConnectDraft | null>(null);
   const draftCount = useRef(0);
@@ -176,6 +200,9 @@ export function useMap(
   const assumptionsRef = useRef<Assumption[]>([]);
   const malformedAssumptionsRef = useRef<string[]>([]);
   const assumptionsWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const pointersRef = useRef<Pointer[]>([]);
+  const malformedPointersRef = useRef<string[]>([]);
+  const pointersWriteRef = useRef<Promise<void>>(Promise.resolve());
 
   /** Re-read every map file (first load and after an atomic patch). */
   const reloadMap = useCallback(async () => {
@@ -187,6 +214,7 @@ export function useMap(
       parsedModel,
       parsedLoops,
       parsedAssumptions,
+      parsedPointers,
     ] = await Promise.all([
       loadReferences(workspacePath),
       loadDistances(workspacePath),
@@ -195,6 +223,7 @@ export function useMap(
       loadModel(workspacePath),
       loadLoops(workspacePath),
       loadAssumptions(workspacePath),
+      loadPointers(workspacePath),
     ]);
     setRefs(referenceList);
     setDistances(parsedDistances.distances);
@@ -218,6 +247,10 @@ export function useMap(
     malformedAssumptionsRef.current = parsedAssumptions.malformed;
     setAssumptions(parsedAssumptions.assumptions);
     setMalformedAssumptions(parsedAssumptions.malformed);
+    pointersRef.current = parsedPointers.pointers;
+    malformedPointersRef.current = parsedPointers.malformed;
+    setPointers(parsedPointers.pointers);
+    setMalformedPointers(parsedPointers.malformed);
     setLoaded(true);
   }, [workspacePath]);
 
@@ -254,6 +287,12 @@ export function useMap(
   useEffect(() => {
     assumptionsRef.current = assumptions;
   }, [assumptions]);
+
+  // Pointers follow the same mirror rule: an edit carrying its marks can land
+  // right after an add, so the queue must never read a stale line list.
+  useEffect(() => {
+    pointersRef.current = pointers;
+  }, [pointers]);
 
   /** Persist the distance file after each mutation (deduped by key). */
   const persistDistances = useCallback(
@@ -340,6 +379,24 @@ export function useMap(
   );
 
   /**
+   * Persist the pointers file after each quiet move. Same in-order queue as the
+   * other records: an add behind an edit must land in the order the person
+   * made them. Every line — hand-duplicated keys included — is written in file
+   * order: the read rule says the app never dedupes them.
+   */
+  const persistPointers = useCallback(
+    (next: readonly Pointer[]) => {
+      pointersRef.current = [...next];
+      setPointers([...next]);
+      const malformedLines = [...malformedPointersRef.current];
+      pointersWriteRef.current = pointersWriteRef.current
+        .catch(() => undefined)
+        .then(() => savePointers(workspacePath, next, malformedLines));
+    },
+    [workspacePath],
+  );
+
+  /**
    * The composed join (ADR-0013 decision 4): pull these words into play. Runs
    * only while playing and only when a set exists — the selector is the door,
    * so a workspace with no accepted set gets no membership write. The caller
@@ -372,8 +429,17 @@ export function useMap(
       distances.map((d) => distanceKey(d.from, d.to, d.word)),
     );
     const linkKeys = new Set(links.map((link) => linkKey(link.from, link.to)));
-    return findOrphanMarks(marks, wordSlugs, wireKeys, linkKeys);
-  }, [loaded, refs, distances, links, marks]);
+    const pointerKeys = new Set(
+      pointers.map((pointer) => pointerKey(pointer.on, pointer.form, pointer.value)),
+    );
+    return findOrphanMarks(
+      marks,
+      wordSlugs,
+      wireKeys,
+      linkKeys,
+      pointerKeys,
+    );
+  }, [loaded, refs, distances, links, pointers, marks]);
 
   /**
    * Links naming a word that is not on the map (a hand edit): preserved in the
@@ -446,6 +512,27 @@ export function useMap(
   const duplicateAssumptions = useMemo(
     () => findDuplicateAssumptions(assumptions),
     [assumptions],
+  );
+
+  /**
+   * Pointers whose reference is not on the map (a hand edit or a partial
+   * write): preserved in the file and surfaced quietly, never dropped on an
+   * unrelated write — the same no-validation posture as the other records.
+   * The TARGET is never checked: a path may be absent and an `at` reach is
+   * machine-local and may dangle honestly (ADR-0017's amendment).
+   */
+  const orphanPointers = useMemo(() => {
+    if (!loaded) return [];
+    const slugs = new Set(
+      refs.map((ref) => ref.slug).filter((slug): slug is string => slug !== null),
+    );
+    return findOrphanPointers(pointers, slugs);
+  }, [loaded, refs, pointers]);
+
+  /** Hand-edited duplicate pointer keys: preserved and surfaced (read rule). */
+  const duplicatePointers = useMemo(
+    () => findDuplicatePointers(pointers),
+    [pointers],
   );
 
   /**
@@ -899,6 +986,89 @@ export function useMap(
     [persistAssumptions],
   );
 
+  /**
+   * Add a pointer to a word (story 1): one new line in file order, the form
+   * exactly as picked by the person (never sniffed from the value, World B).
+   * A byte-exact re-statement keeps its one line. Nothing is interpreted, and
+   * a blank target writes nothing.
+   */
+  const addPointer = useCallback(
+    (on: string, form: PointerForm, value: string) => {
+      const current = pointersRef.current;
+      const next = addPointerRecord(current, on, form, value);
+      // A byte-exact re-statement (or a blank target) is a quiet no-op: the
+      // file is not rewritten with the bytes it already has.
+      if (next.length !== current.length) persistPointers(next);
+    },
+    [persistPointers],
+  );
+
+  /**
+   * Edit a pointer's form/value in place (the quiet revision): the line
+   * changes AT ITS INDEX, with edit-convergence dropping a colliding line (the
+   * edited line is the survivor and keeps its unknown keys). Addressed by
+   * OBJECT identity, which the pure steps preserve for untouched lines, so the
+   * wrong line can never be edited after a converging drop.
+   *
+   * Write order: the POINTER LINE first, its marks second (ADR-0009's
+   * tightened amendment) — a mark on the reach follows the line to its new
+   * key, so a crash can only surface an orphan mark, never a mark naming a
+   * line the app never wrote.
+   */
+  const editPointer = useCallback(
+    (pointer: Pointer, form: PointerForm, value: string) => {
+      const current = pointersRef.current;
+      const index = current.indexOf(pointer);
+      if (index === -1) return;
+      // A commit that changed nothing writes nothing at all.
+      if (form === pointer.form && value === pointer.value) return;
+      const edited: Pointer = { ...pointer, form, value };
+      persistPointers(convergePointerEdit(current, index, form, value).pointers);
+      const moved = retargetPointerMarks(marksRef.current, pointer, edited);
+      if (moved !== marksRef.current) persistMarks(moved);
+    },
+    [persistPointers, persistMarks],
+  );
+
+  /**
+   * Remove one pointer line — ammo, one quiet ×, no tombstone — and the marks
+   * on it, in the same move (die-with-target): a mark dies with its line.
+   */
+  const removePointer = useCallback(
+    (pointer: Pointer) => {
+      const index = pointersRef.current.indexOf(pointer);
+      if (index === -1) return;
+      persistPointers(removePointerAt(pointersRef.current, index));
+      const remaining = dropPointerMarksAt(marksRef.current, pointer);
+      // A line nobody marked takes no mark write with it.
+      if (remaining.length !== marksRef.current.length) persistMarks(remaining);
+    },
+    [persistPointers, persistMarks],
+  );
+
+  /**
+   * Cast or settle an open mark on a pointer LINE: "this reach is open" has an
+   * address (ADR-0009's tightened amendment). The target copies the pointer's
+   * key fields, so a byte-identical hand duplicate shares the key and both
+   * render marked; a replace-in-place edit carries the mark to the new key.
+   */
+  const togglePointerMark = useCallback(
+    (pointer: Pointer) => {
+      const target: MarkTarget = {
+        type: "pointer",
+        on: pointer.on,
+        form: pointer.form,
+        value: pointer.value,
+      };
+      const current = marksRef.current;
+      const next = hasMark(current, "open", target)
+        ? withoutMark(current, "open", target)
+        : withMark(current, { kind: "open", target, extra: {} });
+      persistMarks(next);
+    },
+    [persistMarks],
+  );
+
   return {
     refs,
     distances,
@@ -919,6 +1089,10 @@ export function useMap(
     malformedAssumptions,
     duplicateAssumptions,
     orphanAssumptions,
+    pointers,
+    malformedPointers,
+    duplicatePointers,
+    orphanPointers,
     loaded,
     acceptPlayingSet,
     connect,
@@ -951,5 +1125,9 @@ export function useMap(
     addAssumption,
     reviseAssumption,
     removeAssumption,
+    addPointer,
+    editPointer,
+    removePointer,
+    togglePointerMark,
   };
 }

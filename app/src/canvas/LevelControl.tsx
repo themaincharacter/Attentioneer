@@ -1,4 +1,4 @@
-import type { Level } from "../workspace/level";
+import { LEVELS, type Level } from "../workspace/level";
 
 interface LevelControlProps {
   level: Level;
@@ -11,13 +11,19 @@ interface LevelControlProps {
 }
 
 /**
- * The quiet level control (ADR-0016): one switch naming the two games —
- * concept and dynamics — over one plane. It is the only way between them; zoom
- * never changes the game. In dynamics it grows one quiet text action, "edit
- * the playing set", which re-runs the selector. No badge, no count, no
- * ceremony; the active game is simply inked a little darker.
+ * The quiet level control (ADR-0016, amended): one switch naming the three
+ * games — concept, dynamics and ground — over one plane. It is the only way
+ * between them; zoom never changes the game.
  *
- * Provisional: the control's wording and look (ADR-0003/0016).
+ * The names are the glossary's words and the honest partition holds: words,
+ * distances, marks and the shelf render in every game; dynamics adds the
+ * playing set, links, loops and assumptions; ground adds the pointers (the
+ * outward reach) and leaves everything else exactly as it was. In dynamics the
+ * control grows its two quiet text actions ("edit the playing set", "coin a
+ * loop"); in ground it grows none — the reach lives on each word's handle.
+ *
+ * No badge, no count, no ceremony; the active game is simply inked a little
+ * darker. Provisional: the control's wording, order and look (ADR-0003/0016).
  */
 export function LevelControl({
   level,
@@ -27,24 +33,18 @@ export function LevelControl({
 }: LevelControlProps) {
   return (
     <div className="level-control" role="group" aria-label="level">
-      <button
-        type="button"
-        className={`level-game${level === "concept" ? " active" : ""}`}
-        aria-pressed={level === "concept"}
-        title="concept — words and distances"
-        onClick={() => onChange("concept")}
-      >
-        concept
-      </button>
-      <button
-        type="button"
-        className={`level-game${level === "dynamics" ? " active" : ""}`}
-        aria-pressed={level === "dynamics"}
-        title="dynamics — a playing set, signed links and loops"
-        onClick={() => onChange("dynamics")}
-      >
-        dynamics
-      </button>
+      {LEVELS.map((game) => (
+        <button
+          key={game}
+          type="button"
+          className={"level-game" + (level === game ? " active" : "")}
+          aria-pressed={level === game}
+          title={LEVEL_TITLES[game]}
+          onClick={() => onChange(game)}
+        >
+          {game}
+        </button>
+      ))}
       {level === "dynamics" && (
         <>
           <button
@@ -72,3 +72,13 @@ export function LevelControl({
     </div>
   );
 }
+
+/**
+ * Each game's quiet hover title. Provisional: the wording (the control's look
+ * and wording are ADR-0003's rendering seam).
+ */
+const LEVEL_TITLES: Record<Level, string> = {
+  concept: "concept — words and distances",
+  dynamics: "dynamics — a playing set, signed links and loops",
+  ground: "ground — the same map, with outward pointers",
+};

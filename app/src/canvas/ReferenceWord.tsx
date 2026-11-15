@@ -70,6 +70,17 @@ interface ReferenceWordProps {
   hasAssumptions?: boolean;
   /** Open this word's quiet assumption overlay, anchored beside the row. */
   onOpenAssumptions?: (anchor: Point) => void;
+  /**
+   * True at ground: the word carries ONE quiet reach handle in a fixed slot
+   * (Epic 5 story 1). It is always in the row — so the word's box never grows
+   * and no wire anchor moves — and CSS reveals it on hover, keyboard focus and
+   * while it is focused. Concept and dynamics render no handle at all.
+   */
+  showReach?: boolean;
+  /** True while ANY of this word's pointer lines carries an open mark. */
+  reachMarked?: boolean;
+  /** Open this word's quiet pointer chooser, anchored beside the row. */
+  onOpenPointers?: (anchor: Point) => void;
 }
 
 /** Screen pixels of movement before a mousedown becomes a drag. */
@@ -98,7 +109,10 @@ interface DragState {
  * the position past the fold is the whole record. At Level 2 the row also
  * carries the hollow assumption diamond (story 4), whose overlay is rendered
  * at App level so the word's box never grows and wires never move; Level 1
- * renders no diamond at all.
+ * renders no diamond at all. At ground (Epic 5 story 1) the row instead carries
+ * the one quiet reach handle — a fixed slot revealed on hover or keyboard
+ * focus, with a small ring cue when any of the word's pointer lines is marked;
+ * its quiet pointer chooser is likewise rendered at App level.
  *
  * Dragging is reported upward every animation frame (`onDragMove`) so the
  * word's wires track the pointer instead of snapping on drop.
@@ -125,6 +139,9 @@ export function ReferenceWord({
   showAssumptions = false,
   hasAssumptions = false,
   onOpenAssumptions,
+  showReach = false,
+  reachMarked = false,
+  onOpenPointers,
 }: ReferenceWordProps) {
   const { camera, centerOn } = usePlane();
   const wordRef = useRef<HTMLDivElement>(null);
@@ -476,6 +493,34 @@ export function ReferenceWord({
               });
             }}
           />
+        )}
+        {/* Story 1 of Epic 5's reach (ground only): ONE quiet handle in a
+            fixed slot. It is always in the row, so the word's box never grows
+            and no wire anchor moves; hover, keyboard focus and being focused
+            reveal it. The small ring cue says one of this word's pointer lines
+            is marked — a presence, never a count. It opens the quiet chooser
+            at App level, so the chooser can never grow the word either. */}
+        {showReach && onOpenPointers && !renaming && (
+          <button
+            type="button"
+            className={"reach-handle" + (reachMarked ? " marked" : "")}
+            aria-label={
+              reachMarked
+                ? "reach — pointers on this word (one is marked)"
+                : "reach — pointers on this word"
+            }
+            title="reach"
+            onClick={(e) => {
+              e.stopPropagation();
+              const el = wordRef.current;
+              onOpenPointers({
+                x: x + (el?.offsetWidth ?? 0) + 10,
+                y: y + (el?.offsetHeight ?? 0) / 2,
+              });
+            }}
+          >
+            ↗
+          </button>
         )}
         <button
           type="button"

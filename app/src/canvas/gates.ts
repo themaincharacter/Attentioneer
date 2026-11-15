@@ -19,6 +19,13 @@
  * lists. Level 1 renders none of them (assumptions are Level 2 content), so
  * its behavior is untouched.
  *
+ * Epic 5 story 1's ground game grows the gate again: a word's reach handle
+ * suspends nothing by itself (it is a plain control), but OPENING the quiet
+ * pointer chooser arms the gate in the `pointer` mode — the armed gesture owns
+ * the pointer, so word presses, pan and creation stand still while the chooser
+ * is the only live surface. The handle, the chooser and every element inside it
+ * join both class lists, exactly as every Epic 4 element did.
+ *
  * Pure: no DOM, no React. `ClassListLike` is satisfied by a DOMTokenList, so
  * the handlers can pass the real thing and tests can pass a plain stub.
  */
@@ -26,7 +33,12 @@
 import type { Level } from "../workspace/level";
 
 /** How a gesture is armed right now. Idle is the plain canvas. */
-export type GestureMode = "idle" | "selector" | "path" | "sign-choice";
+export type GestureMode =
+  | "idle"
+  | "selector"
+  | "path"
+  | "sign-choice"
+  | "pointer";
 
 /** The one method the gate needs from a class list (a DOMTokenList works). */
 export interface ClassListLike {
@@ -87,6 +99,24 @@ export const CONTENT_CLASSES = [
   "assumption-input",
   "assumption-remove",
   "assumption-close",
+  // Epic 5 story 1's ground game: the word's one quiet reach handle and the
+  // pointer chooser it opens (rows, their ring/edit/remove controls, the add
+  // entry and its form pick / value field). A press on any of them is content,
+  // never a plane gesture; the chooser never grows a word's box.
+  "reach-handle",
+  "pointer-chooser",
+  "pointer-row",
+  "pointer-form",
+  "pointer-value",
+  "pointer-input",
+  "pointer-ring",
+  "pointer-remove",
+  "pointer-add",
+  "pointer-add-hint",
+  "pointer-picks",
+  "pointer-pick",
+  "pointer-add-input",
+  "pointer-close",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */
@@ -150,14 +180,34 @@ export const WORD_CONTROL_CLASSES = [
   "assumption-input",
   "assumption-remove",
   "assumption-close",
+  // Epic 5 story 1: the reach handle is a word-row affordance (beside the
+  // memory dot and the connect handle), so it must never start a word drag or a
+  // click-to-center; the chooser's rows, controls and fields own their presses.
+  "reach-handle",
+  "pointer-chooser",
+  "pointer-row",
+  "pointer-form",
+  "pointer-value",
+  "pointer-input",
+  "pointer-ring",
+  "pointer-remove",
+  "pointer-add",
+  "pointer-add-hint",
+  "pointer-picks",
+  "pointer-pick",
+  "pointer-add-input",
+  "pointer-close",
 ] as const;
 
 /**
- * The double-click creation menu's kinds (ADR-0011, ADR-0016). At Level 1 the
- * ring menu offers word and lack exactly as it always has; at Level 2 it grows
- * a THIRD kind, `assumption`, which states a claim about a bare spot of plane
- * (ADR-0011's open decision, decided in story 4). The list is the menu's whole
- * contract, so the look and the ordering stay rendering's business.
+ * The double-click creation menu's kinds (ADR-0011, ADR-0016's amendment). The
+ * ring menu offers word and lack in EVERY game; the dynamics game grows a THIRD
+ * kind, `assumption`, which states a claim about a bare spot of plane
+ * (ADR-0011's open decision, decided in story 4). The ground game authors its
+ * records through the word's reach handle, not through the creation menu, so it
+ * offers exactly word and lack — the honest partition: a game only ADDS its own
+ * records. The list is the menu's whole contract, so the look and the ordering
+ * stay rendering's business.
  */
 export type CreationKind = "word" | "lack" | "assumption";
 
