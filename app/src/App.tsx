@@ -24,6 +24,7 @@ import {
 import { AssumptionDiamond } from "./canvas/AssumptionDiamond";
 import { AssumptionOverlay } from "./canvas/AssumptionOverlay";
 import {
+  authoringDoorLive,
   authoringLive,
   creationKinds,
   createLevelPin,
@@ -151,9 +152,12 @@ import type { Workspace } from "./workspace/lifecycle";
  * Epic 7 story 1 makes the playing set structurally required at AUTHORING: the
  * gate's `authoringLive` guards the three dynamics writers (a link, a loop, an
  * assumption) and echoes at the three affordances that would arm them, so with no
- * accepted set those doors are dead and accepting a set re-opens them. While the
- * selector is open the plane renders the DRAFT (`outOfPlay` in model.ts), so a
- * word clicked back in is readable before close.
+ * accepted set those doors are dead and accepting a set re-opens them. An open
+ * selector owns the interaction, so all three doors die there too: the plane's
+ * armed gate covers the two inside it, and `authoringDoorLive` covers the
+ * control's "coin a loop", which sits outside `.plane`. While the selector is
+ * open the plane renders the DRAFT (`outOfPlay` in model.ts), so a word clicked
+ * back in is readable before close.
  */
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -962,16 +966,20 @@ function App() {
    * Arm the path gesture: the level control's "coin a loop" (story 3). Opening
    * it cancels any other pending gesture, and the gate's `path` mode suspends
    * word presses, pan and creation while the words are clicked in order.
+   *
+   * Dead while authoring is inert (Epic 7 story 1) AND while the selector is
+   * open (that story's ruling: all three authoring doors die there). The control
+   * sits OUTSIDE `.plane`, so the armed gate cannot cover this one, and the
+   * guard must run BEFORE `cancelPendingGestures` — clicking a dead door must
+   * never close the selector it is dead behind. `authoringDoorLive` (gates.ts)
+   * is the reading; `createLoop` still enforces the write-time rule.
+   * Provisional: the door rule's shape.
    */
   const beginLoop = useCallback(() => {
-    // Dead while authoring is inert (Epic 7 story 1): a loop is a dynamics
-    // record, so the path is never armed without an accepted set — nobody
-    // clicks a cycle in order and names it into a void. `createLoop` enforces
-    // the same rule at the write.
-    if (!authoringLive(level, model)) return;
+    if (!authoringDoorLive(level, model, selectorOpen)) return;
     cancelPendingGestures();
     setPathSession(beginPathSession());
-  }, [cancelPendingGestures, level, model]);
+  }, [cancelPendingGestures, level, model, selectorOpen]);
 
   /** One word click in the path layer: collect it, or close at the first. */
   const pickPathWord = useCallback((slug: string) => {

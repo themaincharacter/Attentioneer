@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { authoringLive } from "../src/canvas/gates";
+import { authoringDoorLive, authoringLive } from "../src/canvas/gates";
 import { outOfPlay, type PlayingSet } from "../src/map/model";
 
 /**
@@ -87,6 +87,24 @@ describe("authoringLive — the required set is structural (Epic 7 story 1)", ()
   });
 });
 
+describe("authoringDoorLive — an open selector owns every authoring door", () => {
+  test("the loop door dies while the selector is open, even with an accepted set", () => {
+    const accepted = play("rain", "soil");
+    // The set is live (the writers' rule passes) and the door is still dead:
+    // the selector is the one live surface, and the control sits outside .plane.
+    expect(authoringLive("dynamics", accepted)).toBe(true);
+    expect(authoringDoorLive("dynamics", accepted, true)).toBe(false);
+    expect(authoringDoorLive("dynamics", accepted, false)).toBe(true);
+  });
+
+  test("the set rule still decides; an open selector always loses", () => {
+    expect(authoringDoorLive("dynamics", null, false)).toBe(false);
+    expect(authoringDoorLive("dynamics", null, true)).toBe(false);
+    expect(authoringDoorLive("concept", null, false)).toBe(true);
+    expect(authoringDoorLive("ground", null, false)).toBe(true);
+  });
+});
+
 describe("the three dynamics writers ask the seam before they write", () => {
   test("drawLink is guarded before its link write", () => {
     const body = callbackBody(useMapSource, "drawLink");
@@ -161,16 +179,26 @@ describe("the three dynamics writers ask the seam before they write", () => {
   });
 
   test("the three affordances echo the seam before they arm", () => {
-    const armed: Array<[string, string]> = [
-      ["openAssumptions", "setAssumptionAt("],
-      ["beginLoop", "setPathSession("],
-      ["beginConnectLive", "beginConnect("],
+    const armed: Array<[string, string, string]> = [
+      ["openAssumptions", "authoringLive(level, model)", "setAssumptionAt("],
+      [
+        "beginLoop",
+        "authoringDoorLive(level, model, selectorOpen)",
+        "setPathSession(",
+      ],
+      ["beginConnectLive", "authoringLive(level, model)", "beginConnect("],
     ];
-    for (const [name, call] of armed) {
+    for (const [name, guard, call] of armed) {
       const body = callbackBody(appSource, name);
-      expect(body).toContain("authoringLive(level, model)");
-      expect(body.indexOf("authoringLive(")).toBeLessThan(body.indexOf(call));
+      expect(body).toContain(guard);
+      expect(body.indexOf(guard)).toBeLessThan(body.indexOf(call));
     }
+    // The loop door is outside .plane, so its guard is the combined DOOR rule,
+    // and it runs before the cancel path that would close the selector.
+    const loop = callbackBody(appSource, "beginLoop");
+    expect(loop.indexOf("authoringDoorLive(")).toBeLessThan(
+      loop.indexOf("cancelPendingGestures()"),
+    );
     // The connect handle is the shared Level 1 gesture: it still starts a draw in
     // every other game, because the rule returns live there.
     expect(appSource).toContain("onConnectFrom={beginConnectLive}");

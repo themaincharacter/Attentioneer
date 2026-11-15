@@ -545,3 +545,28 @@ export function shouldPromptForSet(
 export function authoringLive(level: Level, model: PlayingSet | null): boolean {
   return level !== "dynamics" || model !== null;
 }
+
+/**
+ * May an authoring DOOR arm right now? `authoringLive` is the write-time rule;
+ * this is the arming-time reading for a door the armed gate cannot cover.
+ *
+ * While the playing-set selector is open the plane's own armed gate stands the
+ * connect handle and the assumption diamond still (`.plane.gesture-armed`), so
+ * those two doors die by construction. The level control's "coin a loop" sits
+ * OUTSIDE `.plane`, so that gate never reaches it: without this rule the loop
+ * door alone stays live while the selector is open (the follow-up Epic 7 story 1
+ * deferred). An open selector owns the interaction, so no door arms.
+ *
+ * Provisional: the shape. This folds the set requirement and the selector's
+ * ownership into one reading; if the selector's state ever moves into the seam,
+ * so does this. Only the control's loop door asks it today — the plane's own
+ * gate covers the other two — and the write-time rule (the writers'
+ * `authoringLive`) is unchanged.
+ */
+export function authoringDoorLive(
+  level: Level,
+  model: PlayingSet | null,
+  selectorOpen: boolean,
+): boolean {
+  return authoringLive(level, model) && !selectorOpen;
+}

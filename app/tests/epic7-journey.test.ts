@@ -55,6 +55,7 @@ import {
 } from "../src/map/refs";
 import { workspaceYml } from "../src/lib/serialize";
 import {
+  authoringDoorLive,
   authoringLive,
   isGestureArmed,
   shouldCreate,
@@ -757,14 +758,22 @@ describe("reconsider: the pre-fill is the circle's memory; close writes nothing"
     expect(cancel).toContain("setPathSession(endPathSession())");
     expect(cancel).toContain("setAssumptionAt(null)");
     expect(cancel).toContain("cancelConnect()");
-    // NAMED FOLLOW-UP (not this story's fix; the record layer is unaffected):
-    // the level control's "coin a loop" sits OUTSIDE the plane, so the armed
-    // gate never covers it and beginLoop sees an accepted set (authoringLive is
-    // true). Clicking it runs cancelPendingGestures (closing the selector) and
-    // arms the path, so the loop door is live while the selector is open. The
-    // check's "three doors die again while it is open" wants that control dead
-    // too. A one-line fix (gate beginLoop on the selector mode, or disable the
-    // control's dynamics actions while selectorOpen) is deferred.
+    // The third door dies too: the named follow-up this story deferred is
+    // fixed (PROVISIONAL: the door rule's shape). The control's "coin a loop"
+    // sits OUTSIDE .plane, so the armed gate never covers it and an accepted set
+    // keeps authoringLive true — yet an open selector still kills the door. The
+    // reading is `authoringDoorLive`, and beginLoop asks it BEFORE
+    // cancelPendingGestures, so clicking the door can no longer close the
+    // selector and arm the path.
+    const journey = afterLink();
+    expect(authoringLive("dynamics", journey.model)).toBe(true);
+    expect(authoringDoorLive("dynamics", journey.model, true)).toBe(false);
+    expect(authoringDoorLive("dynamics", journey.model, false)).toBe(true);
+    const loop = callbackBody(appSource, "beginLoop");
+    expect(loop).toContain("authoringDoorLive(level, model, selectorOpen)");
+    expect(loop.indexOf("authoringDoorLive(")).toBeLessThan(
+      loop.indexOf("cancelPendingGestures()"),
+    );
   });
 });
 
