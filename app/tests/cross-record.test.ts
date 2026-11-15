@@ -10,6 +10,7 @@ import {
 } from "../src/map/assumptions";
 import { parseDistances, serializeDistances, type Distance } from "../src/map/distances";
 import {
+  drawLink,
   linkKey,
   parseLinks,
   serializeLinks,
@@ -18,6 +19,7 @@ import {
 } from "../src/map/links";
 import {
   loopSlug,
+  nameLoop,
   parseLoops,
   serializeLoops,
   type Loop,
@@ -39,6 +41,7 @@ import {
 } from "../src/map/pointers";
 import {
   dedupe,
+  joinWords,
   parseModel,
   serializeModel,
   type PlayingSet,
@@ -64,7 +67,11 @@ import {
 } from "../src/map/patches";
 import { parseReference, serializeReference, type Reference } from "../src/map/refs";
 import { BAND_ZOOM, GROUND_FROM } from "../src/canvas/zoomBands";
-import { createLevelPin, shouldPinLevel } from "../src/canvas/gates";
+import {
+  authoringLive,
+  createLevelPin,
+  shouldPinLevel,
+} from "../src/canvas/gates";
 import { workspaceYml } from "../src/lib/serialize";
 import {
   DEFAULT_LEVEL,
@@ -123,7 +130,8 @@ interface Batch {
   loops: Loop[];
   assumptions: Assumption[];
   pointers: Pointer[];
-  model: PlayingSet;
+  /** The accepted set, or null when map/model.json does not exist. */
+  model: PlayingSet | null;
 }
 
 function base(): Batch {
@@ -272,7 +280,10 @@ function renameThrough(batch: Batch, oldSlug: string, newName: string): Batch {
   // 2e -> 2e2: the pointer lines first, their marks after (the crash rule).
   const pointers = rewritePointerOwners(batch.pointers, oldSlug, newName);
   const pointerMarks = rewritePointerMarkOwners(marks, oldSlug, newName);
-  const model = rewriteMembership(batch.model, oldSlug, newName);
+  const model =
+    batch.model === null
+      ? null
+      : rewriteMembership(batch.model, oldSlug, newName);
   return {
     refs,
     distances,
@@ -306,7 +317,8 @@ function removeThrough(batch: Batch, slug: string): Batch {
   // 1b3 -> 1b4: the pointer lines go before their marks (the batch's order).
   const pointers = dropPointersTouching(batch.pointers, slug);
   const pointerMarks = dropPointerMarksTouching(marks, slug);
-  const model = dropMembership(batch.model, slug);
+  const model =
+    batch.model === null ? null : dropMembership(batch.model, slug);
   const refs = batch.refs.filter((ref) => ref.slug !== slug);
   return {
     refs,
@@ -406,7 +418,7 @@ describe("a rename moves all four records in one batch", () => {
     expect(after.assumptions[1].text).toBe("this link carries the mulch");
 
     // Membership follows and stays sorted.
-    expect(after.model.words).toEqual(["rain", "soil", "woodchip"]);
+    expect(after.model!.words).toEqual(["rain", "soil", "woodchip"]);
     // Nothing dangles, and the rewrite reads back byte-for-byte.
     expectNoDanglingSlugs(after);
     reopenRecords(after);
@@ -560,7 +572,7 @@ describe("a remove moves all four records in one batch", () => {
         pointerKeys.has(pointerKey(mark.target.on, mark.target.form, mark.target.value)),
       ).toBe(true);
     }
-    expect(after.model.words).toEqual(["mulch", "rain"]);
+    expect(after.model!.words).toEqual(["mulch", "rain"]);
     expectNoDanglingSlugs(after);
     reopenRecords(after);
   });
@@ -1097,5 +1109,270 @@ describe("the level key and the handoff interplay (Epic 6, ADR-0018)", () => {
     expect(restore).toContain("deps.moveCamera(next)");
     expect(restore).not.toContain("write(");
     expect(restore).not.toContain("deps.save");
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * Epic 7 story 2: the authoring seam in the batch interplay.
+ * ---------------------------------------------------------------------- */
+
+describe("the authoring seam in the batch interplay (Epic 7 story 2)", () => {
+  /** A lean batch: three words, no accepted set, no dynamics records yet. */
+  function authoringBase(): Batch {
+    return {
+      refs: [
+        reference("rain", "rain"),
+        reference("soil", "soil"),
+        reference("mulch", "mulch"),
+      ],
+      distances: [],
+      links: [],
+      marks: [],
+      loops: [],
+      assumptions: [],
+      pointers: [],
+      model: null,
+    };
+  }
+
+  /** A batch whose RECORDS exist but whose set is gone (a hand edit, a lost file). */
+  function withoutSet(): Batch {
+    return { ...base(), model: null };
+  }
+
+  /** The selector's one write, as using the app does: the accepted set. */
+  function accept(batch: Batch, words: readonly string[]): Batch {
+    return {
+      ...batch,
+      model: {
+        words: dedupe([...words]),
+        extra: batch.model?.extra ?? {},
+      },
+    };
+  }
+
+  /** drawLink's batch: the guard, the durable line, then the composed join. */
+  function drawThrough(
+    batch: Batch,
+    from: string,
+    to: string,
+    sign: LinkSign = "+",
+  ): Batch {
+    if (!authoringLive("dynamics", batch.model)) return batch;
+    const links = drawLink(batch.links, from, to, sign);
+    const model = joinWords(batch.model, [from, to]);
+    return { ...batch, links, model };
+  }
+
+  /** createLoop's batch: the guard, then the loop line; membership untouched. */
+  function loopThrough(
+    batch: Batch,
+    name: string,
+    path: readonly string[],
+  ): Batch {
+    if (!authoringLive("dynamics", batch.model)) return batch;
+    return { ...batch, loops: nameLoop(batch.loops, name, path) };
+  }
+
+  /** addAssumption's batch: the guard, then the claim line; membership untouched. */
+  function claimThrough(
+    batch: Batch,
+    text: string,
+    target: AssumptionTarget,
+  ): Batch {
+    if (!authoringLive("dynamics", batch.model)) return batch;
+    return {
+      ...batch,
+      assumptions: addAssumption(batch.assumptions, text, target),
+    };
+  }
+
+  /** One useCallback body: brace-matched for blocks, the line for expressions. */
+  function callbackBody(source: string, name: string): string {
+    const start = source.indexOf("const " + name + " = useCallback(");
+    expect(start).toBeGreaterThan(-1);
+    const arrow = source.indexOf("=>", start);
+    expect(arrow).toBeGreaterThan(start);
+    let first = arrow + 2;
+    while (first < source.length && /\s/.test(source[first])) first += 1;
+    if (source[first] !== "{") {
+      return source.slice(start, source.indexOf("\n", start));
+    }
+    let depth = 0;
+    let end = first;
+    for (let i = first; i < source.length; i += 1) {
+      if (source[i] === "{") depth += 1;
+      else if (source[i] === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          end = i + 1;
+          break;
+        }
+      }
+    }
+    return source.slice(start, end);
+  }
+
+  test("no accepted set: the three writers no-op and every record keeps its bytes", () => {
+    const before = authoringBase();
+    const bytes = recordBytes(before);
+    expect(authoringLive("dynamics", before.model)).toBe(false);
+    const after = claimThrough(
+      loopThrough(
+        drawThrough(before, "rain", "soil", "+"),
+        "rain loop",
+        ["rain", "soil", "rain"],
+      ),
+      "mulch is the next question",
+      { type: "word", slug: "mulch" },
+    );
+    // Each writer returns the same batch when the set is absent: the identity
+    // is the no-op, and no record — the empty model file included — changes.
+    expect(after).toBe(before);
+    expect(recordBytes(after)).toEqual(bytes);
+    expect(bytes["map/model.json"]).toBe("");
+    expect(parseModel(bytes["map/model.json"]).model).toBeNull();
+  });
+
+  test("accept arms the writers; only a link's join moves membership", () => {
+    const accepted = accept(authoringBase(), ["rain", "soil"]);
+    expect(authoringLive("dynamics", accepted.model)).toBe(true);
+    expect(recordBytes(accepted)["map/model.json"]).toBe(
+      serializeModel(play(["rain", "soil"])),
+    );
+
+    // Both endpoints are already in play: the join has nothing to add, so the
+    // link is ONE write (the same record comes back).
+    const linked = drawThrough(accepted, "rain", "soil", "+");
+    expect(linked.model).toBe(accepted.model);
+
+    // A loop and a claim author too, and neither touches membership.
+    const looped = loopThrough(linked, "rain loop", ["rain", "soil", "rain"]);
+    expect(looped.model).toBe(accepted.model);
+    const claimed = claimThrough(
+      looped,
+      "mulch is the next question",
+      { type: "word", slug: "mulch" },
+    );
+    expect(claimed.model).toBe(accepted.model);
+
+    const bytes = recordBytes(claimed);
+    expect(bytes["map/links.jsonl"]).toBe(
+      '{"from":"rain","sign":"+","to":"soil"}\n',
+    );
+    expect(bytes["map/loops.jsonl"]).toBe(
+      serializeLoops([loop("rain loop", ["rain", "soil", "rain"])]),
+    );
+    expect(bytes["map/assumptions.jsonl"]).toBe(
+      serializeAssumptions([
+        claim("mulch is the next question", { type: "word", slug: "mulch" }),
+      ]),
+    );
+    expect(bytes["map/model.json"]).toBe(
+      serializeModel(play(["rain", "soil"])),
+    );
+    reopenRecords(claimed);
+
+    // A link to a PRUNED word (mulch is out of play): the join is the batch's
+    // second write, and it pulls the word back in — the honesty line.
+    const rejoined = drawThrough(claimed, "rain", "mulch", "+");
+    expect(rejoined.model!.words).toEqual(["mulch", "rain", "soil"]);
+    expect(
+      parseLinks(recordBytes(rejoined)["map/links.jsonl"]).links,
+    ).toHaveLength(2);
+    reopenRecords(rejoined);
+  });
+
+  test("a rename and a remove move membership: the batch's scoped exception", () => {
+    let batch = accept(authoringBase(), ["rain", "soil"]);
+    batch = drawThrough(batch, "rain", "soil", "+");
+    batch = loopThrough(batch, "rain loop", ["rain", "soil", "rain"]);
+    batch = claimThrough(batch, "soil feeds the loop", {
+      type: "word",
+      slug: "soil",
+    });
+
+    const renamed = renameThrough(batch, "soil", "earth");
+    expect(renamed.model!.words).toEqual(["earth", "rain"]);
+    expect(authoringLive("dynamics", renamed.model)).toBe(true);
+    reopenRecords(renamed);
+    expectNoDanglingSlugs(renamed);
+
+    // The remove takes the word's records with it and drops its membership; the
+    // remaining set is still a set, so authoring stays live.
+    const removed = removeThrough(renamed, "earth");
+    expect(removed.model!.words).toEqual(["rain"]);
+    expect(authoringLive("dynamics", removed.model)).toBe(true);
+    expect(removed.links).toEqual([]);
+    expect(removed.loops).toEqual([]);
+    expect(removed.assumptions).toEqual([]);
+    reopenRecords(removed);
+  });
+
+  test("a batch with no set never invents one", () => {
+    const noSet = withoutSet(); // records exist; map/model.json does not
+    expect(authoringLive("dynamics", noSet.model)).toBe(false);
+
+    // The rename still moves the word's records; the model write is skipped
+    // (patches' "if (parsedModel.model)" guard), so the absence is preserved.
+    const renamed = renameThrough(noSet, "mulch", "woodchip");
+    expect(renamed.model).toBeNull();
+    expect(recordBytes(renamed)["map/model.json"]).toBe("");
+
+    const removed = removeThrough(noSet, "mulch");
+    expect(removed.model).toBeNull();
+    expect(recordBytes(removed)["map/model.json"]).toBe("");
+  });
+
+  test("the one write trigger: accept, the join, and the atomic batch", () => {
+    const useMap = readFileSync(
+      new URL("../src/canvas/useMap.ts", import.meta.url),
+      "utf8",
+    );
+    const patches = readFileSync(
+      new URL("../src/map/patches.ts", import.meta.url),
+      "utf8",
+    );
+    const model = readFileSync(
+      new URL("../src/map/model.ts", import.meta.url),
+      "utf8",
+    );
+    const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+    const count = (source: string, needle: string) =>
+      source.split(needle).length - 1;
+
+    // map/model.json's writers, across the record layer: the selector's accept
+    // and the composed join in useMap; the rename/remove atomic batches in
+    // patches. Nothing else in the app writes the record.
+    expect(count(useMap, "saveModel(")).toBe(2);
+    expect(count(patches, "saveModel(")).toBe(2);
+    expect(count(app, "saveModel(")).toBe(0);
+    expect(count(app, "acceptPlayingSet(")).toBe(1);
+    for (const name of ["joinToPlay", "acceptPlayingSet"]) {
+      expect(callbackBody(useMap, name)).toContain("saveModel(");
+    }
+    for (const name of ["renameReference", "removeReference"]) {
+      expect(functionBody(patches, name)).toContain("saveModel(");
+    }
+    // Both patches skip the write when no set exists: a batch never invents one.
+    expect(count(patches, "if (parsedModel.model)")).toBe(2);
+    // The selector's moves never reach a write; the accept is the one.
+    for (const name of [
+      "openSelector",
+      "toggleSelectorWord",
+      "selectAllSelectorWords",
+      "handleLasso",
+      "toggleLasso",
+      "closeSelector",
+    ]) {
+      const body = callbackBody(app, name);
+      expect(body).not.toContain("acceptPlayingSet");
+      expect(body).not.toContain("saveModel");
+    }
+    expect(callbackBody(app, "acceptSelector")).toContain(
+      "acceptPlayingSet(",
+    );
+    // The definition itself is the only other mention.
+    expect(count(model, "export async function saveModel(")).toBe(1);
   });
 });
