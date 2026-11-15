@@ -2004,6 +2004,221 @@ body {
   pointer-events: none;
 }
 
+/* Epic 8 story 1 — quantities (ADR-0020).
+   Provisional: the glyph's shape and slot, the amount card's layout and its
+   anchoring (ADR-0003's rendering seam). One quiet glyph says a number is
+   authored here (a word's stock line in its hover row; a pair's flow line in
+   the signed link's head); the card is the one field where the number — or a
+   deliberate blank, the visible unknown — is stated. Presence only: the glyph
+   never shows the amount, no total, no meter and no table appears anywhere.
+   Motion stays short, soft and ease-out; the global reduced-motion rule above
+   collapses it. */
+
+.quantity-glyph {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  padding: 0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+/* The affordance appears in the target's hover row (with the memory dot, the
+   diamond and the ×); a target that carries a line keeps its glyph faintly
+   visible — "a number is authored here", never what the number is. */
+.word:hover .quantity-glyph,
+.link:hover .quantity-glyph,
+.link-head:hover .quantity-glyph {
+  opacity: 0.5;
+}
+
+.quantity-glyph:hover,
+.quantity-glyph:focus-visible {
+  opacity: 1;
+  color: #6b675e;
+  transform: scale(1.15);
+}
+
+.quantity-glyph.has-quantity {
+  opacity: 0.8;
+  color: #6b675e;
+}
+
+.quantity-glyph.has-quantity:hover {
+  opacity: 1;
+}
+
+/* The quiet amount card: one field, the existing amount prefilled, a quiet
+   state line for a line with no amount (the visible unknown) and its ×. */
+.quantity-overlay {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 138px;
+  max-width: 220px;
+  padding: 7px 20px 7px 9px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 9px;
+  box-shadow:
+    0 1px 2px rgba(40, 35, 25, 0.05),
+    0 5px 18px rgba(40, 35, 25, 0.11);
+  user-select: text;
+  animation: rise-in 150ms ease-out;
+}
+
+@supports ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .quantity-overlay {
+    background: rgba(255, 253, 248, 0.8);
+    -webkit-backdrop-filter: blur(8px) saturate(1.05);
+    backdrop-filter: blur(8px) saturate(1.05);
+  }
+}
+
+.quantity-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.quantity-target {
+  flex: 0 0 auto;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: #a9a294;
+}
+
+.quantity-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 120px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #1e2126;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 1px 3px;
+}
+
+.quantity-input::placeholder {
+  color: #c4beb1;
+}
+
+/* A refused (negative or unreadable) entry: the field stays open and says so
+   quietly — nothing is written and nothing is clamped to 0. */
+.quantity-overlay.refused .quantity-input {
+  color: #a2503f;
+}
+
+.quantity-overlay.refused .quantity-input::placeholder {
+  color: #c9a79e;
+}
+
+/* The line's state under a hairline: "unknown" when the person saved the line
+   with no amount (the absence is content); otherwise the amount reads in the
+   field and this row is only the line's quiet ×. */
+.quantity-state {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  padding-top: 3px;
+  border-top: 1px solid rgba(141, 136, 124, 0.16);
+}
+
+.quantity-unknown {
+  flex: 1 1 auto;
+  font-size: 11.5px;
+  font-style: italic;
+  color: #8d887c;
+}
+
+.quantity-amount {
+  flex: 1 1 auto;
+  font-size: 11.5px;
+  color: #6b675e;
+}
+
+.quantity-remove {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 1px 2px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.quantity-state:hover .quantity-remove,
+.quantity-remove:focus-visible {
+  opacity: 1;
+}
+
+.quantity-remove:hover {
+  color: #b33;
+}
+
+/* The card's own quiet close (Esc, a press outside and leaving the field do
+   the same). */
+.quantity-close {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.quantity-overlay:hover .quantity-close,
+.quantity-close:focus-visible {
+  opacity: 0.55;
+}
+
+.quantity-close:hover {
+  opacity: 1;
+  color: #6b675e;
+}
+
+/* While a gesture is armed the armed gesture owns the pointer (ADR-0016): the
+   quantity glyph stands still with the assumption diamond; the card's own
+   controls stay live when it is open in idle. */
+.plane.gesture-armed .quantity-glyph,
+.plane.gesture-armed .quantity-overlay {
+  pointer-events: none;
+}
+
 /* Epic 5 story 1 — the ground game and its reach (ADR-0017 / ADR-0016's
    amendment).
    Provisional: the handle's glyph and slot, the ring cue, the chooser's card

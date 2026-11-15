@@ -72,6 +72,17 @@ import {
   type PointerForm,
 } from "../map/pointers";
 import {
+  findDuplicateQuantities,
+  findOrphanQuantities,
+  findOutOfPlayQuantities,
+  loadQuantities,
+  removeQuantity as removeQuantityRecord,
+  saveQuantities,
+  setQuantity as setQuantityRecord,
+  type Quantity,
+  type QuantityTarget,
+} from "../map/quantities";
+import {
   dropLinkAssumptions,
   dropLinkMarks,
   dropLoopAssumptions,
@@ -156,12 +167,22 @@ export interface ConnectDraft {
  * repairs it: an `at` reach is machine-local and may dangle honestly.
  *
  * Epic 7 story 1 puts the required-set rule in the WRITERS, not only in a
- * prompt (ADR-0013 decision 1): `drawLink`, `createLoop` and `addAssumption`
- * ask `authoringLive` (gates.ts) before their first persist, so at dynamics with
- * no accepted set nothing authors whatever armed it. Accepting a set is what
- * arms them, and the accept writes the synchronous mirror the seam reads. The
- * words, distances and marks shared by every game are never gated: they are not
- * the dynamics game's own records.
+ * prompt (ADR-0013 decision 1): `drawLink`, `createLoop`, `addAssumption` and
+ * (Epic 8 story 1) `setQuantity` ask `authoringLive` (gates.ts) before their
+ * first persist, so at dynamics with no accepted set nothing authors whatever
+ * armed it. Accepting a set is what arms them, and the accept writes the
+ * synchronous mirror the seam reads. The words, distances and marks shared by
+ * every game are never gated: they are not the dynamics game's own records.
+ *
+ * Epic 8 story 1 adds quantities (ADR-0020): `map/quantities.jsonl` loaded with
+ * the rest — two shapes (a stock line on a word, a flow line between two
+ * words), the amount optional so absent is UNKNOWN and never 0. `setQuantity`
+ * is the quiet authoring write (a new line, or the one line rewritten in place
+ * at its index with the convergence rule); `removeQuantity` is the quiet ×.
+ * The record NEVER joins or scopes: a line naming a word outside the playing
+ * set, or a word that is gone, is preserved and surfaced here, and the writer
+ * never touches `map/model.json`. The amount is authored, never inferred
+ * (World B): the software does not sum, derive or compare it.
  */
 export interface UseMapOptions {
   /**
@@ -199,6 +220,8 @@ export function useMap(
   );
   const [pointers, setPointers] = useState<Pointer[]>([]);
   const [malformedPointers, setMalformedPointers] = useState<string[]>([]);
+  const [quantities, setQuantities] = useState<Quantity[]>([]);
+  const [malformedQuantities, setMalformedQuantities] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [connect, setConnect] = useState<ConnectDraft | null>(null);
   const draftCount = useRef(0);
@@ -218,6 +241,9 @@ export function useMap(
   const pointersRef = useRef<Pointer[]>([]);
   const malformedPointersRef = useRef<string[]>([]);
   const pointersWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const quantitiesRef = useRef<Quantity[]>([]);
+  const malformedQuantitiesRef = useRef<string[]>([]);
+  const quantitiesWriteRef = useRef<Promise<void>>(Promise.resolve());
 
   /** Re-read every map file (first load and after an atomic patch). */
   const reloadMap = useCallback(async () => {
@@ -230,6 +256,7 @@ export function useMap(
       parsedLoops,
       parsedAssumptions,
       parsedPointers,
+      parsedQuantities,
     ] = await Promise.all([
       loadReferences(workspacePath),
       loadDistances(workspacePath),
@@ -239,6 +266,7 @@ export function useMap(
       loadLoops(workspacePath),
       loadAssumptions(workspacePath),
       loadPointers(workspacePath),
+      loadQuantities(workspacePath),
     ]);
     setRefs(referenceList);
     setDistances(parsedDistances.distances);
@@ -266,6 +294,10 @@ export function useMap(
     malformedPointersRef.current = parsedPointers.malformed;
     setPointers(parsedPointers.pointers);
     setMalformedPointers(parsedPointers.malformed);
+    quantitiesRef.current = parsedQuantities.quantities;
+    malformedQuantitiesRef.current = parsedQuantities.malformed;
+    setQuantities(parsedQuantities.quantities);
+    setMalformedQuantities(parsedQuantities.malformed);
     setLoaded(true);
   }, [workspacePath]);
 
@@ -308,6 +340,12 @@ export function useMap(
   useEffect(() => {
     pointersRef.current = pointers;
   }, [pointers]);
+
+  // Quantities follow it too: an amount typed on a pair right after one on a
+  // word must never be written from a stale line list.
+  useEffect(() => {
+    quantitiesRef.current = quantities;
+  }, [quantities]);
 
   /** Persist the distance file after each mutation (deduped by key). */
   const persistDistances = useCallback(
@@ -407,6 +445,26 @@ export function useMap(
       pointersWriteRef.current = pointersWriteRef.current
         .catch(() => undefined)
         .then(() => savePointers(workspacePath, next, malformedLines));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * Persist the quantities file after each quiet move. Same in-order queue as
+   * the other records: a stock amount and a flow amount must land in the order
+   * the person typed them. Every line — hand-duplicated keys included — is
+   * written in file order: the read rule says the app never dedupes them. The
+   * amount is written exactly as authored, and an absent amount stays absent
+   * (never 0).
+   */
+  const persistQuantities = useCallback(
+    (next: readonly Quantity[]) => {
+      quantitiesRef.current = [...next];
+      setQuantities([...next]);
+      const malformedLines = [...malformedQuantitiesRef.current];
+      quantitiesWriteRef.current = quantitiesWriteRef.current
+        .catch(() => undefined)
+        .then(() => saveQuantities(workspacePath, next, malformedLines));
     },
     [workspacePath],
   );
@@ -548,6 +606,46 @@ export function useMap(
   const duplicatePointers = useMemo(
     () => findDuplicatePointers(pointers),
     [pointers],
+  );
+
+  /**
+   * Quantities naming a word that is not on the map (a hand edit or a partial
+   * write): preserved in the file and surfaced quietly, never dropped on an
+   * unrelated write — and NEVER a reason to rejoin the word (ADR-0020 decision
+   * 3). A flow is an orphan when either end is gone.
+   */
+  const orphanQuantities = useMemo(() => {
+    if (!loaded) return [];
+    const slugs = new Set(
+      refs.map((ref) => ref.slug).filter((slug): slug is string => slug !== null),
+    );
+    return findOrphanQuantities(quantities, slugs);
+  }, [loaded, refs, quantities]);
+
+  /**
+   * Quantities on an on-map word that is OUT of the playing set: preserved and
+   * surfaced, never joined and never used to scope the record (ADR-0020
+   * decision 3). No accepted set means nothing is out of play (the same reading
+   * `outOfPlay` uses).
+   */
+  const outOfPlayQuantities = useMemo(() => {
+    if (!loaded) return [];
+    const slugs = new Set(
+      refs.map((ref) => ref.slug).filter((slug): slug is string => slug !== null),
+    );
+    const playing = model === null ? null : new Set(model.words);
+    // A line whose word is gone is the ORPHAN read's; counting it here as well
+    // would surface one hand edit twice in the notices.
+    const orphans = new Set(findOrphanQuantities(quantities, slugs));
+    return findOutOfPlayQuantities(quantities, playing, slugs).filter(
+      (quantity) => !orphans.has(quantity),
+    );
+  }, [loaded, refs, model, quantities]);
+
+  /** Hand-edited duplicate quantity keys: preserved and surfaced (read rule). */
+  const duplicateQuantities = useMemo(
+    () => findDuplicateQuantities(quantities),
+    [quantities],
   );
 
   /**
@@ -1015,6 +1113,33 @@ export function useMap(
   );
 
   /**
+   * Author a quantity (Epic 8 story 1, ADR-0020): one line per natural key —
+   * a stock line on `on`, a flow line over `from`/`to` — appended when the
+   * target has none, or rewritten IN PLACE at its index with the edit-
+   * convergence rule. `null` amount is the UNKNOWN state the person reached and
+   * saved (the line is visible, the number is not); 0 is a stated zero and is
+   * written only when typed. The required-set seam is the same as the other
+   * dynamics writers: with no accepted set at dynamics nothing is authored.
+   */
+  const setQuantity = useCallback(
+    (target: QuantityTarget, amount: number | null) => {
+      if (!authoringLive(level, modelRef.current)) return;
+      persistQuantities(
+        setQuantityRecord(quantitiesRef.current, target, amount),
+      );
+    },
+    [persistQuantities, level],
+  );
+
+  /** Remove one quantity line by its target — ammo, one quiet ×, no tombstone. */
+  const removeQuantity = useCallback(
+    (target: QuantityTarget) => {
+      persistQuantities(removeQuantityRecord(quantitiesRef.current, target));
+    },
+    [persistQuantities],
+  );
+
+  /**
    * Add a pointer to a word (story 1): one new line in file order, the form
    * exactly as picked by the person (never sniffed from the value, World B).
    * A byte-exact re-statement keeps its one line. Nothing is interpreted, and
@@ -1121,6 +1246,11 @@ export function useMap(
     malformedPointers,
     duplicatePointers,
     orphanPointers,
+    quantities,
+    malformedQuantities,
+    duplicateQuantities,
+    orphanQuantities,
+    outOfPlayQuantities,
     loaded,
     acceptPlayingSet,
     connect,
@@ -1153,6 +1283,8 @@ export function useMap(
     addAssumption,
     reviseAssumption,
     removeAssumption,
+    setQuantity,
+    removeQuantity,
     addPointer,
     editPointer,
     removePointer,

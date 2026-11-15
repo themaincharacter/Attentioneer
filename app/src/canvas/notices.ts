@@ -1,4 +1,5 @@
 import type { AssumptionTarget } from "../map/assumptions";
+import type { QuantityTarget } from "../map/quantities";
 import type { WordGap, WalkStep } from "../map/loopRead";
 import type { MarkTarget } from "../map/marks";
 import type { Level } from "../workspace/level";
@@ -127,6 +128,19 @@ export function describeAssumptionTarget(
     case "spot":
       return "a bare spot";
   }
+}
+
+/**
+ * A quiet name for what a quantity line is on (the amount card's aria and the
+ * notices): a word's stock or a flow's ordered pair, in the person's names.
+ */
+export function describeQuantityTarget(
+  target: QuantityTarget,
+  nameOf: NameOf,
+): string {
+  return target.type === "stock"
+    ? `“${nameOf(target.on)}”`
+    : `${nameOf(target.from)} → ${nameOf(target.to)}`;
 }
 
 /**

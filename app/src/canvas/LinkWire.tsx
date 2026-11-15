@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Link } from "../map/links";
 import { AssumptionDiamond } from "./AssumptionDiamond";
+import { QuantityGlyph } from "./QuantityGlyph";
 import { LINK_HEAD_BACK, pointToward, type Point } from "./geometry";
 import { useRingMouseDown } from "./ringDrag";
 
@@ -29,6 +30,14 @@ interface LinkWireProps {
   hasAssumptions?: boolean;
   /** Open the link's quiet assumption overlay, anchored beside the head. */
   onOpenAssumptions?: (anchor: Point) => void;
+  /**
+   * True when this ORDERED pair carries a flow quantity line (Epic 8 story 1,
+   * ADR-0020). The glyph opens the flow's amount card anchored at App level, so
+   * the head (and the wire it anchors) never moves.
+   */
+  hasQuantity?: boolean;
+  /** Open the pair's quiet flow amount card, anchored beside the head. */
+  onOpenQuantity?: (anchor: Point) => void;
 }
 
 /**
@@ -72,6 +81,8 @@ export function LinkWire({
   onMarkRingDrag,
   hasAssumptions = false,
   onOpenAssumptions,
+  hasQuantity = false,
+  onOpenQuantity,
 }: LinkWireProps) {
   const headRef = useRef<HTMLDivElement>(null);
 
@@ -179,6 +190,22 @@ export function LinkWire({
               onOpenAssumptions({
                 x: head.x + (headRef.current?.offsetWidth ?? 0) / 2 + 12,
                 y: head.y,
+              })
+            }
+          />
+        )}
+        {/* Epic 8 story 1's flow presence (ADR-0020): the one quiet glyph for
+            the flow line over this ORDERED pair, in the head cluster beside the
+            assumption diamond. A flow belongs to the pair, not to the sign, so
+            a flip never changes it; the card opens at App level. Provisional:
+            the glyph and the slot. */}
+        {onOpenQuantity && (
+          <QuantityGlyph
+            has={hasQuantity}
+            onPress={() =>
+              onOpenQuantity({
+                x: head.x + (headRef.current?.offsetWidth ?? 0) / 2 + 12,
+                y: head.y + 16,
               })
             }
           />

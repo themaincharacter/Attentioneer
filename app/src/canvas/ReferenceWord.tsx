@@ -9,6 +9,7 @@ import {
 import type { Reference } from "../map/refs";
 import { AssumptionDiamond } from "./AssumptionDiamond";
 import { usePlane } from "./CanvasPlane";
+import { QuantityGlyph } from "./QuantityGlyph";
 import {
   isGestureArmed,
   shouldStartWordPress,
@@ -74,6 +75,15 @@ interface ReferenceWordProps {
   /** Open this word's quiet assumption overlay, anchored beside the row. */
   onOpenAssumptions?: (anchor: Point) => void;
   /**
+   * The word's STOCK quantity, as one quiet view (Epic 8 story 1, ADR-0020):
+   * present at Level 2 only, and null elsewhere so Level 1's markup is exactly
+   * what it was. It is a same-band dynamics family (like the diamond), not a
+   * cross-band cue; the glyph reads presence only — `has` says a line exists,
+   * never what its amount is — and `onOpen` opens the amount card at App level
+   * so the word's box (and every wire's anchor) never moves.
+   */
+  quantity?: { has: boolean; onOpen: (anchor: Point) => void };
+  /**
    * True at ground: the word carries ONE quiet reach handle in a fixed slot
    * (Epic 5 story 1). It is always in the row — so the word's box never grows
    * and no wire anchor moves — and CSS reveals it on hover, keyboard focus and
@@ -132,6 +142,11 @@ interface DragState {
  * the reach handle's presence read: SOLID when the word carries pointers,
  * FAINT-but-addable when not (the diamond's precedent) — in ground only.
  *
+ * Epic 8 story 1 adds the quiet quantity glyph to the Level 2 row: the word's
+ * STOCK amount (a line with no amount is the visible unknown) opens its card at
+ * App level, so the word's box and every wire's anchor hold. Level 1 renders no
+ * glyph at all.
+ *
  * Story 3 also lands the cross-band move (ADR-0019): EVERY word carries the
  * follow control, in every game — one quiet glyph that opens a tiny menu of the
  * two other games and jumps the band with this word as the camera's anchor, so
@@ -163,6 +178,7 @@ export function ReferenceWord({
   showAssumptions = false,
   hasAssumptions = false,
   onOpenAssumptions,
+  quantity,
   showReach = false,
   reachMarked = false,
   onOpenPointers,
@@ -575,6 +591,24 @@ export function ReferenceWord({
               onOpenAssumptions({
                 x: x + (el?.offsetWidth ?? 0) + 10,
                 y: y + (el?.offsetHeight ?? 0) / 2,
+              });
+            }}
+          />
+        )}
+        {/* Epic 8 story 1's quantity presence (ADR-0020): the one quiet glyph
+            for this word's STOCK line, beside the assumption diamond in the
+            same hover row. It opens the amount card at App level, so the word's
+            box (and every wire's anchor) never moves; the card's field commits
+            on Enter and discards on Esc. Level 2 only — a quantity is the
+            dynamics game's own record. Provisional: the glyph and the slot. */}
+        {quantity && !renaming && (
+          <QuantityGlyph
+            has={quantity.has}
+            onPress={() => {
+              const el = wordRef.current;
+              quantity.onOpen({
+                x: x + (el?.offsetWidth ?? 0) + 10,
+                y: y + (el?.offsetHeight ?? 0) / 2 + 16,
               });
             }}
           />

@@ -51,6 +51,14 @@
  * policy — `shouldPromptForSet`: only a DELIBERATE entry asks for a missing
  * playing set; a wheel crossing never does (the cost is named there).
  *
+ * Epic 8 story 1 adds quantities (ADR-0020): a word's quiet stock glyph and a
+ * pair's quiet flow glyph, plus the amount card they open. They join both class
+ * lists like every element before them — a press on the glyph can never start a
+ * word drag or a click-to-center, and a press on the card can never pan the
+ * plane, create anything or start a word gesture. The card is the authoring
+ * surface, so the writer (and the arming echo in App) read `authoringLive`:
+ * at dynamics with no accepted set no amount is authored.
+ *
  * Pure: no DOM, no React. `ClassListLike` is satisfied by a DOMTokenList, and
  * `TextFieldLike` by an HTMLElement, so the handlers can pass the real thing
  * and tests can pass a plain stub.
@@ -164,6 +172,21 @@ export const CONTENT_CLASSES = [
   "word-follow-toggle",
   "word-follow-menu",
   "word-follow-game",
+  // Epic 8 story 1's quantities (ADR-0020): the quiet amount glyph in a word's
+  // row (the stock line) and in a link's head (the flow line over that ordered
+  // pair), the amount card and every element inside it. A press on any of them
+  // is content, never a plane gesture; the glyph is a word-row affordance, so
+  // it must never start a word drag or a click-to-center.
+  "quantity-glyph",
+  "quantity-overlay",
+  "quantity-line",
+  "quantity-target",
+  "quantity-input",
+  "quantity-state",
+  "quantity-unknown",
+  "quantity-amount",
+  "quantity-remove",
+  "quantity-close",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */
@@ -263,6 +286,19 @@ export const WORD_CONTROL_CLASSES = [
   "word-follow-toggle",
   "word-follow-menu",
   "word-follow-game",
+  // Epic 8 story 1's quantities (ADR-0020): the amount glyph is a word-row (and
+  // link-head) affordance, so it must never start a word drag or a
+  // click-to-center; the card's field and controls own their presses.
+  "quantity-glyph",
+  "quantity-overlay",
+  "quantity-line",
+  "quantity-target",
+  "quantity-input",
+  "quantity-state",
+  "quantity-unknown",
+  "quantity-amount",
+  "quantity-remove",
+  "quantity-close",
 ] as const;
 
 /**

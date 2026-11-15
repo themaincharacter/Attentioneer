@@ -37,6 +37,13 @@ import {
   type AssumptionTarget,
 } from "./assumptions";
 import {
+  loadQuantities,
+  quantityKey,
+  saveQuantities,
+  type Quantity,
+  type QuantityTarget,
+} from "./quantities";
+import {
   loadPointers,
   pointerKeyOf,
   savePointers,
@@ -48,24 +55,30 @@ import {
  * ADR-0014): rename and remove are single, all-or-nothing app operations — a
  * file plus `name` plus every `distances.jsonl` endpoint, every `links.jsonl`
  * pair, every touching mark, every `loops.jsonl` path slug, every
- * `assumptions.jsonl` target and the playing set's member slug (rename), or a
- * file plus every touching distance, link, mark, loop line, assumption line and
- * membership (remove). Prose memory is never rewritten (byte-faithful). No
- * other module hand-strings these edits; `distances.ts`/`links.ts`/
- * `marks.ts`/`loops.ts`/`assumptions.ts`/`model.ts`/`serialize.ts` own the
- * bytes.
+ * `assumptions.jsonl` target, every `quantities.jsonl` word end and the
+ * playing set's member slug (rename), or a file plus every touching distance,
+ * link, mark, loop line, assumption line, quantity line and membership
+ * (remove). Prose memory is never rewritten (byte-faithful). No other module
+ * hand-strings these edits; `distances.ts`/`links.ts`/`marks.ts`/`loops.ts`/
+ * `assumptions.ts`/`quantities.ts`/`model.ts`/`serialize.ts` own the bytes.
  *
  * Write order (the crash rule): references -> distances -> links -> marks ->
- * loops -> assumptions -> pointers -> pointer-marks -> membership -> the old file.
+ * loops -> assumptions -> quantities -> pointers -> pointer-marks -> membership
+ * -> the old file.
  * Epic 4 story 4 grew the loop -> assumption steps between loops and
  * membership; Epic 5 story 1 grows the pointer -> pointer-marks steps between
  * assumptions and membership: the reach lines are written BEFORE their marks
  * (a crash must never leave an app-authored dangling mark), and the
  * pointer-key marks (ADR-0009's tightened second amendment) follow their
- * lines in the same batch. A reference rename rewrites word- and link-targeted
- * assumptions and the pointers' `on`; a reference remove drops them (and a
- * loop's own lines when the same batch removes the loop), and a loop
- * rename/remove rewrites or drops `loop` targets.
+ * lines in the same batch. Epic 8 story 1 slots the quantities step AFTER
+ * assumptions and BEFORE pointers (the family position): a quantity line's
+ * `on`/`from`/`to` follows its word, and the number the person authored —
+ * the amount and its unknown keys — is never rewritten. The run before this
+ * story read loops -> assumptions -> pointers -> pointer-marks -> membership -> the old file.
+ * A reference rename rewrites word- and link-targeted assumptions and the
+ * pointers' `on`; a reference remove drops them (and a loop's own lines when
+ * the same batch removes the loop), and a loop rename/remove rewrites or drops
+ * `loop` targets.
  *
  * Crash rule: the durable thing is written first. The reference's file is
  * written before the records that name the slug, and those records are
@@ -644,6 +657,91 @@ export function dropLoopAssumptions(
   );
 }
 
+/**
+ * Re-write a quantity target in one pass, resolving the collisions the rewrite
+ * creates. The app's rewrite is the survivor: if a rewritten line lands on a
+ * key that an untouched line already holds (a hand-edited duplicate), the
+ * untouched line is dropped and the rewritten one keeps its index; if two
+ * rewritten lines land on one key, the later line in file order wins.
+ * Untouched duplicate keys elsewhere are NEVER collapsed — the read preserves
+ * them, and only the keys the app actually rewrote resolve. The amount and the
+ * unknown keys ride along untouched: a rename changes the address, never the
+ * number.
+ */
+function rewriteQuantitiesWhere(
+  quantities: readonly Quantity[],
+  retarget: (target: QuantityTarget) => QuantityTarget | null,
+): Quantity[] {
+  const rewrittenKeys = new Map<string, number>();
+  const next = quantities.map((quantity, index) => {
+    const target = retarget(quantity);
+    if (target === null) return quantity;
+    const record: Quantity =
+      target.type === "stock"
+        ? { ...quantity, type: "stock", on: target.on }
+        : { ...quantity, type: "flow", from: target.from, to: target.to };
+    rewrittenKeys.set(quantityKey(record), index);
+    return record;
+  });
+  if (rewrittenKeys.size === 0) return [...quantities];
+  const drop = new Set<number>();
+  next.forEach((quantity, index) => {
+    const survivor = rewrittenKeys.get(quantityKey(quantity));
+    if (survivor === undefined) return;
+    if (index !== survivor) drop.add(index);
+  });
+  return next.filter((_, index) => !drop.has(index));
+}
+
+/**
+ * Re-write every quantity line touching `oldSlug` (reference rename,
+ * ADR-0020 decision 3): a stock line's `on` and a flow line's `from`/`to`.
+ * The amount and unknown keys are untouched; line order is kept, and a
+ * collision on the new key resolves to the app's rewritten line (the
+ * assumptions rule). Quantities never join or scope — this only follows the
+ * address.
+ */
+export function rewriteQuantityEndpoints(
+  quantities: readonly Quantity[],
+  oldSlug: string,
+  newSlug: string,
+): Quantity[] {
+  if (oldSlug === newSlug) return [...quantities];
+  return rewriteQuantitiesWhere(quantities, (target) => {
+    if (target.type === "stock" && target.on === oldSlug) {
+      return { type: "stock", on: newSlug };
+    }
+    if (
+      target.type === "flow" &&
+      (target.from === oldSlug || target.to === oldSlug)
+    ) {
+      return {
+        type: "flow",
+        from: target.from === oldSlug ? newSlug : target.from,
+        to: target.to === oldSlug ? newSlug : target.to,
+      };
+    }
+    return null;
+  });
+}
+
+/**
+ * Drop every quantity line touching the removed word (reference remove,
+ * ADR-0020 decision 3): a stock line on it, and any flow line with it as an
+ * end — die-with-target, so nothing dangles. Line order and every surviving
+ * line's bytes are untouched.
+ */
+export function dropQuantitiesTouching(
+  quantities: readonly Quantity[],
+  slug: string,
+): Quantity[] {
+  return quantities.filter((quantity) =>
+    quantity.type === "stock"
+      ? quantity.on !== slug
+      : quantity.from !== slug && quantity.to !== slug,
+  );
+}
+
 /** Rename a reference: write the renamed file, rewrite endpoints, drop the old file. */
 export async function renameReference(
   workspacePath: string,
@@ -707,6 +805,19 @@ export async function renameReference(
     workspacePath,
     rewriteAssumptionTargets(parsedAssumptions.assumptions, oldSlug, newSlug),
     parsedAssumptions.malformed,
+  );
+
+  // 2d2. Follow the rename in the quantities in this same batch (ADR-0020,
+  //      Epic 8 story 1): a stock line's `on` and a flow line's `from`/`to`
+  //      are rewritten in place; the authored amount and every unknown key are
+  //      untouched. The step sits AFTER assumptions and BEFORE pointers (the
+  //      family position). Quantities never join or scope, so this is an
+  //      address rewrite and nothing more.
+  const parsedQuantities = await loadQuantities(workspacePath);
+  await saveQuantities(
+    workspacePath,
+    rewriteQuantityEndpoints(parsedQuantities.quantities, oldSlug, newSlug),
+    parsedQuantities.malformed,
   );
 
   // 2e. Follow the rename in the pointers in this same batch (ADR-0017): the
@@ -808,6 +919,18 @@ export async function removeReference(
       deadLoopSlugs,
     ),
     parsedAssumptions.malformed,
+  );
+
+  // 1b2b. Drop the quantity lines touching the word — die-with-target
+  //       (ADR-0020 decision 3, Epic 8 story 1): its stock line and every flow
+  //       ending at it go before the file goes, so no line is ever left naming
+  //       a word the same batch removed. The step sits AFTER assumptions and
+  //       BEFORE pointers (the family position).
+  const parsedQuantities = await loadQuantities(workspacePath);
+  await saveQuantities(
+    workspacePath,
+    dropQuantitiesTouching(parsedQuantities.quantities, slug),
+    parsedQuantities.malformed,
   );
 
   // 1b3. Drop the pointer lines whose owner is the removed word — die-with-

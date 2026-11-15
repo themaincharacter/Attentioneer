@@ -68,6 +68,7 @@ import {
 } from "./canvas/pointerRules";
 import { PointerChooser } from "./canvas/PointerChooser";
 import { PlayingSetBar, PlayingSetWords } from "./canvas/PlayingSetSelector";
+import { QuantityOverlay } from "./canvas/QuantityOverlay";
 import { useRingDrag } from "./canvas/ringDrag";
 import { ReferenceWord } from "./canvas/ReferenceWord";
 import { ShelfFold } from "./canvas/ShelfFold";
@@ -88,12 +89,19 @@ import { markTargetKey, type Mark, type MarkTarget } from "./map/marks";
 import {
   describeAssumptionTarget,
   describeMarkTarget,
+  describeQuantityTarget,
   noticeGroups,
   type NameOf,
   type NoticeFamily,
 } from "./canvas/notices";
 import { outOfPlay, prefilledSelection } from "./map/model";
 import { findPointers, type Pointer } from "./map/pointers";
+import {
+  findQuantity,
+  quantityTargetKey,
+  type Quantity,
+  type QuantityTarget,
+} from "./map/quantities";
 import type { Reference } from "./map/refs";
 import {
   DEFAULT_SHELF_X,
@@ -201,6 +209,11 @@ function App() {
     malformedPointers,
     duplicatePointers,
     orphanPointers,
+    quantities,
+    malformedQuantities,
+    duplicateQuantities,
+    orphanQuantities,
+    outOfPlayQuantities,
     loaded,
     acceptPlayingSet,
     connect,
@@ -233,6 +246,8 @@ function App() {
     addAssumption,
     reviseAssumption,
     removeAssumption,
+    setQuantity,
+    removeQuantity,
     addPointer,
     editPointer,
     removePointer,
@@ -266,6 +281,13 @@ function App() {
   // App level so it never grows a word's box or shifts a wire's anchors.
   const [assumptionAt, setAssumptionAt] = useState<{
     target: AssumptionTarget;
+    anchor: Point;
+  } | null>(null);
+  // The open amount card (Epic 8 story 1, ADR-0020): the stock/flow target it
+  // speaks about and the world point it hangs off, or null. One card at a time,
+  // rendered here at App level so it never grows a word's box or a link head.
+  const [quantityAt, setQuantityAt] = useState<{
+    target: QuantityTarget;
     anchor: Point;
   } | null>(null);
   // The open pointer chooser (Epic 5 story 1, ground only): the word it speaks
@@ -303,12 +325,33 @@ function App() {
   const openAssumptions = useCallback(
     (target: AssumptionTarget, anchor: Point) => {
       if (!authoringLive(level, model)) return;
+      // One quiet card at a time in dynamics: the amount card yields.
+      setQuantityAt(null);
       setAssumptionAt({ target, anchor });
     },
     [level, model],
   );
 
   const closeAssumptions = useCallback(() => setAssumptionAt(null), []);
+
+  /**
+   * Open the quiet amount card for one quantity target (Epic 8 story 1). Dead
+   * while authoring is inert (Epic 7 story 1's seam): at dynamics with no
+   * accepted set no amount can be authored, so the glyph never opens a field
+   * whose Enter would write nothing. This is the seam's arming-time ECHO;
+   * `setQuantity` enforces the same rule before its write. Opening it closes
+   * the assumption overlay — one quiet card at a time.
+   */
+  const openQuantity = useCallback(
+    (target: QuantityTarget, anchor: Point) => {
+      if (!authoringLive(level, model)) return;
+      setAssumptionAt(null);
+      setQuantityAt({ target, anchor });
+    },
+    [level, model],
+  );
+
+  const closeQuantity = useCallback(() => setQuantityAt(null), []);
 
   /**
    * Close the window WITHOUT moving focus: a rename, a removal, a level switch
@@ -421,6 +464,33 @@ function App() {
     [assumptions],
   );
 
+  // Which quantity targets carry a line (Epic 8 story 1) — the word's stock
+  // glyph and the pair's flow glyph read presence, never a number. One Set,
+  // never a tally, and the lines themselves stay in the file.
+  const quantityTargets = useMemo(
+    () => new Set(quantities.map((quantity) => quantityTargetKey(quantity))),
+    [quantities],
+  );
+
+  /**
+   * A word's quiet STOCK quantity view at Level 2, or undefined elsewhere (the
+   * honest partition: Level 1 renders no glyph and no card). Built here so the
+   * word component receives one presence boolean and one opener — never the
+   * amount, and never a face that could leak across bands.
+   */
+  const quantityViewOf = useCallback(
+    (word: Reference) => {
+      if (level !== "dynamics" || word.slug === null) return undefined;
+      const slug = word.slug;
+      return {
+        has: quantityTargets.has(quantityTargetKey({ type: "stock", on: slug })),
+        onOpen: (anchor: Point) =>
+          openQuantity({ type: "stock", on: slug }, anchor),
+      };
+    },
+    [level, quantityTargets, openQuantity],
+  );
+
   // Bare spots carrying assumptions: each needs its own quiet diamond on the
   // plane (a word's, a link's and a loop's ride in their own rows).
   const spotAssumptionTargets = useMemo(
@@ -443,6 +513,17 @@ function App() {
       lines: findAssumptions(assumptions, assumptionAt.target),
     };
   }, [assumptionAt, assumptions]);
+
+  // The open amount card's line, recomputed from the records so a commit or a
+  // removal shows in the same breath. Null means "no line yet" — the card still
+  // opens so a number (or a deliberate unknown) can be authored.
+  const quantityPanel = useMemo(() => {
+    if (!quantityAt) return null;
+    return {
+      ...quantityAt,
+      line: findQuantity(quantities, quantityAt.target)?.quantity ?? null,
+    };
+  }, [quantityAt, quantities]);
 
   // The open pointer chooser's rows, in FILE ORDER, recomputed from the
   // records so an add/edit/remove shows in the same breath.
@@ -707,6 +788,7 @@ function App() {
     setLassoArmed(false);
     setPathSession(endPathSession());
     setAssumptionAt(null);
+    setQuantityAt(null);
     closePointersQuietly();
     closePeekQuietly();
     cancelConnect();
@@ -1363,6 +1445,7 @@ function App() {
               // batch rewrites, so it closes too (quietly: focus would land on
               // a handle whose word is moving).
               closeAssumptions();
+              closeQuantity();
               closePointersQuietly();
               if (candidate.slug !== null) closePeekFor(candidate.slug);
               rename(candidate, newName);
@@ -1373,6 +1456,7 @@ function App() {
               // them, so it closes before the batch runs. The pointer chooser
               // goes with the word's pointer lines (die-with-target).
               closeAssumptions();
+              closeQuantity();
               closePointersQuietly();
               if (candidate.slug !== null) closePeekFor(candidate.slug);
               remove(candidate);
@@ -1408,6 +1492,7 @@ function App() {
               if (word.slug === null) return;
               openAssumptions({ type: "word", slug: word.slug }, anchor);
             }}
+            quantity={quantityViewOf(word)}
             showReach={cueShownIn("reach", level)}
             reachMarked={
               word.slug !== null && wordsWithMarkedPointer.has(word.slug)
@@ -1510,6 +1595,7 @@ function App() {
                     from: link.from,
                     to: link.to,
                   });
+                  closeQuantity();
                   removeLink(link.from, link.to);
                 }}
                 onToggleMark={() => {
@@ -1532,6 +1618,19 @@ function App() {
                 onOpenAssumptions={(anchor) =>
                   openAssumptions(
                     { type: "link", from: link.from, to: link.to },
+                    anchor,
+                  )
+                }
+                hasQuantity={quantityTargets.has(
+                  quantityTargetKey({
+                    type: "flow",
+                    from: link.from,
+                    to: link.to,
+                  }),
+                )}
+                onOpenQuantity={(anchor) =>
+                  openQuantity(
+                    { type: "flow", from: link.from, to: link.to },
                     anchor,
                   )
                 }
@@ -1648,6 +1747,29 @@ function App() {
           />
         )}
 
+        {/* the quantities' quiet amount card (Epic 8 story 1, ADR-0020), in
+            world space beside its target and counter-scaled: one field — a
+            number commits the stated amount, a blank field commits the line
+            with NO amount (the visible unknown, never 0), Esc discards. It
+            never grows a target's box or shifts a wire's anchor. Level 2
+            only — a quantity is the dynamics game's own record. */}
+        {level === "dynamics" && quantityPanel && (
+          <QuantityOverlay
+            anchor={quantityPanel.anchor}
+            targetLabel={describeQuantityTarget(quantityPanel.target, nameOf)}
+            line={quantityPanel.line}
+            onCommit={(amount) => {
+              setQuantity(quantityPanel.target, amount);
+              closeQuantity();
+            }}
+            onRemove={() => {
+              removeQuantity(quantityPanel.target);
+              closeQuantity();
+            }}
+            onClose={closeQuantity}
+          />
+        )}
+
         {/* the ground game's quiet pointer chooser (Epic 5 story 1), in world
             space beside its word and counter-scaled: the reaches in FILE ORDER,
             each with its ring, its in-place edit, its open ↗ (story 2: the
@@ -1733,6 +1855,10 @@ function App() {
         malformedPointers={malformedPointers}
         duplicatePointers={duplicatePointers}
         orphanPointers={orphanPointers}
+        malformedQuantities={malformedQuantities}
+        duplicateQuantities={duplicateQuantities}
+        orphanQuantities={orphanQuantities}
+        outOfPlayQuantities={outOfPlayQuantities}
       />
 
       {/* the walk (story 3): the selected loop's derived read — steps, signs,
@@ -1789,6 +1915,10 @@ function MarkNotices({
   malformedPointers,
   duplicatePointers,
   orphanPointers,
+  malformedQuantities,
+  duplicateQuantities,
+  orphanQuantities,
+  outOfPlayQuantities,
 }: {
   /** The game running now: the strip speaks only this game's records. */
   level: Level;
@@ -1810,6 +1940,11 @@ function MarkNotices({
   malformedPointers: readonly string[];
   duplicatePointers: readonly Pointer[];
   orphanPointers: readonly Pointer[];
+  /** Quantities (Epic 8 story 1): unreadable lines, duplicates, lost/out-of-play words. */
+  malformedQuantities: readonly string[];
+  duplicateQuantities: readonly Quantity[];
+  orphanQuantities: readonly Quantity[];
+  outOfPlayQuantities: readonly Quantity[];
 }) {
   // Which families actually have something to say right now.
   const has: Record<NoticeFamily, boolean> = {
@@ -1826,14 +1961,31 @@ function MarkNotices({
       duplicatePointers.length > 0 ||
       orphanPointers.length > 0,
   };
+  // Quantities are dynamics' own record (Epic 8 story 1), and their lines are
+  // surfaced under dynamics' heading. They ride the group directly rather than
+  // joining `NoticeFamily`: that table names map FAMILIES (things drawn on the
+  // plane), and a quantity is a VALUE property of a word or a pair — it has no
+  // standalone surface of its own (a distance's word has none either). The
+  // notices still say where each kept line lives.
+  const hasQuantities =
+    level === "dynamics" &&
+    (malformedQuantities.length > 0 ||
+      duplicateQuantities.length > 0 ||
+      orphanQuantities.length > 0 ||
+      outOfPlayQuantities.length > 0);
   // The running game's groups, with the empty families dropped; a group with
-  // nothing left is dropped too, so no bare heading ever renders.
+  // nothing left is dropped too, so no bare heading ever renders (the dynamics
+  // group survives when it is only carrying quantity lines).
   const groups = noticeGroups(level)
     .map((group) => ({
       ...group,
       families: group.families.filter((family) => has[family]),
     }))
-    .filter((group) => group.families.length > 0);
+    .filter(
+      (group) =>
+        group.families.length > 0 ||
+        (group.game === "dynamics" && hasQuantities),
+    );
   if (groups.length === 0) return null;
 
   function familyLines(family: NoticeFamily) {
@@ -1967,6 +2119,33 @@ function MarkNotices({
           {group.families.map((family) => (
             <Fragment key={family}>{familyLines(family)}</Fragment>
           ))}
+          {group.game === "dynamics" && hasQuantities && (
+            <>
+              {orphanQuantities.map((quantity, index) => (
+                <div className="mark-notice" key={`orphan-quantity-${index}`}>
+                  a quantity on {describeQuantityTarget(quantity, nameOf)} — not on the map,
+                  kept in map/quantities.jsonl
+                </div>
+              ))}
+              {outOfPlayQuantities.map((quantity, index) => (
+                <div className="mark-notice" key={`out-quantity-${index}`}>
+                  a quantity on {describeQuantityTarget(quantity, nameOf)} — outside the
+                  playing set, kept in map/quantities.jsonl
+                </div>
+              ))}
+              {malformedQuantities.map((line, index) => (
+                <div className="mark-notice" key={`malformed-quantity-${index}`}>
+                  unreadable line in map/quantities.jsonl: {line}
+                </div>
+              ))}
+              {duplicateQuantities.map((quantity, index) => (
+                <div className="mark-notice" key={`duplicate-quantity-${index}`}>
+                  a duplicate quantity line on {describeQuantityTarget(quantity, nameOf)} —
+                  kept in map/quantities.jsonl
+                </div>
+              ))}
+            </>
+          )}
         </div>
       ))}
     </div>
