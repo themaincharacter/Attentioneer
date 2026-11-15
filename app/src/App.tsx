@@ -68,6 +68,7 @@ import {
 } from "./canvas/pointerRules";
 import { PointerChooser } from "./canvas/PointerChooser";
 import { PlayingSetBar, PlayingSetWords } from "./canvas/PlayingSetSelector";
+import { ComparePanel } from "./canvas/ComparePanel";
 import { QuantityOverlay } from "./canvas/QuantityOverlay";
 import { StepCrank } from "./canvas/StepCrank";
 import { useRingDrag } from "./canvas/ringDrag";
@@ -132,6 +133,23 @@ import {
   type ScenarioHandoff,
   type ScenarioHandoffDeps,
 } from "./scenarios/handoff";
+import {
+  comparisonFrame,
+  comparisonOf,
+  type CompareRefusal,
+  type Comparison,
+} from "./scenarios/compare";
+import {
+  loadCommittedRecords,
+  readComparisonSource,
+  saveCommittedRecord,
+  type CommittedRecords,
+} from "./scenarios/compareRead";
+import {
+  deliberateEdit,
+  type BridgeActions,
+  type BridgeMove,
+} from "./scenarios/bridge";
 import { saveWorkspaceLevel, DEFAULT_LEVEL, type Level } from "./workspace/level";
 import {
   createLevelHandoff,
@@ -196,6 +214,22 @@ import type { Workspace } from "./workspace/lifecycle";
  * resets it, a committed-only edit and a zoom/level switch do not, and
  * stepping writes nothing. The crank sits outside `.plane` beside the level
  * control; its notes are step-scoped.
+ *
+ * Epic 8 story 4 adds THE COMPARISON and the return move (ADR-0021 §7 amended):
+ * one EXPLICITLY picked branch is read against the committed model in a frozen
+ * two-value reading — the union of the set members, the link lines and the
+ * quantity lines, each row one provenance sentence ("branch (authored): … /
+ * committed (now): …"), absence as "no line", never a delta and never an
+ * equality claim, with the standing drift line and the branch's dangling
+ * premises said once, in the present tense. The reading is frozen at the pick
+ * and refreshed only by a quiet re-read — a reading resets nothing, so the
+ * branch's run survives it. Beside each row stand the bridge's doors: the
+ * family's ORDINARY deliberate edits of the COMMITTED model (author or replace
+ * an amount, remove a line, draw/flip/remove a sign, join/prune a word, revise
+ * a claim) — never an "apply the branch" verb, and never a write to the branch:
+ * that is why a committed edit never resets the run (ADR-0022's amendment). A
+ * frame of two branches is refused with a word (no shared base), and a dangling
+ * premise clears only by branching again.
  *
  * Epic 7 story 1 makes the playing set structurally required at AUTHORING: the
  * gate's `authoringLive` guards the three dynamics writers (a link, a loop, an
@@ -340,6 +374,21 @@ function App() {
   // and the loop whose walk is open (null = no walk).
   const [pathSession, setPathSession] = useState<PathSession | null>(null);
   const [walkSlug, setWalkSlug] = useState<string | null>(null);
+  // The comparison (Epic 8 story 4): the branch picked THIS session (an
+  // explicit pick — never the resume hint), the FROZEN reading taken when it
+  // was picked, and the frame's refusal. A reading holds no run state: opening,
+  // closing and re-reading reset nothing (ADR-0022's reset amendment).
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [comparePick, setComparePick] = useState<string | null>(null);
+  const [comparison, setComparison] = useState<Comparison | null>(null);
+  const [compareRefusal, setCompareRefusal] = useState<CompareRefusal | null>(
+    null,
+  );
+  // The committed model's three variant records as the bridge reads and writes
+  // them (the panel's open and re-read refresh this); and the in-order chain
+  // of its one-record writes, so two presses can never interleave.
+  const committedRecordsRef = useRef<CommittedRecords | null>(null);
+  const committedWriteRef = useRef<Promise<void>>(Promise.resolve());
   // The open assumption overlay (story 4): the target it speaks about and the
   // world point it hangs off, or null. One overlay at a time, rendered here at
   // App level so it never grows a word's box or shifts a wire's anchors.
@@ -881,6 +930,18 @@ function App() {
   }, [cancelConnect, closePointersQuietly, closePeekQuietly]);
 
   /**
+   * Close the comparison (Epic 8 story 4). It is a transient of the dynamics
+   * game like the walk: a level switch or a branch switch closes it, and so do
+   * Esc and the ×. Closing writes nothing and resets nothing.
+   */
+  const closeComparison = useCallback(() => {
+    setCompareOpen(false);
+    setComparePick(null);
+    setComparison(null);
+    setCompareRefusal(null);
+  }, []);
+
+  /**
    * Open the selector, pre-filled (ADR-0013): every current word on first
    * entry, the accepted set on a re-run. It is also the level control's
    * "edit the playing set".
@@ -957,12 +1018,16 @@ function App() {
       if (cause === "restore") return;
       cancelPendingGestures();
       setWalkSlug(null);
+      // The comparison is the dynamics game's own reading: a switch closes it
+      // (nothing is written; the next open reads anew).
+      closeComparison();
       if (cause === "jump") closePointers("switch-level");
       else closePointersQuietly();
       if (shouldPromptForSet(cause, next, model !== null)) openSelector();
     },
     [
       cancelPendingGestures,
+      closeComparison,
       closePointers,
       closePointersQuietly,
       model,
@@ -1154,9 +1219,13 @@ function App() {
       if (cause === "restore") return;
       cancelPendingGestures();
       setWalkSlug(null);
+      // A branch switch closes the comparison too: the compared branch may be
+      // the one that just stopped running, and a reading is re-taken, never
+      // carried across.
+      closeComparison();
       releasePin();
     },
-    [cancelPendingGestures, releasePin],
+    [cancelPendingGestures, closeComparison, releasePin],
   );
 
   const scenarioDeps = useRef<ScenarioHandoffDeps>({
@@ -1260,6 +1329,167 @@ function App() {
       scenarioHandoff.choose(slug);
     },
     [scenarioHandoff],
+  );
+
+  /* --------------------------------------------------------------------- *
+   * Epic 8 story 4: the comparison and the return move (ADR-0021 §7 amended,
+   * ADR-0022's reset amendment).
+   * --------------------------------------------------------------------- */
+
+  /**
+   * Read one branch against the committed model — the panel's ONE read, used
+   * by the explicit pick and by the re-read. It refreezes the reading: the
+   * committed records (re-read from `map/`) and the branch's records + pins
+   * are loaded, and the panel keeps the value. A re-read is a READING: it
+   * writes nothing, switches nothing and resets nothing, so the branch's run
+   * (which tracks the ACTIVE model, not this one) is untouched.
+   */
+  const readComparison = useCallback(
+    async (slug: string) => {
+      if (!workspace) return;
+      const path = workspace.path;
+      // Wait for any queued committed write first: a reading must never freeze
+      // a record the person just revised and whose write has not landed.
+      await committedWriteRef.current.catch(() => undefined);
+      const records = await loadCommittedRecords(path);
+      committedRecordsRef.current = records;
+      const source = await readComparisonSource(
+        path,
+        slug,
+        records,
+        assumptions,
+      );
+      // A folder whose header does not read as a scenario is not a branch: the
+      // panel shows no reading rather than inventing one.
+      setComparison(source === null ? null : comparisonOf(slug, source));
+    },
+    [workspace, assumptions],
+  );
+
+  /** The level control's "compare…": open the panel (nothing read yet). */
+  const openComparison = useCallback(() => {
+    setCompareOpen(true);
+    setCompareRefusal(null);
+  }, []);
+
+  /**
+   * Pick the branch to read. The frame is branch↔committed ONLY: the committed
+   * side is fixed, so a two-branch frame is refused before any read (the
+   * predicate is `compare.ts`'s; the sentence is the panel's).
+   */
+  const pickComparison = useCallback(
+    (slug: string) => {
+      const frame = comparisonFrame(
+        { kind: "branch", slug },
+        { kind: "committed" },
+      );
+      if (!frame.ok) {
+        setCompareRefusal(frame.refusal);
+        setComparePick(null);
+        setComparison(null);
+        return;
+      }
+      setCompareRefusal(null);
+      setComparePick(frame.branch);
+      // Frozen until the re-read: the old reading is never shown under a new
+      // pick's name.
+      setComparison(null);
+      void readComparison(frame.branch);
+    },
+    [readComparison],
+  );
+
+  /** Re-read the picked branch: another reading, never a live recompute. */
+  const rereadComparison = useCallback(() => {
+    if (comparePick === null) return;
+    void readComparison(comparePick);
+  }, [comparePick, readComparison]);
+
+  // A new workspace (or none) ends the reading: a frozen value belongs to the
+  // workspace it was read from, and carrying it over would show one map's rows
+  // under another map's name. Closing writes nothing.
+  useEffect(() => {
+    closeComparison();
+  }, [workspace?.path, closeComparison]);
+
+  /**
+   * The bridge's one write: take ONE deliberate edit of the committed records
+   * and save the record it changed. The pure move is `bridge.ts`'s; the write
+   * is `compareRead.ts`'s (always `map/`), queued in press order so two
+   * presses can never interleave. A move that changes nothing writes nothing.
+   *
+   * This never touches the ACTIVE model's records: while a branch runs they
+   * live in its folder, so a committed edit cannot reset the branch's run
+   * (ADR-0022's reset amendment — the evidence survives the act of revising).
+   */
+  const commitBridgeMove = useCallback(
+    (move: BridgeMove) => {
+      const records = committedRecordsRef.current;
+      if (records === null) return;
+      const edit = deliberateEdit(records, move);
+      if (edit.changed === null) return;
+      // The pure move names the three records; the malformed bytes the read
+      // preserved ride along so the write never repairs a hand-written line.
+      const next: CommittedRecords = { ...records, ...edit.records };
+      committedRecordsRef.current = next;
+      const record = edit.changed;
+      if (!workspace) return;
+      const path = workspace.path;
+      committedWriteRef.current = committedWriteRef.current
+        .catch(() => undefined)
+        .then(() => saveCommittedRecord(path, next, record));
+    },
+    [workspace],
+  );
+
+  /**
+   * The comparison's doors. Each is ONE ordinary deliberate edit of the
+   * committed model — never an "apply the branch": the branch's values are what
+   * the rows SHOW, and no door here takes a branch. The authoring moves ask
+   * `authoringLive` exactly as the plane's own writers do; a revision (a flip,
+   * a removal, a claim's revise) is ungated like every revision.
+   */
+  const bridge = useMemo<BridgeActions>(
+    () => ({
+      setAmount(target, amount) {
+        if (!authoringLive(level, model)) return;
+        commitBridgeMove({ move: "set-amount", target, amount });
+      },
+      removeLine(target) {
+        commitBridgeMove({ move: "remove-line", target });
+      },
+      drawLink(from, to, sign) {
+        if (!authoringLive(level, model)) return;
+        commitBridgeMove({ move: "draw-link", from, to, sign });
+      },
+      flipLink(from, to) {
+        commitBridgeMove({ move: "flip-link", from, to });
+      },
+      removeLink(from, to) {
+        commitBridgeMove({ move: "remove-link", from, to });
+      },
+      joinWord(word) {
+        if (!authoringLive(level, model)) return;
+        commitBridgeMove({ move: "join-word", word });
+      },
+      pruneWord(word) {
+        if (!authoringLive(level, model)) return;
+        commitBridgeMove({ move: "prune-word", word });
+      },
+      reviseClaim(assumption, text) {
+        reviseAssumption(assumption, text);
+      },
+      stateClaim(target, text) {
+        addAssumption(target, text);
+      },
+    }),
+    [
+      addAssumption,
+      commitBridgeMove,
+      level,
+      model,
+      reviseAssumption,
+    ],
   );
 
   /**
@@ -2059,6 +2289,7 @@ function App() {
         onChooseScenario={chooseScenario}
         onBranchScenario={branchModel}
         onRetireScenario={retireBranch}
+        onCompare={openComparison}
       />
 
       {/* the crank (Epic 8 story 3, ADR-0022): ONE hand-cranked step and,
@@ -2071,6 +2302,28 @@ function App() {
           notes={step.run?.notes ?? []}
           nameOf={nameOf}
           onCrank={step.crank}
+        />
+      )}
+
+      {/* the comparison (Epic 8 story 4, ADR-0021 §7 amended): the FROZEN
+          two-value reading of ONE explicitly picked branch against the
+          committed model, its standing drift line, the branch's dangling
+          premises said once (present tense), and the bridge's ordinary
+          deliberate edits. Level 2 only — it is the dynamics game's own
+          reading — and outside `.plane` like the crank, so the plane's armed
+          gate never reaches its doors. */}
+      {level === "dynamics" && compareOpen && (
+        <ComparePanel
+          branches={scenarios}
+          picked={comparePick}
+          comparison={comparison}
+          refusal={compareRefusal}
+          assumptions={assumptions}
+          nameOf={nameOf}
+          bridge={bridge}
+          onPick={pickComparison}
+          onReRead={rereadComparison}
+          onClose={closeComparison}
         />
       )}
 

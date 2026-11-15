@@ -28,6 +28,8 @@ interface LevelControlProps {
   onBranchScenario: (name: string) => void;
   /** Retire (delete) a branch's folder. */
   onRetireScenario: (slug: string) => void;
+  /** Open the comparison — a branch read against the committed model (story 4). */
+  onCompare: () => void;
 }
 
 /**
@@ -57,6 +59,11 @@ interface LevelControlProps {
  * map"), and the one action that makes a branch. It is outside `.plane` like
  * the other actions here, and switching runs the app's full switch path.
  *
+ * Epic 8 story 4 grows the section once more with "compare…" (ADR-0021 §7
+ * amended): the door to the frozen two-value reading of one explicitly picked
+ * branch against the committed model. It is offered only when a branch exists —
+ * a reading needs one — and it opens the quiet panel outside `.plane`.
+ *
  * No badge, no count, no ceremony. Provisional: the wording, order and look
  * (ADR-0003/0016/0018/0021), and the landing zoom each jump arrives at.
  */
@@ -70,6 +77,7 @@ export function LevelControl({
   onChooseScenario,
   onBranchScenario,
   onRetireScenario,
+  onCompare,
 }: LevelControlProps) {
   return (
     <div
@@ -124,6 +132,21 @@ export function LevelControl({
             onBranch={onBranchScenario}
             onRetire={onRetireScenario}
           />
+          {/* Epic 8 story 4's door: the comparison reads ONE branch against
+              the committed model, so it is offered only once a branch exists.
+              It opens the quiet panel just outside `.plane` like the crank;
+              the pick inside it is an explicit pick of this session, never the
+              resume hint (issue 04's ruling). */}
+          {scenarios.length > 0 && (
+            <button
+              type="button"
+              className="level-compare"
+              title="read a branch against the committed model"
+              onClick={onCompare}
+            >
+              compare…
+            </button>
+          )}
         </>
       )}
     </div>

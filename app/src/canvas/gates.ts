@@ -71,6 +71,12 @@
  * control, and the per-word run read is non-interactive text inside the word
  * (pointer-events: none) — there is no press to gate.
  *
+ * Epic 8 story 4's comparison (ADR-0021 §7 amended) adds no class either: the
+ * panel and every bridge door inside it sit OUTSIDE `.plane` beside the level
+ * control, so the armed gate never reaches them and no press on a door can pan,
+ * create or start a word gesture. Its doors write the COMMITTED model (never
+ * the armed game's records) through `authoringLive`'s ordinary rule.
+ *
  * Pure: no DOM, no React. `ClassListLike` is satisfied by a DOMTokenList, and
  * `TextFieldLike` by an HTMLElement, so the handlers can pass the real thing
  * and tests can pass a plain stub.

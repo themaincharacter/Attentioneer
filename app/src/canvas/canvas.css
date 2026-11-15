@@ -3035,3 +3035,308 @@ body {
   margin-left: 4px;
   opacity: 0.72;
 }
+
+/* Epic 8 story 4 — the comparison (ADR-0021 §7 amended; ADR-0022's reset
+   amendment). The door joins the level control's dynamics section in the
+   chooser's quiet pill vocabulary; the panel is a fixed card beside it, a
+   FROZEN two-value reading that stays readable at any zoom. One row is one
+   provenance sentence; the doors beside it are the bridge's ordinary
+   deliberate edits. Nothing here is a column, a delta or a score. Provisional:
+   the look (ADR-0003's seam). */
+.level-compare {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.level-compare:hover {
+  color: #1e2126;
+}
+
+.level-compare:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+.compare {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: min(440px, 48vw);
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+  padding: 7px 10px 9px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid #e4dfd4;
+  border-radius: 10px;
+  box-shadow: 0 3px 14px rgba(40, 35, 25, 0.1);
+  animation: fade-in 160ms ease-out;
+}
+
+.compare-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.compare-title {
+  font-size: 12.5px;
+  color: #4c4a44;
+}
+
+.compare-frame {
+  flex: 1;
+  font-size: 11.5px;
+  color: #8d887c;
+  font-style: italic;
+}
+
+.compare-close {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 0 1px;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+.compare-close:hover {
+  color: #1e2126;
+}
+
+.compare-refusal {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #8d887c;
+  font-style: italic;
+}
+
+.compare-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid #eee9df;
+}
+
+.compare-pick {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 7px;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+.compare-pick:hover {
+  color: #1e2126;
+}
+
+.compare-pick.active {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.16);
+}
+
+.compare-pick:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+.compare-quiet {
+  font-size: 11.5px;
+  color: #8d887c;
+  font-style: italic;
+}
+
+.compare-drift {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #9a9488;
+  font-style: italic;
+  padding: 2px 0 3px;
+}
+
+.compare-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.compare-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.compare-row-text {
+  flex: 1;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #6b675e;
+}
+
+.compare-row-doors {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.compare-door {
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  color: #8d887c;
+  background: rgba(255, 253, 248, 0.8);
+  border: 1px solid #e8e3d9;
+  border-radius: 999px;
+  padding: 3px 6px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.compare-door:hover {
+  color: #1e2126;
+  border-color: #ddd7cc;
+}
+
+.compare-door:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+.compare-amount {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.compare-amount-input {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #1e2126;
+  background: rgba(255, 253, 248, 0.96);
+  border: 1px solid #e0dbd0;
+  border-radius: 999px;
+  padding: 3px 6px;
+  width: 52px;
+  outline: none;
+}
+
+.compare-dangles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 3px;
+  padding-top: 5px;
+  border-top: 1px solid #eee9df;
+}
+
+.compare-dangle-head {
+  font-size: 11px;
+  color: #8d887c;
+  letter-spacing: 0.02em;
+}
+
+.compare-dangle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.compare-dangle-text {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #6b675e;
+  font-style: italic;
+}
+
+.compare-dangle-clearing {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #9a9488;
+  font-style: italic;
+}
+
+.compare-claim {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.compare-claim-input {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #1e2126;
+  background: rgba(255, 253, 248, 0.96);
+  border: 1px solid #e0dbd0;
+  border-radius: 999px;
+  padding: 3px 7px;
+  width: 190px;
+  outline: none;
+}
+
+.compare-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding-top: 3px;
+  border-top: 1px solid #eee9df;
+}
+
+.compare-reread {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 1px solid #e8e3d9;
+  border-radius: 999px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.compare-reread:hover {
+  color: #1e2126;
+  border-color: #ddd7cc;
+}
+
+.compare-reread:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+.compare-unpinned {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #7d776c;
+}
