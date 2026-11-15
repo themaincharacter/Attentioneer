@@ -231,7 +231,8 @@ body {
 /* The mark ring: the hollow glyph, always visible while open and a quiet
    affordance on hover otherwise. Story 1's provisional cast/settle gesture. */
 .word-mark,
-.distance-mark {
+.distance-mark,
+.link-mark {
   width: 9px;
   height: 9px;
   flex: 0 0 auto;
@@ -248,19 +249,23 @@ body {
 }
 
 .word:hover .word-mark,
-.distance-label:hover .distance-mark {
+.distance-label:hover .distance-mark,
+.link:hover .link-mark,
+.link-head:hover .link-mark {
   opacity: 0.55;
 }
 
 .word-mark:hover,
-.distance-mark:hover {
+.distance-mark:hover,
+.link-mark:hover {
   opacity: 1;
   border-color: #6b675e;
   transform: scale(1.2);
 }
 
 .word-mark.open,
-.distance-mark.open {
+.distance-mark.open,
+.link-mark.open {
   opacity: 1;
   border-color: #8d887c;
 }
@@ -1168,7 +1173,9 @@ body {
 .plane.gesture-armed .word,
 .plane.gesture-armed .distance-label,
 .plane.gesture-armed .distance-ring,
-.plane.gesture-armed .lack-mark {
+.plane.gesture-armed .lack-mark,
+.plane.gesture-armed .link-head,
+.plane.gesture-armed .link-hit {
   pointer-events: none;
 }
 
@@ -1181,4 +1188,202 @@ body {
 
 .word.out-of-set:hover {
   opacity: 1;
+}
+
+/* Epic 4 story 2 — signed links (ADR-0012/0014/0016; story 2).
+   Provisional: the pair offset, the chevron, the head cluster and the sign
+   glyph's look. Level 1 never renders these elements, so the concept game reads
+   exactly as before. Every motion stays short, soft and ease-out; the global
+   reduced-motion rule above collapses it. */
+
+.link {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  pointer-events: none;
+  animation: fade-in 200ms ease-out;
+}
+
+/* Wires are anchored to two references and have no shelf: a link touching a
+   set-aside word is quieter, never gone (ADR-0010). */
+.link.shelved {
+  opacity: 0.4;
+}
+
+.link-line {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 0;
+  border-top: 1px solid #a9a294;
+  transform-origin: 0 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* The invisible band that lets a dropped ring find a wire. It is hit-testable
+   only while a ring is in flight (.plane.ring-picking), so it can never
+   intercept an ordinary press, pan or double-click. */
+.link-hit,
+.distance-hit {
+  position: absolute;
+  left: 0;
+  top: -4px;
+  height: 8px;
+  background: transparent;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.plane.ring-picking .link-hit,
+.plane.ring-picking .distance-hit {
+  pointer-events: auto;
+}
+
+/* The direction cue at the target edge: the record's order is a fact, and the
+   chevron is how the pixels say it. */
+.link-arrow {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-top: 1.4px solid #8d887c;
+  border-right: 1.4px solid #8d887c;
+  pointer-events: none;
+}
+
+/* The head cluster: the link's whole language — the ring, the sign glyph (or
+   the unknown sign slot while an open mark stands), and the hover x. */
+.link-head {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px;
+  transform: translate(-50%, -50%);
+  background: #f7f6f3;
+  border-radius: 999px;
+  pointer-events: auto;
+  z-index: 3;
+  animation: fade-in 160ms ease-out;
+}
+
+.link-sign,
+.link-unknown {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  color: #4c4a44;
+  background: transparent;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.link-sign {
+  border: 1px solid #b5ad9e;
+  cursor: pointer;
+}
+
+.link-sign:hover {
+  background: rgba(141, 136, 124, 0.14);
+  border-color: #8d887c;
+}
+
+/* Mark precedence to pixels: while the link carries an open mark the head
+   shows the UNKNOWN SIGN SLOT — never the stored sign beside the ring. */
+.link-unknown {
+  border: 1px dashed #a49c8d;
+  color: #8a8477;
+  font-style: italic;
+}
+
+.link-remove {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 0 1px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.link-head:hover .link-remove {
+  opacity: 1;
+}
+
+.link-remove:hover {
+  color: #b33;
+}
+
+/* The Level 2 sign choice (ADR-0016 decision 3): + or -, no default, an
+   explicit pick or nothing written. It opens in world space where the coin
+   field would, and counter-scales against the camera like the plane menu so a
+   sign stays pressable at every zoom. */
+.sign-choice {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  background: #fffdf8;
+  border: 1px solid #c9c2b4;
+  border-radius: 999px;
+  box-shadow: 0 4px 18px rgba(40, 35, 25, 0.14);
+  transform: translate(-50%, -50%);
+  z-index: 6;
+  outline: none;
+  animation: fade-in 150ms ease-out;
+}
+
+.sign-choice-hint {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+  padding-left: 2px;
+  pointer-events: none;
+}
+
+.sign-choice-option {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #4c4a44;
+  background: transparent;
+  border: 1px solid #ddd7cc;
+  border-radius: 50%;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.sign-choice-option:hover,
+.sign-choice-option:focus-visible {
+  background: rgba(141, 136, 124, 0.14);
+  border-color: #8d887c;
+  color: #1e2126;
+  outline: none;
 }

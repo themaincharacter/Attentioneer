@@ -15,6 +15,7 @@ import {
   type MarkTarget,
 } from "../src/map/marks";
 import { distanceKey } from "../src/map/distances";
+import { linkKey } from "../src/map/links";
 import {
   dropMarksTouching,
   recoinWireMarks,
@@ -110,7 +111,9 @@ describe("tolerant read of the marks file", () => {
       '{"kind":"open"}',
       '{"kind":"open","on":""}',
       '{"kind":"open","on":"a","x":1}',
-      '{"kind":"open","from":"a","to":"b"}',
+      // A half pair stays malformed; the full wordless pair is a LINK target
+      // (ADR-0009's 2026-11-15 amendment), asserted separately below.
+      '{"kind":"open","from":"a"}',
       '{"kind":"open","x":1}',
       '{"kind":"open","x":"1","y":2}',
       '{"kind":"open","from":"a","to":"b","word":""}',
@@ -121,6 +124,50 @@ describe("tolerant read of the marks file", () => {
     expect(parsed.marks[0].target).toEqual(wire("a", "b", "feeds"));
     expect(parsed.malformed).toHaveLength(11);
     expect(parsed.malformed[0]).toBe("{bad json}");
+  });
+});
+
+describe("the wordless pair targets a link (ADR-0009's amendment)", () => {
+  test("from+to with no word is a link target, not a malformed wire", () => {
+    const parsed = parseMarkLine('{"kind":"open","from":"a","to":"b"}');
+    expect(parsed).not.toBeNull();
+    expect(parsed!.target).toEqual({ type: "link", from: "a", to: "b" });
+    expect(parsed!.extra).toEqual({});
+  });
+
+  test("the wordless pair round-trips to canonical bytes", () => {
+    const mark = { kind: "open", target: { type: "link", from: "b", to: "a" } as MarkTarget, extra: {} };
+    const line = serializeMarkLine(mark);
+    expect(line).toBe('{"from":"b","kind":"open","to":"a"}');
+    expect(parseMarkLine(line)!.target).toEqual({ type: "link", from: "b", to: "a" });
+    expect(serializeMarkLine(parseMarkLine(line)!)).toBe(line);
+  });
+
+  test("a link mark and a wire mark on one pair are two distinct keys", () => {
+    const onLink = mark({ target: { type: "link", from: "a", to: "b" } });
+    const onWire = mark({ target: wire("a", "b", "feeds") });
+    expect(dedupeMarks([onLink, onWire])).toHaveLength(2);
+    expect(markTargetKey(onLink.target)).not.toBe(markTargetKey(onWire.target));
+    // The ordered pair, not the unordered one: A→B and B→A are two marks.
+    expect(markTargetKey({ type: "link", from: "a", to: "b" })).not.toBe(
+      markTargetKey({ type: "link", from: "b", to: "a" }),
+    );
+  });
+
+  test("a cast, a settle and a flip all keep one line per ordered pair", () => {
+    const target: MarkTarget = { type: "link", from: "a", to: "b" };
+    const cast = withMark([], { kind: "open", target, extra: {} });
+    expect(serializeMarks(cast)).toBe('{"from":"a","kind":"open","to":"b"}\n');
+    expect(withMark(cast, { kind: "open", target, extra: { rank: 2 } })).toHaveLength(1);
+    expect(withoutMark(cast, "open", target)).toEqual([]);
+  });
+
+  test("a link whose signed pair is gone is an orphan; a drawn link is not", () => {
+    const onLink = mark({ target: { type: "link", from: "a", to: "b" } });
+    const reverse = mark({ target: { type: "link", from: "b", to: "a" } });
+    expect(
+      findOrphanMarks([onLink, reverse], new Set(["a", "b"]), new Set(), new Set([linkKey("a", "b")])),
+    ).toEqual([reverse]);
   });
 });
 

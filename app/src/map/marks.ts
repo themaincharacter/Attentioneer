@@ -1,6 +1,7 @@
 import { readTextFile, writeTextFile } from "../lib/fs";
 import { canonicalJsonlLine, canonicalJsonlLines } from "../lib/serialize";
 import { distanceKey } from "./distances";
+import { linkKey } from "./links";
 
 /**
  * Marks (ADR-0009): one `map/marks.jsonl` line per mark — an anonymous
@@ -14,9 +15,16 @@ import { distanceKey } from "./distances";
  * rewrites; malformed lines are preserved verbatim; a missing file means no
  * marks.
  *
+ * Four target forms now: a word, a distance wire (from, to, word), a signed
+ * link's wordless pair (from, to — ADR-0009's 2026-11-15 amendment), and a bare
+ * spot. The wordless pair and the wire triple are DISTINCT natural keys, so one
+ * pair may carry a mark on its distance and another on its link. A link's key
+ * has no sign: flipping the sign keeps the mark; removing the link drops it
+ * (die-with-target).
+ *
  * Provisional: `kind` has one value, `"open"` — it names the mark's flavor,
  * never a lifecycle (absence is the only settled state, ADR-0009). The record
- * carries all three target forms: a bare spot is cast, named (grow) and bound
+ * carries all four target forms: a bare spot is cast, named (grow) and bound
  * by the canvas's ring gestures (story 2), and `retargetMark` is their one
  * pure write.
  *
@@ -24,10 +32,14 @@ import { distanceKey } from "./distances";
  * turns the file's bytes into records and back.
  */
 
-/** What a mark sits on: a word slug, a wire's natural key, or a bare spot. */
+/**
+ * What a mark sits on: a word slug, a distance wire's natural key, a signed
+ * link's wordless pair (ADR-0009's amendment), or a bare spot.
+ */
 export type MarkTarget =
   | { type: "word"; slug: string }
   | { type: "wire"; from: string; to: string; word: string }
+  | { type: "link"; from: string; to: string }
   | { type: "spot"; x: number; y: number };
 
 export interface Mark {
@@ -57,6 +69,10 @@ export function markTargetKey(target: MarkTarget): string {
     case "wire":
       // The wire is named exactly as its distance is (ADR-0006's natural key).
       return `wire\u0000${distanceKey(target.from, target.to, target.word)}`;
+    case "link":
+      // The wordless pair names the link by its ordered pair — no sign, so a
+      // flip cannot orphan the mark (ADR-0009's amendment, ADR-0014 decision 3).
+      return `link\u0000${linkKey(target.from, target.to)}`;
     case "spot":
       return `spot\u0000${target.x}\u0000${target.y}`;
   }
@@ -70,7 +86,8 @@ export function markKey(mark: Mark): string {
 /**
  * Parse one JSONL line into a Mark; malformed or out-of-shape lines become
  * `null`. A line must carry `kind` and exactly one target form — a line that
- * mixes forms or half-states a wire/spot is malformed, never guessed at.
+ * mixes forms or half-states a pair/spot is malformed, never guessed at. A
+ * `from`/`to` pair WITHOUT a `word` is the wordless pair: a mark on a link.
  */
 export function parseMarkLine(line: string): Mark | null {
   let value: unknown;
@@ -98,13 +115,19 @@ export function parseMarkLine(line: string): Mark | null {
   if ("from" in rest || "to" in rest || "word" in rest) {
     if (
       typeof rest.from !== "string" ||
+      rest.from === "" ||
       typeof rest.to !== "string" ||
-      typeof rest.word !== "string" ||
-      rest.word === ""
+      rest.to === ""
     ) {
       return null;
     }
     if ("x" in rest || "y" in rest) return null;
+    if (!("word" in rest)) {
+      // The wordless pair targets a Level 2 signed link (ADR-0009's amendment).
+      const { from, to, ...extra } = rest;
+      return { kind, target: { type: "link", from, to }, extra };
+    }
+    if (typeof rest.word !== "string" || rest.word === "") return null;
     const { from, to, word, ...extra } = rest;
     return { kind, target: { type: "wire", from, to, word }, extra };
   }
@@ -134,6 +157,8 @@ function targetFields(target: MarkTarget): Record<string, string | number> {
       return { on: target.slug };
     case "wire":
       return { from: target.from, to: target.to, word: target.word };
+    case "link":
+      return { from: target.from, to: target.to };
     case "spot":
       return { x: target.x, y: target.y };
   }
@@ -247,21 +272,26 @@ export function retargetMark(
 }
 
 /**
- * Marks whose target is not on the map: a word slug that no longer exists, or
- * a wire whose distance line is gone (hand edits, partial writes). They are
- * preserved in the file and surfaced by the app, never rendered or guessed
- * away (ADR-0009). A bare spot is its own target, so it is never an orphan.
+ * Marks whose target is not on the map: a word slug that no longer exists, a
+ * wire whose distance line is gone, or a link whose signed pair is gone (hand
+ * edits, partial writes). They are preserved in the file and surfaced by the
+ * app, never rendered or guessed away (ADR-0009). A bare spot is its own
+ * target, so it is never an orphan.
  */
 export function findOrphanMarks(
   marks: readonly Mark[],
   wordSlugs: ReadonlySet<string>,
   wireKeys: ReadonlySet<string>,
+  linkKeys: ReadonlySet<string> = new Set(),
 ): Mark[] {
   return marks.filter((mark) => {
     if (mark.target.type === "word") return !wordSlugs.has(mark.target.slug);
     if (mark.target.type === "wire") {
       const { from, to, word } = mark.target;
       return !wireKeys.has(distanceKey(from, to, word));
+    }
+    if (mark.target.type === "link") {
+      return !linkKeys.has(linkKey(mark.target.from, mark.target.to));
     }
     return false;
   });

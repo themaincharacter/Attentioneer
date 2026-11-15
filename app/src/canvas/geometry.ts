@@ -44,6 +44,93 @@ export function wireEndpoints(
   };
 }
 
+/**
+ * Signed-link geometry (Epic 4 story 2, ADR-0012/0014/0016). A pair may carry
+ * two directed links (A→B and B→A); they must read as two wires, never as one
+ * doubled line. The frame is CANONICAL and UNORDERED: the two endpoint points
+ * are sorted by slug once, the chord's normal is derived from that sorted
+ * order, and each direction is shifted onto its own side of the chord. So the
+ * side is a property of the pair, not of the draw order, and the gap is
+ * constant on screen at every zoom (provisional, like every glyph in ADR-0003's
+ * seam).
+ */
+
+/** Screen px between the two directions of one pair (provisional). */
+export const LINK_PAIR_GAP_PX = 9;
+
+/** World units the head cluster (sign glyph, ring, ×) sits back from the target
+ * edge, clear of the word's text (provisional). */
+export const LINK_HEAD_BACK = 16;
+
+/** The world-unit gap for a zoom — constant pixels on screen. */
+export function pairGap(zoom: number): number {
+  return LINK_PAIR_GAP_PX / Math.max(zoom, 0.0001);
+}
+
+/**
+ * Which side of the canonical chord a directed link runs on: +1 when its
+ * origin sorts first, -1 otherwise, 0 for a self-link (which sits on the
+ * chord). A pair's sides are opposite by construction, so both wires stay
+ * apart at every zoom.
+ */
+export function pairSide(from: string, to: string): number {
+  if (from === to) return 0;
+  return from < to ? 1 : -1;
+}
+
+/** The unit normal of the chord `lo` → `hi` (null for a degenerate chord). */
+export function chordNormal(lo: Point, hi: Point): Point | null {
+  const dx = hi.x - lo.x;
+  const dy = hi.y - lo.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return null;
+  // Normalize -0 away: a normal is a direction, and -0 would leak into both
+  // the rendered transform and a toEqual comparison.
+  return { x: dy === 0 ? 0 : -dy / length, y: dx === 0 ? 0 : dx / length };
+}
+
+/** One endpoint of a link as the wire sees it: its slug and edge point. */
+export interface DirectedEndpoint {
+  slug: string;
+  point: Point;
+}
+
+/**
+ * A directed link's rendered wire (ADR-0014's one pair-spine): both endpoints
+ * shifted together onto the direction's side of the canonical unordered chord,
+ * returned in DRAW order (origin first, target second). A→B and B→A therefore
+ * run parallel on opposite sides; the identical pair never doubles up. A
+ * self-link or a degenerate chord renders the plain points.
+ */
+export function directedWireEndpoints(
+  from: DirectedEndpoint,
+  to: DirectedEndpoint,
+  zoom = 1,
+): { from: Point; to: Point } {
+  const canonical = from.slug <= to.slug;
+  const lo = canonical ? from.point : to.point;
+  const hi = canonical ? to.point : from.point;
+  const side = pairSide(from.slug, to.slug);
+  const normal = side === 0 ? null : chordNormal(lo, hi);
+  if (!normal) return { from: from.point, to: to.point };
+  const gap = pairGap(zoom) * side;
+  const shift = { x: normal.x * gap, y: normal.y * gap };
+  const shiftedLo = { x: lo.x + shift.x, y: lo.y + shift.y };
+  const shiftedHi = { x: hi.x + shift.x, y: hi.y + shift.y };
+  return canonical
+    ? { from: shiftedLo, to: shiftedHi }
+    : { from: shiftedHi, to: shiftedLo };
+}
+
+/** A point `back` world units from `head` toward `tail` (the head cluster). */
+export function pointToward(head: Point, tail: Point, back: number): Point {
+  const dx = tail.x - head.x;
+  const dy = tail.y - head.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return head;
+  return { x: head.x + (dx / length) * back, y: head.y + (dy / length) * back };
+}
+
 /** A word as the playing-set lasso sees it: slug, top-left position and box. */
 export interface LassoWord {
   slug: string;

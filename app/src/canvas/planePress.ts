@@ -28,3 +28,22 @@ export interface PlanePress {
 export function closesPair(a: PlanePress, b: PlanePress): boolean {
   return b.t - a.t <= DOUBLE_CLICK_MS && Math.hypot(b.x - a.x, b.y - a.y) <= PAIR_SLOP;
 }
+
+/** Screen ms within which two presses on a sign are one press-pair (a
+ * double-click on the sign glyph counts once, story 2). Provisional. */
+export const SIGN_PAIR_MS = 400;
+
+/**
+ * Does a press on a sign glyph count as a flip, or is it the second half of a
+ * press-pair? A double-click fires two clicks; without this the sign would flip
+ * twice and land back where it started — a quiet no-op that reads as a broken
+ * gesture. Each link carries its own last-press time, so two quick presses on
+ * different signs are two flips.
+ */
+export function countsAsOneFlip(
+  previousAt: number | null,
+  now: number,
+  windowMs = SIGN_PAIR_MS,
+): boolean {
+  return previousAt === null || now - previousAt > windowMs;
+}

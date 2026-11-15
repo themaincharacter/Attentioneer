@@ -3,6 +3,12 @@ import { slugName } from "../lib/serialize";
 import { referencePath, serializeReference, type Reference } from "./refs";
 import { loadDistances, saveDistances, type Distance } from "./distances";
 import {
+  dedupeLinks,
+  loadLinks,
+  saveLinks,
+  type Link,
+} from "./links";
+import {
   dedupe,
   loadModel,
   saveModel,
@@ -18,13 +24,13 @@ import {
 } from "./marks";
 
 /**
- * Atomic patches (ADR-0005, ADR-0007, ADR-0009, ADR-0013): rename and remove are
- * single, all-or-nothing app operations — a file plus `name` plus every
- * `distances.jsonl` endpoint, every touching mark and the playing set's member
- * slug (rename), or a file plus every touching line, mark and membership
- * (remove). Prose memory is never rewritten (byte-faithful). No other module
- * hand-strings these edits; `distances.ts`/`marks.ts`/`model.ts`/
- * `serialize.ts` own the bytes.
+ * Atomic patches (ADR-0005, ADR-0007, ADR-0009, ADR-0012, ADR-0013, ADR-0014):
+ * rename and remove are single, all-or-nothing app operations — a file plus
+ * `name` plus every `distances.jsonl` endpoint, every `links.jsonl` pair, every
+ * touching mark and the playing set's member slug (rename), or a file plus
+ * every touching distance, link, mark and membership (remove). Prose memory is
+ * never rewritten (byte-faithful). No other module hand-strings these edits;
+ * `distances.ts`/`links.ts`/`marks.ts`/`model.ts`/`serialize.ts` own the bytes.
  *
  * Crash rule: the durable thing is written first. The reference's file is
  * written before the records that name the slug, and those records are
@@ -62,6 +68,44 @@ export function dropTouching(
 }
 
 /**
+ * Re-write every link whose `from` or `to` is `oldSlug` (rename). A link's
+ * pair is two endpoint slugs exactly as a distance's is; the sign is authored
+ * structure and is never touched (ADR-0014).
+ *
+ * Collision rule, mirroring the marks: untouched links are emitted first,
+ * rewritten ones last, so a hand-edited duplicate loses to the app's rename.
+ */
+export function rewriteLinkEndpoints(
+  links: readonly Link[],
+  oldSlug: string,
+  newSlug: string,
+): Link[] {
+  if (oldSlug === newSlug) return [...links];
+  const untouched: Link[] = [];
+  const rewritten: Link[] = [];
+  for (const link of links) {
+    if (link.from !== oldSlug && link.to !== oldSlug) {
+      untouched.push(link);
+      continue;
+    }
+    rewritten.push({
+      ...link,
+      from: link.from === oldSlug ? newSlug : link.from,
+      to: link.to === oldSlug ? newSlug : link.to,
+    });
+  }
+  return dedupeLinks([...untouched, ...rewritten]);
+}
+
+/** Drop every link touching `slug` (remove): nothing dangles. */
+export function dropTouchingLinks(
+  links: readonly Link[],
+  slug: string,
+): Link[] {
+  return links.filter((link) => link.from !== slug && link.to !== slug);
+}
+
+/**
  * Re-write the playing set's member slug (rename, ADR-0013): the set names
  * words by slug like every other record, so a rename follows here too and the
  * canonical sorted order is restored. Renaming a non-member is a no-op.
@@ -94,8 +138,9 @@ export function dropMembership(model: PlayingSet, slug: string): PlayingSet {
 
 /**
  * Re-write every mark target touching `oldSlug` to `newSlug` (rename): a word
- * mark's `on`, and a wire mark's `from`/`to` (ADR-0009). The wire's coined word
- * is left untouched — exactly as a rename leaves a distance-word alone.
+ * mark's `on`, a wire mark's `from`/`to`, and a link mark's wordless pair
+ * (ADR-0009, amended). The wire's coined word is left untouched — exactly as a
+ * rename leaves a distance-word alone — and a link's sign is never a mark field.
  *
  * Collision rule: if an orphan mark already sits on the new slug, the app's
  * renamed mark wins and the stale one is dropped in the same patch (untouched
@@ -119,6 +164,15 @@ export function rewriteMarkEndpoints(
       const from = mark.target.from === oldSlug ? newSlug : mark.target.from;
       const to = mark.target.to === oldSlug ? newSlug : mark.target.to;
       rewritten.push({ ...mark, target: { type: "wire", from, to, word: mark.target.word } });
+    } else if (
+      mark.target.type === "link" &&
+      (mark.target.from === oldSlug || mark.target.to === oldSlug)
+    ) {
+      // The wordless pair follows the endpoints exactly as a wire triple does;
+      // the link's mark has no sign in its key, so this is the whole rewrite.
+      const from = mark.target.from === oldSlug ? newSlug : mark.target.from;
+      const to = mark.target.to === oldSlug ? newSlug : mark.target.to;
+      rewritten.push({ ...mark, target: { type: "link", from, to } });
     } else {
       untouched.push(mark);
     }
@@ -127,14 +181,17 @@ export function rewriteMarkEndpoints(
 }
 
 /**
- * Drop every mark touching `slug` (remove): a word mark on it, and any wire
- * mark with it as an endpoint. Bare spots are untouched — a lack outlives the
- * words around it (ADR-0009).
+ * Drop every mark touching `slug` (remove): a word mark on it, and any wire or
+ * link mark with it as an endpoint. Bare spots are untouched — a lack outlives
+ * the words around it (ADR-0009).
  */
 export function dropMarksTouching(marks: readonly Mark[], slug: string): Mark[] {
   return marks.filter((mark) => {
     if (mark.target.type === "word") return mark.target.slug !== slug;
     if (mark.target.type === "wire") {
+      return mark.target.from !== slug && mark.target.to !== slug;
+    }
+    if (mark.target.type === "link") {
       return mark.target.from !== slug && mark.target.to !== slug;
     }
     return true;
@@ -190,6 +247,27 @@ export function dropWireMarks(
   );
 }
 
+/** The natural target of one link, as marks name it (the wordless pair). */
+function linkMarkTarget(from: string, to: string): MarkTarget {
+  return { type: "link", from, to };
+}
+
+/**
+ * Removing a link drops the marks on its pair — die-with-target (ADR-0009's
+ * amendment). The reverse pair's marks are a different key and stay; a flip
+ * needs no step at all, because the key carries no sign (ADR-0014).
+ */
+export function dropLinkMarks(
+  marks: readonly Mark[],
+  from: string,
+  to: string,
+): Mark[] {
+  const key = markTargetKey(linkMarkTarget(from, to));
+  return marks.filter(
+    (mark) => !(mark.target.type === "link" && markTargetKey(mark.target) === key),
+  );
+}
+
 /** Pure: mint the first free slug, adding a numeric suffix on collision (ADR-0005 rule 4). */
 export function nextSlug(base: string, taken: ReadonlySet<string>): string {
   if (!taken.has(base)) return base;
@@ -222,7 +300,18 @@ export async function renameReference(
     malformed,
   );
 
-  // 2b. Follow the rename in the marks in the same batch (ADR-0009).
+  // 2a. Follow the rename in the signed links in the same batch
+  //     (ADR-0012/0014). A link's pair is two endpoint slugs like a distance's;
+  //     the sign is authored structure and is left exactly as drawn.
+  const parsedLinks = await loadLinks(workspacePath);
+  await saveLinks(
+    workspacePath,
+    rewriteLinkEndpoints(parsedLinks.links, oldSlug, newSlug),
+    parsedLinks.malformed,
+  );
+
+  // 2b. Follow the rename in the marks in the same batch (ADR-0009). A link
+  //     mark's wordless pair is rewritten here too, alongside its link line.
   const parsedMarks = await loadMarks(workspacePath);
   await saveMarks(
     workspacePath,
@@ -262,6 +351,15 @@ export async function removeReference(
   //    the word, never a dangling line or mark).
   const { distances, malformed } = await loadDistances(workspacePath);
   await saveDistances(workspacePath, dropTouching(distances, ref.slug), malformed);
+
+  // 1a. Drop the signed links touching the word (ADR-0012/0014) — before the
+  //     marks, so no mark is ever left naming a pair the same batch removed.
+  const parsedLinks = await loadLinks(workspacePath);
+  await saveLinks(
+    workspacePath,
+    dropTouchingLinks(parsedLinks.links, ref.slug),
+    parsedLinks.malformed,
+  );
 
   const parsedMarks = await loadMarks(workspacePath);
   await saveMarks(

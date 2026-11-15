@@ -20,8 +20,26 @@ import {
   type Mark,
   type MarkTarget,
 } from "../map/marks";
-import { dedupe, loadModel, saveModel, type PlayingSet } from "../map/model";
 import {
+  dedupeLinks,
+  drawLink as drawLinkRecord,
+  flipLink as flipLinkRecord,
+  linkKey,
+  loadLinks,
+  removeLink as removeLinkRecord,
+  saveLinks,
+  type Link,
+  type LinkSign,
+} from "../map/links";
+import {
+  dedupe,
+  joinWords,
+  loadModel,
+  saveModel,
+  type PlayingSet,
+} from "../map/model";
+import {
+  dropLinkMarks,
   dropWireMarks,
   recoinWireMarks,
   removeReference,
@@ -60,13 +78,38 @@ export interface ConnectDraft {
  * selector's accept is pressed. Membership is read, never validated against
  * another record; hand-edited member names that no longer exist on the map are
  * surfaced, not repaired.
+ *
+ * Epic 4 story 2 adds signed links (ADR-0012/0014): `map/links.jsonl` loaded
+ * with the rest, and the quiet moves — draw (one line per ordered pair, a sign
+ * is always an explicit pick), flip (rewrite in place at its index), remove
+ * (ammo, dropping the link's marks with it) and the link's own open mark. The
+ * composed joins land here too (ADR-0013 decision 4): a drawn link pulls its
+ * endpoints into play, a word coined while playing joins, and in both the
+ * DURABLE record is written first — the link line or the reference file — with
+ * the membership write second, so a crash leaves the visible move, never a
+ * member naming nothing.
  */
-export function useMap(workspacePath: string) {
+export interface UseMapOptions {
+  /**
+   * Is Level 2 the active game? The composed joins hang off it (ADR-0013):
+   * coining while playing joins the word, and a drawn link pulls its endpoints
+   * into play. Level 1 writes exactly what it wrote before.
+   */
+  playing?: boolean;
+}
+
+export function useMap(
+  workspacePath: string,
+  options: UseMapOptions = {},
+) {
+  const playing = options.playing ?? false;
   const [refs, setRefs] = useState<Reference[]>([]);
   const [distances, setDistances] = useState<Distance[]>([]);
   const [malformed, setMalformed] = useState<string[]>([]);
   const [marks, setMarks] = useState<Mark[]>([]);
   const [malformedMarks, setMalformedMarks] = useState<string[]>([]);
+  const [links, setLinks] = useState<Link[]>([]);
+  const [malformedLinks, setMalformedLinks] = useState<string[]>([]);
   const [model, setModel] = useState<PlayingSet | null>(null);
   const [malformedModel, setMalformedModel] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -75,14 +118,19 @@ export function useMap(workspacePath: string) {
   const marksRef = useRef<Mark[]>([]);
   const malformedMarksRef = useRef<string[]>([]);
   const marksWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const linksRef = useRef<Link[]>([]);
+  const malformedLinksRef = useRef<string[]>([]);
+  const linksWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const modelRef = useRef<PlayingSet | null>(null);
 
   /** Re-read every map file (first load and after an atomic patch). */
   const reloadMap = useCallback(async () => {
-    const [referenceList, parsedDistances, parsedMarks, parsedModel] =
+    const [referenceList, parsedDistances, parsedMarks, parsedLinks, parsedModel] =
       await Promise.all([
         loadReferences(workspacePath),
         loadDistances(workspacePath),
         loadMarks(workspacePath),
+        loadLinks(workspacePath),
         loadModel(workspacePath),
       ]);
     setRefs(referenceList);
@@ -92,6 +140,11 @@ export function useMap(workspacePath: string) {
     malformedMarksRef.current = parsedMarks.malformed;
     setMarks(parsedMarks.marks);
     setMalformedMarks(parsedMarks.malformed);
+    linksRef.current = parsedLinks.links;
+    malformedLinksRef.current = parsedLinks.malformed;
+    setLinks(parsedLinks.links);
+    setMalformedLinks(parsedLinks.malformed);
+    modelRef.current = parsedModel.model;
     setModel(parsedModel.model);
     setMalformedModel(parsedModel.malformed);
     setLoaded(true);
@@ -108,6 +161,16 @@ export function useMap(workspacePath: string) {
   useEffect(() => {
     marksRef.current = marks;
   }, [marks]);
+
+  // The same mirror for links and for the playing set (a composed join can run
+  // right after a burst of writes, so it must never read a stale record).
+  useEffect(() => {
+    linksRef.current = links;
+  }, [links]);
+
+  useEffect(() => {
+    modelRef.current = model;
+  }, [model]);
 
   /** Persist the distance file after each mutation (deduped by key). */
   const persistDistances = useCallback(
@@ -140,6 +203,43 @@ export function useMap(workspacePath: string) {
   );
 
   /**
+   * Persist the links file after each mutation (one line per ordered pair).
+   * Same in-order queue as marks: a burst of flips must land in the order the
+   * person made them, never as an older sign reappearing under a newer one.
+   */
+  const persistLinks = useCallback(
+    (next: readonly Link[]) => {
+      const deduped = dedupeLinks(next);
+      linksRef.current = deduped;
+      setLinks(deduped);
+      const malformedLines = [...malformedLinksRef.current];
+      linksWriteRef.current = linksWriteRef.current
+        .catch(() => undefined)
+        .then(() => saveLinks(workspacePath, deduped, malformedLines));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * The composed join (ADR-0013 decision 4): pull these words into play. Runs
+   * only while playing and only when a set exists — the selector is the door,
+   * so a workspace with no accepted set gets no membership write. The caller
+   * writes the durable thing first; this is the second write of the batch.
+   */
+  const joinToPlay = useCallback(
+    async (slugs: readonly string[]) => {
+      if (!playing) return;
+      const current = modelRef.current;
+      const next = joinWords(current, slugs);
+      if (next === null || next === current) return;
+      modelRef.current = next;
+      setModel(next);
+      await saveModel(workspacePath, next);
+    },
+    [playing, workspacePath],
+  );
+
+  /**
    * Marks whose target is not on the map (hand edit, partial write): preserved
    * in the file and surfaced quietly by the app (ADR-0009). A bare spot has no
    * target citizen, so it is never an orphan.
@@ -152,8 +252,24 @@ export function useMap(workspacePath: string) {
     const wireKeys = new Set(
       distances.map((d) => distanceKey(d.from, d.to, d.word)),
     );
-    return findOrphanMarks(marks, wordSlugs, wireKeys);
-  }, [loaded, refs, distances, marks]);
+    const linkKeys = new Set(links.map((link) => linkKey(link.from, link.to)));
+    return findOrphanMarks(marks, wordSlugs, wireKeys, linkKeys);
+  }, [loaded, refs, distances, links, marks]);
+
+  /**
+   * Links naming a word that is not on the map (a hand edit): preserved in the
+   * file and surfaced quietly, never dropped on an unrelated write — the same
+   * no-validation posture as membership (ADR-0013) and marks (ADR-0009).
+   */
+  const orphanLinks = useMemo(() => {
+    if (!loaded) return [];
+    const slugs = new Set(
+      refs.map((ref) => ref.slug).filter((slug): slug is string => slug !== null),
+    );
+    return links.filter(
+      (link) => !slugs.has(link.from) || !slugs.has(link.to),
+    );
+  }, [loaded, refs, links]);
 
   /**
    * The playing set names words that are no longer on the map (a hand edit):
@@ -201,14 +317,22 @@ export function useMap(workspacePath: string) {
     setRefs((list) => [...list, ref]);
   }, []);
 
-  /** Persist a reference (assigning its slug on first coin) and refresh. */
+  /**
+   * Persist a reference (assigning its slug on first coin) and refresh. A word
+   * coined while playing joins the playing set in the same user move (ADR-0013
+   * decision 4): the reference file — the durable thing — is written first, so a
+   * crash leaves the visible word briefly out of play, never a member naming
+   * nothing. Editing an existing word never touches membership.
+   */
   const updateReference = useCallback(
     (ref: Reference) => {
+      const coining = ref.slug === null;
       saveReference(workspacePath, ref).then((saved) => {
         setRefs((list) => list.map((r) => (r.id === ref.id ? saved : r)));
+        if (coining && saved.slug !== null) void joinToPlay([saved.slug]);
       });
     },
-    [workspacePath],
+    [workspacePath, joinToPlay],
   );
 
   /** Drop an uncoined draft — Escape on the coin field. */
@@ -261,6 +385,57 @@ export function useMap(workspacePath: string) {
       persistMarks(next);
     },
     [persistMarks],
+  );
+
+  /**
+   * Cast or settle an open mark on a link (story 2): the wordless pair is the
+   * target, so the mark survives a sign flip (the key carries no sign) and dies
+   * with its link. Nothing is interpreted; the mark only says "not settled".
+   */
+  const toggleLinkMark = useCallback(
+    (from: string, to: string) => {
+      const target: MarkTarget = { type: "link", from, to };
+      const current = marksRef.current;
+      const next = hasMark(current, "open", target)
+        ? withoutMark(current, "open", target)
+        : withMark(current, { kind: "open", target, extra: {} });
+      persistMarks(next);
+    },
+    [persistMarks],
+  );
+
+  /**
+   * Draw a signed link (the Level 2 sign choice's explicit pick): one line per
+   * ordered pair, the sign exactly as picked. The link's own write goes first —
+   * the durable, visible thing — and the composed join follows it (ADR-0013).
+   */
+  const drawLink = useCallback(
+    (from: string, to: string, sign: LinkSign) => {
+      persistLinks(drawLinkRecord(linksRef.current, from, to, sign));
+      void joinToPlay([from, to]);
+    },
+    [persistLinks, joinToPlay],
+  );
+
+  /** Flip a link's sign: rewritten in place at its line's index (quiet). */
+  const flipLink = useCallback(
+    (from: string, to: string) => {
+      persistLinks(flipLinkRecord(linksRef.current, from, to));
+    },
+    [persistLinks],
+  );
+
+  /**
+   * Remove a link (ammo, one click) and the marks targeting it — die-with-
+   * target (ADR-0009's amendment). No distance is touched: the two families
+   * share only the pair (ADR-0014 decision 2).
+   */
+  const removeLink = useCallback(
+    (from: string, to: string) => {
+      persistLinks(removeLinkRecord(linksRef.current, from, to));
+      persistMarks(dropLinkMarks(marksRef.current, from, to));
+    },
+    [persistLinks, persistMarks],
   );
 
   /** Cast a bare open mark — the menu's lack choice; no field, no name. */
@@ -457,10 +632,13 @@ export function useMap(workspacePath: string) {
   return {
     refs,
     distances,
+    links,
     marks,
     malformed,
     malformedMarks,
+    malformedLinks,
     orphanMarks,
+    orphanLinks,
     model,
     malformedModel,
     orphanMembers,
@@ -474,6 +652,10 @@ export function useMap(workspacePath: string) {
     remove,
     toggleWordMark,
     toggleWireMark,
+    toggleLinkMark,
+    drawLink,
+    flipLink,
+    removeLink,
     castMark,
     withdrawMark,
     moveMark,

@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
   distanceToSegment,
+  PICK_DISTANCE_CLASS,
+  PICK_LINK_CLASS,
+  PICK_WORD_CLASS,
+  resolveElementPick,
   resolveMarkDrop,
+  targetOfPickedElement,
   wireAtPoint,
   wordAtPoint,
   WIRE_DROP_SLOP,
+  type PickedElement,
   type WireHit,
   type WordHit,
 } from "../src/canvas/markTargets";
@@ -96,5 +102,116 @@ describe("distance to a segment", () => {
 
   test("a degenerate segment is a point", () => {
     expect(distanceToSegment({ x: 3, y: 4 }, { x: 0, y: 0 }, { x: 0, y: 0 })).toBe(5);
+  });
+});
+
+/**
+ * Story-2 guarantee, automated: a dropped ring binds by ELEMENT-UNDER-POINTER
+ * (ADR-0016 decision 5), never by nearest-element math. The canvas flattens the
+ * DOM under the pointer into a chain — the hit element first, then its
+ * ancestors — and the first element that names a target wins; bare plane leaves
+ * the mark at the drop point. These tests pin the pure rule, DOM-free.
+ */
+
+function picked(
+  classes: readonly string[],
+  data: Record<string, string | undefined> = {},
+): PickedElement {
+  return { classes, data };
+}
+
+describe("a dropped ring binds the element under the pointer", () => {
+  test("the word element names its slug", () => {
+    expect(targetOfPickedElement(picked([PICK_WORD_CLASS], { slug: "rain" }))).toEqual({
+      type: "word",
+      slug: "rain",
+    });
+  });
+
+  test("the distance container names the wire's natural key", () => {
+    expect(
+      targetOfPickedElement(
+        picked([PICK_DISTANCE_CLASS], { from: "rain", to: "soil", word: "soaks" }),
+      ),
+    ).toEqual({ type: "wire", from: "rain", to: "soil", word: "soaks" });
+  });
+
+  test("the link container names the wordless pair (a LINK, never a wire)", () => {
+    expect(
+      targetOfPickedElement(picked([PICK_LINK_CLASS], { from: "rain", to: "soil" })),
+    ).toEqual({ type: "link", from: "rain", to: "soil" });
+  });
+
+  test("the chain is nearest-first: a press on a head button climbs to its link", () => {
+    const chain = [
+      picked(["link-sign"]),
+      picked(["link-head"]),
+      picked([PICK_LINK_CLASS], { from: "a", to: "b" }),
+      picked(["plane-inner"]),
+    ];
+    expect(resolveElementPick(chain, { x: 1, y: 2 })).toEqual({
+      type: "link",
+      from: "a",
+      to: "b",
+    });
+  });
+
+  test("a word's inner span climbs to the word element", () => {
+    const chain = [picked(["word-name"]), picked([PICK_WORD_CLASS], { slug: "mulch" })];
+    expect(resolveElementPick(chain, { x: 0, y: 0 })).toEqual({
+      type: "word",
+      slug: "mulch",
+    });
+  });
+
+  test("bare plane leaves the mark bare at the drop point (never a guess)", () => {
+    const chain = [picked(["plane-inner"]), picked(["plane"])];
+    expect(resolveElementPick(chain, { x: 42.5, y: -3 })).toEqual({
+      type: "spot",
+      x: 42.5,
+      y: -3,
+    });
+    expect(resolveElementPick([], { x: 7, y: 8 })).toEqual({ type: "spot", x: 7, y: 8 });
+  });
+
+  test("half a target names nothing: a wire without its word, a link without its pair", () => {
+    expect(
+      targetOfPickedElement(picked([PICK_DISTANCE_CLASS], { from: "a", to: "b" })),
+    ).toBeNull();
+    expect(
+      targetOfPickedElement(picked([PICK_LINK_CLASS], { from: "a" })),
+    ).toBeNull();
+    expect(targetOfPickedElement(picked([PICK_WORD_CLASS]))).toBeNull();
+    // ...and the drop falls through the chain to the plane.
+    expect(
+      resolveElementPick(
+        [picked([PICK_LINK_CLASS], { from: "a" }), picked(["plane"])],
+        { x: 0, y: 0 },
+      ),
+    ).toEqual({ type: "spot", x: 0, y: 0 });
+  });
+
+  test("the nearest naming element wins when a chain holds several", () => {
+    const chain = [
+      picked([PICK_LINK_CLASS], { from: "a", to: "b" }),
+      picked([PICK_DISTANCE_CLASS], { from: "a", to: "b", word: "feeds" }),
+    ];
+    expect(resolveElementPick(chain, { x: 0, y: 0 })).toEqual({
+      type: "link",
+      from: "a",
+      to: "b",
+    });
+    expect(resolveElementPick([...chain].reverse(), { x: 0, y: 0 })).toEqual({
+      type: "wire",
+      from: "a",
+      to: "b",
+      word: "feeds",
+    });
+  });
+
+  test("the class names are the canvas's markup contract", () => {
+    expect(PICK_WORD_CLASS).toBe("word");
+    expect(PICK_DISTANCE_CLASS).toBe("distance");
+    expect(PICK_LINK_CLASS).toBe("link");
   });
 });

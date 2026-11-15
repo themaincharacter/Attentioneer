@@ -86,6 +86,12 @@ interface CanvasPlaneProps {
   gestureMode?: GestureMode;
   /** True while the playing-set selector's draw tool is armed (story 1). */
   lassoArmed?: boolean;
+  /**
+   * True while a mark ring is in flight (story 2): the wires' invisible hit
+   * bands turn clickable, so the drop can bind the element under the pointer
+   * without the wire ever intercepting an ordinary press (ADR-0016).
+   */
+  picking?: boolean;
   /** Called with the lasso's world path when the draw tool is released. */
   onLasso?: (path: readonly Point[]) => void;
   children?: ReactNode;
@@ -97,6 +103,7 @@ export function CanvasPlane({
   onPlaneDoubleClick,
   gestureMode = "idle",
   lassoArmed = false,
+  picking = false,
   onLasso,
   children,
 }: CanvasPlaneProps) {
@@ -306,7 +313,7 @@ export function CanvasPlane({
     <PlaneContext.Provider value={planeApi}>
       <div
         ref={planeRef}
-        className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}`}
+        className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}${picking ? " ring-picking" : ""}`}
         style={gridStyle}
         onDoubleClick={handleDoubleClick}
       >

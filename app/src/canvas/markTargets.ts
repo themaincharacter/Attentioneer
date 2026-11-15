@@ -4,8 +4,14 @@ import type { Box, Point } from "./geometry";
 /**
  * Where a dragged ring lands (Epic 3 story 2, ADR-0009): a mark is addressed
  * by what it is on, so binding is simply choosing a new target — a word, a
- * wire, or a bare spot of plane. Pure hit-testing over the same geometry the
- * canvas renders, so a drop can be tested without a DOM.
+ * distance wire, a signed link's wordless pair, or a bare spot of plane.
+ *
+ * Pick binding is ELEMENT-UNDER-POINTER (ADR-0016 decision 5): the canvas asks
+ * the DOM what is under the pointer and `resolveElementPick` reads the first
+ * element in the chain that names a target. No nearest-element math decides a
+ * drop — array order can never break a tie. The point helpers below
+ * (`wordAtPoint`/`wireAtPoint`/`resolveMarkDrop`) stay as pure geometry
+ * utilities (used by the wire tests); they no longer drive a drop.
  */
 
 /** World-unit reach around a wire that counts as "on the wire". */
@@ -94,8 +100,10 @@ export function wireAtPoint(
 }
 
 /**
- * Resolve a ring drop: a word wins (the mark binds to it), then a wire near
- * the pointer, else the drop leaves the mark bare at that spot.
+ * Resolve a ring drop by geometry: a word wins (the mark binds to it), then a
+ * wire near the pointer, else the drop leaves the mark bare at that spot.
+ * PROVISIONAL: retained as a geometry utility for the wire tests; the canvas's
+ * drop path binds element-under-pointer instead (ADR-0016).
  */
 export function resolveMarkDrop(
   point: Point,
@@ -107,5 +115,65 @@ export function resolveMarkDrop(
   if (word) return { type: "word", slug: word.slug };
   const wire = wireAtPoint(point, wires, wireSlop);
   if (wire) return { type: "wire", from: wire.from, to: wire.to, word: wire.word };
+  return { type: "spot", x: point.x, y: point.y };
+}
+
+/**
+ * The element-under-pointer pick (ADR-0016 decision 5). The canvas flattens
+ * the DOM under the pointer into a chain — the hit element first, then its
+ * ancestors up to the plane — and this pure rule reads it: the first element
+ * that NAMES a mark target wins, else the drop leaves the mark bare.
+ *
+ * Provisional: the data attribute names (slug / from / to / word) and the
+ * class names are the canvas's own markup contract.
+ */
+
+/** A target-carrying word element is `.word` with its slug. */
+export const PICK_WORD_CLASS = "word";
+/** A distance wire's container is `.distance` with from/to/word. */
+export const PICK_DISTANCE_CLASS = "distance";
+/** A signed link's container is `.link` with from/to. */
+export const PICK_LINK_CLASS = "link";
+
+/** One element of the chain, as the canvas can describe it (DOM-free). */
+export interface PickedElement {
+  classes: readonly string[];
+  data: Readonly<Record<string, string | undefined>>;
+}
+
+/** The elements under the pointer, nearest first (the hit element's ancestors). */
+export type ElementChain = readonly PickedElement[];
+
+/** The mark target this element names, or null when it names none. */
+export function targetOfPickedElement(el: PickedElement): MarkTarget | null {
+  const has = (name: string) => el.classes.includes(name);
+  const from = el.data.from;
+  const to = el.data.to;
+  if (has(PICK_WORD_CLASS) && el.data.slug) {
+    return { type: "word", slug: el.data.slug };
+  }
+  if (has(PICK_LINK_CLASS) && from && to) {
+    return { type: "link", from, to };
+  }
+  if (has(PICK_DISTANCE_CLASS) && from && to && el.data.word) {
+    return { type: "wire", from, to, word: el.data.word };
+  }
+  return null;
+}
+
+/**
+ * Resolve a ring drop by the element under the pointer: the nearest chain
+ * element that names a target wins (a word, a link wire, a distance wire), and
+ * a pointer over bare plane leaves the mark bare at the drop point. The chain's
+ * order is the DOM's, never an array's — no nearest-element math.
+ */
+export function resolveElementPick(
+  chain: ElementChain,
+  point: Point,
+): MarkTarget {
+  for (const el of chain) {
+    const target = targetOfPickedElement(el);
+    if (target) return target;
+  }
   return { type: "spot", x: point.x, y: point.y };
 }

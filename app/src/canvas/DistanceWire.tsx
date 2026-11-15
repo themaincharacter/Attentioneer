@@ -126,7 +126,12 @@ export function DistanceWire({
   }
 
   return (
-    <div className={`distance${shelved ? " shelved" : ""}`}>
+    <div
+      className={`distance${shelved ? " shelved" : ""}`}
+      data-from={distance.from}
+      data-to={distance.to}
+      data-word={distance.word}
+    >
       <div
         className={`distance-line${marked ? " open" : ""}`}
         style={
@@ -139,6 +144,15 @@ export function DistanceWire({
                 transform: `translate3d(${fromPoint.x}px, ${fromPoint.y}px, 0) rotate(${angle}deg) scaleX(${length})`,
               }
         }
+      />
+      {/* A wider invisible band, hit-testable only while a ring is in flight
+          (the plane's .ring-picking class): binding a mark is
+          element-under-pointer, never nearest-wire math (ADR-0016). */}
+      <div
+        className="distance-hit"
+        style={{
+          transform: `translate3d(${fromPoint.x}px, ${fromPoint.y}px, 0) rotate(${angle}deg) scaleX(${length})`,
+        }}
       />
       {labelVisible && (
         <div

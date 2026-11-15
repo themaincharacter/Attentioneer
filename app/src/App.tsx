@@ -4,6 +4,7 @@ import { DistanceWire } from "./canvas/DistanceWire";
 import {
   centerOf,
   DEFAULT_BOX,
+  directedWireEndpoints,
   edgePoint,
   wordsInPolygon,
   type Box,
@@ -12,14 +13,18 @@ import {
 import type { GestureMode } from "./canvas/gates";
 import { LevelControl } from "./canvas/LevelControl";
 import { LackMark } from "./canvas/LackMark";
-import { resolveMarkDrop, type WireHit, type WordHit } from "./canvas/markTargets";
+import { LinkWire } from "./canvas/LinkWire";
+import { resolveElementPick, type PickedElement } from "./canvas/markTargets";
+import { countsAsOneFlip } from "./canvas/planePress";
 import { PlaneMenu } from "./canvas/PlaneMenu";
 import { PlayingSetBar, PlayingSetWords } from "./canvas/PlayingSetSelector";
 import { useRingDrag } from "./canvas/ringDrag";
 import { ReferenceWord } from "./canvas/ReferenceWord";
 import { ShelfFold } from "./canvas/ShelfFold";
+import { SignChoice } from "./canvas/SignChoice";
 import { useCamera } from "./canvas/useCamera";
 import { useMap } from "./canvas/useMap";
+import { linkKey, type LinkSign } from "./map/links";
 import { markTargetKey, type Mark, type MarkTarget } from "./map/marks";
 import { hasWord, prefilledSelection } from "./map/model";
 import type { Reference } from "./map/refs";
@@ -27,9 +32,6 @@ import { DEFAULT_SHELF_X, isShelved, rejectSpot } from "./map/shelf";
 import { saveWorkspaceLevel, DEFAULT_LEVEL, type Level } from "./workspace/level";
 import { WorkspaceGate } from "./workspace/WorkspaceGate";
 import type { Workspace } from "./workspace/lifecycle";
-
-/** World-unit reach around a wire at 100% zoom (kept screen-sized while zooming). */
-const WIRE_DROP_PX = 12;
 
 /**
  * One workspace per window (ADR-0002): the gate or an open workspace's canvas,
@@ -54,13 +56,18 @@ const WIRE_DROP_PX = 12;
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const { camera, intents } = useCamera();
-  const map = useMap(workspace?.path ?? "");
+  // The active game (ADR-0016): workspace.yml's level key is the sole source.
+  const level: Level = workspace?.level ?? DEFAULT_LEVEL;
+  const map = useMap(workspace?.path ?? "", { playing: level === "dynamics" });
   const {
     refs,
     distances,
+    links,
     marks,
     malformedMarks,
+    malformedLinks,
     orphanMarks,
+    orphanLinks,
     model,
     malformedModel,
     orphanMembers,
@@ -75,6 +82,10 @@ function App() {
     reject,
     toggleWordMark,
     toggleWireMark,
+    toggleLinkMark,
+    drawLink,
+    flipLink,
+    removeLink,
     castMark,
     withdrawMark,
     moveMark,
@@ -179,11 +190,14 @@ function App() {
     [posOf, boxOf, shelfX],
   );
 
-  // The active game (ADR-0016): workspace.yml's level key is the sole source.
-  const level: Level = workspace?.level ?? DEFAULT_LEVEL;
-  // The interaction-mode gate: the selector is the first armed gesture. Later
-  // stories arm path collection and the sign choice through the same value.
-  const gestureMode: GestureMode = selectorOpen ? "selector" : "idle";
+  // The interaction-mode gate (ADR-0016): the selector and the pending sign
+  // choice are the armed gestures; story 3's path collection joins here.
+  const signPending = level === "dynamics" && connect !== null && connect.to !== undefined;
+  const gestureMode: GestureMode = selectorOpen
+    ? "selector"
+    : signPending
+      ? "sign-choice"
+      : "idle";
 
   // Every coined word, as the selector's world-space layer needs it.
   const selectorWords = useMemo(
@@ -330,38 +344,71 @@ function App() {
   );
 
   /**
-   * Resolve a dropped ring (story 2): a word wins, then a wire, else the mark
-   * stays bare at the drop point. Dropping on the mark's own target is a quiet
-   * no-op; anything else moves the one mark in one write.
+   * The elements under a client point, nearest first: the DOM's own answer to
+   * "what is here?" — the hit element and its ancestors up to the plane. This
+   * is the element-under-pointer half of ADR-0016 decision 5; the pure rule
+   * that reads it lives in markTargets.ts.
+   */
+  const pickChainAt = useCallback(
+    (clientX: number, clientY: number): PickedElement[] => {
+      const chain: PickedElement[] = [];
+      if (typeof document === "undefined") return chain;
+      let node: HTMLElement | null = document.elementFromPoint(
+        clientX,
+        clientY,
+      ) as HTMLElement | null;
+      while (node && node !== document.body) {
+        chain.push({ classes: [...node.classList], data: { ...node.dataset } });
+        node = node.parentElement;
+      }
+      return chain;
+    },
+    [],
+  );
+
+  /**
+   * Resolve a dropped ring: bind the mark to the ELEMENT under the pointer — a
+   * word, a link wire, a distance wire — else leave it bare at the drop point
+   * (ADR-0016 decision 5; no nearest-element math). Dropping on the mark's own
+   * target is a quiet no-op; anything else moves the one mark in one write.
    */
   const handleRingDrop = useCallback(
-    (source: MarkTarget, point: Point) => {
-      const words: WordHit[] = [];
-      for (const word of refs) {
-        if (word.slug === null) continue;
-        words.push({ slug: word.slug, pos: posOf(word), box: boxOf(word) });
-      }
-      const wires: WireHit[] = [];
-      for (const distance of distances) {
-        const from = refs.find((r) => r.slug === distance.from);
-        const to = refs.find((r) => r.slug === distance.to);
-        if (!from || !to) continue;
-        wires.push({
-          from: distance.from,
-          to: distance.to,
-          word: distance.word,
-          fromPoint: centerOfWord(from),
-          toPoint: centerOfWord(to),
-        });
-      }
-      const target = resolveMarkDrop(point, words, wires, WIRE_DROP_PX / camera.zoom);
+    (source: MarkTarget, point: Point, client: Point) => {
+      const target = resolveElementPick(pickChainAt(client.x, client.y), point);
       if (markTargetKey(target) === markTargetKey(source)) return;
       moveMark(source, target);
     },
-    [refs, distances, posOf, boxOf, centerOfWord, camera.zoom, moveMark],
+    [pickChainAt, moveMark],
   );
 
   const markDrag = useRingDrag(handleRingDrop, toWorld);
+
+  // One flip per press-pair: a double-click on a sign fires two clicks, which
+  // without this would flip and unflip — a quiet no-op that reads as broken.
+  const lastSignFlipRef = useRef(new Map<string, number>());
+  const flipSign = useCallback(
+    (from: string, to: string) => {
+      const key = linkKey(from, to);
+      const now = Date.now();
+      if (!countsAsOneFlip(lastSignFlipRef.current.get(key) ?? null, now)) return;
+      lastSignFlipRef.current.set(key, now);
+      flipLink(from, to);
+    },
+    [flipLink],
+  );
+
+  /**
+   * The pending link's explicit sign pick (ADR-0016 decision 3, World B): only
+   * a press on + or - authors it. Nothing chosen means nothing written.
+   */
+  const pickSign = useCallback(
+    (sign: LinkSign) => {
+      if (!connect || !connect.to) return;
+      drawLink(connect.from, connect.to, sign);
+      cancelConnect();
+    },
+    [connect, drawLink, cancelConnect],
+  );
 
   /** A double-click on empty plane opens the word/lack menu at that point. */
   const handlePlaneDoubleClick = useCallback((point: Point) => {
@@ -388,8 +435,12 @@ function App() {
 
   // Track the pointer live during a connect draw so the dashed preview follows,
   // and end the draw when the pointer is released off a target word.
+  //
+  // Once the pair is fixed (`connect.to`), the gesture is over: the next
+  // surface is the coin field (Level 1) or the sign choice (Level 2), and a
+  // mouseup on that surface must never be read as "released off a word".
   useEffect(() => {
-    if (!connect) return;
+    if (!connect || connect.to) return;
     const onMove = (ev: MouseEvent) => {
       const el = document.querySelector<HTMLDivElement>(".plane");
       if (!el) return;
@@ -450,6 +501,7 @@ function App() {
         onPlaneDoubleClick={handlePlaneDoubleClick}
         gestureMode={gestureMode}
         lassoArmed={selectorOpen && lassoArmed}
+        picking={markDrag.ghost !== null}
         onLasso={handleLasso}
       >
         {/* the shelf's fold and margin: a place in world space (story 3) */}
@@ -545,6 +597,63 @@ function App() {
           );
         })}
 
+        {/* signed links (story 2, ADR-0012/0014): Level 2 only — Level 1
+            renders exactly as before. Each directed link is its own wire, on
+            its direction's side of the pair's canonical chord, with the sign
+            glyph at the target head. */}
+        {level === "dynamics" &&
+          links.map((link) => {
+            const f = refs.find((r) => r.slug === link.from);
+            const t = refs.find((r) => r.slug === link.to);
+            if (!f || !t) return null;
+            const fCenter = centerOfWord(f);
+            const tCenter = centerOfWord(t);
+            // A self-link is legal and unremarkable: it renders as a short
+            // stub off the word's right edge (provisional, like the rest of
+            // the wire geometry).
+            const points =
+              link.from === link.to
+                ? {
+                    from: { x: fCenter.x + boxOf(f).w / 2, y: fCenter.y },
+                    to: { x: fCenter.x + boxOf(f).w / 2 + 26, y: fCenter.y },
+                  }
+                : directedWireEndpoints(
+                    {
+                      slug: link.from,
+                      point: edgePoint(fCenter, boxOf(f), tCenter),
+                    },
+                    {
+                      slug: link.to,
+                      point: edgePoint(tCenter, boxOf(t), fCenter),
+                    },
+                    camera.zoom,
+                  );
+            return (
+              <LinkWire
+                key={`link-${linkKey(link.from, link.to)}`}
+                link={link}
+                fromPoint={points.from}
+                toPoint={points.to}
+                marked={openTargets.has(
+                  markTargetKey({ type: "link", from: link.from, to: link.to }),
+                )}
+                shelved={shelvedOf(f) || shelvedOf(t)}
+                onFlip={() => flipSign(link.from, link.to)}
+                onRemove={() => removeLink(link.from, link.to)}
+                onToggleMark={() => {
+                  if (markDrag.isClickSuppressed()) return;
+                  toggleLinkMark(link.from, link.to);
+                }}
+                onMarkRingDrag={(e) =>
+                  markDrag.begin(
+                    { type: "link", from: link.from, to: link.to },
+                    e,
+                  )
+                }
+              />
+            );
+          })}
+
         {/* the playing-set selector's world layer (story 1): one quiet button
             over each word; excluded words wear a dashed hollow ring, never
             the remove × */}
@@ -575,14 +684,26 @@ function App() {
           <ConnectPreview from={previewFrom} to={connect} />
         )}
 
-        {/* coin-in-place field once the pair is fixed */}
+        {/* once the pair is fixed the gesture is LEVEL-SCOPED (ADR-0016):
+            at Level 2 the sign choice opens in place of the coin field — no
+            default, an explicit pick or nothing — while Level 1 still coins a
+            distance word exactly as before. */}
         {connect && connect.to && fromRef && toRef && (
-          <DistanceCoinField
-            fromCenter={centerOfWord(fromRef)}
-            toCenter={centerOfWord(toRef)}
-            onCoin={coinConnect}
-            onCancel={cancelConnect}
-          />
+          level === "dynamics" ? (
+            <SignChoice
+              fromCenter={centerOfWord(fromRef)}
+              toCenter={centerOfWord(toRef)}
+              onPick={pickSign}
+              onDiscard={cancelConnect}
+            />
+          ) : (
+            <DistanceCoinField
+              fromCenter={centerOfWord(fromRef)}
+              toCenter={centerOfWord(toRef)}
+              onCoin={coinConnect}
+              onCancel={cancelConnect}
+            />
+          )
         )}
 
         {/* the double-click creation menu: word or lack, at the point */}
@@ -619,6 +740,8 @@ function App() {
       <MarkNotices
         malformed={malformedMarks}
         orphans={orphanMarks}
+        malformedLinks={malformedLinks}
+        orphanLinks={orphanLinks}
         malformedModel={malformedModel}
         orphanMembers={orphanMembers}
       />
@@ -643,17 +766,23 @@ function App() {
 function MarkNotices({
   malformed,
   orphans,
+  malformedLinks,
+  orphanLinks,
   malformedModel,
   orphanMembers,
 }: {
   malformed: readonly string[];
   orphans: readonly Mark[];
+  malformedLinks: readonly string[];
+  orphanLinks: readonly { from: string; to: string }[];
   malformedModel: string | null;
   orphanMembers: readonly string[];
 }) {
   if (
     malformed.length === 0 &&
     orphans.length === 0 &&
+    malformedLinks.length === 0 &&
+    orphanLinks.length === 0 &&
     malformedModel === null &&
     orphanMembers.length === 0
   ) {
@@ -669,6 +798,17 @@ function MarkNotices({
       {malformed.map((line, index) => (
         <div className="mark-notice" key={`malformed-${index}`}>
           unreadable line in map/marks.jsonl: {line}
+        </div>
+      ))}
+      {orphanLinks.map((link, index) => (
+        <div className="mark-notice" key={`link-${index}`}>
+          a link names “{link.from} → {link.to}” — not on the map, kept in
+          map/links.jsonl
+        </div>
+      ))}
+      {malformedLinks.map((line, index) => (
+        <div className="mark-notice" key={`malformed-link-${index}`}>
+          unreadable line in map/links.jsonl: {line}
         </div>
       ))}
       {orphanMembers.map((slug) => (
@@ -691,6 +831,8 @@ function describeMarkTarget(target: MarkTarget): string {
       return `“${target.slug}”`;
     case "wire":
       return `the wire ${target.from} → ${target.to} · “${target.word}”`;
+    case "link":
+      return `the link ${target.from} → ${target.to}`;
     case "spot":
       return "a bare spot";
   }

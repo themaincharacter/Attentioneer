@@ -6,8 +6,9 @@ import type { Point } from "./geometry";
  * Ring drag (Epic 3 story 2): dragging any open-mark ring binds it. The same
  * physical move covers both directions (map ticket 03) — onto a word or wire
  * to bind, off onto the plane to leave it bare again — so the drag only reports
- * the drop point; the canvas resolves the target and moves the one mark in one
- * write (ADR-0009).
+ * the drop point (world AND client, because the canvas binds the mark to the
+ * element under the pointer); the canvas resolves the target and moves the one
+ * mark in one write (ADR-0009, ADR-0016).
  *
  * The mousedown must be a raw listener on the ring: d3-zoom's plane handler
  * stops immediate propagation on mousedown, so React's synthetic mouse events
@@ -36,7 +37,7 @@ export interface RingDrag {
  * null if the plane is not measurable (nothing is dropped).
  */
 export function useRingDrag(
-  onDrop: (source: MarkTarget, point: Point) => void,
+  onDrop: (source: MarkTarget, point: Point, client: Point) => void,
   toWorld: (clientX: number, clientY: number) => Point | null,
 ): RingDrag {
   const [ghost, setGhost] = useState<Point | null>(null);
@@ -85,7 +86,7 @@ export function useRingDrag(
         if (!moved) return;
         suppressUntilRef.current = Date.now() + CLICK_SUPPRESS_MS;
         const point = toWorld(ev.clientX, ev.clientY);
-        if (point) onDrop(source, point);
+        if (point) onDrop(source, point, { x: ev.clientX, y: ev.clientY });
       };
 
       window.addEventListener("mousemove", onMove);
