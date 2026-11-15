@@ -59,6 +59,13 @@
  * surface, so the writer (and the arming echo in App) read `authoringLive`:
  * at dynamics with no accepted set no amount is authored.
  *
+ * Epic 8 story 2's branch chooser (ADR-0021) adds no class here, and that is
+ * deliberate: it lives in the level control, which sits OUTSIDE `.plane` beside
+ * the control's other actions ("edit the playing set", "coin a loop"), so the
+ * plane's armed gate never reaches it and no press on it can pan, create or
+ * start a word gesture. Its switch runs the app's full switch path, which is
+ * what closes any armed surface.
+ *
  * Pure: no DOM, no React. `ClassListLike` is satisfied by a DOMTokenList, and
  * `TextFieldLike` by an HTMLElement, so the handlers can pass the real thing
  * and tests can pass a plain stub.

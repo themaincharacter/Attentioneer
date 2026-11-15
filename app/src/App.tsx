@@ -111,6 +111,23 @@ import {
 } from "./map/shelf";
 import { cueShownIn } from "./canvas/presenceRules";
 import { linkWiresVisible } from "./canvas/zoomBands";
+import { createWriteQueue, type WriteQueue } from "./lib/writeQueue";
+import {
+  createScenario,
+  listScenarios,
+  retireScenario,
+  type Scenario,
+} from "./scenarios/branch";
+import {
+  resolveActiveScenario,
+  saveWorkspaceScenario,
+} from "./scenarios/active";
+import {
+  createScenarioHandoff,
+  type ScenarioCause,
+  type ScenarioHandoff,
+  type ScenarioHandoffDeps,
+} from "./scenarios/handoff";
 import { saveWorkspaceLevel, DEFAULT_LEVEL, type Level } from "./workspace/level";
 import {
   createLevelHandoff,
@@ -157,6 +174,16 @@ import type { Workspace } from "./workspace/lifecycle";
  * is the pure `shouldPromptForSet`: a DELIBERATE entry asks for a missing
  * playing set, a wheel crossing never does.
  *
+ * Epic 8 story 2 adds THE BRANCH (ADR-0021): a scenario is a NAMED BRANCH of
+ * the dynamics model — `scenarios/<slug>/` at the workspace root with
+ * byte-copies of the model's three variant-owned records and every committed
+ * assumption pinned. The level control's dynamics section grows the quiet
+ * chooser; while a branch runs the map's three variant records read and write
+ * in its folder and everything else stays the committed model's. The switch
+ * runs the FULL switch path (transients close, gestures cancel, the walk
+ * closes, the level pin is released), and `workspace.yml`'s `scenario` key is
+ * only the resume hint that switch writes — opening never writes it.
+ *
  * Epic 7 story 1 makes the playing set structurally required at AUTHORING: the
  * gate's `authoringLive` guards the three dynamics writers (a link, a loop, an
  * assumption) and echoes at the three affordances that would arm them, so with no
@@ -185,7 +212,13 @@ function App() {
   // listener is re-attached on every wheel tick).
   const cameraZoomRef = useRef(camera.zoom);
   cameraZoomRef.current = camera.zoom;
-  const map = useMap(workspace?.path ?? "", { level });
+  // The running BRANCH (ADR-0021, Epic 8 story 2): null is the committed model.
+  // The map's three variant records read and write in that branch's folder; the
+  // app's one restore reads `workspace.yml`'s `scenario` hint once on open.
+  const [scenario, setScenario] = useState<string | null>(null);
+  // The branch folders on disk, read on open and after the chooser's moves.
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const map = useMap(workspace?.path ?? "", { level, scenario });
   const {
     refs,
     distances,
@@ -198,6 +231,7 @@ function App() {
     model,
     malformedModel,
     orphanMembers,
+    ghostMembers,
     loops,
     malformedLoops,
     orphanLoops,
@@ -922,13 +956,28 @@ function App() {
       if (workspace) await saveWorkspaceLevel(workspace.path, next);
     },
   };
+  // ONE queue for `workspace.yml` (lib/writeQueue.ts: one queue per file). The
+  // level handoff and the scenario handoff both rewrite their own line of that
+  // one file with a read-modify-write, so they MUST share the queue — two
+  // queues over one file could interleave and resurrect an older value under a
+  // newer one.
+  const workspaceQueueRef = useRef<WriteQueue | null>(null);
+  if (workspaceQueueRef.current === null) {
+    workspaceQueueRef.current = createWriteQueue();
+  }
+  const workspaceQueue = workspaceQueueRef.current;
+
   const handoffRef = useRef<LevelHandoff | null>(null);
   if (handoffRef.current === null) {
-    handoffRef.current = createLevelHandoff(DEFAULT_LEVEL, {
-      onSwitch: (next, cause) => handoffDeps.current.onSwitch(next, cause),
-      moveCamera: (next) => handoffDeps.current.moveCamera(next),
-      save: (next) => handoffDeps.current.save(next),
-    });
+    handoffRef.current = createLevelHandoff(
+      DEFAULT_LEVEL,
+      {
+        onSwitch: (next, cause) => handoffDeps.current.onSwitch(next, cause),
+        moveCamera: (next) => handoffDeps.current.moveCamera(next),
+        save: (next) => handoffDeps.current.save(next),
+      },
+      workspaceQueue,
+    );
   }
   const handoff = handoffRef.current;
 
@@ -1026,6 +1075,140 @@ function App() {
     }
     wasArmedRef.current = armed;
   }, [gestureMode, releasePin]);
+
+  /* ----------------------------------------------------------------------- *
+   * Epic 8 story 2: the branch (ADR-0021).
+   * ----------------------------------------------------------------------- */
+
+  /**
+   * The scenario switch's path (ADR-0021 decision 5). It runs the FULL switch
+   * path — the same one a level jump runs: every transient closes, the armed
+   * gestures cancel, the walk closes — and then, because the branch's records
+   * are a different FOLDER, the app's branch state changes and `useMap`
+   * re-reads the three variant records from it.
+   *
+   * The LEVEL PIN is honored explicitly. Closing the transients removes
+   * whatever field was holding focus without a `focusout` in Chromium (the
+   * app's own long-standing note), so a held level crossing would otherwise
+   * stay stuck behind a surface that no longer exists: `releasePin()` applies
+   * it here, in the same move, with the wheel's cause.
+   *
+   * A restore (open) runs no switch path: there is no transient to close, and
+   * it never writes (a hand-edited hint is honored on open).
+   */
+  const switchScenario = useCallback(
+    (next: string | null, cause: ScenarioCause) => {
+      setScenario(next);
+      if (cause === "restore") return;
+      cancelPendingGestures();
+      setWalkSlug(null);
+      releasePin();
+    },
+    [cancelPendingGestures, releasePin],
+  );
+
+  const scenarioDeps = useRef<ScenarioHandoffDeps>({
+    onSwitch: () => undefined,
+    save: async () => undefined,
+  });
+  scenarioDeps.current = {
+    onSwitch: switchScenario,
+    save: async (next) => {
+      if (workspace) await saveWorkspaceScenario(workspace.path, next);
+    },
+  };
+  const scenarioHandoffRef = useRef<ScenarioHandoff | null>(null);
+  if (scenarioHandoffRef.current === null) {
+    scenarioHandoffRef.current = createScenarioHandoff(
+      null,
+      {
+        onSwitch: (next, cause) => scenarioDeps.current.onSwitch(next, cause),
+        save: (next) => scenarioDeps.current.save(next),
+      },
+      workspaceQueue,
+    );
+  }
+  const scenarioHandoff = scenarioHandoffRef.current;
+
+  /**
+   * Open-restore (ADR-0021 decision 5): read the branch folders, resolve
+   * `workspace.yml`'s `scenario` hint against them and set the running
+   * branch. It NEVER writes — a hand-edited hint is honored here and rewritten
+   * only on the first deliberate switch — and a hint naming no folder resolves
+   * to the committed model, quietly. Once per workspace.
+   */
+  const scenarioRestoredRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!workspace) return;
+    let cancelled = false;
+    void listScenarios(workspace.path).then((folders) => {
+      if (cancelled) return;
+      setScenarios(folders);
+      if (scenarioRestoredRef.current === workspace.path) return;
+      scenarioRestoredRef.current = workspace.path;
+      scenarioHandoff.restore(
+        resolveActiveScenario(
+          workspace.resumeScenario,
+          folders.map((folder) => folder.slug),
+        ),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace, scenarioHandoff]);
+
+  /**
+   * Branch the COMMITTED model under a coined name (the chooser's "branch…").
+   * The copy is always `map/`'s — a scenario is a model variant, not a second
+   * model (ADR-0021 decision 6) — and the new branch becomes the running one,
+   * which is the move the person just made. The write order is the branch
+   * module's: copies, the pins, then the header last (the folder only becomes a
+   * scenario once it is whole).
+   */
+  const branchModel = useCallback(
+    (name: string) => {
+      if (!workspace) return;
+      void (async () => {
+        // The branch copies the COMMITTED model (ADR-0021 decision 6) and the
+        // folder becomes a scenario only once it is whole.
+        const created = await createScenario(workspace.path, name);
+        setScenarios(await listScenarios(workspace.path));
+        scenarioHandoff.choose(created.slug);
+      })();
+    },
+    [workspace, scenarioHandoff],
+  );
+
+  /**
+   * Retire a branch: DELETE its folder (ADR-0021 decisions 1 and 6 — ammo, no
+   * archive, no history). Retiring the running branch first switches back to
+   * the committed model through the handoff (the switch path runs and the hint
+   * write is queued, so `workspace.yml` stops naming the branch), and the
+   * folder is deleted only after that write has settled: the hint never names a
+   * folder that is gone by the app's own act. A crash between the two leaves a
+   * harmless orphan folder the chooser still lists.
+   */
+  const retireBranch = useCallback(
+    (slug: string) => {
+      if (!workspace) return;
+      void (async () => {
+        scenarioHandoff.retire(slug);
+        await scenarioHandoff.idle();
+        await retireScenario(workspace.path, slug);
+        setScenarios(await listScenarios(workspace.path));
+      })();
+    },
+    [workspace, scenarioHandoff],
+  );
+
+  /** The chooser's pick: a branch, or the committed model (null). */
+  const chooseScenario = useCallback(
+    (slug: string | null) => {
+      scenarioHandoff.choose(slug);
+    },
+    [scenarioHandoff],
+  );
 
   /**
    * A zoom gesture settled (ADR-0018 decisions 3 and 5, story 2): while the
@@ -1818,6 +2001,11 @@ function App() {
         onJump={(next) => handoff.jump(next)}
         onEditPlayingSet={openSelector}
         onCoinLoop={beginLoop}
+        scenarios={scenarios}
+        activeScenario={scenario}
+        onChooseScenario={chooseScenario}
+        onBranchScenario={branchModel}
+        onRetireScenario={retireBranch}
       />
 
       {/* the path gesture's quiet hint (story 3): what the click does and how
@@ -1847,6 +2035,8 @@ function App() {
         orphanLinks={orphanLinks}
         malformedModel={malformedModel}
         orphanMembers={orphanMembers}
+        ghostMembers={ghostMembers}
+        scenario={scenario}
         malformedLoops={malformedLoops}
         orphanLoops={orphanLoops}
         malformedAssumptions={malformedAssumptions}
@@ -1907,6 +2097,8 @@ function MarkNotices({
   orphanLinks,
   malformedModel,
   orphanMembers,
+  ghostMembers,
+  scenario,
   malformedLoops,
   orphanLoops,
   malformedAssumptions,
@@ -1930,6 +2122,13 @@ function MarkNotices({
   orphanLinks: readonly { from: string; to: string }[];
   malformedModel: string | null;
   orphanMembers: readonly string[];
+  /**
+   * A BRANCH's set naming slugs the map does not carry (Epic 8 story 2): our
+   * nameless ghosts, surfaced here and never drawn as words.
+   */
+  ghostMembers: readonly string[];
+  /** The branch running now (null = the committed model), for the file's path. */
+  scenario: string | null;
   malformedLoops: readonly string[];
   orphanLoops: readonly string[];
   malformedAssumptions: readonly string[];
@@ -1946,11 +2145,23 @@ function MarkNotices({
   orphanQuantities: readonly Quantity[];
   outOfPlayQuantities: readonly Quantity[];
 }) {
+  /**
+   * The file a variant-owned record's line is kept in (ADR-0021): `map/` for
+   * the committed model, the branch's folder while one runs. The strip names
+   * the file the line is ACTUALLY in — a ghost is kept in the branch's
+   * `model.json`, never in `map/`'s.
+   */
+  const recordFile = (name: string): string =>
+    scenario === null ? "map/" + name : "scenarios/" + scenario + "/" + name;
+
   // Which families actually have something to say right now.
   const has: Record<NoticeFamily, boolean> = {
     marks: malformed.length > 0 || orphans.length > 0,
     links: malformedLinks.length > 0 || orphanLinks.length > 0,
-    model: malformedModel !== null || orphanMembers.length > 0,
+    model:
+      malformedModel !== null ||
+      orphanMembers.length > 0 ||
+      ghostMembers.length > 0,
     loops: malformedLoops.length > 0 || orphanLoops.length > 0,
     assumptions:
       malformedAssumptions.length > 0 ||
@@ -2012,12 +2223,12 @@ function MarkNotices({
             {orphanLinks.map((link, index) => (
               <div className="mark-notice" key={`link-${index}`}>
                 a link names “{nameOf(link.from)} → {nameOf(link.to)}” — not on
-                the map, kept in map/links.jsonl
+                the map, kept in {recordFile("links.jsonl")}
               </div>
             ))}
             {malformedLinks.map((line, index) => (
               <div className="mark-notice" key={`malformed-link-${index}`}>
-                unreadable line in map/links.jsonl: {line}
+                unreadable line in {recordFile("links.jsonl")}: {line}
               </div>
             ))}
           </>
@@ -2027,14 +2238,22 @@ function MarkNotices({
           <>
             {orphanMembers.map((slug) => (
               <div className="mark-notice" key={`member-${slug}`}>
-                playing set names “{nameOf(slug)}” — not on the map, kept in
-                map/model.json
+                playing set names “{nameOf(slug)}” — not on the map, kept in{" "}
+                {recordFile("model.json")}
+              </div>
+            ))}
+            {/* A branch's unmatched slugs (Epic 8 story 2, ADR-0021 decision
+                4): a NAMELESS GHOST — surfaced here, never drawn as a word. */}
+            {ghostMembers.map((slug) => (
+              <div className="mark-notice" key={`ghost-${slug}`}>
+                the branch names “{nameOf(slug)}” — no such word on the map: a
+                nameless ghost, kept in {recordFile("model.json")}
               </div>
             ))}
             {malformedModel !== null && (
               <div className="mark-notice">
-                unreadable map/model.json — kept as is until a playing set is
-                accepted
+                unreadable {recordFile("model.json")} — kept as is until a
+                playing set is accepted
               </div>
             )}
           </>
@@ -2124,24 +2343,24 @@ function MarkNotices({
               {orphanQuantities.map((quantity, index) => (
                 <div className="mark-notice" key={`orphan-quantity-${index}`}>
                   a quantity on {describeQuantityTarget(quantity, nameOf)} — not on the map,
-                  kept in map/quantities.jsonl
+                  kept in {recordFile("quantities.jsonl")}
                 </div>
               ))}
               {outOfPlayQuantities.map((quantity, index) => (
                 <div className="mark-notice" key={`out-quantity-${index}`}>
                   a quantity on {describeQuantityTarget(quantity, nameOf)} — outside the
-                  playing set, kept in map/quantities.jsonl
+                  playing set, kept in {recordFile("quantities.jsonl")}
                 </div>
               ))}
               {malformedQuantities.map((line, index) => (
                 <div className="mark-notice" key={`malformed-quantity-${index}`}>
-                  unreadable line in map/quantities.jsonl: {line}
+                  unreadable line in {recordFile("quantities.jsonl")}: {line}
                 </div>
               ))}
               {duplicateQuantities.map((quantity, index) => (
                 <div className="mark-notice" key={`duplicate-quantity-${index}`}>
                   a duplicate quantity line on {describeQuantityTarget(quantity, nameOf)} —
-                  kept in map/quantities.jsonl
+                  kept in {recordFile("quantities.jsonl")}
                 </div>
               ))}
             </>

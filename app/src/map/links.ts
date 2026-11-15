@@ -1,5 +1,6 @@
 import { readTextFile, writeTextFile } from "../lib/fs";
 import { canonicalJsonlLine, canonicalJsonlLines } from "../lib/serialize";
+import { RECORD_FILE } from "./records";
 
 /**
  * Signed links (ADR-0012 decision 2, ADR-0014): one `map/links.jsonl` line per
@@ -51,8 +52,12 @@ export function linkKey(from: string, to: string): string {
   return `${from}\u0000${to}`;
 }
 
-export function linksPath(workspacePath: string): string {
-  return `${workspacePath}/map/links.jsonl`;
+/**
+ * The links file in a RECORDS FOLDER (ADR-0021): `map/` for the committed
+ * model, a branch's `scenarios/<slug>/` while one is active.
+ */
+export function linksPath(recordsDir: string): string {
+  return `${recordsDir}/${RECORD_FILE.links}`;
 }
 
 /** Is this an authored sign? Anything else is malformed, never guessed at. */
@@ -106,8 +111,9 @@ export function parseLinks(text: string): ParsedLinks {
   return { links, malformed };
 }
 
-export async function loadLinks(workspacePath: string): Promise<ParsedLinks> {
-  const text = await readTextFile(linksPath(workspacePath));
+/** Read a records folder's links (the committed model's, or a branch's). */
+export async function loadLinks(recordsDir: string): Promise<ParsedLinks> {
+  const text = await readTextFile(linksPath(recordsDir));
   return text === null ? { links: [], malformed: [] } : parseLinks(text);
 }
 
@@ -133,12 +139,13 @@ export function serializeLinks(
   return canonicalJsonlLines([...known, ...malformed]);
 }
 
+/** Write a records folder's links (the committed model's, or a branch's). */
 export async function saveLinks(
-  workspacePath: string,
+  recordsDir: string,
   links: readonly Link[],
   malformed: readonly string[] = [],
 ): Promise<void> {
-  await writeTextFile(linksPath(workspacePath), serializeLinks(links, malformed));
+  await writeTextFile(linksPath(recordsDir), serializeLinks(links, malformed));
 }
 
 /** The one link on this ordered pair, if it exists. */

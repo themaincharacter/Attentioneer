@@ -1,4 +1,6 @@
 import { LEVELS, type Level } from "../workspace/level";
+import type { Scenario } from "../scenarios/branch";
+import { ScenarioChooser } from "./ScenarioChooser";
 
 interface LevelControlProps {
   /**
@@ -16,6 +18,16 @@ interface LevelControlProps {
   onEditPlayingSet: () => void;
   /** Arm the path gesture and click a loop's words in order (story 3). */
   onCoinLoop: () => void;
+  /** The branch folders the workspace holds (Epic 8 story 2, ADR-0021). */
+  scenarios: readonly Scenario[];
+  /** The branch running now, or null for the committed model. */
+  activeScenario: string | null;
+  /** Switch to a branch, or back to the committed model. */
+  onChooseScenario: (slug: string | null) => void;
+  /** Coin a branch's name and branch the committed model under it. */
+  onBranchScenario: (name: string) => void;
+  /** Retire (delete) a branch's folder. */
+  onRetireScenario: (slug: string) => void;
 }
 
 /**
@@ -40,14 +52,24 @@ interface LevelControlProps {
  * focus here — the control is not yanked into the person's way (ADR-0018
  * decision 5); only a deliberate jump returns focus to it.
  *
+ * Epic 8 story 2 grows the dynamics section with the SCENARIO CHOOSER
+ * (ADR-0021): the quiet list of named branches, the committed model ("the
+ * map"), and the one action that makes a branch. It is outside `.plane` like
+ * the other actions here, and switching runs the app's full switch path.
+ *
  * No badge, no count, no ceremony. Provisional: the wording, order and look
- * (ADR-0003/0016/0018), and the landing zoom each jump arrives at.
+ * (ADR-0003/0016/0018/0021), and the landing zoom each jump arrives at.
  */
 export function LevelControl({
   level,
   onJump,
   onEditPlayingSet,
   onCoinLoop,
+  scenarios,
+  activeScenario,
+  onChooseScenario,
+  onBranchScenario,
+  onRetireScenario,
 }: LevelControlProps) {
   return (
     <div
@@ -90,6 +112,18 @@ export function LevelControl({
           >
             coin a loop
           </button>
+          {/* Epic 8 story 2's branch chooser (ADR-0021): the list of named
+              branches, the committed model, and the quiet × that RETIRES a
+              branch by deleting its folder. It sits outside `.plane` like the
+              control's other actions, so the plane's armed gate never reaches
+              it; a switch runs the app's full switch path. */}
+          <ScenarioChooser
+            scenarios={scenarios}
+            active={activeScenario}
+            onChoose={onChooseScenario}
+            onBranch={onBranchScenario}
+            onRetire={onRetireScenario}
+          />
         </>
       )}
     </div>

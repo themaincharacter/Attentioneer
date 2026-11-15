@@ -1044,6 +1044,84 @@ body {
   color: #1e2126;
 }
 
+/* Epic 8 story 2's branch chooser (ADR-0021): the branches this workspace
+   holds, the committed model, and the quiet × that retires one. Same quiet
+   pill vocabulary as the level control's own actions; a branch that is running
+   is inked like the running game. Provisional: the look (ADR-0003's seam). */
+.scenario-chooser {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 2px;
+  padding-left: 4px;
+  border-left: 1px solid #e4dfd4;
+}
+
+.scenario-entry {
+  display: inline-flex;
+  align-items: center;
+}
+
+.scenario-name,
+.scenario-branch {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+.scenario-name:hover,
+.scenario-branch:hover,
+.scenario-retire:hover {
+  color: #1e2126;
+}
+
+.scenario-name.active {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.16);
+}
+
+.scenario-retire {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #a9a396;
+  background: transparent;
+  border: 0;
+  padding: 4px 4px;
+  cursor: pointer;
+}
+
+.scenario-name-input {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #1e2126;
+  background: rgba(255, 253, 248, 0.96);
+  border: 1px solid #d8d2c6;
+  border-radius: 999px;
+  padding: 4px 9px;
+  width: 132px;
+  outline: none;
+}
+
+.scenario-name:focus-visible,
+.scenario-branch:focus-visible,
+.scenario-retire:focus-visible,
+.scenario-name-input:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
 /* The selector's strip, fixed in screen space (readable at any zoom). Quiet
    buttons; the accepted set writes on "accept", and Esc/close writes nothing. */
 .playing-set-bar {

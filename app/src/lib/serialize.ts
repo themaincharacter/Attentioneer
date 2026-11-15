@@ -176,7 +176,8 @@ export function agentsMd(workspaceName: string): string {
     "## What is here",
     "",
     "- `workspace.yml` — workspace marker, format key, the shelf's fold",
-    "  (`shelf_x`) and the level's resume hint (`level`); keep it.",
+    "  (`shelf_x`), the level's resume hint (`level`) and the branch's",
+    "  (`scenario`); keep it.",
     "- `map/references/` — one Markdown file per reference: its coined name, its",
     "  place on the plane, and its optional memory (prose).",
     "- `map/distances.jsonl` — one line per distance: its two endpoints and the",
@@ -306,6 +307,34 @@ export function agentsMd(workspaceName: string): string {
     "of the open moment, not a record: nothing about it is written, so reopening",
     "a pointer shows the file as it is now, never a cached earlier read.",
     "",
+    "## A scenario is a named branch",
+    "",
+    "`scenarios/<slug>/` holds a BRANCH of the dynamics model: `scenario.yml`",
+    "(the format key and the person's coined name), byte-copies of",
+    "`map/model.json`, `map/links.jsonl` and `map/quantities.jsonl`, and",
+    "`assumption-pins.jsonl` — every committed assumption line as it stood when",
+    "the branch was made. The map is the committed model and stays where it is:",
+    "a branch never edits `map/`. While a branch is open the app reads and",
+    "writes the model's three records IN THAT FOLDER, so the `model.json` there",
+    "is the active playing set.",
+    "",
+    "`workspace.yml`'s `scenario` key names the branch to resume with; absent",
+    "means the committed model, which is also what an empty, unreadable or",
+    "unknown value means. Like `level`, it is a resume hint the app writes when",
+    "the person switches (and removes when they switch back), so a hand-edited",
+    "key is honored on open and rewritten only on the next deliberate switch.",
+    "",
+    "The copies are byte-faithful and taken once: a branch does not follow the",
+    "map on its own, no history is kept, and RETIRING a branch deletes its",
+    "folder — `scenario.yml` is written last on the way in and removed first on",
+    "the way out, so a folder without a header is never a scenario. A branch's",
+    "playing set that names a word the map does not carry is a nameless ghost:",
+    "it is surfaced and never drawn, and it is preserved rather than repaired.",
+    "An assumption pin DANGLES when no exact (target, text) match is left in",
+    "`map/assumptions.jsonl`; assumptions are pinned, never overridden. A word's",
+    "rename rewrites the pins' targets and every folder's variant slugs; a",
+    "removal drops the touching lines everywhere — die-with-target.",
+    "",
     "## Ground rules",
     "",
     "- The user authors the map. Your edits arrive as ghosts: small reversible patches",
@@ -323,7 +352,9 @@ export function agentsMd(workspaceName: string): string {
     "the ontology) use one",
     "canonical style: LF newlines, 2-space indent, sorted keys, trailing newline;",
     "JSONL records are one compact JSON object per line. Hand edits are welcome; the",
-    "app returns them in that style.",
+    "app returns them in that style. A branch's `scenario.yml` and",
+    "`assumption-pins.jsonl` follow that style too; the branch's record copies",
+    "are byte-copies, never canonicalized or repaired.",
     "",
   ].join("\n");
 }
@@ -379,4 +410,7 @@ export async function scaffoldWorkspace(path: string, name: string): Promise<voi
   }
   await createDirAll(`${path}/notes`);
   await createDirAll(`${path}/map/references`);
+  // The branches' home (Epic 8 story 2, ADR-0021): a user-owned area created
+  // only when the folder is NEW, so an older workspace keeps its own layout.
+  await createDirAll(`${path}/scenarios`);
 }

@@ -157,7 +157,15 @@ describe("the three dynamics writers ask the seam before they write", () => {
     expect(useMapSource).toContain('const level = options.level ?? "concept";');
     expect(useMapSource).toContain('const playing = level === "dynamics";');
     expect(useMapSource).not.toContain("options.playing");
-    expect(appSource).toContain('useMap(workspace?.path ?? "", { level })');
+    // The hook now also takes the running BRANCH (ADR-0021, Epic 8 story 2):
+    // the level stays its one level input, and the branch is the one records
+    // source. (Updated in that story, deliberately.)
+    expect(appSource).toContain(
+      'useMap(workspace?.path ?? "", { level, scenario })',
+    );
+    expect(useMapSource).toContain(
+      'const scenario = options.scenario ?? null;',
+    );
   });
 
   test("the every-game writers stay ungated: words, distances and marks", () => {

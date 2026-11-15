@@ -64,3 +64,13 @@ export async function renameFile(from: string, to: string): Promise<void> {
 export async function removeFile(path: string): Promise<void> {
   await invoke("remove_file", { path });
 }
+
+/**
+ * Remove a folder and everything in it (Epic 8 story 2's retire verb: a
+ * scenario IS its folder, so deleting the folder is the whole of retirement).
+ * A missing path is a quiet no-op. Only the scenario batch calls it, and only
+ * ever on `scenarios/<slug>/`.
+ */
+export async function removeDirAll(path: string): Promise<void> {
+  await invoke("remove_dir_all", { path });
+}

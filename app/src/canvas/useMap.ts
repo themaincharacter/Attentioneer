@@ -88,12 +88,17 @@ import {
   dropLoopAssumptions,
   dropPointerMarksAt,
   dropWireMarks,
+  fanOutLinkRemove,
+  fanOutLoopRemove,
+  fanOutLoopRename,
   recoinWireMarks,
   removeReference,
   renameReference,
   retargetPointerMarks,
   rewriteAssumptionLoopTargets,
 } from "../map/patches";
+import { recordsDirOf } from "../map/records";
+import { scopedMembership, variantAcceptWords } from "../scenarios/variant";
 import { authoringLive } from "./gates";
 import type { Level } from "../workspace/level";
 
@@ -183,6 +188,18 @@ export interface ConnectDraft {
  * set, or a word that is gone, is preserved and surfaced here, and the writer
  * never touches `map/model.json`. The amount is authored, never inferred
  * (World B): the software does not sum, derive or compare it.
+ *
+ * Epic 8 story 2 adds THE BRANCH (ADR-0021): the hook takes the running
+ * scenario (`options.scenario`) and reads and writes the three variant-owned
+ * records — the playing set, the links and the quantities — in that branch's
+ * folder instead of `map/`. Everything else stays the committed model's: the
+ * references, distances, marks, loops, assumptions and pointers do not move,
+ * because the map IS the committed model. A variant's set is read against the
+ * map's words (`ghostMembers`: an unmatched slug is a nameless ghost,
+ * surfaced and never drawn) and its accept is pruned to them (ADR-0021
+ * decision 4). The lifecycle fan-out is not here: the atomic batches
+ * (`map/patches.ts`) reach every folder, and the quiet loop/link moves call
+ * `fanOut*` from here.
  */
 export interface UseMapOptions {
   /**
@@ -195,6 +212,16 @@ export interface UseMapOptions {
    * before: absent or `"concept"` keeps every guard live.
    */
   level?: Level;
+  /**
+   * The branch whose model VARIANT is running (ADR-0021, Epic 8 story 2), or
+   * null/absent for the committed model. While a branch is active the three
+   * variant-owned records — the playing set, the links and the quantities —
+   * are read from and written to `scenarios/<slug>/`; the map's own records
+   * (references, distances, marks, loops, assumptions, pointers) stay in
+   * `map/`, because the map IS the committed model and a branch never edits
+   * it. The switch is the app's (a new slug here re-reads every record).
+   */
+  scenario?: string | null;
 }
 
 export function useMap(
@@ -203,6 +230,10 @@ export function useMap(
 ) {
   const level = options.level ?? "concept";
   const playing = level === "dynamics";
+  const scenario = options.scenario ?? null;
+  // Where the three variant-owned records live right now (ADR-0021): `map/`
+  // for the committed model, the branch's folder while one is active.
+  const recordsDir = recordsDirOf(workspacePath, scenario);
   const [refs, setRefs] = useState<Reference[]>([]);
   const [distances, setDistances] = useState<Distance[]>([]);
   const [malformed, setMalformed] = useState<string[]>([]);
@@ -261,12 +292,12 @@ export function useMap(
       loadReferences(workspacePath),
       loadDistances(workspacePath),
       loadMarks(workspacePath),
-      loadLinks(workspacePath),
-      loadModel(workspacePath),
+      loadLinks(recordsDir),
+      loadModel(recordsDir),
       loadLoops(workspacePath),
       loadAssumptions(workspacePath),
       loadPointers(workspacePath),
-      loadQuantities(workspacePath),
+      loadQuantities(recordsDir),
     ]);
     setRefs(referenceList);
     setDistances(parsedDistances.distances);
@@ -299,7 +330,9 @@ export function useMap(
     setQuantities(parsedQuantities.quantities);
     setMalformedQuantities(parsedQuantities.malformed);
     setLoaded(true);
-  }, [workspacePath]);
+    // The records folder is part of the dependency: a scenario switch changes
+    // WHERE the three variant records are and must re-read them.
+  }, [workspacePath, recordsDir]);
 
   useEffect(() => {
     if (!workspacePath) return;
@@ -390,9 +423,9 @@ export function useMap(
       const malformedLines = [...malformedLinksRef.current];
       linksWriteRef.current = linksWriteRef.current
         .catch(() => undefined)
-        .then(() => saveLinks(workspacePath, deduped, malformedLines));
+        .then(() => saveLinks(recordsDir, deduped, malformedLines));
     },
-    [workspacePath],
+    [recordsDir],
   );
 
   /**
@@ -464,9 +497,9 @@ export function useMap(
       const malformedLines = [...malformedQuantitiesRef.current];
       quantitiesWriteRef.current = quantitiesWriteRef.current
         .catch(() => undefined)
-        .then(() => saveQuantities(workspacePath, next, malformedLines));
+        .then(() => saveQuantities(recordsDir, next, malformedLines));
     },
-    [workspacePath],
+    [recordsDir],
   );
 
   /**
@@ -474,6 +507,12 @@ export function useMap(
    * only while playing and only when a set exists — the selector is the door,
    * so a workspace with no accepted set gets no membership write. The caller
    * writes the durable thing first; this is the second write of the batch.
+   *
+   * While a BRANCH is active the join lands in the ACTIVE set — the branch's
+   * own `model.json` (ADR-0021 decision 3) — so coining a word while a variant
+   * runs writes the committed reference (`updateReference`'s first write) and
+   * joins the branch's set. The committed model's set is untouched, exactly as
+   * the committed links and quantities are.
    */
   const joinToPlay = useCallback(
     async (slugs: readonly string[]) => {
@@ -483,9 +522,9 @@ export function useMap(
       if (next === null || next === current) return;
       modelRef.current = next;
       setModel(next);
-      await saveModel(workspacePath, next);
+      await saveModel(recordsDir, next);
     },
-    [playing, workspacePath],
+    [playing, recordsDir],
   );
 
   /**
@@ -529,18 +568,41 @@ export function useMap(
     );
   }, [loaded, refs, links]);
 
+  /** The map's word slugs: the scope every variant's membership is read against. */
+  const onMapSlugs = useMemo(
+    () =>
+      new Set(
+        refs
+          .map((ref) => ref.slug)
+          .filter((slug): slug is string => slug !== null),
+      ),
+    [refs],
+  );
+
   /**
-   * The playing set names words that are no longer on the map (a hand edit):
-   * preserved in the record and surfaced quietly, never dropped on an
-   * unrelated write (ADR-0013's no-validation posture, ADR-0009's precedent).
+   * The COMMITTED playing set naming words that are no longer on the map (a
+   * hand edit): preserved in the record and surfaced quietly, never dropped on
+   * an unrelated write (ADR-0013's no-validation posture, ADR-0009's
+   * precedent). With a BRANCH active this reading is `ghostMembers`' instead —
+   * the same lines, read as a variant's nameless ghosts (ADR-0021 decision 4)
+   * — so one hand edit is never surfaced twice.
    */
   const orphanMembers = useMemo(() => {
-    if (!loaded || model === null) return [];
-    const slugs = new Set(
-      refs.map((ref) => ref.slug).filter((slug): slug is string => slug !== null),
-    );
-    return model.words.filter((slug) => !slugs.has(slug));
-  }, [loaded, model, refs]);
+    if (!loaded || scenario !== null || model === null) return [];
+    return model.words.filter((slug) => !onMapSlugs.has(slug));
+  }, [loaded, scenario, model, onMapSlugs]);
+
+  /**
+   * A BRANCH's playing set naming a slug the map does not carry: a NAMELESS
+   * GHOST (ADR-0021 decision 4). It is surfaced by the notices and never drawn
+   * as a word — a word is a reference on the map, and this slug names none. The
+   * variant's set, as the plane reads it, is its members; the ghost is the
+   * drift the branch carries, kept in its own `model.json` and never repaired.
+   */
+  const ghostMembers = useMemo(() => {
+    if (!loaded || scenario === null || model === null) return [];
+    return scopedMembership(model.words, onMapSlugs).ghosts;
+  }, [loaded, scenario, model, onMapSlugs]);
 
   /**
    * Loops naming a word that is not on the map (a hand edit or a partial
@@ -649,14 +711,22 @@ export function useMap(
   );
 
   /**
-   * Accept the selector's set: one explicit write of `map/model.json`
-   * (ADR-0013). Re-running rewrites the record — no history, no confirmation;
+   * Accept the selector's set: one explicit write of the MODEL record
+   * (ADR-0013) — `map/model.json`, or the active branch's `model.json` while a
+   * variant runs. Re-running rewrites the record — no history, no confirmation;
    * a formerly unreadable file is replaced here because the person said so.
+   *
+   * With a branch active the set is MEMBERSHIP-SCOPED (ADR-0021 decision 4): a
+   * variant may join or prune EXISTING words only, so the accept's words are
+   * pruned to the map's (a slug that left the map while the selector was open
+   * never lands in the branch's record as a new ghost). The committed set's
+   * accept keeps its own reading — the map is the person's, exactly as before.
    */
   const acceptPlayingSet = useCallback(
     (slugs: readonly string[]) => {
       const next: PlayingSet = {
-        words: dedupe(slugs),
+        words:
+          scenario === null ? dedupe(slugs) : variantAcceptWords(slugs, onMapSlugs),
         extra: model?.extra ?? {},
       };
       // The mirror first, for the same reason the joins set it: the accept is
@@ -665,9 +735,9 @@ export function useMap(
       modelRef.current = next;
       setModel(next);
       setMalformedModel(null);
-      void saveModel(workspacePath, next);
+      void saveModel(recordsDir, next);
     },
-    [workspacePath, model],
+    [recordsDir, model, onMapSlugs, scenario],
   );
 
   /** Open a blank word to coin at a plane point. */
@@ -802,6 +872,10 @@ export function useMap(
    * 6). No distance is touched: the two families share only the pair
    * (ADR-0014 decision 2). A sign flip reaches none of this: neither key
    * carries a sign.
+   *
+   * The branches follow in the same move (Epic 8 story 2, ADR-0021 decision
+   * 3): every branch folder's pins on that ordered pair die with it, so no
+   * branch is left standing on a claim about a link that is gone.
    */
   const removeLink = useCallback(
     (from: string, to: string) => {
@@ -810,8 +884,9 @@ export function useMap(
       persistAssumptions(
         dropLinkAssumptions(assumptionsRef.current, from, to),
       );
+      void fanOutLinkRemove(workspacePath, from, to).catch(() => undefined);
     },
-    [persistLinks, persistMarks, persistAssumptions],
+    [persistLinks, persistMarks, persistAssumptions, workspacePath],
   );
 
   /** Cast a bare open mark — the menu's lack choice; no field, no name. */
@@ -1046,8 +1121,12 @@ export function useMap(
       persistAssumptions(
         rewriteAssumptionLoopTargets(assumptionsRef.current, oldKey, newKey),
       );
+      // Every branch's pins follow the resolved slug too (ADR-0021 decision 3):
+      // a loop target is an address like a word's, and an address change is
+      // never a dangle.
+      void fanOutLoopRename(workspacePath, oldKey, newKey).catch(() => undefined);
     },
-    [persistLoops, persistAssumptions],
+    [persistLoops, persistAssumptions, workspacePath],
   );
 
   /**
@@ -1061,8 +1140,13 @@ export function useMap(
       persistAssumptions(
         dropLoopAssumptions(assumptionsRef.current, loopKey(loop)),
       );
+      // Die-with-target everywhere: each branch's pins targeting the loop go
+      // with it (ADR-0021 decision 3).
+      void fanOutLoopRemove(workspacePath, [loopKey(loop)]).catch(
+        () => undefined,
+      );
     },
-    [persistLoops, persistAssumptions],
+    [persistLoops, persistAssumptions, workspacePath],
   );
 
   /**
@@ -1235,6 +1319,7 @@ export function useMap(
     model,
     malformedModel,
     orphanMembers,
+    ghostMembers,
     loops,
     malformedLoops,
     orphanLoops,

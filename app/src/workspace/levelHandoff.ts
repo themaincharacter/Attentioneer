@@ -85,12 +85,20 @@ export interface LevelHandoff {
   idle: () => Promise<void>;
 }
 
+/**
+ * The level handoff. `queue` is optional so tests (and any caller with one
+ * file) can stay queue-free; the APP passes the workspace's ONE
+ * `workspace.yml` queue, shared with the scenario handoff
+ * (`scenarios/handoff.ts`) — both keys live in that one file, and
+ * `lib/writeQueue.ts`'s rule is one queue per file, so their
+ * read-modify-writes can never interleave.
+ */
 export function createLevelHandoff(
   initial: Level,
   deps: LevelHandoffDeps,
+  queue: WriteQueue = createWriteQueue(),
 ): LevelHandoff {
   let current: Level = initial;
-  const queue: WriteQueue = createWriteQueue();
 
   /**
    * THE one level write trigger. Queued, so a burst of crossings lands in the

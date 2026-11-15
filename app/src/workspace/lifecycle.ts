@@ -1,6 +1,7 @@
 import { pathExists, readTextFile } from "../lib/fs";
 import { parseYamlFields, scaffoldWorkspace } from "../lib/serialize";
 import { DEFAULT_SHELF_X, shelfXOf } from "../map/shelf";
+import { scenarioOf } from "../scenarios/active";
 import { DEFAULT_LEVEL, levelOf, type Level } from "./level";
 import { pushRecent } from "./recents";
 
@@ -25,6 +26,16 @@ export interface Workspace {
    * settled crossing.
    */
   resumeLevel: Level;
+  /**
+   * The active BRANCH's RESUME HINT (ADR-0021 decision 5, Epic 8 story 2):
+   * `workspace.yml`'s provisional `scenario` key, or null for the committed
+   * model — which is also what an absent, empty, unreadable or garbage value
+   * reads as, so an older workspace opens exactly as before. The key is a hint:
+   * the app resolves it against the branch folders on disk
+   * (`resolveActiveScenario`) and falls back to the committed model when
+   * nothing answers, and opening never writes it.
+   */
+  resumeScenario: string | null;
 }
 
 export function workspaceName(path: string): string {
@@ -55,6 +66,7 @@ async function readWorkspace(path: string): Promise<Workspace> {
     name: workspaceName(path),
     shelfX: fields.shelf_x === undefined ? DEFAULT_SHELF_X : shelfXOf(fields),
     resumeLevel: fields.level === undefined ? DEFAULT_LEVEL : levelOf(fields),
+    resumeScenario: scenarioOf(fields),
   };
 }
 

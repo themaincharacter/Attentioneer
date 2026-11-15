@@ -1,5 +1,6 @@
 import { readTextFile, writeTextFile } from "../lib/fs";
 import { canonicalJson } from "../lib/serialize";
+import { RECORD_FILE } from "./records";
 
 /**
  * The playing set (ADR-0013): a dynamics model plays with a literal set of
@@ -41,8 +42,12 @@ export interface ParsedModel {
   malformed: string | null;
 }
 
-export function modelPath(workspacePath: string): string {
-  return `${workspacePath}/map/model.json`;
+/**
+ * The playing set in a RECORDS FOLDER (ADR-0021): `map/` for the committed
+ * model, a branch's `scenarios/<slug>/` while one is active.
+ */
+export function modelPath(recordsDir: string): string {
+  return `${recordsDir}/${RECORD_FILE.model}`;
 }
 
 /** Sorted, unique, non-empty member slugs — the canonical member order. */
@@ -99,8 +104,9 @@ export function serializeModel(
   return canonicalJson({ ...model.extra, words: dedupe(model.words) });
 }
 
-export async function loadModel(workspacePath: string): Promise<ParsedModel> {
-  return parseModel(await readTextFile(modelPath(workspacePath)));
+/** Read a records folder's playing set (the committed model's, or a branch's). */
+export async function loadModel(recordsDir: string): Promise<ParsedModel> {
+  return parseModel(await readTextFile(modelPath(recordsDir)));
 }
 
 /**
@@ -109,11 +115,11 @@ export async function loadModel(workspacePath: string): Promise<ParsedModel> {
  * a real set is already canonical before it arrives.
  */
 export async function saveModel(
-  workspacePath: string,
+  recordsDir: string,
   model: PlayingSet | null,
   malformed: string | null = null,
 ): Promise<void> {
-  await writeTextFile(modelPath(workspacePath), serializeModel(model, malformed));
+  await writeTextFile(modelPath(recordsDir), serializeModel(model, malformed));
 }
 
 /** Is this slug in the playing set? No set means nothing is in play. */

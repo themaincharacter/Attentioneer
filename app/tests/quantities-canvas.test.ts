@@ -109,8 +109,12 @@ describe("the authoring write obeys the dynamics seam (authoringLive)", () => {
       "saveQuantities(",
     );
     // The loader reads the record with the rest of the map, and the mirror
-    // follows it so a burst can never write from a stale list.
-    expect(useMapSource).toContain("loadQuantities(workspacePath)");
+    // follows it so a burst can never write from a stale list. Epic 8 story 2
+    // gives the three variant-owned records a FOLDER (ADR-0021): `map/` for the
+    // committed model, the active branch's `scenarios/<slug>/` otherwise, so
+    // the loader takes the records dir the hook derives. (Updated in that
+    // story, deliberately — the reading is the same.)
+    expect(useMapSource).toContain("loadQuantities(recordsDir)");
     expect(useMapSource).toMatch(
       /useEffect\(\(\) => \{\s*quantitiesRef\.current = quantities;/,
     );

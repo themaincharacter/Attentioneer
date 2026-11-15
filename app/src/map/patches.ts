@@ -1,17 +1,38 @@
-import { pathExists, removeFile, writeTextFile } from "../lib/fs";
+import { pathExists, readTextFile, removeFile, writeTextFile } from "../lib/fs";
 import { slugName } from "../lib/serialize";
+import { mapDir, scenarioDir } from "./records";
+import {
+  dropPinLinkTargets,
+  dropPinLoopTargets,
+  dropPinWordTargets,
+  parsePins,
+  pinIsOnLink,
+  pinTargetsLoop,
+  pinTouchesWord,
+  pinsPath,
+  rewritePinLoopTargets,
+  rewritePinWordTargets,
+  serializePins,
+} from "../scenarios/pins";
+import { listScenarios } from "../scenarios/branch";
 import { referencePath, serializeReference, type Reference } from "./refs";
 import { loadDistances, saveDistances, type Distance } from "./distances";
 import {
   dedupeLinks,
+  linksPath,
   loadLinks,
+  parseLinks,
   saveLinks,
+  serializeLinks,
   type Link,
 } from "./links";
 import {
   dedupe,
   loadModel,
+  modelPath,
+  parseModel,
   saveModel,
+  serializeModel,
   type PlayingSet,
 } from "./model";
 import {
@@ -38,8 +59,12 @@ import {
 } from "./assumptions";
 import {
   loadQuantities,
+  parseQuantities,
+  quantitiesPath,
   quantityKey,
+  quantityWords,
   saveQuantities,
+  serializeQuantities,
   type Quantity,
   type QuantityTarget,
 } from "./quantities";
@@ -64,7 +89,7 @@ import {
  *
  * Write order (the crash rule): references -> distances -> links -> marks ->
  * loops -> assumptions -> quantities -> pointers -> pointer-marks -> membership
- * -> the old file.
+ * -> every scenario folder -> the old file.
  * Epic 4 story 4 grew the loop -> assumption steps between loops and
  * membership; Epic 5 story 1 grows the pointer -> pointer-marks steps between
  * assumptions and membership: the reach lines are written BEFORE their marks
@@ -75,6 +100,13 @@ import {
  * `on`/`from`/`to` follows its word, and the number the person authored —
  * the amount and its unknown keys — is never rewritten. The run before this
  * story read loops -> assumptions -> pointers -> pointer-marks -> membership -> the old file.
+ * Epic 8 story 2 slots the BRANCH step after membership and before the old
+ * file (ADR-0021 decision 3): every branch folder's playing set, links,
+ * quantities and pins follow a rename, and a remove's touching lines and pins
+ * die there too. The fan-out is INSIDE the batch and before the word's own
+ * file falls last, so a crash mid-fan-out can leave a branch at the previous
+ * address (a word whose file still exists) but never one naming a word that is
+ * gone.
  * A reference rename rewrites word- and link-targeted assumptions and the
  * pointers' `on`; a reference remove drops them (and a loop's own lines when
  * the same batch removes the loop), and a loop rename/remove rewrites or drops
@@ -742,7 +774,326 @@ export function dropQuantitiesTouching(
   );
 }
 
-/** Rename a reference: write the renamed file, rewrite endpoints, drop the old file. */
+/* ------------------------------------------------------------------------- *
+ * Epic 8 story 2: the branch step — every scenario folder (ADR-0021 decision 3).
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One branch folder's four files, as the bytes found on disk. A `null` is an
+ * ABSENT file (a branch made from a model with no accepted set has no
+ * `model.json`; a branch made before this story has no pins file), never an
+ * empty one: the steps below keep "absent" absent and never invent a file.
+ */
+export interface ScenarioFolderBytes {
+  /** `model.json`'s bytes, or null. */
+  model: string | null;
+  /** `links.jsonl`'s bytes, or null. */
+  links: string | null;
+  /** `quantities.jsonl`'s bytes, or null. */
+  quantities: string | null;
+  /** `assumption-pins.jsonl`'s bytes, or null. */
+  pins: string | null;
+}
+
+/**
+ * One record's step, uniformly: a missing file stays missing; a file nothing
+ * touches is returned BYTE-FOR-BYTE (a branch's hand-written bytes are never
+ * canonicalized by a rename that does not name it); a file the app cannot read
+ * is preserved exactly (unreadable bytes are content, and the committed batch
+ * has the same posture); and a touched file is re-serialized canonically with
+ * its own malformed lines riding along, exactly as the committed model's
+ * records are.
+ */
+function stepModelBytes(
+  text: string | null,
+  touches: (model: PlayingSet) => boolean,
+  next: (model: PlayingSet) => PlayingSet,
+): string | null {
+  if (text === null) return text;
+  const parsed = parseModel(text);
+  if (parsed.model === null || !touches(parsed.model)) return text;
+  const rewritten = next(parsed.model);
+  if (rewritten === parsed.model) return text;
+  return serializeModel(rewritten, null);
+}
+
+function stepLinkBytes(
+  text: string | null,
+  touches: (links: readonly Link[]) => boolean,
+  next: (links: readonly Link[]) => Link[],
+): string | null {
+  if (text === null) return text;
+  const parsed = parseLinks(text);
+  if (!touches(parsed.links)) return text;
+  return serializeLinks(next(parsed.links), parsed.malformed);
+}
+
+function stepQuantityBytes(
+  text: string | null,
+  touches: (quantities: readonly Quantity[]) => boolean,
+  next: (quantities: readonly Quantity[]) => Quantity[],
+): string | null {
+  if (text === null) return text;
+  const parsed = parseQuantities(text);
+  if (!touches(parsed.quantities)) return text;
+  return serializeQuantities(next(parsed.quantities), parsed.malformed);
+}
+
+function stepPinBytes(
+  text: string | null,
+  touches: (pins: readonly Assumption[]) => boolean,
+  next: (pins: readonly Assumption[]) => Assumption[],
+): string | null {
+  if (text === null) return text;
+  const parsed = parsePins(text);
+  if (!touches(parsed.pins)) return text;
+  return serializePins(next(parsed.pins), parsed.malformed);
+}
+
+/**
+ * A step's result, with the folder's IDENTITY kept when no byte changed: the
+ * applier's one skip test is `next === folder`, so "nothing to write" has to
+ * be the same object, not an equal one.
+ */
+function compactFolder(
+  before: ScenarioFolderBytes,
+  after: ScenarioFolderBytes,
+): ScenarioFolderBytes {
+  const untouched =
+    before.model === after.model &&
+    before.links === after.links &&
+    before.quantities === after.quantities &&
+    before.pins === after.pins;
+  return untouched ? before : after;
+}
+
+/**
+ * THE reference-rename step, applied inside one branch folder: the variant's
+ * playing set's member slugs, its links' endpoints, its quantities' word ends
+ * and its PIN TARGETS all follow the rename — the same pure steps the
+ * committed model's records use, in the same spirit (the sign, the amount, the
+ * claim's text and every unknown key ride along untouched). The pin's TEXT is
+ * never rewritten: a rename changes an address, never a claim.
+ *
+ * The whole folder comes back as the same object when nothing touched it, so
+ * the applier writes nothing and a branch that never named the word keeps its
+ * exact bytes.
+ */
+export function rewriteScenarioFolderForWord(
+  folder: ScenarioFolderBytes,
+  oldSlug: string,
+  newSlug: string,
+): ScenarioFolderBytes {
+  if (oldSlug === newSlug) return folder;
+  const touchesWord = (slug: string) => (link: Link) =>
+    link.from === slug || link.to === slug;
+  return compactFolder(folder, {
+    model: stepModelBytes(
+      folder.model,
+      (model) => model.words.includes(oldSlug),
+      (model) => rewriteMembership(model, oldSlug, newSlug),
+    ),
+    links: stepLinkBytes(
+      folder.links,
+      (links) => links.some(touchesWord(oldSlug)),
+      (links) => rewriteLinkEndpoints(links, oldSlug, newSlug),
+    ),
+    quantities: stepQuantityBytes(
+      folder.quantities,
+      (quantities) =>
+        quantities.some((quantity) => quantityWords(quantity).includes(oldSlug)),
+      (quantities) => rewriteQuantityEndpoints(quantities, oldSlug, newSlug),
+    ),
+    pins: stepPinBytes(
+      folder.pins,
+      (pins) => pins.some((pin) => pinTouchesWord(pin, oldSlug)),
+      (pins) => rewritePinWordTargets(pins, oldSlug, newSlug),
+    ),
+  });
+}
+
+/**
+ * THE reference-remove step, applied inside one branch folder: die-with-target
+ * EVERYWHERE (ADR-0021 decision 3). The variant's set drops the member, its
+ * links drop every pair touching the word, its quantities drop every line
+ * naming it, and the pins drop (a claim about a word that is gone is not
+ * something a branch can keep standing on — the same rule the committed
+ * `map/assumptions.jsonl` follows).
+ */
+export function dropScenarioFolderTouching(
+  folder: ScenarioFolderBytes,
+  slug: string,
+): ScenarioFolderBytes {
+  return compactFolder(folder, {
+    model: stepModelBytes(
+      folder.model,
+      (model) => model.words.includes(slug),
+      (model) => dropMembership(model, slug),
+    ),
+    links: stepLinkBytes(
+      folder.links,
+      (links) => links.some((link) => link.from === slug || link.to === slug),
+      (links) => dropTouchingLinks(links, slug),
+    ),
+    quantities: stepQuantityBytes(
+      folder.quantities,
+      (quantities) =>
+        quantities.some((quantity) => quantityWords(quantity).includes(slug)),
+      (quantities) => dropQuantitiesTouching(quantities, slug),
+    ),
+    pins: stepPinBytes(
+      folder.pins,
+      (pins) => pins.some((pin) => pinTouchesWord(pin, slug)),
+      (pins) => dropPinWordTargets(pins, slug),
+    ),
+  });
+}
+
+/**
+ * The LOOP rename's branch step: a loop's slug is an assumption target's
+ * address like a word's, so every folder's pins follow the resolved slug. The
+ * loop's own line lives in the committed `map/loops.jsonl`; a branch carries
+ * no loops, so nothing else in the folder can change.
+ */
+export function renameLoopInScenarioFolder(
+  folder: ScenarioFolderBytes,
+  oldLoopSlug: string,
+  newLoopSlug: string,
+): ScenarioFolderBytes {
+  if (oldLoopSlug === newLoopSlug) return folder;
+  return compactFolder(folder, {
+    ...folder,
+    pins: stepPinBytes(
+      folder.pins,
+      (pins) => pins.some((pin) => pinTargetsLoop(pin, oldLoopSlug)),
+      (pins) => rewritePinLoopTargets(pins, oldLoopSlug, newLoopSlug),
+    ),
+  });
+}
+
+/** The loop remove's branch step: the pins targeting the removed loops die too. */
+export function dropLoopPinsInScenarioFolder(
+  folder: ScenarioFolderBytes,
+  loopSlugs: readonly string[],
+): ScenarioFolderBytes {
+  const dropped = new Set(loopSlugs);
+  if (dropped.size === 0) return folder;
+  return compactFolder(folder, {
+    ...folder,
+    pins: stepPinBytes(
+      folder.pins,
+      (pins) =>
+        pins.some(
+          (pin) => pin.target.type === "loop" && dropped.has(pin.target.slug),
+        ),
+      (pins) => dropPinLoopTargets(pins, [...dropped]),
+    ),
+  });
+}
+
+/** The link remove's branch step: the pins on that ordered pair die with it. */
+export function dropLinkPinsInScenarioFolder(
+  folder: ScenarioFolderBytes,
+  from: string,
+  to: string,
+): ScenarioFolderBytes {
+  return compactFolder(folder, {
+    ...folder,
+    pins: stepPinBytes(
+      folder.pins,
+      (pins) => pins.some((pin) => pinIsOnLink(pin, from, to)),
+      (pins) => dropPinLinkTargets(pins, from, to),
+    ),
+  });
+}
+
+/**
+ * Apply one pure folder step to EVERY branch folder. The batch's scenario step
+ * is this one function: it lists the branches (folders carrying a valid
+ * header — a crash leftover is not one), reads each folder's four files, asks
+ * the step, and writes back only what changed, in the folder's family order
+ * (the set, then the links, then the quantities, then the pins).
+ *
+ * A folder the step leaves untouched is not written at all, so a branch's
+ * bytes are its own: no canonicalization repair reaches a folder nothing named.
+ * The committed model's own records are the caller's steps, not this one's.
+ */
+export async function applyScenarioStep(
+  workspacePath: string,
+  step: (folder: ScenarioFolderBytes) => ScenarioFolderBytes,
+): Promise<void> {
+  for (const scenario of await listScenarios(workspacePath)) {
+    const dir = scenarioDir(workspacePath, scenario.slug);
+    const [modelText, linksText, quantitiesText, pinsText] = await Promise.all([
+      readTextFile(modelPath(dir)),
+      readTextFile(linksPath(dir)),
+      readTextFile(quantitiesPath(dir)),
+      readTextFile(pinsPath(dir)),
+    ]);
+    const folder: ScenarioFolderBytes = {
+      model: modelText,
+      links: linksText,
+      quantities: quantitiesText,
+      pins: pinsText,
+    };
+    const next = step(folder);
+    if (next === folder) continue;
+    await writeChangedBytes(modelPath(dir), folder.model, next.model);
+    await writeChangedBytes(linksPath(dir), folder.links, next.links);
+    await writeChangedBytes(quantitiesPath(dir), folder.quantities, next.quantities);
+    await writeChangedBytes(pinsPath(dir), folder.pins, next.pins);
+  }
+}
+
+/** Write one folder file only when the step produced different bytes for it. */
+async function writeChangedBytes(
+  path: string,
+  before: string | null,
+  after: string | null,
+): Promise<void> {
+  if (after === null || after === before) return;
+  await writeTextFile(path, after);
+}
+
+/**
+ * The quiet moves' branch steps (a loop's rename or removal, a link's removal):
+ * each reaches every folder for the pins it invalidates, exactly as the atomic
+ * batches do. They are separate entries because those moves are single-line
+ * writes in `useMap`, not batches in this module — the rule is one: a target's
+ * address change rewrites its pins, a target's death drops them.
+ */
+export async function fanOutLoopRename(
+  workspacePath: string,
+  oldLoopSlug: string,
+  newLoopSlug: string,
+): Promise<void> {
+  await applyScenarioStep(workspacePath, (folder) =>
+    renameLoopInScenarioFolder(folder, oldLoopSlug, newLoopSlug),
+  );
+}
+
+export async function fanOutLoopRemove(
+  workspacePath: string,
+  loopSlugs: readonly string[],
+): Promise<void> {
+  await applyScenarioStep(workspacePath, (folder) =>
+    dropLoopPinsInScenarioFolder(folder, loopSlugs),
+  );
+}
+
+export async function fanOutLinkRemove(
+  workspacePath: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  await applyScenarioStep(workspacePath, (folder) =>
+    dropLinkPinsInScenarioFolder(folder, from, to),
+  );
+}
+
+/**
+ * Rename a reference: write the renamed file, rewrite endpoints, drop the old file.
+ */
 export async function renameReference(
   workspacePath: string,
   ref: Reference,
@@ -769,9 +1120,9 @@ export async function renameReference(
   // 2a. Follow the rename in the signed links in the same batch
   //     (ADR-0012/0014). A link's pair is two endpoint slugs like a distance's;
   //     the sign is authored structure and is left exactly as drawn.
-  const parsedLinks = await loadLinks(workspacePath);
+  const parsedLinks = await loadLinks(mapDir(workspacePath));
   await saveLinks(
-    workspacePath,
+    mapDir(workspacePath),
     rewriteLinkEndpoints(parsedLinks.links, oldSlug, newSlug),
     parsedLinks.malformed,
   );
@@ -813,9 +1164,9 @@ export async function renameReference(
   //      untouched. The step sits AFTER assumptions and BEFORE pointers (the
   //      family position). Quantities never join or scope, so this is an
   //      address rewrite and nothing more.
-  const parsedQuantities = await loadQuantities(workspacePath);
+  const parsedQuantities = await loadQuantities(mapDir(workspacePath));
   await saveQuantities(
-    workspacePath,
+    mapDir(workspacePath),
     rewriteQuantityEndpoints(parsedQuantities.quantities, oldSlug, newSlug),
     parsedQuantities.malformed,
   );
@@ -849,13 +1200,25 @@ export async function renameReference(
   //     member name in map/model.json (visible, fixable by re-running the
   //     selector), never a member that names no word. An unreadable model file
   //     is skipped and keeps its bytes exactly.
-  const parsedModel = await loadModel(workspacePath);
+  const parsedModel = await loadModel(mapDir(workspacePath));
   if (parsedModel.model) {
     await saveModel(
-      workspacePath,
+      mapDir(workspacePath),
       rewriteMembership(parsedModel.model, oldSlug, newSlug),
     );
   }
+
+  // 2g. Fan the rename out to EVERY branch folder (ADR-0021 decision 3, Epic 8
+  //     story 2): each variant's playing set, links, quantities and its pins
+  //     name words by slug exactly as the committed records do, so the same
+  //     pure steps are applied inside every scenario folder. The step sits
+  //     AFTER the committed membership and BEFORE the old file goes, so a crash
+  //     mid-fan-out leaves every branch consistent: the old reference file is
+  //     still on disk, so a folder still naming the old slug names a word that
+  //     exists. Nothing dangles, and nothing is repaired.
+  await applyScenarioStep(workspacePath, (folder) =>
+    rewriteScenarioFolderForWord(folder, oldSlug, newSlug),
+  );
 
   // 3. Drop the old file.
   if (oldSlug !== newSlug) {
@@ -880,9 +1243,9 @@ export async function removeReference(
 
   // 1a. Drop the signed links touching the word (ADR-0012/0014) — before the
   //     marks, so no mark is ever left naming a pair the same batch removed.
-  const parsedLinks = await loadLinks(workspacePath);
+  const parsedLinks = await loadLinks(mapDir(workspacePath));
   await saveLinks(
-    workspacePath,
+    mapDir(workspacePath),
     dropTouchingLinks(parsedLinks.links, slug),
     parsedLinks.malformed,
   );
@@ -926,9 +1289,9 @@ export async function removeReference(
   //       ending at it go before the file goes, so no line is ever left naming
   //       a word the same batch removed. The step sits AFTER assumptions and
   //       BEFORE pointers (the family position).
-  const parsedQuantities = await loadQuantities(workspacePath);
+  const parsedQuantities = await loadQuantities(mapDir(workspacePath));
   await saveQuantities(
-    workspacePath,
+    mapDir(workspacePath),
     dropQuantitiesTouching(parsedQuantities.quantities, slug),
     parsedQuantities.malformed,
   );
@@ -957,10 +1320,21 @@ export async function removeReference(
   // 1c. Drop the word's membership before the file goes (ADR-0013). Same
   //     crash rule: a crash after this write leaves the word on the map, not
   //     in play — visible, and one accept away from being put back.
-  const parsedModel = await loadModel(workspacePath);
+  const parsedModel = await loadModel(mapDir(workspacePath));
   if (parsedModel.model) {
-    await saveModel(workspacePath, dropMembership(parsedModel.model, slug));
+    await saveModel(mapDir(workspacePath), dropMembership(parsedModel.model, slug));
   }
+
+  // 1d. Die-with-target EVERYWHERE (ADR-0021 decision 3, Epic 8 story 2): drop
+  //     the touching lines in every branch folder — the variant's membership,
+  //     its links, its quantities — and the pins that named the removed target.
+  //     The step sits AFTER the committed membership and BEFORE the file goes:
+  //     a crash mid-fan-out leaves a branch naming a word whose file still
+  //     exists (visible, and one remove away from settled), never a branch
+  //     naming nothing.
+  await applyScenarioStep(workspacePath, (folder) =>
+    dropScenarioFolderTouching(folder, slug),
+  );
 
   // 2. Delete the file.
   await removeFile(referencePath(workspacePath, slug));

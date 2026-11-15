@@ -1,5 +1,6 @@
 import { readTextFile, writeTextFile } from "../lib/fs";
 import { canonicalJsonlLine, canonicalJsonlLines } from "../lib/serialize";
+import { RECORD_FILE } from "./records";
 
 /**
  * Quantities (ADR-0020, Epic 8 story 1): one `map/quantities.jsonl` line per
@@ -111,8 +112,12 @@ export interface FoundQuantity {
   index: number;
 }
 
-export function quantitiesPath(workspacePath: string): string {
-  return `${workspacePath}/map/quantities.jsonl`;
+/**
+ * The quantities file in a RECORDS FOLDER (ADR-0021): `map/` for the committed
+ * model, a branch's `scenarios/<slug>/` while one is active.
+ */
+export function quantitiesPath(recordsDir: string): string {
+  return `${recordsDir}/${RECORD_FILE.quantities}`;
 }
 
 /**
@@ -246,10 +251,11 @@ export function parseQuantities(text: string | null): ParsedQuantities {
   };
 }
 
+/** Read a records folder's quantities (the committed model's, or a branch's). */
 export async function loadQuantities(
-  workspacePath: string,
+  recordsDir: string,
 ): Promise<ParsedQuantities> {
-  return parseQuantities(await readTextFile(quantitiesPath(workspacePath)));
+  return parseQuantities(await readTextFile(quantitiesPath(recordsDir)));
 }
 
 /**
@@ -269,13 +275,14 @@ export function serializeQuantities(
   ]);
 }
 
+/** Write a records folder's quantities (the committed model's, or a branch's). */
 export async function saveQuantities(
-  workspacePath: string,
+  recordsDir: string,
   quantities: readonly Quantity[],
   malformed: readonly string[] = [],
 ): Promise<void> {
   await writeTextFile(
-    quantitiesPath(workspacePath),
+    quantitiesPath(recordsDir),
     serializeQuantities(quantities, malformed),
   );
 }

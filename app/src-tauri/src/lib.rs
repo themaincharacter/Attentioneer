@@ -68,6 +68,19 @@ fn remove_file(path: String) -> Result<(), String> {
     }
 }
 
+/// Remove a folder and its contents (Epic 8 story 2's retire verb). A missing
+/// path is a quiet no-op, like `remove_file`; the frontend only ever calls it
+/// on a scenario folder (`scenarios/<slug>/`) whose header it has already
+/// removed, so the folder is not a scenario by the time anything is deleted.
+#[tauri::command]
+fn remove_dir_all(path: String) -> Result<(), String> {
+    match fs::remove_dir_all(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("remove {}: {}", path, e)),
+    }
+}
+
 /// The window's bounded glimpse of a text file (Epic 5 story 2, ADR-0017's
 /// amendment): a read-only head plus the identity facts, for a pointer's
 /// `path` or `at`. The implementation and its guards live in `head.rs`;
@@ -100,6 +113,7 @@ pub fn run() {
             list_dir,
             rename_file,
             remove_file,
+            remove_dir_all,
             read_text_head,
             config_path
         ])
