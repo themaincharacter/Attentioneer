@@ -66,6 +66,11 @@
  * start a word gesture. Its switch runs the app's full switch path, which is
  * what closes any armed surface.
  *
+ * Epic 8 story 3's crank (ADR-0022) also adds no class, for the same reason:
+ * the crank and its step-scoped notes sit OUTSIDE `.plane` beside the level
+ * control, and the per-word run read is non-interactive text inside the word
+ * (pointer-events: none) — there is no press to gate.
+ *
  * Pure: no DOM, no React. `ClassListLike` is satisfied by a DOMTokenList, and
  * `TextFieldLike` by an HTMLElement, so the handlers can pass the real thing
  * and tests can pass a plain stub.

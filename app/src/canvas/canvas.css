@@ -2941,3 +2941,97 @@ body {
 .plane.gesture-armed .word-follow {
   pointer-events: none;
 }
+
+/* Epic 8 story 3 — the step (ADR-0022). THE CRANK: one quiet control below the
+   level control and, under it, the last crank's STEP-SCOPED notes. It lives
+   outside `.plane`, so the plane's armed gate never reaches it; a clamp is
+   inked a little darker — loud, still quiet (the consequence worth noticing,
+   never a celebration). Provisional: the look (ADR-0003's seam). */
+.step-crank {
+  position: fixed;
+  top: 56px;
+  left: 16px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: min(46ch, 46vw);
+  pointer-events: none;
+}
+
+.step-crank-button {
+  pointer-events: auto;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #8d887c;
+  background: rgba(255, 253, 248, 0.84);
+  border: 1px solid #e4dfd4;
+  border-radius: 999px;
+  padding: 5px 10px;
+  box-shadow: 0 1px 5px rgba(40, 35, 25, 0.06);
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.step-crank-button:hover {
+  color: #1e2126;
+  border-color: #ddd7cc;
+}
+
+.step-crank-button:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+/* The step's notes: small quiet lines, one per gated piece / named world /
+   clamped flow. A clamp reads a shade darker: it is the loud one, and it lasts
+   for this crank only (the next crank replaces the list). */
+.step-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+  background: rgba(255, 253, 248, 0.72);
+  border-radius: 8px;
+}
+
+.step-note {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #8d887c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: fade-in 160ms ease-out;
+}
+
+.step-note-clamp {
+  color: #6b675e;
+}
+
+/* The word's RUN read (Epic 8 story 3): its running amount and the last
+   crank's delta, hanging below the word. Absolutely positioned (the follow
+   menu's idiom), so the word's measured box never grows and every wire keeps
+   its anchor; per-word by construction — no panel collects the words into a
+   column or a total. */
+.word-run {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  font-size: 10.5px;
+  line-height: 1;
+  color: #8d887c;
+  white-space: nowrap;
+}
+
+.word-run-delta {
+  margin-left: 4px;
+  opacity: 0.72;
+}

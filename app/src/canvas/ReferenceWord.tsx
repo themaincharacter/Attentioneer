@@ -18,6 +18,7 @@ import {
 import type { Point } from "./geometry";
 import { followTargets, screenPointOf } from "./followRules";
 import { reachHandleModifiers } from "./presenceRules";
+import { stepAmountText, stepDeltaText } from "./stepNotes";
 import type { Level } from "../workspace/level";
 
 interface ReferenceWordProps {
@@ -83,6 +84,15 @@ interface ReferenceWordProps {
    * so the word's box (and every wire's anchor) never moves.
    */
   quantity?: { has: boolean; onOpen: (anchor: Point) => void };
+  /**
+   * The word's RUN read (Epic 8 story 3, ADR-0022): its running amount after
+   * the last crank and what that crank moved for it (the signed net delta;
+   * null = nothing moved). Level 2 only and only while a run exists, so
+   * Level 1's markup is exactly what it was. It hangs BELOW the word as an
+   * absolutely positioned line (the follow menu's placement idiom), so the
+   * word's box never grows and every wire's anchor holds.
+   */
+  run?: { amount: number | null; delta: number | null };
   /**
    * True at ground: the word carries ONE quiet reach handle in a fixed slot
    * (Epic 5 story 1). It is always in the row — so the word's box never grows
@@ -179,6 +189,7 @@ export function ReferenceWord({
   hasAssumptions = false,
   onOpenAssumptions,
   quantity,
+  run,
   showReach = false,
   reachMarked = false,
   onOpenPointers,
@@ -519,6 +530,10 @@ export function ReferenceWord({
   }
 
   const transform = `translate3d(${x}px, ${y}px, 0)`;
+  // The run read's two pieces (Epic 8 story 3): the amount's spelling and the
+  // last crank's signed delta (null when this crank moved nothing here).
+  const runAmount = run ? stepAmountText(run.amount) : null;
+  const runDelta = run ? stepDeltaText(run.delta) : null;
 
   if (isDraft) {
     return (
@@ -725,6 +740,24 @@ export function ReferenceWord({
           ×
         </button>
       </div>
+      {/* Epic 8 story 3's run read (ADR-0022): this stock's running amount
+          after the last crank, and what that crank moved for it. It hangs
+          below the word (absolutely positioned, the follow menu's idiom), so
+          the word's box never grows and every wire's anchor holds; it is
+          per-word BY CONSTRUCTION — there is no panel that could collect the
+          words into a column or a total. Level 2 only: the app passes it only
+          in the dynamics band. Provisional: the line's look and sign. */}
+      {run && runAmount !== null && (
+        <span
+          className="word-run"
+          aria-label={`${word.name} — ${runAmount} after the last crank${
+            runDelta ? `, ${runDelta}` : ""
+          }`}
+        >
+          <span className="word-run-amount">{runAmount}</span>
+          {runDelta && <span className="word-run-delta">{runDelta}</span>}
+        </span>
+      )}
       {revealing && (
         <div className="memory">
           <textarea

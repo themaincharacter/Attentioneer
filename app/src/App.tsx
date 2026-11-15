@@ -69,12 +69,14 @@ import {
 import { PointerChooser } from "./canvas/PointerChooser";
 import { PlayingSetBar, PlayingSetWords } from "./canvas/PlayingSetSelector";
 import { QuantityOverlay } from "./canvas/QuantityOverlay";
+import { StepCrank } from "./canvas/StepCrank";
 import { useRingDrag } from "./canvas/ringDrag";
 import { ReferenceWord } from "./canvas/ReferenceWord";
 import { ShelfFold } from "./canvas/ShelfFold";
 import { SignChoice } from "./canvas/SignChoice";
 import { useCamera } from "./canvas/useCamera";
 import { useMap } from "./canvas/useMap";
+import { useStepRun } from "./canvas/useStepRun";
 import {
   assumptionTargetKey,
   findAssumptions,
@@ -102,7 +104,9 @@ import {
   type Quantity,
   type QuantityTarget,
 } from "./map/quantities";
+import { recordsDirOf } from "./map/records";
 import type { Reference } from "./map/refs";
+import { activeModelKey, type StepModel } from "./map/step";
 import {
   DEFAULT_SHELF_X,
   foldExtent,
@@ -183,6 +187,15 @@ import type { Workspace } from "./workspace/lifecycle";
  * runs the FULL switch path (transients close, gestures cancel, the walk
  * closes, the level pin is released), and `workspace.yml`'s `scenario` key is
  * only the resume hint that switch writes — opening never writes it.
+ *
+ * Epic 8 story 3 adds THE STEP (ADR-0022): a hand-cranked, per-piece gated
+ * reading of the ACTIVE model's quantities — one simultaneous move from the
+ * opening amounts, file order clamping loudly, the world named where a stock
+ * line is absent, and per-word running amounts plus the last delta. The run is
+ * EPHEMERAL (the `useStepRun` hook): an active-model edit or a branch switch
+ * resets it, a committed-only edit and a zoom/level switch do not, and
+ * stepping writes nothing. The crank sits outside `.plane` beside the level
+ * control; its notes are step-scoped.
  *
  * Epic 7 story 1 makes the playing set structurally required at AUTHORING: the
  * gate's `authoringLive` guards the three dynamics writers (a link, a loop, an
@@ -287,6 +300,23 @@ function App() {
     removePointer,
     togglePointerMark,
   } = map;
+
+  // The step's run (Epic 8 story 3, ADR-0022): an EPHEMERAL read of the ACTIVE
+  // model, held in memory and never written. The key is the model's identity —
+  // the records folder (a branch switch is a new model, even between identical
+  // copies) plus the playing set, the links and the quantities. A different key
+  // resets the run, so an active-model edit or a scenario switch resets it
+  // while a committed-only edit, a zoom and a level switch leave it standing.
+  const stepRecordsDir = recordsDirOf(workspace?.path ?? "", scenario);
+  const stepModel = useMemo<StepModel>(
+    () => ({ words: model?.words ?? null, quantities, links }),
+    [model, quantities, links],
+  );
+  const stepKey = useMemo(
+    () => activeModelKey(stepRecordsDir, model, links, quantities),
+    [stepRecordsDir, model, links, quantities],
+  );
+  const step = useStepRun(stepModel, stepKey);
 
   // The shelf's fold (ADR-0010): a workspace-level convention, provisional.
   const shelfX = workspace?.shelfX ?? DEFAULT_SHELF_X;
@@ -523,6 +553,28 @@ function App() {
       };
     },
     [level, quantityTargets, openQuantity],
+  );
+
+  /**
+   * A word's RUN read at Level 2 (Epic 8 story 3, ADR-0022), or undefined
+   * elsewhere and before the first crank: the stock's running amount after the
+   * last crank and what that crank moved for it. Per word BY CONSTRUCTION —
+   * there is no panel, column or total to collect the words into — and it
+   * never renders at Level 1 (a run is the dynamics game's own reading).
+   */
+  const runViewOf = useCallback(
+    (word: Reference) => {
+      if (level !== "dynamics" || word.slug === null || step.run === null) {
+        return undefined;
+      }
+      const slug = word.slug;
+      if (!step.run.amounts.has(slug)) return undefined;
+      return {
+        amount: step.run.amounts.get(slug) ?? null,
+        delta: step.run.lastDelta.get(slug) ?? null,
+      };
+    },
+    [level, step.run],
   );
 
   // Bare spots carrying assumptions: each needs its own quiet diamond on the
@@ -1676,6 +1728,7 @@ function App() {
               openAssumptions({ type: "word", slug: word.slug }, anchor);
             }}
             quantity={quantityViewOf(word)}
+            run={runViewOf(word)}
             showReach={cueShownIn("reach", level)}
             reachMarked={
               word.slug !== null && wordsWithMarkedPointer.has(word.slug)
@@ -2007,6 +2060,19 @@ function App() {
         onBranchScenario={branchModel}
         onRetireScenario={retireBranch}
       />
+
+      {/* the crank (Epic 8 story 3, ADR-0022): ONE hand-cranked step and,
+          beneath it, that crank's OWN notes. Level 2 only — a step is the
+          dynamics game's own reading. It lives outside `.plane` beside the
+          level control, so the plane's armed gate never reaches it; one notch
+          per press, no timer, no autoplay, nothing written. */}
+      {level === "dynamics" && (
+        <StepCrank
+          notes={step.run?.notes ?? []}
+          nameOf={nameOf}
+          onCrank={step.crank}
+        />
+      )}
 
       {/* the path gesture's quiet hint (story 3): what the click does and how
           it ends; fixed in screen space, and gone with the session */}
