@@ -149,11 +149,14 @@ export function workspaceYml(): string {
 /**
  * The scaffolded `AGENTS.md` — the workspace's orientation for delegates.
  *
- * Level 1's text (the map, the shelf, the ground rules) stays exactly as it was
- * and Level 2's orientation is ADDED to it (Epic 4 story 5): the four records,
- * the `level` key, the reading rule (polarity, completeness, mark precedence,
+ * Level 1's text (the map, the shelf, the ground rules) stays exactly as it was;
+ * Level 2's orientation is ADDED to it (Epic 4 story 5): the four records, the
+ * `level` key, the reading rule (polarity, completeness, mark precedence,
  * rotation-canonical paths, exact-direction matching, named gaps) and the
- * no-label rule. The scaffold is WRITE-ONCE (ADR-0004): `scaffoldWorkspace`
+ * no-label rule; Level 3's orientation (Epic 5 story 3) adds the reach: the
+ * render map, the three level values with garbage tolerance, the pointer forms
+ * and their resolution, and the window's snapshot wording. The scaffold is
+ * WRITE-ONCE (ADR-0004): `scaffoldWorkspace`
  * writes only files that are missing, so an existing workspace keeps its own
  * text and only a NEW workspace gets this one — a story never rewrites the
  * orientation a workspace already holds.
@@ -187,6 +190,9 @@ export function agentsMd(workspaceName: string): string {
     "- `map/assumptions.jsonl` — one line per stated assumption: its `text` and",
     "  one target — `on` a word, a `from`/`to` link pair, `loop` a loop, or",
     "  `x`/`y` a bare spot of the plane.",
+    "- `map/pointers.jsonl` — one line per reach beyond the map: the word it hangs",
+    "  on (`on`) plus exactly one authored target form — `path`",
+    "  (workspace-relative), `at` (absolute, machine-local) or `url` (any scheme).",
     "- `notes/` — working notes from before the map; kept untouched, no longer shown.",
     "- `ontology/` arrives in later efforts.",
     "",
@@ -205,8 +211,9 @@ export function agentsMd(workspaceName: string): string {
     "## Level 2 — the dynamics model",
     "",
     "`workspace.yml`'s `level` key is the only source of the active game:",
-    "`\"concept\"` (Level 1 — absent means this) or `\"dynamics\"` (Level 2). Zoom",
-    "never changes it. Level 2 is a quiet mode over the same plane, and its records",
+    "`\"concept\"` (Level 1 — absent means this), `\"dynamics\"` (Level 2) or",
+    "`\"ground\"` (Level 3 — the reach, below). Zoom never changes it. Level 2 is",
+    "a quiet mode over the same plane, and its records",
     "are the playing set (`map/model.json`, required before the model is read)",
     "plus `map/links.jsonl`, `map/loops.jsonl` and `map/assumptions.jsonl`.",
     "",
@@ -231,6 +238,46 @@ export function agentsMd(workspaceName: string): string {
     "every change, and keep it out of the files. An assumption is a claim kept",
     "open to revision; a mark says something is not settled. Neither is a label.",
     "",
+    "## Level 3 — the reach beyond the map",
+    "",
+    "`workspace.yml`'s `level` has a third value, `\"ground\"` (Level 3). The three",
+    "games are `\"concept\"` (Level 1), `\"dynamics\"` (Level 2) and `\"ground\"`",
+    "(Level 3); absent, empty, unreadable or any other value means concept. The",
+    "app never fails to open over a garbage value and never asks twice — an old",
+    "workspace opens exactly as before.",
+    "",
+    "The render map is additive, never exclusive. Every game draws the words,",
+    "distances, marks and the shelf; the dynamics game adds the links, loops,",
+    "assumptions and the playing set; the ground game adds the pointers. Nothing",
+    "is taken away and no game hides another game's records.",
+    "",
+    "`map/pointers.jsonl` holds the reaches beyond the map. A line is the owner",
+    "word (`on`) plus exactly one AUTHORED target form — the JSON key the person",
+    "picked at write time, never sniffed from the value:",
+    "",
+    "- `path` — a path INSIDE this workspace, resolved against the workspace root",
+    "  exactly as written. An absolute-looking value is still a `path`.",
+    "- `at` — an absolute path on THIS machine (machine-local), stored verbatim.",
+    "  It may dangle on another machine; when it does not resolve the window",
+    "  answers \"cannot read\". It is never repaired, re-rooted or rewritten.",
+    "- `url` — any scheme, stored verbatim. A scheme the system opener cannot",
+    "  handle says \"cannot open this scheme\" plainly, never a quiet no-op.",
+    "",
+    "The form is authored structure: never classify a value into a different",
+    "form, never trim, normalize or repair a target string, and never stat it at",
+    "the record layer. Several reaches per word are legal; one natural key",
+    "(owner + form + value) has one line, and a replace-in-place edit rewrites",
+    "that line at its index.",
+    "",
+    "A mark may also sit on a pointer LINE: `{\"kind\":\"open\",\"on\":\"<word>\",",
+    "\"path\": ...}` (or `at`/`url`). Its key is the pointer's own key, so it is",
+    "distinct from a mark on the word; it follows an in-place edit to the new key",
+    "and dies with its line.",
+    "",
+    "The window is an open-moment glimpse — reopen to refresh. It is a transient",
+    "of the open moment, not a record: nothing about it is written, so reopening",
+    "a pointer shows the file as it is now, never a cached earlier read.",
+    "",
     "## Ground rules",
     "",
     "- The user authors the map. Your edits arrive as ghosts: small reversible patches",
@@ -243,7 +290,8 @@ export function agentsMd(workspaceName: string): string {
     "",
     "Machine-written files (`workspace.yml`, `map/model.json`,",
     "`map/distances.jsonl`, `map/marks.jsonl`, `map/links.jsonl`,",
-    "`map/loops.jsonl`, `map/assumptions.jsonl`, and later the ontology) use one",
+    "`map/loops.jsonl`, `map/assumptions.jsonl`, `map/pointers.jsonl`, and later",
+    "the ontology) use one",
     "canonical style: LF newlines, 2-space indent, sorted keys, trailing newline;",
     "JSONL records are one compact JSON object per line. Hand edits are welcome; the",
     "app returns them in that style.",

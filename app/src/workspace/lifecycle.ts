@@ -57,11 +57,12 @@ async function readWorkspace(path: string): Promise<Workspace> {
 
 /**
  * Create: scaffold the folder into a workspace and remember it. The scaffold's
- * orientation text — Level 1's map/shelf sections plus Level 2's four records
- * and the loop-reading rule — is `agentsMd` in `lib/serialize.ts`. The
- * scaffold is WRITE-ONCE (`scaffoldWorkspace` writes only missing files), so
- * only a NEW workspace gets the current text; an existing workspace's
- * `AGENTS.md` is never rewritten.
+ * orientation text — Level 1's map/shelf sections, Level 2's four records and
+ * the loop-reading rule, and Level 3's reach (the render map, the three level
+ * values, the pointer forms and the window's snapshot wording) — is `agentsMd`
+ * in `lib/serialize.ts`. The scaffold is WRITE-ONCE (`scaffoldWorkspace` writes
+ * only missing files), so only a NEW workspace gets the current text; an
+ * existing workspace's `AGENTS.md` is never rewritten.
  */
 export async function createWorkspace(path: string): Promise<Workspace> {
   await scaffoldWorkspace(path, workspaceName(path));

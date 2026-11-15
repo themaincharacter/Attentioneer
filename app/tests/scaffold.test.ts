@@ -12,7 +12,10 @@ import {
 /**
  * Story-5 guarantee, automated: the scaffolded workspace `AGENTS.md` gains the
  * Level 2 orientation and the reading rule (ADR-0015's write-once rule), while
- * Level 1's orientation text stays exactly as it was. The scaffold is
+ * Level 1's orientation text stays exactly as it was. Epic 5 story 3 adds
+ * Level 3's orientation (the render map, the three `level` values with garbage
+ * tolerance, the pointer forms and their resolution, the window's snapshot
+ * wording) the same way: only NEW workspaces get it. The scaffold is
  * WRITE-ONCE: only files that are missing are written, so an old workspace
  * keeps its own bytes and only a NEW workspace gets the new orientation.
  *
@@ -26,6 +29,16 @@ const OLD_AGENTS_MD = [
   "# garden — agent orientation",
   "",
   "The pre-Epic-4 orientation text a workspace created by an older app holds.",
+  "",
+].join("\n");
+
+/** A workspace created by the Level 2 app: it has Level 2's text, not level 3's. */
+const PRE_LEVEL_3_AGENTS_MD = [
+  "# garden — agent orientation",
+  "",
+  "## Level 2 — the dynamics model",
+  "",
+  "The pre-Epic-5 orientation text a workspace created by the previous app holds.",
   "",
 ].join("\n");
 
@@ -151,6 +164,73 @@ describe("the new workspace scaffold gains the Level 2 orientation", () => {
   });
 });
 
+describe("the new workspace scaffold gains the Level 3 orientation", () => {
+  const md = agentsMd("garden");
+
+  test("the render map names every game's records (additive, never exclusive)", () => {
+    expect(md).toContain("## Level 3 — the reach beyond the map");
+    // Every game: words, distances, marks and the shelf.
+    expect(md).toContain("Every game draws the words,");
+    expect(md).toContain("distances, marks and the shelf");
+    // The dynamics game adds its own four records.
+    expect(md).toContain("the dynamics game adds the links, loops,");
+    expect(md).toContain("assumptions and the playing set");
+    // The ground game adds the reach and takes nothing away.
+    expect(md).toContain("the ground game adds the pointers");
+    expect(md).toContain("Nothing");
+    expect(md).toContain("is taken away");
+  });
+
+  test("the three level values and the garbage-tolerance rule", () => {
+    expect(md).toContain('`"concept"`');
+    expect(md).toContain('`"dynamics"`');
+    expect(md).toContain('`"ground"`');
+    expect(md).toContain("The three");
+    expect(md).toContain("absent, empty, unreadable or any other value means concept");
+    expect(md).toContain("never asks twice");
+    expect(md).toContain("opens exactly as before");
+  });
+
+  test("the pointer forms and their resolution rules", () => {
+    expect(md).toContain("`map/pointers.jsonl`");
+    expect(md).toContain("AUTHORED target form");
+    expect(md).toContain("never sniffed from the value");
+    // path: workspace-relative, joined as written, never normalized.
+    expect(md).toContain("a path INSIDE this workspace");
+    expect(md).toContain("workspace root");
+    expect(md).toContain("An absolute-looking value is still a `path`");
+    // at: absolute, machine-local, may dangle elsewhere, answered cannot read.
+    expect(md).toContain("an absolute path on THIS machine");
+    expect(md).toContain("machine-local");
+    expect(md).toContain("may dangle on another machine");
+    expect(md).toContain('answers "cannot read"');
+    expect(md).toContain("never repaired");
+    // url: any scheme, stored verbatim, refused schemes said plainly.
+    expect(md).toContain("any scheme, stored verbatim");
+    expect(md).toContain('says "cannot open this scheme"');
+    // The form is structure: the value is never classified into another form.
+    expect(md).toContain("never classify a value");
+    // A mark may address a pointer LINE (the pointer-key mark grammar).
+    expect(md).toContain("A mark may also sit on a pointer LINE");
+  });
+
+  test("the window is an open-moment glimpse — reopen to refresh", () => {
+    expect(md).toContain(
+      "The window is an open-moment glimpse — reopen to refresh.",
+    );
+    expect(md).toContain("not a record");
+    expect(md).toContain("nothing about it is written");
+    expect(md).toContain("never a cached earlier read");
+  });
+
+  test("the pointers file joins the orientation inventory and the machine-files rule", () => {
+    expect(md).toContain(
+      "- `map/pointers.jsonl` — one line per reach beyond the map",
+    );
+    expect(md).toContain("`map/pointers.jsonl`, and later");
+  });
+});
+
 describe("the scaffold is write-once (an older workspace keeps its text)", () => {
   test("a new workspace gets both files, AGENTS.md with the new orientation", () => {
     const files = workspaceScaffold(WS, "garden");
@@ -162,6 +242,9 @@ describe("the scaffold is write-once (an older workspace keeps its text)", () =>
     expect(scaffoldFile("AGENTS.md").content).toBe(agentsMd("garden"));
     expect(scaffoldFile("AGENTS.md").content).toContain(
       "## Level 2 — the dynamics model",
+    );
+    expect(scaffoldFile("AGENTS.md").content).toContain(
+      "## Level 3 — the reach beyond the map",
     );
   });
 
@@ -177,6 +260,38 @@ describe("the scaffold is write-once (an older workspace keeps its text)", () =>
     expect(disk.get(`${WS}/AGENTS.md`)).toBe(OLD_AGENTS_MD);
     expect(disk.get(`${WS}/AGENTS.md`)).not.toContain("Level 2");
     expect(disk.get(`${WS}/workspace.yml`)).toContain("old");
+  });
+
+  test("a Level 2-era workspace keeps its bytes on open: only new spaces get Level 3", () => {
+    const disk = new Map<string, string>([
+      [`${WS}/workspace.yml`, workspaceYml()],
+      [`${WS}/AGENTS.md`, PRE_LEVEL_3_AGENTS_MD],
+    ]);
+    const writes = scaffoldWrites(
+      workspaceScaffold(WS, "garden"),
+      new Set(disk.keys()),
+    );
+
+    // The scaffold offers nothing: no write path can touch the old text, so
+    // opening (which does not scaffold at all) leaves these bytes identical.
+    expect(writes).toEqual([]);
+    expect(disk.get(`${WS}/AGENTS.md`)).toBe(PRE_LEVEL_3_AGENTS_MD);
+    expect(disk.get(`${WS}/AGENTS.md`)).not.toContain("Level 3");
+    // The current scaffold, by contrast, carries the Level 3 orientation —
+    // only a workspace created now receives it.
+    expect(agentsMd("garden")).toContain(
+      "## Level 3 — the reach beyond the map",
+    );
+  });
+
+  test("a Level 2-era workspace missing its yml gains only the yml, not the new text", () => {
+    const disk = new Map<string, string>([
+      [`${WS}/AGENTS.md`, PRE_LEVEL_3_AGENTS_MD],
+    ]);
+    scaffoldInto(disk, "garden");
+
+    expect(disk.get(`${WS}/workspace.yml`)).toBe(workspaceYml());
+    expect(disk.get(`${WS}/AGENTS.md`)).toBe(PRE_LEVEL_3_AGENTS_MD);
   });
 
   test("a half-scaffolded folder gains only the missing file", () => {

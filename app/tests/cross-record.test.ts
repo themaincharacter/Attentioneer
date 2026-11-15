@@ -30,6 +30,14 @@ import {
   type MarkTarget,
 } from "../src/map/marks";
 import {
+  findDuplicatePointers,
+  findOrphanPointers,
+  parsePointers,
+  pointerKey,
+  serializePointers,
+  type Pointer,
+} from "../src/map/pointers";
+import {
   dedupe,
   parseModel,
   serializeModel,
@@ -41,6 +49,8 @@ import {
   dropLoopAssumptions,
   dropMarksTouching,
   dropMembership,
+  dropPointerMarksTouching,
+  dropPointersTouching,
   dropTouching,
   dropTouchingLinks,
   rewriteAssumptionTargets,
@@ -49,6 +59,8 @@ import {
   rewriteLoopPaths,
   rewriteMarkEndpoints,
   rewriteMembership,
+  rewritePointerMarkOwners,
+  rewritePointerOwners,
 } from "../src/map/patches";
 import { parseReference, serializeReference, type Reference } from "../src/map/refs";
 
@@ -92,7 +104,7 @@ function reference(name: string, slug: string, body = ""): Reference {
   return { id: slug, slug, name, x: 100, y: 120, body, extra: {} };
 }
 
-/** The four records plus the map they are about — one batch's whole input. */
+/** Every record plus the map they are about — one batch's whole input. */
 interface Batch {
   refs: Reference[];
   distances: Distance[];
@@ -100,6 +112,7 @@ interface Batch {
   marks: Mark[];
   loops: Loop[];
   assumptions: Assumption[];
+  pointers: Pointer[];
   model: PlayingSet;
 }
 
@@ -120,6 +133,15 @@ function base(): Batch {
       open({ type: "word", slug: "mulch" }),
       open({ type: "link", from: "soil", to: "mulch" }),
       open({ type: "wire", from: "mulch", to: "rain", word: "feeds" }),
+      open({ type: "pointer", on: "mulch", form: "path", value: "notes/mulch.md" }),
+      open({ type: "pointer", on: "rain", form: "at", value: "/home/k/rain.md" }),
+      open({ type: "pointer", on: "soil", form: "url", value: "https://example.org/soil" }),
+      open({ type: "spot", x: 40, y: 60 }),
+    ],
+    pointers: [
+      { on: "mulch", form: "path", value: "notes/mulch.md", extra: { rank: 1 } },
+      { on: "rain", form: "at", value: "/home/k/rain.md", extra: {} },
+      { on: "soil", form: "url", value: "https://example.org/soil", extra: {} },
     ],
     loops: [loop("rain loop", ["rain", "soil", "mulch", "rain"])],
     assumptions: [
@@ -141,6 +163,7 @@ function recordBytes(batch: Batch): Record<string, string> {
     "map/assumptions.jsonl": serializeAssumptions(batch.assumptions),
     "map/marks.jsonl": serializeMarks(batch.marks),
     "map/distances.jsonl": serializeDistances(batch.distances),
+    "map/pointers.jsonl": serializePointers(batch.pointers),
   };
 }
 
@@ -166,6 +189,10 @@ function reopenRecords(batch: Batch): void {
   expect(
     serializeDistances(parsedDistances.distances, parsedDistances.malformed),
   ).toBe(bytes["map/distances.jsonl"]);
+  const parsedPointers = parsePointers(bytes["map/pointers.jsonl"]);
+  expect(
+    serializePointers(parsedPointers.pointers, parsedPointers.malformed),
+  ).toBe(bytes["map/pointers.jsonl"]);
 }
 
 /** Every slug a record names in a STRUCTURED field (never a claim's text). */
@@ -191,7 +218,9 @@ function referencedSlugs(batch: Batch): Set<string> {
       slugs.add(m.target.from);
       slugs.add(m.target.to);
     }
+    if (m.target.type === "pointer") slugs.add(m.target.on);
   }
+  for (const p of batch.pointers) slugs.add(p.on);
   for (const a of batch.assumptions) {
     if (a.target.type === "word") slugs.add(a.target.slug);
     if (a.target.type === "link") {
@@ -214,8 +243,8 @@ function expectNoDanglingSlugs(batch: Batch): void {
  * The rename batch, in `renameReference`'s documented write order: the renamed
  * reference file first (the durable thing), then distances -> links -> marks ->
  * loops -> assumptions -> pointers -> pointer-marks -> membership, then the old
- * file goes (Epic 5 inserted the pointer steps; this suite's batch predates
- * the reach and leaves it out deliberately — the pointers' own suite covers it).
+ * file goes. The pointer LINES are written before their marks (Epic 5 story 1):
+ * a crash must never leave an app-authored dangling mark.
  */
 function renameThrough(batch: Batch, oldSlug: string, newName: string): Batch {
   // 1. the renamed file (prose byte-verbatim), old file dropped last.
@@ -230,14 +259,27 @@ function renameThrough(batch: Batch, oldSlug: string, newName: string): Batch {
   const marks = rewriteMarkEndpoints(batch.marks, oldSlug, newName);
   const loops = rewriteLoopPaths(batch.loops, oldSlug, newName);
   const assumptions = rewriteAssumptionTargets(batch.assumptions, oldSlug, newName);
+  // 2e -> 2e2: the pointer lines first, their marks after (the crash rule).
+  const pointers = rewritePointerOwners(batch.pointers, oldSlug, newName);
+  const pointerMarks = rewritePointerMarkOwners(marks, oldSlug, newName);
   const model = rewriteMembership(batch.model, oldSlug, newName);
-  return { refs, distances, links, marks, loops, assumptions, model };
+  return {
+    refs,
+    distances,
+    links,
+    marks: pointerMarks,
+    loops,
+    assumptions,
+    pointers,
+    model,
+  };
 }
 
 /**
  * The remove batch, in `removeReference`'s documented write order: distances ->
  * links -> marks -> loops (remembering the loop slugs that went) -> assumptions
- * (word, its links, and those loops) -> membership -> the file goes.
+ * (word, its links, and those loops) -> pointers -> pointer-marks -> membership
+ * -> the file goes.
  */
 function removeThrough(batch: Batch, slug: string): Batch {
   const deadLoopSlugs = batch.loops
@@ -251,9 +293,21 @@ function removeThrough(batch: Batch, slug: string): Batch {
     dropAssumptionsTouching(batch.assumptions, slug),
     deadLoopSlugs,
   );
+  // 1b3 -> 1b4: the pointer lines go before their marks (the batch's order).
+  const pointers = dropPointersTouching(batch.pointers, slug);
+  const pointerMarks = dropPointerMarksTouching(marks, slug);
   const model = dropMembership(batch.model, slug);
   const refs = batch.refs.filter((ref) => ref.slug !== slug);
-  return { refs, distances, links, marks, loops, assumptions, model };
+  return {
+    refs,
+    distances,
+    links,
+    marks: pointerMarks,
+    loops,
+    assumptions,
+    pointers,
+    model,
+  };
 }
 
 /** The source text of one exported function in a module file. */
@@ -294,11 +348,36 @@ describe("a rename moves all four records in one batch", () => {
       "soil>woodchip+",
       "woodchip>rain+",
     ]);
+    // The marks step emits untouched marks first and the app's rewritten ones
+    // last; the pointer-marks step then emits the pointer marks last, in the
+    // same batch and AFTER their lines.
     expect(after.marks).toEqual([
+      open({ type: "pointer", on: "rain", form: "at", value: "/home/k/rain.md" }),
+      open({ type: "pointer", on: "soil", form: "url", value: "https://example.org/soil" }),
+      open({ type: "spot", x: 40, y: 60 }),
       open({ type: "word", slug: "woodchip" }),
       open({ type: "link", from: "soil", to: "woodchip" }),
       open({ type: "wire", from: "woodchip", to: "rain", word: "feeds" }),
+      open({ type: "pointer", on: "woodchip", form: "path", value: "notes/mulch.md" }),
     ]);
+    // The pointer lines follow their word; their target strings are verbatim
+    // prose and are never rewritten (notes/mulch.md stays notes/mulch.md).
+    expect(after.pointers).toEqual([
+      { on: "woodchip", form: "path", value: "notes/mulch.md", extra: { rank: 1 } },
+      { on: "rain", form: "at", value: "/home/k/rain.md", extra: {} },
+      { on: "soil", form: "url", value: "https://example.org/soil", extra: {} },
+    ]);
+    // The ORDER guarantee at the record level: no pointer mark dangles — each
+    // names a pointer line that exists in the same batch's output.
+    const pointerKeys = new Set(
+      after.pointers.map((p) => pointerKey(p.on, p.form, p.value)),
+    );
+    for (const mark of after.marks) {
+      if (mark.target.type !== "pointer") continue;
+      expect(
+        pointerKeys.has(pointerKey(mark.target.on, mark.target.form, mark.target.value)),
+      ).toBe(true);
+    }
 
     // The loop path follows AND is rotation-canonical again ('rain' is now the
     // smallest slug, so the line rotates).
@@ -351,6 +430,28 @@ describe("a rename moves all four records in one batch", () => {
         '{"from":"woodchip","sign":"+","to":"rain"}',
       ].sort(),
     );
+    // The pointer lines: `on` follows the word, the target strings do not.
+    expect(bytes["map/pointers.jsonl"]).toBe(
+      [
+        '{"on":"woodchip","path":"notes/mulch.md","rank":1}',
+        '{"at":"/home/k/rain.md","on":"rain"}',
+        '{"on":"soil","url":"https://example.org/soil"}',
+        "",
+      ].join("\n"),
+    );
+    // The mark lines: the pointer marks come after their pointer lines.
+    expect(bytes["map/marks.jsonl"]).toBe(
+      [
+        '{"at":"/home/k/rain.md","kind":"open","on":"rain"}',
+        '{"kind":"open","on":"soil","url":"https://example.org/soil"}',
+        '{"kind":"open","x":40,"y":60}',
+        '{"kind":"open","on":"woodchip"}',
+        '{"from":"soil","kind":"open","to":"woodchip"}',
+        '{"from":"woodchip","kind":"open","to":"rain","word":"feeds"}',
+        '{"kind":"open","on":"woodchip","path":"notes/mulch.md"}',
+        "",
+      ].join("\n"),
+    );
     // No structured field still names the old slug; only claim text may.
     const structured = [
       bytes["map/model.json"],
@@ -362,6 +463,24 @@ describe("a rename moves all four records in one batch", () => {
       .assumptions.map((a) => JSON.stringify(a.target))
       .join("\n");
     expect(assumptionFields).not.toContain("mulch");
+    // Pointer OWNERS and mark ADDRESSES follow the rename. A pointer's target
+    // value is never interpreted, so notes/mulch.md legitimately still says
+    // 'mulch' inside the woodchip line's prose-like value.
+    const pointerOwners = parsePointers(bytes["map/pointers.jsonl"])
+      .pointers.map((p) => p.on)
+      .join("\n");
+    expect(pointerOwners).not.toContain("mulch");
+    expect(pointerOwners).toContain("woodchip");
+    const markAddresses = parseMarks(bytes["map/marks.jsonl"])
+      .marks.map((m) => {
+        if (m.target.type === "pointer") return m.target.on;
+        if (m.target.type === "word") return m.target.slug;
+        if (m.target.type === "wire") return m.target.from + "|" + m.target.to;
+        if (m.target.type === "link") return m.target.from + "|" + m.target.to;
+        return "spot";
+      })
+      .join("\n");
+    expect(markAddresses).not.toContain("mulch");
   });
 });
 
@@ -408,6 +527,29 @@ describe("a remove moves all four records in one batch", () => {
       "rain still falls",
       "the mulch loop turns",
     ]);
+    // The removed word's pointer line and its pointer mark die (die-with-
+    // target); every other reach and mark keeps its bytes.
+    expect(after.pointers).toEqual([
+      { on: "mulch", form: "path", value: "notes/mulch.md", extra: { rank: 1 } },
+      { on: "rain", form: "at", value: "/home/k/rain.md", extra: {} },
+    ]);
+    expect(after.marks).toEqual([
+      open({ type: "word", slug: "mulch" }),
+      open({ type: "wire", from: "mulch", to: "rain", word: "feeds" }),
+      open({ type: "pointer", on: "mulch", form: "path", value: "notes/mulch.md" }),
+      open({ type: "pointer", on: "rain", form: "at", value: "/home/k/rain.md" }),
+      open({ type: "spot", x: 40, y: 60 }),
+    ]);
+    // No pointer mark names a line the batch removed.
+    const pointerKeys = new Set(
+      after.pointers.map((p) => pointerKey(p.on, p.form, p.value)),
+    );
+    for (const mark of after.marks) {
+      if (mark.target.type !== "pointer") continue;
+      expect(
+        pointerKeys.has(pointerKey(mark.target.on, mark.target.form, mark.target.value)),
+      ).toBe(true);
+    }
     expect(after.model.words).toEqual(["mulch", "rain"]);
     expectNoDanglingSlugs(after);
     reopenRecords(after);
@@ -423,6 +565,16 @@ describe("a remove moves all four records in one batch", () => {
     expect(bytes["map/loops.jsonl"]).toBe(
       '{"name":"mulch loop","path":["mulch","mulch"]}' + "\n",
     );
+    // The surviving reaches are the other words' lines, byte-stable, and no
+    // mark names the removed word's pointer line.
+    expect(bytes["map/pointers.jsonl"]).toBe(
+      [
+        '{"on":"mulch","path":"notes/mulch.md","rank":1}',
+        '{"at":"/home/k/rain.md","on":"rain"}',
+        "",
+      ].join("\n"),
+    );
+    expect(bytes["map/marks.jsonl"]).not.toContain("soil");
   });
 });
 
@@ -442,6 +594,8 @@ describe("the batch's write order and crash-order comments", () => {
       /loops -> assumptions -> pointers -> pointer-marks -> membership -> the old file/,
     );
     expect(source).toContain("the durable thing is written first");
+    expect(source).toContain("written BEFORE their marks");
+    expect(source).toContain("dangling mark");
   });
 
   test("rename writes the file first, then each record, then drops the old file", () => {
@@ -453,15 +607,23 @@ describe("the batch's write order and crash-order comments", () => {
       "saveMarks(",
       "saveLoops(",
       "saveAssumptions(",
+      "savePointers(",
+      "saveMarks(",
       "saveModel(",
       "removeFile(referencePath",
     ];
     let last = -1;
-    for (const needle of order) {
-      const index = body.indexOf(needle);
+    for (const [i, needle] of order.entries()) {
+      // saveMarks appears twice: the word/link marks step and the
+      // pointer-marks step, with the pointer lines between them.
+      const index = body.indexOf(needle, i === 0 ? 0 : last + 1);
       expect(index).toBeGreaterThan(last);
       last = index;
     }
+    // The pointer marks step consumes the pointer lines written just before.
+    expect(body.indexOf("rewritePointerMarkOwners(")).toBeGreaterThan(
+      body.indexOf("savePointers("),
+    );
     // The crash comments ride along (they are why the order is what it is).
     expect(body.toLowerCase()).toContain("crash");
   });
@@ -474,15 +636,21 @@ describe("the batch's write order and crash-order comments", () => {
       "saveMarks(",
       "saveLoops(",
       "saveAssumptions(",
+      "savePointers(",
+      "saveMarks(",
       "saveModel(",
       "removeFile(referencePath",
     ];
     let last = -1;
-    for (const needle of order) {
-      const index = body.indexOf(needle);
+    for (const [i, needle] of order.entries()) {
+      const index = body.indexOf(needle, i === 0 ? 0 : last + 1);
       expect(index).toBeGreaterThan(last);
       last = index;
     }
+    // The pointer lines are dropped before their marks (the batch's order).
+    expect(body.indexOf("dropPointerMarksTouching(")).toBeGreaterThan(
+      body.indexOf("savePointers("),
+    );
     expect(body.toLowerCase()).toContain("crash");
   });
 });
@@ -516,6 +684,26 @@ describe("malformed, orphan and duplicate lines surface across records", () => {
     expect(serializeAssumptions(assumptions.assumptions, assumptions.malformed)).toBe(
       assumptionsText,
     );
+
+    const pointersText =
+      '{"on":"rain","path":"notes/x.md"}\n{not a pointer\n';
+    const pointers = parsePointers(pointersText);
+    expect(pointers.pointers).toHaveLength(1);
+    expect(pointers.malformed).toEqual(["{not a pointer"]);
+    expect(serializePointers(pointers.pointers, pointers.malformed)).toBe(
+      pointersText,
+    );
+
+    // A pointer-key mark rides the marks file with every other form.
+    const marksText =
+      '{"kind":"open","on":"rain","path":"notes/x.md"}\n{not a mark\n';
+    const parsedMarks = parseMarks(marksText);
+    expect(parsedMarks.marks).toHaveLength(1);
+    expect(parsedMarks.marks[0].target.type).toBe("pointer");
+    expect(parsedMarks.malformed).toEqual(["{not a mark"]);
+    expect(serializeMarks(parsedMarks.marks, parsedMarks.malformed)).toBe(
+      marksText,
+    );
   });
 
   test("orphans are surfaced per record and nothing is silently repaired", () => {
@@ -524,21 +712,35 @@ describe("malformed, orphan and duplicate lines surface across records", () => {
     const distances: Distance[] = [{ from: "rain", to: "soil", word: "feeds", extra: {} }];
     const model = play(["rain"]);
 
-    // A mark on a link, a wire and a word that are all gone.
+    // A mark on a link, a wire, a word and a pointer line that are all gone.
     const marks: Mark[] = [
       open({ type: "link", from: "soil", to: "rain" }),
       open({ type: "wire", from: "rain", to: "soil", word: "gone" }),
       open({ type: "word", slug: "phantom" }),
       open({ type: "word", slug: "rain" }),
+      open({ type: "pointer", on: "rain", form: "path", value: "notes/x.md" }),
+      open({ type: "pointer", on: "rain", form: "path", value: "notes/gone.md" }),
     ];
+    const pointerKeys = new Set([pointerKey("rain", "path", "notes/x.md")]);
     expect(
       findOrphanMarks(
         marks,
         onMap,
         new Set(distances.map((d) => `${d.from}\u0000${d.to}\u0000${d.word}`)),
         new Set(links.map((l) => linkKey(l.from, l.to))),
+        pointerKeys,
       ).map((mark) => mark.target.type),
-    ).toEqual(["link", "wire", "word"]);
+    ).toEqual(["link", "wire", "word", "pointer"]);
+
+    // A pointer whose owner is gone is surfaced; its TARGET is never checked,
+    // so an at reach that does not exist on this machine is not an orphan.
+    const pointers: Pointer[] = [
+      { on: "rain", form: "path", value: "notes/x.md", extra: {} },
+      { on: "phantom", form: "at", value: "/nonexistent/x", extra: {} },
+    ];
+    expect(findOrphanPointers(pointers, onMap).map((p) => p.on)).toEqual([
+      "phantom",
+    ]);
 
     // A loop path naming a slug the map does not have stays verbatim.
     const loops = [loop("rain loop", ["rain", "phantom", "rain"])];
@@ -589,6 +791,26 @@ describe("malformed, orphan and duplicate lines surface across records", () => {
       '{"name":"rain loop","path":["mulch","rain","mulch"]}' + "\n",
     );
 
+    // Pointers are the other preserving family: a hand-duplicated key stays
+    // two lines and is surfaced; a write never collapses it.
+    const pointerLine = '{"on":"rain","path":"notes/x.md"}';
+    const parsedPointers = parsePointers(pointerLine + "\n" + pointerLine + "\n");
+    expect(parsedPointers.pointers).toHaveLength(2);
+    expect(parsedPointers.duplicates).toHaveLength(1);
+    expect(findDuplicatePointers(parsedPointers.pointers)).toHaveLength(1);
+    expect(serializePointers(parsedPointers.pointers)).toBe(
+      pointerLine + "\n" + pointerLine + "\n",
+    );
+
+    // A pointer-key mark is like every other mark: the read keeps a hand
+    // duplicate, the write collapses to one line (last write wins).
+    const pointerMark = '{"kind":"open","on":"rain","path":"notes/x.md"}';
+    const parsedPointerMarks = parseMarks(
+      pointerMark + "\n" + pointerMark + "\n",
+    );
+    expect(parsedPointerMarks.marks).toHaveLength(2);
+    expect(serializeMarks(parsedPointerMarks.marks)).toBe(pointerMark + "\n");
+
     // Assumptions are the exception: a hand-duplicated key is PRESERVED and
     // surfaced (a hand edit is content), and the write never collapses it.
     const claimDup =
@@ -614,6 +836,7 @@ describe("malformed, orphan and duplicate lines surface across records", () => {
     expect(parseLoops("").loops).toEqual([]);
     expect(parseAssumptions("").assumptions).toEqual([]);
     expect(parseMarks("").marks).toEqual([]);
+    expect(parsePointers("").pointers).toEqual([]);
 
     // The canonical empty JSONL is one newline; the model's absence writes
     // nothing (an explicit accept is the only thing that writes a set).
@@ -621,6 +844,7 @@ describe("malformed, orphan and duplicate lines surface across records", () => {
     expect(serializeLoops([])).toBe("\n");
     expect(serializeAssumptions([])).toBe("\n");
     expect(serializeMarks([])).toBe("\n");
+    expect(serializePointers([])).toBe("\n");
     expect(serializeModel(null)).toBe("");
   });
 
