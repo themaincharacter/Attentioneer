@@ -146,6 +146,18 @@ export function workspaceYml(): string {
   ].join("\n");
 }
 
+/**
+ * The scaffolded `AGENTS.md` — the workspace's orientation for delegates.
+ *
+ * Level 1's text (the map, the shelf, the ground rules) stays exactly as it was
+ * and Level 2's orientation is ADDED to it (Epic 4 story 5): the four records,
+ * the `level` key, the reading rule (polarity, completeness, mark precedence,
+ * rotation-canonical paths, exact-direction matching, named gaps) and the
+ * no-label rule. The scaffold is WRITE-ONCE (ADR-0004): `scaffoldWorkspace`
+ * writes only files that are missing, so an existing workspace keeps its own
+ * text and only a NEW workspace gets this one — a story never rewrites the
+ * orientation a workspace already holds.
+ */
 export function agentsMd(workspaceName: string): string {
   return [
     `# ${workspaceName} — agent orientation`,
@@ -162,7 +174,19 @@ export function agentsMd(workspaceName: string): string {
     "- `map/distances.jsonl` — one line per distance: its two endpoints and the",
     "  coined word (from, to, word).",
     "- `map/marks.jsonl` — one line per open mark: an anonymous annotation on a",
-    "  word, on a distance, or on a bare spot of the plane.",
+    "  word, on a distance, on a signed link, or on a bare spot of the plane.",
+    "- `map/model.json` — the playing set: the sorted word slugs the dynamics game",
+    "  plays with, as `{\"words\": [...]}`. Absence is exclusion: a word not named",
+    "  here is out of play, and nothing else records the choice.",
+    "- `map/links.jsonl` — one line per signed causal link: `from`, `to` and a",
+    "  `sign` of `+` or `-`. The ordered pair is the key, so `A` → `B` and",
+    "  `B` → `A` are two different links.",
+    "- `map/loops.jsonl` — one line per named loop: the person's coined `name` and",
+    "  the closed `path` of word slugs it walks (the first slug repeated at the",
+    "  end, so every member pair reads explicitly).",
+    "- `map/assumptions.jsonl` — one line per stated assumption: its `text` and",
+    "  one target — `on` a word, a `from`/`to` link pair, `loop` a loop, or",
+    "  `x`/`y` a bare spot of the plane.",
     "- `notes/` — working notes from before the map; kept untouched, no longer shown.",
     "- `ontology/` arrives in later efforts.",
     "",
@@ -178,6 +202,35 @@ export function agentsMd(workspaceName: string): string {
     "always means \"on the shelf\"; move it clearly below to bring it back. Change",
     "`shelf_x` only when the user asks to move the fold.",
     "",
+    "## Level 2 — the dynamics model",
+    "",
+    "`workspace.yml`'s `level` key is the only source of the active game:",
+    "`\"concept\"` (Level 1 — absent means this) or `\"dynamics\"` (Level 2). Zoom",
+    "never changes it. Level 2 is a quiet mode over the same plane, and its records",
+    "are the playing set (`map/model.json`, required before the model is read)",
+    "plus `map/links.jsonl`, `map/loops.jsonl` and `map/assumptions.jsonl`.",
+    "",
+    "Reading a loop. Walk its `path` in order, one step per consecutive pair, and",
+    "read each step's sign from `map/links.jsonl` by EXACT direction: the step",
+    "`A` → `B` needs the link with `from: \"A\", to: \"B\"`. `+` means the pair moves",
+    "in the same direction; `-` means opposite. Never read a reverse-only link —",
+    "say it runs the other way instead. A path is rotation-canonical: the smallest",
+    "slug is first, direction and closure preserved, so lines are comparable.",
+    "",
+    "The verdict. Say \"reinforcing\" (an even number of `-` steps) or",
+    "\"balancing\" (odd) ONLY when every step's sign is known and every path word",
+    "is on the map and in the playing set. A mark on a link overrides its stored",
+    "sign while the mark stands: the file keeps the sign, the read shows unknown,",
+    "and withdrawing the mark restores it — a mark may doubt existence or",
+    "direction, not only the sign. When a step does not resolve, name the gap and",
+    "withhold the verdict: never guess a sign, never accept a reverse-only link,",
+    "never repair a path, never invent a link.",
+    "",
+    "A loop's behavior is READ from its links, never stored. No record carries a",
+    "verdict, a label, a count or a score: recompute the read from the files on",
+    "every change, and keep it out of the files. An assumption is a claim kept",
+    "open to revision; a mark says something is not settled. Neither is a label.",
+    "",
     "## Ground rules",
     "",
     "- The user authors the map. Your edits arrive as ghosts: small reversible patches",
@@ -188,28 +241,64 @@ export function agentsMd(workspaceName: string): string {
     "",
     "## Machine files",
     "",
-    "Machine-written files (`workspace.yml`, `map/distances.jsonl`,",
-    "`map/marks.jsonl`, and later the ontology) use one canonical style: LF newlines,",
-    "2-space indent, sorted keys, trailing newline. Hand edits are welcome; the app",
-    "returns them in that style.",
+    "Machine-written files (`workspace.yml`, `map/model.json`,",
+    "`map/distances.jsonl`, `map/marks.jsonl`, `map/links.jsonl`,",
+    "`map/loops.jsonl`, `map/assumptions.jsonl`, and later the ontology) use one",
+    "canonical style: LF newlines, 2-space indent, sorted keys, trailing newline;",
+    "JSONL records are one compact JSON object per line. Hand edits are welcome; the",
+    "app returns them in that style.",
     "",
   ].join("\n");
+}
+
+/** One file a scaffold can write: its absolute path and its canonical bytes. */
+export interface ScaffoldFile {
+  path: string;
+  content: string;
+}
+
+/**
+ * The files a scaffold offers a folder (ADR-0004): `workspace.yml` and
+ * `AGENTS.md`. Pure, so the scaffold's content is asserted without the fs
+ * bridge and the write-once rule can be tested directly.
+ */
+export function workspaceScaffold(
+  path: string,
+  name: string,
+): ScaffoldFile[] {
+  return [
+    { path: `${path}/workspace.yml`, content: workspaceYml() },
+    { path: `${path}/AGENTS.md`, content: agentsMd(name) },
+  ];
+}
+
+/**
+ * The scaffold is WRITE-ONCE (ADR-0004): only files that are not already on
+ * disk are written, so an existing workspace keeps its own `workspace.yml`,
+ * its own `AGENTS.md` bytes and every later story's orientation text. Pure:
+ * the caller supplies the paths that already exist.
+ */
+export function scaffoldWrites(
+  files: readonly ScaffoldFile[],
+  existing: ReadonlySet<string>,
+): ScaffoldFile[] {
+  return files.filter((file) => !existing.has(file.path));
 }
 
 /**
  * Scaffold a workspace folder (ADR-0004): `workspace.yml`, `AGENTS.md`,
  * `notes/` (earlier scaffolding, kept) and `map/references/` (Epic 2).
- * Files that already exist are left as they are.
+ * Files that already exist are left exactly as they are — the scaffold never
+ * rewrites an older workspace's orientation.
  */
 export async function scaffoldWorkspace(path: string, name: string): Promise<void> {
-  const files: ReadonlyArray<readonly [string, string]> = [
-    [`${path}/workspace.yml`, workspaceYml()],
-    [`${path}/AGENTS.md`, agentsMd(name)],
-  ];
-  for (const [file, content] of files) {
-    if (!(await pathExists(file))) {
-      await writeMachineFile(file, content);
-    }
+  const files = workspaceScaffold(path, name);
+  const existing = new Set<string>();
+  for (const file of files) {
+    if (await pathExists(file.path)) existing.add(file.path);
+  }
+  for (const file of scaffoldWrites(files, existing)) {
+    await writeMachineFile(file.path, file.content);
   }
   await createDirAll(`${path}/notes`);
   await createDirAll(`${path}/map/references`);

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   CONTENT_CLASSES,
   CONTENT_SELECTOR,
+  creationKinds,
   isContentElement,
   isGestureArmed,
   isWordControl,
@@ -248,5 +249,153 @@ describe("the loop's elements are content and the path gate owns the pointer", (
     ]) {
       expect(CONTENT_SELECTOR).toContain(`.${name}`);
     }
+  });
+});
+
+/**
+ * Story 5's whole-suite assertion: the gate is read as ONE contract now that all
+ * four gesture modes and every story's elements have landed (Epic 4's record
+ * layer closes here). The whole menu of creation kinds is level-scoped, every
+ * element the four stories added is in the content list, every interactive one
+ * is also in the word handler's early-return list, and no level-1 behavior moved.
+ */
+describe("the grown gate, as a whole", () => {
+  const MODES: GestureMode[] = ["idle", "selector", "path", "sign-choice"];
+
+  /** Every element the four Epic 4 stories added, with its home story. */
+  const STORY_ELEMENTS = {
+    selector: ["playing-set", "playing-set-word"],
+    signs: [
+      "link",
+      "link-head",
+      "link-mark",
+      "link-sign",
+      "link-unknown",
+      "link-remove",
+      "sign-choice",
+      "sign-choice-option",
+    ],
+    loops: [
+      "loop-route",
+      "loop-route-hit",
+      "loop-name",
+      "loop-name-text",
+      "loop-remove",
+      "loop-coinfield",
+      "loop-coinfield-input",
+      "path-collect",
+      "path-word",
+      "path-bar",
+      "walk",
+      "walk-step",
+      "walk-gap",
+      "walk-verdict",
+      "walk-close",
+    ],
+    assumptions: [
+      "assumption-diamond",
+      "assumption-spot",
+      "assumption-overlay",
+      "assumption-line",
+      "assumption-text",
+      "assumption-input",
+      "assumption-remove",
+      "assumption-close",
+    ],
+  } as const;
+
+  test("all four gesture modes: idle is plain, every armed mode suspends the plane", () => {
+    for (const mode of MODES) {
+      const armed = mode !== "idle";
+      expect(isGestureArmed(mode)).toBe(armed);
+      // Word press, pan and creation are all-or-nothing with the arm.
+      expect(shouldStartWordPress(mode, cl("word-name"))).toBe(!armed);
+      expect(shouldPan(mode)).toBe(!armed);
+      expect(shouldCreate(mode)).toBe(!armed);
+    }
+  });
+
+  test("the creation menu is level-scoped: Level 1 word/lack, Level 2 adds assumption", () => {
+    expect(creationKinds("concept")).toEqual(["word", "lack"]);
+    expect(creationKinds("dynamics")).toEqual(["word", "lack", "assumption"]);
+    // Level 1 is exactly as it was; the L2 menu only grows a third kind.
+    expect(creationKinds("dynamics").slice(0, 2)).toEqual(creationKinds("concept"));
+    // No kind is offered twice, and the assumption kind is L2-only.
+    for (const level of ["concept", "dynamics"] as const) {
+      const kinds = creationKinds(level);
+      expect(new Set(kinds).size).toBe(kinds.length);
+    }
+    expect(creationKinds("concept")).not.toContain("assumption");
+  });
+
+  test("every story-added element is in the content list (never a plane gesture)", () => {
+    for (const elements of Object.values(STORY_ELEMENTS)) {
+      for (const name of elements) {
+        expect(CONTENT_CLASSES).toContain(name as never);
+        expect(isContentElement(cl(name))).toBe(true);
+        expect(CONTENT_SELECTOR).toContain(`.${name}`);
+      }
+    }
+  });
+
+  test("every story-added element joins BOTH lists (ADR-0016 decision 4)", () => {
+    for (const elements of Object.values(STORY_ELEMENTS)) {
+      for (const name of elements) {
+        expect(WORD_CONTROL_CLASSES).toContain(name as never);
+        expect(isWordControl(cl(name))).toBe(true);
+        // Idle included: these never start a word drag or a click-to-center.
+        expect(shouldStartWordPress("idle", cl(name))).toBe(false);
+      }
+    }
+  });
+
+  test("the selector, the sign glyph, the loop route/name and the diamond/overlay are all present", () => {
+    // The brief's four groups, spelled out once in one place.
+    for (const name of STORY_ELEMENTS.selector) {
+      expect(WORD_CONTROL_CLASSES).toContain(name as never);
+    }
+    for (const name of ["link-sign", "link-unknown", "sign-choice", "sign-choice-option"]) {
+      expect(WORD_CONTROL_CLASSES).toContain(name as never);
+    }
+    for (const name of ["loop-route", "loop-name"]) {
+      expect(WORD_CONTROL_CLASSES).toContain(name as never);
+    }
+    for (const name of ["assumption-diamond", "assumption-overlay"]) {
+      expect(WORD_CONTROL_CLASSES).toContain(name as never);
+    }
+  });
+
+  test("no element is listed twice and the selector mirrors the list", () => {
+    expect(new Set(CONTENT_CLASSES).size).toBe(CONTENT_CLASSES.length);
+    expect(new Set(WORD_CONTROL_CLASSES).size).toBe(WORD_CONTROL_CLASSES.length);
+    expect(CONTENT_SELECTOR).toBe(
+      CONTENT_CLASSES.map((name) => `.${name}`).join(", "),
+    );
+  });
+
+  test("Level 1's own elements and the plain plane are untouched", () => {
+    for (const name of [
+      "word",
+      "lack-mark",
+      "distance-label",
+      "distance-ring",
+      "distance-coinfield",
+      "grow-field",
+      "plane-menu",
+    ]) {
+      expect(CONTENT_CLASSES).toContain(name as never);
+    }
+    for (const name of [
+      "memory-dot",
+      "connect-handle",
+      "word-remove",
+      "word-reject",
+      "word-mark",
+    ]) {
+      expect(WORD_CONTROL_CLASSES).toContain(name as never);
+    }
+    expect(isContentElement(cl("plane"))).toBe(false);
+    expect(isContentElement(cl("word-name"))).toBe(false);
+    expect(isWordControl(cl("word-name"))).toBe(false);
   });
 });

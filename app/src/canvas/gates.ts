@@ -96,8 +96,11 @@ export const CONTENT_SELECTOR = CONTENT_CLASSES.map((name) => `.${name}`).join("
  * Press targets inside a word that never start a word gesture (drag or
  * click-to-center): the ring and the connect handle start their own gestures,
  * while the memory dot, the remove × and the reject arrow are plain buttons.
- * The selector's elements belong here too, so a press on one can never fall
- * through to a word behind it.
+ * Every Epic 4 element joins this list as well as `CONTENT_CLASSES` — ADR-0016
+ * decision 4's "every new element joins both lists as it lands" — so a press on
+ * any of them can never fall through to a word behind or beneath it. (Level 1's
+ * elements are left exactly as they were: the gate's two lists predate the
+ * stories, and Level 1 must behave as before.)
  */
 export const WORD_CONTROL_CLASSES = [
   "word-mark",
@@ -107,8 +110,9 @@ export const WORD_CONTROL_CLASSES = [
   "word-reject",
   "playing-set",
   "playing-set-word",
-  // Story 2: the sign glyph and its head controls own their presses, and the
-  // pending sign choice must never fall through to a word behind it.
+  // Story 2: the wire, the sign glyph and its head controls own their presses,
+  // and the pending sign choice must never fall through to a word behind it.
+  "link",
   "link-head",
   "link-mark",
   "link-sign",
@@ -128,7 +132,12 @@ export const WORD_CONTROL_CLASSES = [
   "loop-coinfield-input",
   "path-collect",
   "path-word",
+  "path-bar",
   "walk",
+  "walk-step",
+  "walk-gap",
+  "walk-verdict",
+  "walk-close",
   // Story 4: the diamond and the overlay own their presses. The diamond is a
   // word-row affordance (beside the memory dot and the connect handle), so it
   // must never start a word drag or a click-to-center; the overlay's lines,
