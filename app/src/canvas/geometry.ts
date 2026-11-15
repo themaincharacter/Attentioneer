@@ -180,3 +180,198 @@ export function wordsInPolygon<T extends LassoWord>(
 ): T[] {
   return words.filter((word) => pointInPolygon(centerOf(word.pos, word.box), polygon));
 }
+
+/**
+ * Loop routes (Epic 4 story 3, ADR-0012/0015/0016). A stored loop renders as a
+ * quiet CLOSED route through its words in path order, hugging each word's edge
+ * so it never crosses text: a word's rim point is the bisector of its incoming
+ * and outgoing chords, pushed just off the box, and a walk that passes straight
+ * through sends the route around the word's side. One-word loops get a small
+ * orbit off the word; two-word cycles get a thin closed ring around both words
+ * (a chord is all they have, and the ring still reads as a cycle). Every loop
+ * is staggered a little further out (its rank in the file) so overlapping
+ * cycles stay distinct.
+ *
+ * Pure, so the route's "never through text" promise is asserted without a DOM.
+ * Provisional: the offsets, the orbit and the ring (ADR-0003's seam).
+ */
+
+/** World units a loop's route is pushed out per rank, so overlaps stay apart. */
+export const LOOP_ROUTE_STAGGER = 6;
+
+/** World units the route stands off a word's edge (never on the text). */
+export const LOOP_ROUTE_STANDOFF = 2;
+
+/** A self-loop's orbit: its radius and the gap from the word's right edge. */
+export const SELF_LOOP_RADIUS = 9;
+export const SELF_LOOP_GAP = 3;
+
+/** A word as the route sees it: its centre and measured box. */
+export interface RouteVisit {
+  center: Point;
+  box: Box;
+}
+
+/** The unit vector center -> toward, or null for a degenerate direction. */
+function unitVector(from: Point, to: Point): Point | null {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return null;
+  return { x: dx / length, y: dy / length };
+}
+
+/**
+ * Where the route leaves (or meets) one word: the bisector of the incoming and
+ * outgoing chord directions, pushed off the box edge by the standoff plus this
+ * loop's offset. Opposing chords (the walk passes straight through) send it
+ * around the side instead, so the route never crosses the text.
+ */
+export function routeRim(
+  visit: RouteVisit,
+  prev: Point,
+  next: Point,
+  offset = 0,
+): Point {
+  const incoming = unitVector(visit.center, prev);
+  const outgoing = unitVector(visit.center, next);
+  let direction: Point | null = null;
+  if (incoming && outgoing) {
+    const sum = { x: incoming.x + outgoing.x, y: incoming.y + outgoing.y };
+    const length = Math.hypot(sum.x, sum.y);
+    direction =
+      length < 1e-6
+        ? { x: -incoming.y, y: incoming.x }
+        : { x: sum.x / length, y: sum.y / length };
+  } else {
+    direction = incoming ?? outgoing;
+  }
+  if (!direction) return { x: visit.center.x, y: visit.center.y };
+  const edge = edgePoint(visit.center, visit.box, {
+    x: visit.center.x + direction.x,
+    y: visit.center.y + direction.y,
+  });
+  const push = offset + LOOP_ROUTE_STANDOFF;
+  return {
+    x: edge.x + direction.x * push,
+    y: edge.y + direction.y * push,
+  };
+}
+
+/** A one-word loop's orbit: a small quiet circle off the word's right edge. */
+export function selfLoopPoints(visit: RouteVisit, offset = 0): Point[] {
+  const radius = SELF_LOOP_RADIUS + offset;
+  const center = {
+    x: visit.center.x + visit.box.w / 2 + SELF_LOOP_GAP + radius,
+    y: visit.center.y,
+  };
+  const points: Point[] = [];
+  for (let i = 0; i < 10; i += 1) {
+    const angle = (i / 10) * Math.PI * 2;
+    points.push({
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+    });
+  }
+  return points;
+}
+
+/**
+ * A two-word cycle's ring: a quiet capsule around both words — straight sides
+ * hugging the pair, rounded ends wrapping them — so the route encloses the
+ * cycle without ever crossing either word's text. The frame is the chord's own
+ * (midpoint and angle); the capsule's radius clears the boxes' widest corner,
+ * and each loop's rank pushes it a little further out.
+ */
+export function pairLoopPoints(
+  a: RouteVisit,
+  b: RouteVisit,
+  offset = 0,
+): Point[] {
+  const angle = Math.atan2(
+    b.center.y - a.center.y,
+    b.center.x - a.center.x,
+  );
+  const mid = {
+    x: (a.center.x + b.center.x) / 2,
+    y: (a.center.y + b.center.y) / 2,
+  };
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  // Every corner of both boxes, in the chord frame.
+  let halfLength = 0;
+  let halfWidth = 0;
+  for (const visit of [a, b]) {
+    for (const corner of boxCorners(visit.center, visit.box)) {
+      const dx = corner.x - mid.x;
+      const dy = corner.y - mid.y;
+      const along = dx * cos + dy * sin;
+      const across = -dx * sin + dy * cos;
+      halfLength = Math.max(halfLength, Math.abs(along));
+      halfWidth = Math.max(halfWidth, Math.abs(across));
+    }
+  }
+  const radius = halfWidth + LOOP_ROUTE_STANDOFF + offset;
+  const steps = 8;
+  const points: Point[] = [];
+  const add = (along: number, across: number) => {
+    points.push({
+      x: mid.x + along * cos - across * sin,
+      y: mid.y + along * sin + across * cos,
+    });
+  };
+  // The right cap, then the left cap; the straight sides are the segments
+  // between the caps (so the whole ring hugs the pair).
+  for (let i = 0; i <= steps; i += 1) {
+    const t = -Math.PI / 2 + (i / steps) * Math.PI;
+    add(halfLength + radius * Math.cos(t), radius * Math.sin(t));
+  }
+  for (let i = 0; i <= steps; i += 1) {
+    const t = Math.PI / 2 + (i / steps) * Math.PI;
+    add(-halfLength + radius * Math.cos(t), radius * Math.sin(t));
+  }
+  return points;
+}
+
+/** The four corners of a word's box (the route layout's containment tests). */
+function boxCorners(center: Point, box: Box): Point[] {
+  const halfW = box.w / 2;
+  const halfH = box.h / 2;
+  return [
+    { x: center.x - halfW, y: center.y - halfH },
+    { x: center.x + halfW, y: center.y - halfH },
+    { x: center.x + halfW, y: center.y + halfH },
+    { x: center.x - halfW, y: center.y + halfH },
+  ];
+}
+
+/**
+ * The closed route through a loop's words, one visit per path word (the closing
+ * repeat omitted by the caller). Three or more words get the rim polyline; a
+ * self-loop gets its orbit; a 2-cycle gets its ring. An empty walk has no route.
+ */
+export function loopRoutePoints(
+  visits: readonly RouteVisit[],
+  offset = 0,
+): Point[] {
+  if (visits.length === 0) return [];
+  if (visits.length === 1) return selfLoopPoints(visits[0], offset);
+  if (visits.length === 2) return pairLoopPoints(visits[0], visits[1], offset);
+  return visits.map((visit, i) => {
+    const prev = visits[(i - 1 + visits.length) % visits.length];
+    const next = visits[(i + 1) % visits.length];
+    return routeRim(visit, prev.center, next.center, offset);
+  });
+}
+
+/** The route's middle, where the coined name sits (the average of its points). */
+export function routeCenter(points: readonly Point[]): Point {
+  if (points.length === 0) return { x: 0, y: 0 };
+  let x = 0;
+  let y = 0;
+  for (const point of points) {
+    x += point.x;
+    y += point.y;
+  }
+  return { x: x / points.length, y: y / points.length };
+}

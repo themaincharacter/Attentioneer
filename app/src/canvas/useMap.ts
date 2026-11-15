@@ -39,6 +39,15 @@ import {
   type PlayingSet,
 } from "../map/model";
 import {
+  loadLoops,
+  nameLoop as nameLoopRecord,
+  removeLoop as removeLoopRecord,
+  renameLoop as renameLoopRecord,
+  saveLoops,
+  unusedLoopSlugs,
+  type Loop,
+} from "../map/loops";
+import {
   dropLinkMarks,
   dropWireMarks,
   recoinWireMarks,
@@ -88,6 +97,15 @@ export interface ConnectDraft {
  * DURABLE record is written first — the link line or the reference file — with
  * the membership write second, so a crash leaves the visible move, never a
  * member naming nothing.
+ *
+ * Epic 4 story 3 adds named loops (ADR-0012 decision 3, ADR-0015):
+ * `map/loops.jsonl` loaded with the rest, one line per coined name plus its
+ * rotation-canonical closed path. Authoring, renaming and removing are quiet
+ * single-line writes through the same in-order queue as marks and links. The
+ * walk is NOT here: `loopRead.ts` derives it on every render, so a flip changes
+ * the read in the same breath and no verdict is ever stored. Creating a loop
+ * does not touch the playing set — ADR-0013 decision 4 lets a loop name a
+ * non-member and surfaces that at read time.
  */
 export interface UseMapOptions {
   /**
@@ -112,6 +130,8 @@ export function useMap(
   const [malformedLinks, setMalformedLinks] = useState<string[]>([]);
   const [model, setModel] = useState<PlayingSet | null>(null);
   const [malformedModel, setMalformedModel] = useState<string | null>(null);
+  const [loops, setLoops] = useState<Loop[]>([]);
+  const [malformedLoops, setMalformedLoops] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [connect, setConnect] = useState<ConnectDraft | null>(null);
   const draftCount = useRef(0);
@@ -122,17 +142,27 @@ export function useMap(
   const malformedLinksRef = useRef<string[]>([]);
   const linksWriteRef = useRef<Promise<void>>(Promise.resolve());
   const modelRef = useRef<PlayingSet | null>(null);
+  const loopsRef = useRef<Loop[]>([]);
+  const malformedLoopsRef = useRef<string[]>([]);
+  const loopsWriteRef = useRef<Promise<void>>(Promise.resolve());
 
   /** Re-read every map file (first load and after an atomic patch). */
   const reloadMap = useCallback(async () => {
-    const [referenceList, parsedDistances, parsedMarks, parsedLinks, parsedModel] =
-      await Promise.all([
-        loadReferences(workspacePath),
-        loadDistances(workspacePath),
-        loadMarks(workspacePath),
-        loadLinks(workspacePath),
-        loadModel(workspacePath),
-      ]);
+    const [
+      referenceList,
+      parsedDistances,
+      parsedMarks,
+      parsedLinks,
+      parsedModel,
+      parsedLoops,
+    ] = await Promise.all([
+      loadReferences(workspacePath),
+      loadDistances(workspacePath),
+      loadMarks(workspacePath),
+      loadLinks(workspacePath),
+      loadModel(workspacePath),
+      loadLoops(workspacePath),
+    ]);
     setRefs(referenceList);
     setDistances(parsedDistances.distances);
     setMalformed(parsedDistances.malformed);
@@ -147,6 +177,10 @@ export function useMap(
     modelRef.current = parsedModel.model;
     setModel(parsedModel.model);
     setMalformedModel(parsedModel.malformed);
+    loopsRef.current = parsedLoops.loops;
+    malformedLoopsRef.current = parsedLoops.malformed;
+    setLoops(parsedLoops.loops);
+    setMalformedLoops(parsedLoops.malformed);
     setLoaded(true);
   }, [workspacePath]);
 
@@ -171,6 +205,12 @@ export function useMap(
   useEffect(() => {
     modelRef.current = model;
   }, [model]);
+
+  // The loops mirror follows the same rule: a rename or remove can land right
+  // after a burst of writes, so it must never read a stale record.
+  useEffect(() => {
+    loopsRef.current = loops;
+  }, [loops]);
 
   /** Persist the distance file after each mutation (deduped by key). */
   const persistDistances = useCallback(
@@ -216,6 +256,23 @@ export function useMap(
       linksWriteRef.current = linksWriteRef.current
         .catch(() => undefined)
         .then(() => saveLinks(workspacePath, deduped, malformedLines));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * Persist the loops file after each mutation (one line per coined name, the
+   * path rotation-canonical). Same in-order queue: a rename followed by a remove
+   * must land in the order the person made them.
+   */
+  const persistLoops = useCallback(
+    (next: readonly Loop[]) => {
+      loopsRef.current = [...next];
+      setLoops([...next]);
+      const malformedLines = [...malformedLoopsRef.current];
+      loopsWriteRef.current = loopsWriteRef.current
+        .catch(() => undefined)
+        .then(() => saveLoops(workspacePath, next, malformedLines));
     },
     [workspacePath],
   );
@@ -283,6 +340,20 @@ export function useMap(
     );
     return model.words.filter((slug) => !slugs.has(slug));
   }, [loaded, model, refs]);
+
+  /**
+   * Loops naming a word that is not on the map (a hand edit or a partial
+   * write): preserved in the file and surfaced quietly, never dropped on an
+   * unrelated write — the no-validation posture (ADR-0012 decision 3). The
+   * walk names the same gap, per path word, when it is opened.
+   */
+  const orphanLoops = useMemo(() => {
+    if (!loaded) return [];
+    const slugs = new Set(
+      refs.map((ref) => ref.slug).filter((slug): slug is string => slug !== null),
+    );
+    return unusedLoopSlugs(loops, slugs);
+  }, [loaded, loops, refs]);
 
   /**
    * Accept the selector's set: one explicit write of `map/model.json`
@@ -629,6 +700,40 @@ export function useMap(
     [distances, persistDistances, persistMarks],
   );
 
+  /**
+   * Coin a loop: one line, the name exactly as coined (a key collision mints a
+   * numeric suffix in the name, never a silent merge), the path rotated
+   * canonically at its smallest slug with direction and closure kept
+   * (ADR-0015 decision 5). The gate's path gesture supplies the closed slug
+   * list; membership is deliberately untouched (ADR-0013 decision 4).
+   */
+  const createLoop = useCallback(
+    (name: string, path: readonly string[]) => {
+      persistLoops(nameLoopRecord(loopsRef.current, name, path));
+    },
+    [persistLoops],
+  );
+
+  /**
+   * Rename a loop: one in-place rewrite of its line — name, key and path bytes
+   * in one atomic move, unknown keys riding along (ADR-0012 decision 3). Story 4
+   * grows the assumption loop-targets step; nothing targets a loop yet.
+   */
+  const renameLoop = useCallback(
+    (loop: Loop, newName: string) => {
+      persistLoops(renameLoopRecord(loopsRef.current, loop, newName));
+    },
+    [persistLoops],
+  );
+
+  /** Remove a loop — ammo, one click, no ceremony; only its line goes. */
+  const removeLoop = useCallback(
+    (loop: Loop) => {
+      persistLoops(removeLoopRecord(loopsRef.current, loop));
+    },
+    [persistLoops],
+  );
+
   return {
     refs,
     distances,
@@ -642,6 +747,9 @@ export function useMap(
     model,
     malformedModel,
     orphanMembers,
+    loops,
+    malformedLoops,
+    orphanLoops,
     loaded,
     acceptPlayingSet,
     connect,
@@ -668,5 +776,8 @@ export function useMap(
     cancelConnect,
     recoinDistance,
     removeDistance,
+    createLoop,
+    renameLoop,
+    removeLoop,
   };
 }

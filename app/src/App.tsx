@@ -6,6 +6,9 @@ import {
   DEFAULT_BOX,
   directedWireEndpoints,
   edgePoint,
+  LOOP_ROUTE_STAGGER,
+  loopRoutePoints,
+  routeCenter,
   wordsInPolygon,
   type Box,
   type Point,
@@ -14,6 +17,15 @@ import type { GestureMode } from "./canvas/gates";
 import { LevelControl } from "./canvas/LevelControl";
 import { LackMark } from "./canvas/LackMark";
 import { LinkWire } from "./canvas/LinkWire";
+import {
+  beginPathSession,
+  clickPathWord,
+  endPathSession,
+  type PathSession,
+} from "./canvas/loopAuthoring";
+import { LoopCoinField, PathBar, PathWords } from "./canvas/LoopFields";
+import { LoopRoute } from "./canvas/LoopRoute";
+import { LoopWalk } from "./canvas/LoopWalk";
 import { resolveElementPick, type PickedElement } from "./canvas/markTargets";
 import { countsAsOneFlip } from "./canvas/planePress";
 import { PlaneMenu } from "./canvas/PlaneMenu";
@@ -25,6 +37,8 @@ import { SignChoice } from "./canvas/SignChoice";
 import { useCamera } from "./canvas/useCamera";
 import { useMap } from "./canvas/useMap";
 import { linkKey, type LinkSign } from "./map/links";
+import { readLoop } from "./map/loopRead";
+import { findLoop, isClosedPath, loopSlug, type Loop } from "./map/loops";
 import { markTargetKey, type Mark, type MarkTarget } from "./map/marks";
 import { hasWord, prefilledSelection } from "./map/model";
 import type { Reference } from "./map/refs";
@@ -71,6 +85,9 @@ function App() {
     model,
     malformedModel,
     orphanMembers,
+    loops,
+    malformedLoops,
+    orphanLoops,
     loaded,
     acceptPlayingSet,
     connect,
@@ -97,6 +114,9 @@ function App() {
     cancelConnect,
     recoinDistance,
     removeDistance,
+    createLoop,
+    renameLoop,
+    removeLoop,
   } = map;
 
   // The shelf's fold (ADR-0010): a workspace-level convention, provisional.
@@ -117,6 +137,10 @@ function App() {
     new Set(),
   );
   const [lassoArmed, setLassoArmed] = useState(false);
+  // Loop authoring (story 3): the path gesture's session (null = not arming),
+  // and the loop whose walk is open (null = no walk).
+  const [pathSession, setPathSession] = useState<PathSession | null>(null);
+  const [walkSlug, setWalkSlug] = useState<string | null>(null);
   // A workspace that resumed in dynamics with no set prompts the selector once.
   const autoPromptedRef = useRef<string | null>(null);
 
@@ -147,6 +171,17 @@ function App() {
           .map((mark) => markTargetKey(mark.target)),
       ),
     [marks],
+  );
+
+  // Every coined word's slug: the read's "is this path word on the map?".
+  const wordSlugs = useMemo(
+    () =>
+      new Set(
+        refs
+          .map((ref) => ref.slug)
+          .filter((slug): slug is string => slug !== null),
+      ),
+    [refs],
   );
 
   // The bare lacks (spot targets), one ring each, deduped by natural key so a
@@ -190,14 +225,18 @@ function App() {
     [posOf, boxOf, shelfX],
   );
 
-  // The interaction-mode gate (ADR-0016): the selector and the pending sign
-  // choice are the armed gestures; story 3's path collection joins here.
+  // The interaction-mode gate (ADR-0016): the selector, the pending sign choice
+  // and story 3's path collection are the armed gestures. While the path arm is
+  // live the words' own presses stand still, the plane does not pan and the
+  // creation menu cannot open — the path layer is the only live surface.
   const signPending = level === "dynamics" && connect !== null && connect.to !== undefined;
   const gestureMode: GestureMode = selectorOpen
     ? "selector"
     : signPending
       ? "sign-choice"
-      : "idle";
+      : pathSession !== null
+        ? "path"
+        : "idle";
 
   // Every coined word, as the selector's world-space layer needs it.
   const selectorWords = useMemo(
@@ -214,6 +253,46 @@ function App() {
         })),
     [refs, posOf, boxOf],
   );
+
+  /**
+   * The stored loops' quiet routes (Level 2 only, story 3): one closed polyline
+   * per loop through its words in path order, staggered by the loop's rank in
+   * the file so overlapping cycles stay distinct. A route needs every path word
+   * on the map (a missing one has no place on the plane — the notice strip names
+   * it, and the walk names it per step); an unclosed hand-edited path draws no
+   * route either, for the same reason a rotation would change its walks.
+   */
+  const loopRoutes = useMemo(() => {
+    if (level !== "dynamics") return [];
+    const bySlug = new Map(selectorWords.map((word) => [word.slug, word]));
+    const routes: Array<{ loop: Loop; points: Point[]; nameAt: Point }> = [];
+    loops.forEach((loop, rank) => {
+      if (!isClosedPath(loop.path)) return;
+      const visits: Array<{ center: Point; box: Box }> = [];
+      for (const slug of loop.path.slice(0, -1)) {
+        const word = bySlug.get(slug);
+        if (!word) return;
+        visits.push({ center: centerOf(word.pos, word.box), box: word.box });
+      }
+      if (visits.length === 0) return;
+      const points = loopRoutePoints(visits, rank * LOOP_ROUTE_STAGGER);
+      if (points.length < 3) return;
+      routes.push({ loop, points, nameAt: routeCenter(points) });
+    });
+    return routes;
+  }, [level, loops, selectorWords]);
+
+  /**
+   * The open loop's walk — DERIVED on every render from the records, never
+   * stored: a flipped sign or a cast mark changes the read in the same breath
+   * (ADR-0015). Null when no walk is open or the loop is gone.
+   */
+  const walkRead = useMemo(() => {
+    if (level !== "dynamics" || walkSlug === null) return null;
+    const loop = findLoop(loops, walkSlug);
+    if (!loop) return null;
+    return readLoop(loop, { links, marks, model, words: wordSlugs });
+  }, [level, walkSlug, loops, links, marks, model, wordSlugs]);
 
   // Out of play at Level 2: dimmed but fully live (ADR-0013, story 1). In
   // concept mode — or before a set exists — every word renders unchanged.
@@ -234,6 +313,7 @@ function App() {
     setGrowAt(null);
     setSelectorOpen(false);
     setLassoArmed(false);
+    setPathSession(endPathSession());
     cancelConnect();
   }, [cancelConnect]);
 
@@ -303,6 +383,7 @@ function App() {
     (next: Level) => {
       if (!workspace || workspace.level === next) return;
       cancelPendingGestures();
+      setWalkSlug(null);
       setWorkspace({ ...workspace, level: next });
       void saveWorkspaceLevel(workspace.path, next);
       if (next === "dynamics" && model === null) {
@@ -311,6 +392,75 @@ function App() {
     },
     [workspace, model, cancelPendingGestures, openSelector],
   );
+
+  /**
+   * Arm the path gesture: the level control's "coin a loop" (story 3). Opening
+   * it cancels any other pending gesture, and the gate's `path` mode suspends
+   * word presses, pan and creation while the words are clicked in order.
+   */
+  const beginLoop = useCallback(() => {
+    cancelPendingGestures();
+    setPathSession(beginPathSession());
+  }, [cancelPendingGestures]);
+
+  /** One word click in the path layer: collect it, or close at the first. */
+  const pickPathWord = useCallback((slug: string) => {
+    setPathSession((session) => (session ? clickPathWord(session, slug) : session));
+  }, []);
+
+  /** Esc (or leaving the gesture): the whole session goes, nothing is written. */
+  const cancelPath = useCallback(() => {
+    setPathSession(endPathSession());
+  }, []);
+
+  /**
+   * The coin field's Enter: one line in `map/loops.jsonl`, path rotated
+   * canonically (ADR-0015 decision 5). The loop is a claim about the path, not
+   * a change to the playing set — a path word outside play stays a gap the walk
+   * names (ADR-0013 decision 4).
+   */
+  const commitLoop = useCallback(
+    (name: string) => {
+      if (!pathSession || pathSession.kind !== "naming") return;
+      createLoop(name, pathSession.path);
+      setPathSession(null);
+    },
+    [pathSession, createLoop],
+  );
+
+  /** Open a loop's walk — the route or the coined name is the only trigger. */
+  const openWalk = useCallback((slug: string) => setWalkSlug(slug), []);
+  const closeWalk = useCallback(() => setWalkSlug(null), []);
+
+  // Esc cancels loop authoring entirely: the collected path and the coin field
+  // go and nothing is written (ADR-0016's gate spells the gesture's ends).
+  useEffect(() => {
+    if (pathSession === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setPathSession(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pathSession]);
+
+  /**
+   * Where the coin field asks for the loop's name: the middle of the path just
+   * walked (the route's own middle, so the field sits where the loop will).
+   */
+  const pathCoinAt = useMemo<Point | null>(() => {
+    if (pathSession === null || pathSession.kind !== "naming") return null;
+    const bySlug = new Map(selectorWords.map((word) => [word.slug, word]));
+    const visits: Array<{ center: Point; box: Box }> = [];
+    for (const slug of pathSession.path.slice(0, -1)) {
+      const word = bySlug.get(slug);
+      if (!word) return null;
+      visits.push({ center: centerOf(word.pos, word.box), box: word.box });
+    }
+    if (visits.length === 0) return null;
+    return routeCenter(loopRoutePoints(visits));
+  }, [pathSession, selectorWords]);
 
   /**
    * Reject = settle + set aside in one move (ADR-0010): the word lands in the
@@ -507,6 +657,25 @@ function App() {
         {/* the shelf's fold and margin: a place in world space (story 3) */}
         <ShelfFold shelfX={shelfX} />
 
+        {/* stored loops render at Level 2 only (story 3): a quiet closed route
+            through each loop's words in path order, beneath the words so it
+            hugs them, with the coined name near it. The route or the name opens
+            the walk; the name renames on double-click and removes on its ×. */}
+        {loopRoutes.map(({ loop, points, nameAt }) => (
+          <LoopRoute
+            key={`loop-${loopSlug(loop.name)}`}
+            loop={loop}
+            points={points}
+            nameAt={nameAt}
+            onOpen={() => openWalk(loopSlug(loop.name))}
+            onRename={(name) => renameLoop(loop, name)}
+            onRemove={() => {
+              if (walkSlug === loopSlug(loop.name)) closeWalk();
+              removeLoop(loop);
+            }}
+          />
+        ))}
+
         {/* bare lacks: one quiet ring per open spot (story 2) */}
         {openSpots.map((spot) => (
           <LackMark
@@ -654,6 +823,17 @@ function App() {
             );
           })}
 
+        {/* loop authoring (story 3): while the path gate is armed, one quiet
+            button over each word collects its slug IN ORDER; pressing the
+            first word again closes the cycle (a self-loop is A, A). */}
+        {pathSession && (
+          <PathWords
+            words={selectorWords}
+            session={pathSession}
+            onPick={pickPathWord}
+          />
+        )}
+
         {/* the playing-set selector's world layer (story 1): one quiet button
             over each word; excluded words wear a dashed hollow ring, never
             the remove × */}
@@ -676,6 +856,17 @@ function App() {
               if (spot) growMark(spot, name);
             }}
             onCancel={() => setGrowAt(null)}
+          />
+        )}
+
+        {/* the loop's coin field after the path closes (story 3): name it or
+            esc; nothing is written until Enter */}
+        {pathCoinAt && (
+          <LoopCoinField
+            x={pathCoinAt.x}
+            y={pathCoinAt.y}
+            onCoin={commitLoop}
+            onCancel={cancelPath}
           />
         )}
 
@@ -723,7 +914,14 @@ function App() {
         level={level}
         onChange={changeLevel}
         onEditPlayingSet={openSelector}
+        onCoinLoop={beginLoop}
       />
+
+      {/* the path gesture's quiet hint (story 3): what the click does and how
+          it ends; fixed in screen space, and gone with the session */}
+      {pathSession && (
+        <PathBar collecting={pathSession.kind === "collecting"} />
+      )}
 
       {/* the selector's controls, in screen space while it is open (story 1) */}
       {selectorOpen && (
@@ -744,7 +942,13 @@ function App() {
         orphanLinks={orphanLinks}
         malformedModel={malformedModel}
         orphanMembers={orphanMembers}
+        malformedLoops={malformedLoops}
+        orphanLoops={orphanLoops}
       />
+
+      {/* the walk (story 3): the selected loop's derived read — steps, signs,
+          named gaps and the verdict only when complete (ADR-0015) */}
+      {walkRead && <LoopWalk read={walkRead} onClose={closeWalk} />}
 
       {/* the ring in flight while its mark is being bound (story 2) */}
       {markDrag.ghost && (
@@ -770,6 +974,8 @@ function MarkNotices({
   orphanLinks,
   malformedModel,
   orphanMembers,
+  malformedLoops,
+  orphanLoops,
 }: {
   malformed: readonly string[];
   orphans: readonly Mark[];
@@ -777,6 +983,8 @@ function MarkNotices({
   orphanLinks: readonly { from: string; to: string }[];
   malformedModel: string | null;
   orphanMembers: readonly string[];
+  malformedLoops: readonly string[];
+  orphanLoops: readonly string[];
 }) {
   if (
     malformed.length === 0 &&
@@ -784,7 +992,9 @@ function MarkNotices({
     malformedLinks.length === 0 &&
     orphanLinks.length === 0 &&
     malformedModel === null &&
-    orphanMembers.length === 0
+    orphanMembers.length === 0 &&
+    malformedLoops.length === 0 &&
+    orphanLoops.length === 0
   ) {
     return null;
   }
@@ -821,6 +1031,16 @@ function MarkNotices({
           unreadable map/model.json — kept as is until a playing set is accepted
         </div>
       )}
+      {orphanLoops.map((slug) => (
+        <div className="mark-notice" key={`loop-word-${slug}`}>
+          a loop's path names “{slug}” — not on the map, kept in map/loops.jsonl
+        </div>
+      ))}
+      {malformedLoops.map((line, index) => (
+        <div className="mark-notice" key={`malformed-loop-${index}`}>
+          unreadable line in map/loops.jsonl: {line}
+        </div>
+      ))}
     </div>
   );
 }

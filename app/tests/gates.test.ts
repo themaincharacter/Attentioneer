@@ -172,3 +172,81 @@ describe("the signed link's elements are content and own their presses", () => {
     expect(shouldCreate("sign-choice")).toBe(false);
   });
 });
+
+/**
+ * Story 3's growth, automated: the loop's route and coined name, the
+ * rename/coin field, the path-collection layer and the walk's read all join the
+ * content list (and the route/name join the word handler's early-return list),
+ * and the `path` arm suppresses the plane's own gestures exactly as the earlier
+ * modes do (ADR-0016 decision 4).
+ */
+describe("the loop's elements are content and the path gate owns the pointer", () => {
+  const LOOP_CONTENT = [
+    "loop-route",
+    "loop-route-hit",
+    "loop-name",
+    "loop-name-text",
+    "loop-remove",
+    "loop-coinfield",
+    "loop-coinfield-input",
+    "path-collect",
+    "path-word",
+    "path-bar",
+    "walk",
+    "walk-step",
+    "walk-gap",
+    "walk-verdict",
+    "walk-close",
+  ];
+
+  test("each loop element is content (never a plane gesture)", () => {
+    for (const name of LOOP_CONTENT) {
+      expect(CONTENT_CLASSES).toContain(name as never);
+      expect(isContentElement(cl(name))).toBe(true);
+      expect(CONTENT_SELECTOR).toContain(`.${name}`);
+    }
+  });
+
+  test("the route, its name and their presses join the word handler's list", () => {
+    for (const name of [
+      "loop-route",
+      "loop-route-hit",
+      "loop-name",
+      "loop-name-text",
+      "loop-remove",
+      "loop-coinfield",
+      "loop-coinfield-input",
+      "path-collect",
+      "path-word",
+      "walk",
+    ]) {
+      expect(WORD_CONTROL_CLASSES).toContain(name as never);
+      expect(shouldStartWordPress("idle", cl(name))).toBe(false);
+    }
+  });
+
+  test("the path arm suspends word press, pan and creation", () => {
+    expect(isGestureArmed("path")).toBe(true);
+    expect(shouldStartWordPress("path", cl("word-name"))).toBe(false);
+    expect(shouldPan("path")).toBe(false);
+    // The creation ring menu must not open behind the path gesture.
+    expect(shouldCreate("path")).toBe(false);
+  });
+
+  test("the earlier lists are untouched (no Level 1 regression)", () => {
+    for (const name of [
+      "word",
+      "lack-mark",
+      "distance-label",
+      "distance-coinfield",
+      "grow-field",
+      "plane-menu",
+      "playing-set-word",
+      "link",
+      "link-head",
+      "sign-choice",
+    ]) {
+      expect(CONTENT_SELECTOR).toContain(`.${name}`);
+    }
+  });
+});

@@ -3,8 +3,8 @@
  * while a gesture is armed the plane's own gestures stand still — word press
  * behaviors, pan and creation all suspend — and the armed gesture owns the
  * pointer. The selector is the first mode; `sign-choice` (a link's sign, story
- * 2) is the second; `path` (loop authoring) arrives in story 3, named now so
- * the seam is one module instead of conditionals threaded through old handlers.
+ * 2) is the second; `path` (loop authoring, story 3) is the third — it arms
+ * while the words of a cycle are clicked in order and named.
  *
  * The gate also owns the content-element list: presses on content are never
  * plane gestures. New canvas elements join `CONTENT_CLASSES` as they land, and
@@ -47,6 +47,24 @@ export const CONTENT_CLASSES = [
   "link-remove",
   "sign-choice",
   "sign-choice-option",
+  // Story 3's loops: the route and its coined name, the rename/coin field, the
+  // path-collection layer and the walk's quiet read. A press on any of them is
+  // content, never a plane gesture.
+  "loop-route",
+  "loop-route-hit",
+  "loop-name",
+  "loop-name-text",
+  "loop-remove",
+  "loop-coinfield",
+  "loop-coinfield-input",
+  "path-collect",
+  "path-word",
+  "path-bar",
+  "walk",
+  "walk-step",
+  "walk-gap",
+  "walk-verdict",
+  "walk-close",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */
@@ -76,6 +94,19 @@ export const WORD_CONTROL_CLASSES = [
   "link-remove",
   "sign-choice",
   "sign-choice-option",
+  // Story 3: the loop route/name own their presses (open the walk, rename,
+  // remove) and the path layer's buttons are the only live surface while the
+  // path gesture is armed; none of them may ever start a word press.
+  "loop-route",
+  "loop-route-hit",
+  "loop-name",
+  "loop-name-text",
+  "loop-remove",
+  "loop-coinfield",
+  "loop-coinfield-input",
+  "path-collect",
+  "path-word",
+  "walk",
 ] as const;
 
 /** Is any gesture armed? */

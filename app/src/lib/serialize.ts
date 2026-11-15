@@ -31,6 +31,19 @@ export function slugName(name: string): string {
   return slug || "untitled";
 }
 
+/**
+ * Mint the first free slug, adding a numeric suffix on collision (ADR-0005
+ * rule 4). Pure, and it lives beside `slugName` because it is the second half
+ * of the slug rules: a reference's file slug, a loop's name-derived key and a
+ * membership slug all mint the same way. The caller supplies what is taken.
+ */
+export function nextSlug(base: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(`${base}-${n}`)) n += 1;
+  return `${base}-${n}`;
+}
+
 function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sortKeys);

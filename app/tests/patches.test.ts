@@ -1,17 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import {
+  dropLoopsTouching,
   dropMarksTouching,
   dropMembership,
   dropTouching,
   dropWireMarks,
+  nextSlug,
   recoinWireMarks,
   rewriteEndpoints,
+  rewriteLoopPaths,
   rewriteMarkEndpoints,
   rewriteMembership,
 } from "../src/map/patches";
 import type { Distance } from "../src/map/distances";
 import { markTargetKey, type Mark, type MarkTarget } from "../src/map/marks";
 import type { PlayingSet } from "../src/map/model";
+import type { Loop } from "../src/map/loops";
+import { serializeLoops as serializeLoopPaths } from "../src/map/loops";
 
 function d(from: string, to: string, word: string): Distance {
   return { from, to, word, extra: {} };
@@ -250,5 +255,101 @@ describe("the playing set follows a rename and a remove (ADR-0013)", () => {
     const renamed = rewriteMembership(play(["rain"]), "rain", "showers");
     expect(renamed.words).toEqual(["showers"]);
     expect(dropMembership(renamed, "showers").words).toEqual([]);
+  });
+});
+
+function lp(
+  name: string,
+  path: string[],
+  extra: Record<string, unknown> = {},
+): Loop {
+  return { name, path, extra };
+}
+
+describe("a rename rewrites loop path slugs in the same batch (ADR-0012/0015)", () => {
+  test("every path is rewritten and rotation-canonicalized again", () => {
+    const loops = [
+      lp("rain loop", ["soil", "plant", "rain", "soil"]),
+      lp("other", ["a", "b", "a"]),
+    ];
+    const out = rewriteLoopPaths(loops, "soil", "earth");
+    // Re-canonicalized: 'earth' now sorts before 'rain' but after 'plant'?
+    // p < r and e < p, so the smallest is 'earth': the rotation moves.
+    expect(out[0].path).toEqual(["earth", "plant", "rain", "earth"]);
+    expect(out[1]).toEqual(loops[1]);
+  });
+
+  test("a rename that changes the smallest slug rotates the line", () => {
+    const loops = [lp("loop", ["b", "c", "a", "b"])];
+    const out = rewriteLoopPaths(loops, "b", "z");
+    // body z,c,a -> smallest a -> [a,z,c] + closure.
+    expect(out[0].path).toEqual(["a", "z", "c", "a"]);
+    // ...and writing it again is byte-stable.
+    expect(serializeLoopPaths(out)).toBe(
+      '{"name":"loop","path":["a","z","c","a"]}' + "\n",
+    );
+  });
+
+  test("the collision-suffixed slug a rename resolved flows straight into paths", () => {
+    // renameReference resolves a name collision to 'rain-2' before this step.
+    const loops = [lp("loop", ["rain", "soil", "rain"])];
+    const out = rewriteLoopPaths(loops, "rain", "rain-2");
+    expect(out[0].path).toEqual(["rain-2", "soil", "rain-2"]);
+  });
+
+  test("names, unknown keys, line count and line order are untouched", () => {
+    const loops = [
+      lp("rain loop", ["a", "b", "a"], { rank: 1 }),
+      lp("soil loop", ["b", "c", "b"], { rank: 2 }),
+    ];
+    const out = rewriteLoopPaths(loops, "b", "z");
+    expect(out).toHaveLength(2);
+    expect(out.map((loop) => loop.name)).toEqual(["rain loop", "soil loop"]);
+    expect(out.map((loop) => loop.extra)).toEqual([{ rank: 1 }, { rank: 2 }]);
+    expect(out[0].path).toEqual(["a", "z", "a"]);
+    // 'z' is no longer the smallest, so the line's rotation moves to 'c'.
+    expect(out[1].path).toEqual(["c", "z", "c"]);
+  });
+
+  test("a self-loop and a path that never mentions the slug are handled", () => {
+    const loops = [
+      lp("self", ["a", "a"]),
+      lp("untouched", ["c", "d", "c"]),
+    ];
+    const out = rewriteLoopPaths(loops, "c", "e");
+    expect(out[0]).toEqual(loops[0]);
+    // Renamed to 'e', which sorts after 'd': the canonical start is 'd'.
+    expect(out[1].path).toEqual(["d", "e", "d"]);
+    // Rewriting the same slug again is a no-op copy.
+    expect(rewriteLoopPaths(loops, "c", "c")).toEqual(loops);
+  });
+
+  test("an unclosed hand-edited path is rewritten but never repaired", () => {
+    const out = rewriteLoopPaths([lp("open", ["a", "b", "c"])], "a", "z");
+    expect(out[0].path).toEqual(["z", "b", "c"]);
+  });
+
+  test("nextSlug is still exported where callers expect it", () => {
+    expect(nextSlug("apple", new Set(["apple"]))).toBe("apple-2");
+  });
+});
+
+describe("removing a reference drops the loops its path names (die-with-target)", () => {
+  test("only the paths mentioning the slug go; the rest keep their bytes", () => {
+    const loops = [
+      lp("one", ["a", "b", "a"]),
+      lp("two", ["b", "c", "b"]),
+      lp("three", ["d", "e", "d"]),
+    ];
+    expect(dropLoopsTouching(loops, "b")).toEqual([loops[2]]);
+  });
+
+  test("a self-loop naming the removed word goes with it", () => {
+    expect(dropLoopsTouching([lp("self", ["a", "a"])], "a")).toEqual([]);
+  });
+
+  test("nothing mentions the slug: no line is touched", () => {
+    const loops = [lp("one", ["a", "b", "a"])];
+    expect(dropLoopsTouching(loops, "gone")).toEqual(loops);
   });
 });

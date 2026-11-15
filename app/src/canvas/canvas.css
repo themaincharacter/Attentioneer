@@ -996,14 +996,16 @@ body {
 
 .level-game:focus-visible,
 .level-edit:focus-visible,
+.level-loop:focus-visible,
 .playing-set-bar button:focus-visible,
 .playing-set-word:focus-visible {
   outline: 1.5px solid #6b675e;
   outline-offset: 1px;
 }
 
-/* "edit the playing set": the same control's quiet re-run of the selector. */
-.level-edit {
+/* "edit the playing set" / "coin a loop": the control's quiet actions. */
+.level-edit,
+.level-loop {
   font: inherit;
   font-size: 11px;
   line-height: 1;
@@ -1019,7 +1021,8 @@ body {
   transition: color 160ms ease;
 }
 
-.level-edit:hover {
+.level-edit:hover,
+.level-loop:hover {
   color: #1e2126;
 }
 
@@ -1386,4 +1389,344 @@ body {
   border-color: #8d887c;
   color: #1e2126;
   outline: none;
+}
+
+/* Epic 4 story 3 — loops and their read (ADR-0012/0015/0016).
+   Provisional: the route's hairline and stagger, the name's pill, the
+   self-loop orbit, the path layer's closing marker and the walk's layout.
+   Level 1 renders none of it, so the concept game reads exactly as before.
+   Every motion stays short, soft and ease-out; the global reduced-motion rule
+   above collapses it. */
+
+/* One stored loop's presence: its route and its coined name. No z-index here,
+   so the route pays out in DOM order (beneath the words that follow) while the
+   name keeps its own layer above them — a stacking context on .loop would bury
+   the name under any word it crosses. */
+.loop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+/* The route: one closed hairline polyline. Its svg viewport is the route's own
+   bounding box (set inline), so the wider transparent polygon above the line is
+   the walk's click target along its whole length. Stroke widths are world units,
+   exactly like the wires' hairlines, so the route scales with the map. */
+.loop-route {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+  animation: fade-in 240ms ease-out;
+}
+
+.loop-route-line {
+  fill: none;
+  stroke: #b5ad9e;
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+  pointer-events: none;
+  transition: stroke 160ms ease;
+}
+
+.loop:hover .loop-route-line {
+  stroke: #8d887c;
+}
+
+.loop-route-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+/* The coined name near the route: the distance label's quiet pill, so a loop's
+   name reads as another thing on the map rather than a panel. */
+.loop-name {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  background: #fffdf8;
+  border: 1px solid #ddd7cc;
+  border-radius: 999px;
+  box-shadow: 0 1px 6px rgba(40, 35, 25, 0.08);
+  pointer-events: auto;
+  z-index: 3;
+  animation: fade-in 200ms ease-out;
+  transition:
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+
+.loop-name:hover {
+  box-shadow: 0 3px 12px rgba(40, 35, 25, 0.14);
+  border-color: #c9c2b4;
+}
+
+.loop-name-text {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  color: #4c4a44;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.loop-name-text:hover {
+  color: #1e2126;
+}
+
+.loop-remove {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 0 1px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.loop-name:hover .loop-remove {
+  opacity: 1;
+}
+
+.loop-remove:hover {
+  color: #b33;
+}
+
+/* The in-place coin/rename field: the distance coin field's idiom, world space
+   (it is content, never a panel). */
+.loop-coinfield {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: #fffdf8;
+  border: 1px solid #c9c2b4;
+  border-radius: 999px;
+  box-shadow: 0 4px 18px rgba(40, 35, 25, 0.14);
+  padding: 3px 10px;
+  z-index: 6;
+  animation: fade-in 150ms ease-out;
+}
+
+.loop-coinfield-input {
+  font: inherit;
+  font-size: 14px;
+  color: #1e2126;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  min-width: 150px;
+}
+
+.loop-name .loop-coinfield-input {
+  font-size: 12px;
+  min-width: 90px;
+}
+
+.loop-coinfield-input::placeholder {
+  color: #c4beb1;
+}
+
+/* The path layer (story 3): one transparent button over each word while the
+   path gate is armed. Collected words wear a soft outline; the FIRST word wears
+   the closing marker — a small inked dot, never a numeral. Clicking it again
+   closes the cycle (a self-loop is one word, clicked twice). */
+.path-collect {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 6;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.path-word {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 1px dashed transparent;
+  border-radius: 7px;
+  pointer-events: auto;
+  cursor: pointer;
+  transition:
+    opacity 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.path-word:hover {
+  background: rgba(255, 253, 248, 0.5);
+  border-color: rgba(141, 136, 124, 0.45);
+}
+
+.path-word.collected {
+  background: rgba(141, 136, 124, 0.1);
+  border: 1px solid rgba(141, 136, 124, 0.5);
+}
+
+.path-word.first {
+  border-style: dotted;
+  border-color: #6b675e;
+}
+
+.path-word.first::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6b675e;
+}
+
+/* The path gesture's hint: fixed in screen space, readable at any zoom, and
+   gone with the session. */
+.path-bar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  z-index: 8;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 12px;
+  background: rgba(255, 253, 248, 0.88);
+  border: 1px solid #e4dfd4;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(40, 35, 25, 0.08);
+  transform: translateX(-50%);
+  pointer-events: none;
+  animation: fade-in 160ms ease-out;
+}
+
+.path-bar-title {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.path-bar-hint {
+  font-size: 11.5px;
+  color: #8d887c;
+}
+
+/* The walk (story 3, ADR-0015): the selected loop's read in a quiet fixed
+   card — steps in path order with their signs or named gaps, and the parity
+   word only when every step resolved. No numerals, ratios or meters. */
+.walk {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 180px;
+  max-width: min(340px, 44vw);
+  padding: 7px 10px 9px;
+  background: rgba(255, 253, 248, 0.9);
+  border: 1px solid #e4dfd4;
+  border-radius: 10px;
+  box-shadow: 0 3px 14px rgba(40, 35, 25, 0.1);
+  animation: fade-in 160ms ease-out;
+}
+
+.walk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.walk-title {
+  flex: 1;
+  font-size: 12.5px;
+  color: #4c4a44;
+}
+
+.walk-close {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 0 1px;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+.walk-close:hover {
+  color: #1e2126;
+}
+
+.walk-step {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #6b675e;
+}
+
+.walk-pair {
+  white-space: nowrap;
+}
+
+.walk-sign {
+  width: 11px;
+  text-align: center;
+  color: #4c4a44;
+}
+
+.walk-sign.unknown {
+  color: #8a8477;
+  font-style: italic;
+}
+
+.walk-note {
+  color: #8d887c;
+  font-style: italic;
+}
+
+.walk-gap {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #8d887c;
+  font-style: italic;
+}
+
+.walk-verdict {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: #1e2126;
+  font-style: italic;
+}
+
+/* While a gesture is armed the loops stand still too — the armed gesture owns
+   the pointer (the path layer's buttons and the coin field stay live). The hit
+   polygon sets its own pointer-events, so the inherited none must be repeated
+   on it. */
+.plane.gesture-armed .loop-route,
+.plane.gesture-armed .loop-route-hit,
+.plane.gesture-armed .loop-name {
+  pointer-events: none;
 }

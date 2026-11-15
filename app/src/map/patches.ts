@@ -22,15 +22,26 @@ import {
   type Mark,
   type MarkTarget,
 } from "./marks";
+import {
+  canonicalPath,
+  loadLoops,
+  saveLoops,
+  type Loop,
+} from "./loops";
 
 /**
  * Atomic patches (ADR-0005, ADR-0007, ADR-0009, ADR-0012, ADR-0013, ADR-0014):
  * rename and remove are single, all-or-nothing app operations — a file plus
  * `name` plus every `distances.jsonl` endpoint, every `links.jsonl` pair, every
- * touching mark and the playing set's member slug (rename), or a file plus
- * every touching distance, link, mark and membership (remove). Prose memory is
- * never rewritten (byte-faithful). No other module hand-strings these edits;
- * `distances.ts`/`links.ts`/`marks.ts`/`model.ts`/`serialize.ts` own the bytes.
+ * touching mark, every `loops.jsonl` path slug and the playing set's member
+ * slug (rename), or a file plus every touching distance, link, mark, loop line
+ * and membership (remove). Prose memory is never rewritten (byte-faithful). No
+ * other module hand-strings these edits; `distances.ts`/`links.ts`/
+ * `marks.ts`/`loops.ts`/`model.ts`/`serialize.ts` own the bytes.
+ *
+ * Write order (the crash rule): references -> distances -> links -> marks ->
+ * loops -> membership -> the old file. Story 4 grows a loop -> assumption step
+ * between loops and membership (the marked seams below say where).
  *
  * Crash rule: the durable thing is written first. The reference's file is
  * written before the records that name the slug, and those records are
@@ -268,12 +279,50 @@ export function dropLinkMarks(
   );
 }
 
-/** Pure: mint the first free slug, adding a numeric suffix on collision (ADR-0005 rule 4). */
-export function nextSlug(base: string, taken: ReadonlySet<string>): string {
-  if (!taken.has(base)) return base;
-  let n = 2;
-  while (taken.has(`${base}-${n}`)) n += 1;
-  return `${base}-${n}`;
+/**
+ * `nextSlug` now lives with the slug rules in `lib/serialize.ts` (the loop
+ * record mints its natural key against the file's lines, and it must not import
+ * this patch batch, which imports loops). Re-exported here for existing
+ * callers; the rule is unchanged (ADR-0005 rule 4).
+ */
+export { nextSlug } from "../lib/serialize";
+
+/**
+ * Re-write every loop path that names `oldSlug` (rename, ADR-0012 decision 6):
+ * the slug is replaced in place and the path is rotation-canonicalized again,
+ * because the smallest slug may have changed — one canonical line, same index,
+ * name and unknown keys untouched. `newSlug` is the caller's resolved slug, so
+ * a rename whose name collides (a `-2` suffix, ADR-0005) flows straight into
+ * the paths. A path that never mentions the old slug is returned as it was.
+ */
+export function rewriteLoopPaths(
+  loops: readonly Loop[],
+  oldSlug: string,
+  newSlug: string,
+): Loop[] {
+  if (oldSlug === newSlug) return [...loops];
+  return loops.map((loop) => {
+    if (!loop.path.includes(oldSlug)) return loop;
+    return {
+      ...loop,
+      path: canonicalPath(
+        loop.path.map((slug) => (slug === oldSlug ? newSlug : slug)),
+      ),
+    };
+  });
+}
+
+/**
+ * Drop every loop whose path names `slug` (remove): die-with-target, ADR-0012
+ * decision 6 — a loop is a path over the map, so a path naming a gone word goes
+ * with it rather than dangling. Loops that never mention it are untouched, and
+ * removing a LINK never reaches here (a loop survives its links, ADR-0012).
+ */
+export function dropLoopsTouching(
+  loops: readonly Loop[],
+  slug: string,
+): Loop[] {
+  return loops.filter((loop) => !loop.path.includes(slug));
 }
 
 /** Rename a reference: write the renamed file, rewrite endpoints, drop the old file. */
@@ -319,7 +368,23 @@ export async function renameReference(
     parsedMarks.malformed,
   );
 
-  // 2c. Follow the rename in the playing set (ADR-0013). The renamed file —
+  // 2c. Follow the rename in the loops' paths in the same batch (ADR-0012
+  //     decision 6). The line is re-canonicalized: the smallest slug may have
+  //     changed, so the rotation is recomputed. Unknown keys and the name ride
+  //     along; a hand-edited unclosed path is left unclosed (never repaired).
+  const parsedLoops = await loadLoops(workspacePath);
+  await saveLoops(
+    workspacePath,
+    rewriteLoopPaths(parsedLoops.loops, oldSlug, newSlug),
+    parsedLoops.malformed,
+  );
+
+  // STORY 4 SEAM — loop -> assumption steps. Story 4 grows this batch here: a
+  // loop rename rewrites the assumption lines whose target is that loop's slug
+  // (ADR-0012 decision 6), in this same ordered write, between loops and
+  // membership. Nothing targets a loop yet.
+
+  // 2d. Follow the rename in the playing set (ADR-0013). The renamed file —
   //     the durable thing — is already on disk, so a crash here leaves a stale
   //     member name in map/model.json (visible, fixable by re-running the
   //     selector), never a member that names no word. An unreadable model file
@@ -368,7 +433,22 @@ export async function removeReference(
     parsedMarks.malformed,
   );
 
-  // 1b. Drop the word's membership before the file goes (ADR-0013). Same
+  // 1b. Drop the loop lines whose path names the word — die-with-target
+  //     (ADR-0012 decision 6) — before the file goes, so no path is ever left
+  //     naming a word the same batch removed. A loop is a path over the map, not
+  //     an annotation on the word, so only the loops that name it go.
+  const parsedLoops = await loadLoops(workspacePath);
+  await saveLoops(
+    workspacePath,
+    dropLoopsTouching(parsedLoops.loops, ref.slug),
+    parsedLoops.malformed,
+  );
+
+  // STORY 4 SEAM — a loop's assumption lines die with the loop (die-with-target,
+  // ADR-0009) when a loop is removed from the canvas; today no assumption
+  // record exists, so this batch has no such step.
+
+  // 1c. Drop the word's membership before the file goes (ADR-0013). Same
   //     crash rule: a crash after this write leaves the word on the map, not
   //     in play — visible, and one accept away from being put back.
   const parsedModel = await loadModel(workspacePath);
