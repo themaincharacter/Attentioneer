@@ -1098,8 +1098,10 @@ body {
 }
 
 /* The selector's world layer: one transparent button over each word. A kept
-   word reads through untouched; an excluded one sits behind a pale wash with
-   its dashed hollow ring. Content, never a plane gesture. */
+   word reads through untouched; an excluded one carries the dashed hollow ring.
+   The wash is the WORD's own quiet (Epic 7 story 1): while the selector is open
+   `.word.out-of-set` follows the DRAFT, so this layer adds the ring only. Content,
+   never a plane gesture. */
 .playing-set {
   position: absolute;
   left: 0;
@@ -1133,15 +1135,20 @@ body {
   border-color: rgba(141, 136, 124, 0.45);
 }
 
+/* ONE wash, two signals (Epic 7 story 1): the word's own quiet is the wash, and
+   this layer adds only what a wash cannot say — the excluded border and the
+   dashed ring below. No second pale wash here: a word that was both out of the
+   accepted set and excluded from the draft used to stack two quiets and read as
+   a dying word, and the wash also fought the draft (a re-included word stayed
+   dimmed until close). */
 .playing-set-word.out {
-  opacity: 0.62;
-  background: rgba(247, 246, 243, 0.66);
+  background: transparent;
   border-color: rgba(141, 136, 124, 0.4);
 }
 
 .playing-set-word.out:hover {
-  opacity: 0.9;
-  background: rgba(247, 246, 243, 0.32);
+  background: transparent;
+  border-color: rgba(141, 136, 124, 0.6);
 }
 
 /* The exclusion marker: a dashed hollow ring, the lack's quiet family and
@@ -1200,14 +1207,45 @@ body {
   pointer-events: none;
 }
 
-/* Out of play at Level 2 (ADR-0013): dimmed but live. Hover un-quiets it and
+/* Out of play at Level 2 (ADR-0013): quiet but live. Hover un-quiets it and
    every Level 1 gesture still works — this is never a disabled state. In
-   concept mode the class is absent, so Level 1 reads exactly as before. */
+   concept mode the class is absent, so Level 1 reads exactly as before. While
+   the selector is open the class follows the DRAFT (Epic 7 story 1): this is the
+   ONE wash an excluded word wears, and it lifts the moment the word is clicked
+   back in. */
 .word.out-of-set {
   opacity: 0.42;
 }
 
 .word.out-of-set:hover {
+  opacity: 1;
+}
+
+/* The quiet collisions (Epic 7 story 1; the values are PROVISIONAL). Quiets
+   never multiply: shelf × out-of-set stacked 0.5 × 0.42 to ~0.21 and read as a
+   dying word, and a marked word's pale italic ink vanished under its own dim.
+   Each collision gets ONE combined quiet that still says both things, and hover
+   still un-quiets everything. */
+.word.shelved.out-of-set {
+  opacity: 0.35;
+}
+
+.word.shelved.out-of-set:hover {
+  opacity: 0.85;
+}
+
+/* Marked AND out of play: the ink carries the mark (italic + dashed underline,
+   from .word.open above), deepened so it stays readable under the dim — a
+   second quiet on top of it would erase the very thing the mark says. */
+.word.out-of-set.open {
+  opacity: 0.7;
+}
+
+.word.out-of-set.open .word-name {
+  color: #6b6558;
+}
+
+.word.out-of-set.open:hover {
   opacity: 1;
 }
 

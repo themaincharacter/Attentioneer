@@ -8,8 +8,9 @@ import type { Box, Point } from "./geometry";
  *
  * - "all" keeps every word (shelved words included; the shelf is a place, not
  *   an exclusion);
- * - the draw tool lassos words on the plane (words only, never wires — the
- *   magic circle arrives early, relationships stay Epic 7's);
+ * - the draw tool lassos words on the plane (words only, never wires: the
+ *   circle's word form IS this selector, and the relationship form dissolved at
+ *   Epic 7 — relations are selected by authoring them);
  * - clicking a word excludes or includes it. The excluded marker is a dashed
  *   hollow ring at the word's corner — quiet, and never the remove × glyph;
  * - "accept" writes map/model.json and closes. Re-running rewrites it: no
@@ -39,7 +40,9 @@ interface PlayingSetWordsProps {
  * The selector's world-space layer, inside .plane-inner: one quiet button
  * over each word, matching its measured box. A press here is content, never a
  * plane gesture (gates.ts); the button is transparent so the word itself reads
- * through, and an excluded word sits behind a pale wash with its dashed ring.
+ * through, and an excluded word carries its dashed hollow ring — the WASH is the
+ * word's own quiet, read live from the DRAFT (Epic 7 story 1: `outOfPlay` in
+ * model.ts), so this layer never washes a second time.
  */
 export function PlayingSetWords({
   words,

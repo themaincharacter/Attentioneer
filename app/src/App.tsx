@@ -24,6 +24,7 @@ import {
 import { AssumptionDiamond } from "./canvas/AssumptionDiamond";
 import { AssumptionOverlay } from "./canvas/AssumptionOverlay";
 import {
+  authoringLive,
   creationKinds,
   createLevelPin,
   didReleaseFocusPin,
@@ -90,7 +91,7 @@ import {
   type NameOf,
   type NoticeFamily,
 } from "./canvas/notices";
-import { hasWord, prefilledSelection } from "./map/model";
+import { outOfPlay, prefilledSelection } from "./map/model";
 import { findPointers, type Pointer } from "./map/pointers";
 import type { Reference } from "./map/refs";
 import {
@@ -146,6 +147,13 @@ import type { Workspace } from "./workspace/lifecycle";
  * on, and a real crossing then runs the full switch path. The selector's prompt
  * is the pure `shouldPromptForSet`: a DELIBERATE entry asks for a missing
  * playing set, a wheel crossing never does.
+ *
+ * Epic 7 story 1 makes the playing set structurally required at AUTHORING: the
+ * gate's `authoringLive` guards the three dynamics writers (a link, a loop, an
+ * assumption) and echoes at the three affordances that would arm them, so with no
+ * accepted set those doors are dead and accepting a set re-opens them. While the
+ * selector is open the plane renders the DRAFT (`outOfPlay` in model.ts), so a
+ * word clicked back in is readable before close.
  */
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -165,7 +173,7 @@ function App() {
   // listener is re-attached on every wheel tick).
   const cameraZoomRef = useRef(camera.zoom);
   cameraZoomRef.current = camera.zoom;
-  const map = useMap(workspace?.path ?? "", { playing: level === "dynamics" });
+  const map = useMap(workspace?.path ?? "", { level });
   const {
     refs,
     distances,
@@ -281,12 +289,19 @@ function App() {
   // A workspace that resumed in dynamics with no set prompts the selector once.
   const autoPromptedRef = useRef<string | null>(null);
 
-  /** Open the quiet assumption overlay for one target at a world anchor. */
+  /**
+   * Open the quiet assumption overlay for one target at a world anchor. Dead
+   * while authoring is inert (Epic 7 story 1): at dynamics with no accepted set
+   * no claim can be authored, so the diamond never opens a field whose Enter
+   * would write nothing. This is the seam's arming-time ECHO; `addAssumption`
+   * enforces the same rule before its write.
+   */
   const openAssumptions = useCallback(
     (target: AssumptionTarget, anchor: Point) => {
+      if (!authoringLive(level, model)) return;
       setAssumptionAt({ target, anchor });
     },
-    [],
+    [level, model],
   );
 
   const closeAssumptions = useCallback(() => setAssumptionAt(null), []);
@@ -665,17 +680,19 @@ function App() {
     return readLoop(loop, { links, marks, model, words: wordSlugs });
   }, [level, walkSlug, loops, links, marks, model, wordSlugs]);
 
-  // Out of play at Level 2: dimmed but fully live (ADR-0013, story 1). In
-  // concept mode — or before a set exists — every word renders unchanged.
-  // A word coined while playing joins the set in story 2's composed move; until
-  // then a fresh word reads out of play until the selector is re-run.
+  // Out of play at Level 2: quiet but fully live (ADR-0013, story 1). The ONE
+  // reading is `outOfPlay` (model.ts, Epic 7 story 1): while the selector is
+  // open the DRAFT is what the plane shows, so a word clicked back in undims
+  // before close and one clicked out quiets at once; when it is closed the
+  // ACCEPTED set decides, so no set at all means nothing is out. In concept mode
+  // — and in ground, and for a word still being coined — every word renders
+  // unchanged.
   const isOutOfSet = useCallback(
     (word: Reference): boolean =>
       level === "dynamics" &&
-      model !== null &&
       word.slug !== null &&
-      !hasWord(model, word.slug),
-    [level, model],
+      outOfPlay(model, selectorOpen ? selectorDraft : null, word.slug),
+    [level, model, selectorOpen, selectorDraft],
   );
 
   /** Switching games cancels any pending gesture (ADR-0016). */
@@ -947,9 +964,14 @@ function App() {
    * word presses, pan and creation while the words are clicked in order.
    */
   const beginLoop = useCallback(() => {
+    // Dead while authoring is inert (Epic 7 story 1): a loop is a dynamics
+    // record, so the path is never armed without an accepted set — nobody
+    // clicks a cycle in order and names it into a void. `createLoop` enforces
+    // the same rule at the write.
+    if (!authoringLive(level, model)) return;
     cancelPendingGestures();
     setPathSession(beginPathSession());
-  }, [cancelPendingGestures]);
+  }, [cancelPendingGestures, level, model]);
 
   /** One word click in the path layer: collect it, or close at the first. */
   const pickPathWord = useCallback((slug: string) => {
@@ -1106,6 +1128,22 @@ function App() {
       cancelConnect();
     },
     [connect, drawLink, cancelConnect],
+  );
+
+  /**
+   * Begin a draw from a word's connect handle. Dead while authoring is inert
+   * (Epic 7 story 1): at dynamics with no accepted set the draw could only reach
+   * a sign choice whose pick writes nothing, so the gesture is never spent. The
+   * seam's arming-time ECHO — `drawLink` enforces the rule before the write —
+   * and Level 1's distance draw (the same handle) is untouched, because
+   * `authoringLive` is true in every other game.
+   */
+  const beginConnectLive = useCallback(
+    (slug: string, at: Point) => {
+      if (!authoringLive(level, model)) return;
+      beginConnect(slug, at.x, at.y);
+    },
+    [beginConnect, level, model],
   );
 
   /** A double-click on empty plane opens the word/lack menu at that point. */
@@ -1331,7 +1369,7 @@ function App() {
               if (candidate.slug !== null) closePeekFor(candidate.slug);
               remove(candidate);
             }}
-            onConnectFrom={(slug, c) => beginConnect(slug, c.x, c.y)}
+            onConnectFrom={beginConnectLive}
             onDragMove={handleDragMove}
             onMeasure={handleMeasure}
             connectTarget={connect !== null && connect.from !== word.slug}

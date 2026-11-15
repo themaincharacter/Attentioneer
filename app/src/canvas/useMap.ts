@@ -83,6 +83,8 @@ import {
   retargetPointerMarks,
   rewriteAssumptionLoopTargets,
 } from "../map/patches";
+import { authoringLive } from "./gates";
+import type { Level } from "../workspace/level";
 
 /** A distance draw in flight: origin slug + the pointer's live world position. */
 export interface ConnectDraft {
@@ -152,21 +154,34 @@ export interface ConnectDraft {
  * marks die with it) are quiet moves through the same in-order queue. The
  * record layer never interprets a target string, never stats it and never
  * repairs it: an `at` reach is machine-local and may dangle honestly.
+ *
+ * Epic 7 story 1 puts the required-set rule in the WRITERS, not only in a
+ * prompt (ADR-0013 decision 1): `drawLink`, `createLoop` and `addAssumption`
+ * ask `authoringLive` (gates.ts) before their first persist, so at dynamics with
+ * no accepted set nothing authors whatever armed it. Accepting a set is what
+ * arms them, and the accept writes the synchronous mirror the seam reads. The
+ * words, distances and marks shared by every game are never gated: they are not
+ * the dynamics game's own records.
  */
 export interface UseMapOptions {
   /**
-   * Is Level 2 the active game? The composed joins hang off it (ADR-0013):
-   * coining while playing joins the word, and a drawn link pulls its endpoints
-   * into play. Level 1 writes exactly what it wrote before.
+   * The game running right now (ADR-0018: the zoom band is the level). It is the
+   * ONE level input, so nothing here can disagree with the piece the person is
+   * looking at: the composed joins hang off it (ADR-0013 — coining while playing
+   * joins the word, a drawn link pulls its endpoints into play), and so does the
+   * authoring seam (Epic 7 story 1 — `authoringLive`: at dynamics with no
+   * accepted set the three writers no-op). Level 1 writes exactly what it wrote
+   * before: absent or `"concept"` keeps every guard live.
    */
-  playing?: boolean;
+  level?: Level;
 }
 
 export function useMap(
   workspacePath: string,
   options: UseMapOptions = {},
 ) {
-  const playing = options.playing ?? false;
+  const level = options.level ?? "concept";
+  const playing = level === "dynamics";
   const [refs, setRefs] = useState<Reference[]>([]);
   const [distances, setDistances] = useState<Distance[]>([]);
   const [malformed, setMalformed] = useState<string[]>([]);
@@ -546,6 +561,10 @@ export function useMap(
         words: dedupe(slugs),
         extra: model?.extra ?? {},
       };
+      // The mirror first, for the same reason the joins set it: the accept is
+      // what makes authoring LIVE (Epic 7 story 1), so the seam must see it
+      // before the next gesture, not one render later.
+      modelRef.current = next;
       setModel(next);
       setMalformedModel(null);
       void saveModel(workspacePath, next);
@@ -662,10 +681,13 @@ export function useMap(
    */
   const drawLink = useCallback(
     (from: string, to: string, sign: LinkSign) => {
+      // The authoring seam (Epic 7 story 1): a dead door writes nothing, even
+      // when a sign choice reached it. Level 1 and ground are untouched.
+      if (!authoringLive(level, modelRef.current)) return;
       persistLinks(drawLinkRecord(linksRef.current, from, to, sign));
       void joinToPlay([from, to]);
     },
-    [persistLinks, joinToPlay],
+    [persistLinks, joinToPlay, level],
   );
 
   /** Flip a link's sign: rewritten in place at its line's index (quiet). */
@@ -894,9 +916,12 @@ export function useMap(
    */
   const createLoop = useCallback(
     (name: string, path: readonly string[]) => {
+      // The same seam: a coined loop is a dynamics record, so it needs an
+      // accepted set before its line can be written.
+      if (!authoringLive(level, modelRef.current)) return;
       persistLoops(nameLoopRecord(loopsRef.current, name, path));
     },
-    [persistLoops],
+    [persistLoops, level],
   );
 
   /**
@@ -950,11 +975,14 @@ export function useMap(
    */
   const addAssumption = useCallback(
     (target: AssumptionTarget, text: string) => {
+      // The same seam: a claim is a dynamics record, and a field that opened
+      // under an accepted set that has since gone away still writes nothing.
+      if (!authoringLive(level, modelRef.current)) return;
       persistAssumptions(
         addAssumptionRecord(assumptionsRef.current, text, target),
       );
     },
-    [persistAssumptions],
+    [persistAssumptions, level],
   );
 
   /**

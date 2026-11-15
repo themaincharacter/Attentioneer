@@ -6,8 +6,9 @@ import { canonicalJson } from "../lib/serialize";
  * words, kept as one record — `map/model.json`, one canonical JSON object
  * `{"words": [sorted member slugs]}`. Absence is exclusion: a word not named
  * here is out of play, and nothing else records the choice. A missing file
- * means no accepted set (the selector opens before play); an empty file is
- * tolerated as the same nothing.
+ * means no accepted set: the dynamics game authors nothing until one is
+ * accepted (the selector is the door, and only a DELIBERATE entry asks for it —
+ * a wheel crossing never does); an empty file is tolerated as the same nothing.
  *
  * Unknown top-level keys are preserved across rewrites (ADR-0006's posture),
  * and a file the app cannot read is preserved byte-for-byte and surfaced by
@@ -118,6 +119,33 @@ export async function saveModel(
 /** Is this slug in the playing set? No set means nothing is in play. */
 export function hasWord(model: PlayingSet | null, slug: string): boolean {
   return model !== null && model.words.includes(slug);
+}
+
+/**
+ * The DRAFT reading (Epic 7 story 1, PROVISIONAL): is this word out of play in
+ * the reading the plane is showing? Two states, one predicate — while the
+ * selector is open the DRAFT is what the plane shows, and when it is closed the
+ * ACCEPTED record is.
+ *
+ * `draft === null` means the selector is closed: the accepted model decides, so
+ * no accepted set means nothing is out of play (unchanged since Epic 4). Any
+ * draft — a set, even an empty one — means the selector is open and the draft
+ * IS the reading: a word clicked back in reads in play BEFORE close (the defect
+ * this settles: out-of-set used to be read from the accepted record, so a
+ * re-included word stayed dimmed until accept), and one clicked out quiets at
+ * once.
+ *
+ * A draft is a VIEW, never a record: nothing here writes, and a close without
+ * accept leaves the accepted set exactly as it was (ADR-0013 decision 2 —
+ * reversible, quiet, no history).
+ */
+export function outOfPlay(
+  model: PlayingSet | null,
+  draft: ReadonlySet<string> | null,
+  slug: string,
+): boolean {
+  if (draft !== null) return !draft.has(slug);
+  return model !== null && !hasWord(model, slug);
 }
 
 /** Add a word to play. */

@@ -56,6 +56,7 @@
  * and tests can pass a plain stub.
  */
 
+import type { PlayingSet } from "../map/model";
 import type { Level } from "../workspace/level";
 import type { HandoffCause } from "../workspace/levelHandoff";
 
@@ -493,7 +494,8 @@ export function createLevelPin(): LevelPin {
  * THE NAMED COST: a person who wheels into dynamics with no set lands in a game
  * whose own records stay inert but legible until they take a deliberate step —
  * the set stays REQUIRED AT AUTHORING (nothing is authored while playing
- * without it), and the level control's "edit the playing set" is the door.
+ * without it; Epic 7 story 1 makes that structural in `authoringLive` below),
+ * and the level control's "edit the playing set" is the door.
  */
 export function shouldPromptForSet(
   cause: HandoffCause,
@@ -502,4 +504,44 @@ export function shouldPromptForSet(
 ): boolean {
   if (cause === "settle") return false;
   return level === "dynamics" && !hasModel;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Epic 7 story 1: the authoring seam — the required-set rule made structural.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * May the dynamics game's own records be authored right now? The playing set is
+ * REQUIRED before they can be (ADR-0013 decision 1), and until Epic 7 that
+ * requirement lived in a PROMPT and in prose: a person who wheeled into
+ * dynamics with no accepted set landed in a legible but inert game, and any
+ * gesture that reached a writer still wrote. This is the rule itself — at
+ * dynamics with no accepted set nothing authors; every other game is untouched,
+ * so Level 1 (and ground, and the words, distances and marks every game shares)
+ * writes exactly what it wrote before.
+ *
+ * The three writers are `useMap`'s `drawLink`, `createLoop` and
+ * `addAssumption`; each asks this rule before it touches its record, so a dead
+ * door cannot write whatever armed it (a stray keyboard path, a restored
+ * gesture, a later story's surface). The three affordances that would spend a
+ * gesture on that dead end — the connect handle, the assumption diamond/overlay
+ * and the control's "coin a loop" — ask the same rule before they ARM, so
+ * nobody types a claim into a void. That echo is a courtesy; the write is where
+ * the rule is enforced.
+ *
+ * What it never guards: ACCEPT (the narrowing is the human's — select-all stays
+ * legal and the selector's accept always writes), membership itself (ADR-0013
+ * decision 4: a drawn link to a prune rejoins it, and `joinWords` is a record
+ * join, never an authoring move), and the words, distances and marks shared by
+ * every game. Level 1 is untouched by construction: `level !== "dynamics"`
+ * returns live before the model is looked at.
+ *
+ * Provisional: the seam's SHAPE. This story settles it at write-time (the
+ * writers no-op), with the arming-time echo above as the quiet courtesy — a
+ * write-only guard would let a whole gesture evaporate, an arming-only guard
+ * would leave the rule bypassable. The membership model it reads
+ * (`PlayingSet | null`, absence = nothing accepted) is ADR-0013's.
+ */
+export function authoringLive(level: Level, model: PlayingSet | null): boolean {
+  return level !== "dynamics" || model !== null;
 }
