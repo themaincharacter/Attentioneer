@@ -3928,6 +3928,26 @@ body {
   align-items: center;
 }
 
+/* The card's inclusion choice: one quiet checkbox, OFF by default. */
+.ghost-choice {
+  display: flex;
+  align-items: center;
+}
+
+.ghost-card-choice {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 11px;
+  color: #6b675e;
+  cursor: pointer;
+}
+
+.ghost-card-choice input {
+  margin: 0;
+  accent-color: #8d887c;
+}
+
 .ghost-packet {
   margin: 0;
   max-height: 40vh;

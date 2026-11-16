@@ -115,6 +115,7 @@ import {
   type NameOf,
   type NoticeFamily,
 } from "./canvas/notices";
+import { loadCards } from "./map/cards";
 import { outOfPlay, prefilledSelection } from "./map/model";
 import { findPointers, type Pointer } from "./map/pointers";
 import {
@@ -1110,10 +1111,22 @@ function App() {
     context: () => ({ level, scenario }),
     nameOf,
   });
+  /**
+   * The cards' read (Epic 11 story 3): the person's own game notes, read at
+   * ASK time — so a hand edit to `map/cards.jsonl` is seen by the very next
+   * ask, and the frozen packet's hash moves with the content. A card is not a
+   * map record (no batch touches it), so no reload path owns it.
+   */
+  const readCards = useCallback(async () => {
+    if (workspace === null) return [];
+    return (await loadCards(workspace.path)).cards;
+  }, [workspace]);
   const ghostRequest = useGhostRequest({
     workspacePath: workspace?.path ?? "",
     context: () => ({ level, scenario }),
     view: () => packetView,
+    cards: readCards,
+    creationKinds: (game) => creationKinds(game),
   });
   const { close: closeGhosts } = ghosts;
 
@@ -1255,12 +1268,16 @@ function App() {
     [ghostRequest],
   );
 
-  /** The paste: wrap, validate and file a model's reply as a proposal. */
+  /**
+   * The paste: wrap, validate and file a model's reply as a proposal. The
+   * frozen packet's hash rides along when one is in flight (Epic 11 story 3):
+   * the envelope records the ASK the reply answers, as provenance only.
+   */
   const proposeGhost = useCallback(
     (raw: string) => {
-      void ghosts.intake(raw);
+      void ghosts.intake(raw, ghostRequest.packet?.freeze.hash ?? null);
     },
-    [ghosts],
+    [ghosts, ghostRequest.packet],
   );
 
   /**
@@ -2868,14 +2885,17 @@ function App() {
       {/* the ask surface (Epic 10 story 3): the minimal wiring of the quiet
           request and the intake. Pick one target, ask — the frozen packet's
           bytes appear — then paste a model's reply back and file it. The
-          person's region is not wired here (the ADR's fallback applies), and
-          the panel is deliberately plain (story 3's "no polish"). */}
+          person's region is not wired here (the ADR's fallback applies); the
+          card's inclusion choice IS (Epic 11 story 3, OFF by default), and the
+          panel is deliberately plain (story 3's "no polish"). */}
       {level === "dynamics" && ghostPanelOpen && (
         <GhostPanel
           targets={ghostTargets}
           packet={ghostRequest.packet}
           askIssues={ghostAskIssues}
           intakeIssues={ghostIntakeIssues}
+          includeCard={ghostRequest.includeCard}
+          onIncludeCard={ghostRequest.setIncludeCard}
           onAsk={askForGhost}
           onPropose={proposeGhost}
           onClose={closeGhostPanel}

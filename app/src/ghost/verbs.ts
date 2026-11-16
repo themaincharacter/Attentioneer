@@ -112,13 +112,18 @@ function droppedOpened(state: GhostState, id: string): GhostState {
  * File one pasted/imported reply: the session wraps, validates and files it, and
  * a landed ghost joins the rows at the END. Nothing is opened by the intake —
  * the person's opening is the person's.
+ *
+ * `packetHash` is the frozen packet's hash the reply answers (Epic 11 story
+ * 3), when one was asked: the session attaches it as PROVENANCE, and nothing
+ * here ever reads it back.
  */
 export async function intakeReply(
   deps: GhostVerbDeps,
   state: GhostState,
   raw: string,
+  packetHash?: string | null,
 ): Promise<IntakeReport> {
-  const result = await deps.session.intake(raw, deps.context());
+  const result = await deps.session.intake(raw, deps.context(), packetHash);
   if (!result.ok || result.envelope === null) return { state, result };
   return {
     state: { ...state, ghosts: appendGhost(state.ghosts, result.envelope) },

@@ -15,6 +15,15 @@ import { canonicalJson } from "../lib/serialize";
  * `proposals` sibling. The envelope is re-validated at accept, and its
  * `steps` are READ-ONLY: the deriver owns them, so a tampered list is ignored.
  *
+ * THE PACKET-HASH PROVENANCE (Epic 11 story 3, ADR-0027 §5 as amended): when
+ * the person asked a packet before the reply, the app also mints
+ * `packetHash` — the frozen packet's hash — onto the envelope. It is
+ * PROVENANCE, never enforcement: nothing reads it (not the grammar, not the
+ * accept, not the base pin), so editing a game card, asking again and filing
+ * another reply never refuses the previous ghost. The card stays OUT of the
+ * base pin, exactly as the ADR's amendment says: the hash makes the ask
+ * visible, it does not hold the proposal to it.
+ *
  * The glossary's words: the FILE is a **Patch**; **Ghost** is the faint
  * rendering of a pending proposal (story 3). This module owns the file.
  *
@@ -24,8 +33,9 @@ import { canonicalJson } from "../lib/serialize";
  * is the envelope's `target`, not a copy inside `params`, so there is exactly
  * one place a target lives (PROVISIONAL: the split is ADR-0024's).
  *
- * Provisional: the format key's value, the id prefix, the step's JSON look, and
- * `proposals` being a plain array of nothing in v1.
+ * Provisional: the format key's value, the id prefix, the step's JSON look,
+ * `proposals` being a plain array of nothing in v1, and the `packetHash`
+ * key's spelling and its optionality (provenance; absent when no ask).
  */
 
 /** The envelope's format key (PROVISIONAL). */
@@ -115,6 +125,14 @@ export interface GhostEnvelope {
   format: string;
   /** The app-minted in-session id (also the inbox file's name). */
   id: string;
+  /**
+   * The frozen packet's hash this reply answers, when the person asked one
+   * first (PROVENANCE ONLY, Epic 11 story 3). App-minted at intake, never
+   * authored, and never read: the grammar, the accept and the base pin all
+   * ignore it, so a card edit between ask and accept refuses nothing.
+   * Absent when the paste answered no ask.
+   */
+  packetHash?: string;
   /** The registered move. */
   move: GhostMove;
   /** What the move is about (v1: one word or loop). */
@@ -131,10 +149,16 @@ export interface GhostEnvelope {
   proposals: readonly GhostProposal[];
 }
 
-/** The envelope's own key set — a hand edit changes values, never the keys. */
+/**
+ * The envelope's own key set — a hand edit changes values, never the keys.
+ * `packetHash` is app-minted provenance (Epic 11 story 3) and is allowed
+ * here, but it is never read: the key set's door is about KEYS, and no value
+ * under this one can refuse a ghost.
+ */
 export const GHOST_KEYS: readonly string[] = [
   "format",
   "id",
+  "packetHash",
   "move",
   "target",
   "params",
@@ -179,6 +203,21 @@ export function mintGhostId(): string {
 /** The envelope's canonical bytes (through `serialize.ts`; hand-editable). */
 export function serializeEnvelope(envelope: GhostEnvelope): string {
   return canonicalJson(envelope);
+}
+
+/**
+ * Attach the packet-hash provenance to a validated envelope (Epic 11 story 3).
+ * The session calls this AFTER the grammar has spoken, so the grammar never
+ * sees the key at intake; a reshape re-files the same proposal under the ask
+ * it already answered. PROVENANCE ONLY: a missing or non-string hash attaches
+ * nothing, and nothing ever reads the value.
+ */
+export function withPacketHash(
+  envelope: GhostEnvelope,
+  hash: unknown,
+): GhostEnvelope {
+  if (typeof hash !== "string" || hash === "") return envelope;
+  return { ...envelope, packetHash: hash };
 }
 
 /** A name slot is a key that would let the agent coin a name — refused. */

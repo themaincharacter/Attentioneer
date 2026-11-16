@@ -12,6 +12,8 @@ import { sha256Hex } from "./digest";
 import type { GhostExpect, GhostGame, GhostTarget } from "./envelope";
 import {
   authorableTargetKinds,
+  gameMovesOf,
+  MOVES,
   pinOf,
   registeredMovesOf,
   registryHash,
@@ -62,6 +64,19 @@ import type { GhostSnapshot } from "./snapshot";
  * bytes, base and grammar the proposal was asked under — two expansion runs
  * are comparable.
  *
+ * THE CARD (Epic 11 story 3, ADR-0027): the game's conventions section is the
+ * ONE place a card rides the packet, and it rides only when the person
+ * INCLUDES it (the trial shape; the default is OFF). The card REPLACES the
+ * default prose with one line — `card: <game> — moves; conventions` — whose
+ * moves half is DERIVED (the registry's rows plus the canvas ring's kinds,
+ * both passed as data, through the one `gameMovesOf` helper) and whose
+ * conventions half is the person's authored prose, passed in verbatim. No
+ * card, or no inclusion, leaves the default standing. The ghost layer never
+ * imports the card record (story 1's seam): the app reads `map/cards.jsonl`
+ * and hands the game's note in as plain data, exactly as creation kinds arrive.
+ * The card never enforces: it is packet CONTENT, not a pin, so a card edit
+ * between ask and accept changes the next packet's hash and refuses nothing.
+ *
  * The behavioral boundary is the registry's own boundary string (data): what
  * the move DOES, never the validator's keys (echoing the grammar would turn a
  * cheap grammar-fail into prompt-compliance). The move's shape and the game's
@@ -72,9 +87,9 @@ import type { GhostSnapshot } from "./snapshot";
  * request surface (request.ts) refuses another band.
  *
  * Provisional: the packet's wording and section order, PacketWord.box (the
- * veil's centre rule needs a rendered box — layout, not a record field), and
- * the reading that a reference's prose memory is not carried (records, not
- * documents).
+ * veil's centre rule needs a rendered box — layout, not a record field), the
+ * reading that a reference's prose memory is not carried (records, not
+ * documents), the card line's exact spelling and the inclusion flag's name.
  */
 
 /** The packet's format tag (PROVISIONAL, but part of the bytes). */
@@ -87,8 +102,13 @@ export const PACKET_LIMIT = "This view; the map is larger.";
 export const PACKET_POSTURE =
   "Each record is carried as it stands — its own marks, its own words, its own unknown keys. A hand edit is kept and shown, never repaired or tidied.";
 
-/** What each game is, for the packet's conventions section (fixed prose). */
-const GAME_CONVENTIONS: Record<GhostGame, string> = {
+/**
+ * What each game is, for the packet's conventions section — the DEFAULT prose
+ * (Epic 10 story 2). It stands whenever the person does not include a card for
+ * the move's game (ADR-0027 decision 2): with no card, or with the inclusion
+ * off, the packet reads exactly as it always did.
+ */
+export const GAME_CONVENTIONS: Record<GhostGame, string> = {
   concept:
     "concept is the map's first game: words on a plane, distances between them and open marks — the map as it stands, with no model.",
   dynamics:
@@ -96,6 +116,21 @@ const GAME_CONVENTIONS: Record<GhostGame, string> = {
   ground:
     "ground is the map's third game: each word may keep a reach outward, and a window opens onto it.",
 };
+
+/**
+ * A game's card as the packet may carry it — the PERSON'S NOTE, passed as
+ * plain data (Epic 11 story 3). The ghost layer never imports the card record
+ * (story 1's seam): the app reads `map/cards.jsonl` and hands the game's
+ * conventions over; the packet derives the moves line itself, so a hand-edited
+ * copy of the moves can never become a second truth. Examples never ride: the
+ * card's examples are person-facing only (ADR-0027 decision 3).
+ */
+export interface PacketCard {
+  /** The game the note is about; only the move's own game's card can ride. */
+  game: GhostGame;
+  /** The person's authored conventions, verbatim (the record's own field). */
+  conventions: string;
+}
 
 /** How a params field is described in the packet (by kind, not by code). */
 const PARAM_KIND_GLOSS: Record<string, string> = {
@@ -211,6 +246,24 @@ export interface PacketInput {
   target: GhostTarget;
   /** The person's own region (their selection, or none). */
   person: PersonRegion;
+  /**
+   * THE PERSON'S INCLUSION CHOICE (Epic 11 story 3): true carries this game's
+   * card, false or absent leaves the default conventions standing. It is
+   * PERSON state, exactly like the region — the request carries no key for it,
+   * so a request can never smuggle the choice (the negative is tested).
+   */
+  includeCard?: boolean;
+  /**
+   * The map's game notes, as plain data. Only the move's own game's card can
+   * ride, and only when the person includes it; an absent or mismatched card
+   * leaves the default prose.
+   */
+  cards?: readonly PacketCard[];
+  /**
+   * The canvas ring's authored kinds for the game (data, never an import): the
+   * card line's second move source. The registry rows are the first.
+   */
+  creationKinds?: readonly string[];
   /** The map's records, verbatim. */
   view: PacketView;
   /** The base-pin snapshot, read at the ask moment. */
@@ -393,6 +446,40 @@ function authoredFields(entry: MoveDefinition): string {
 }
 
 /**
+ * The card the packet may carry: only when the person included it AND a note
+ * for the move's own game stands. Otherwise null — and the default prose is
+ * the packet's conventions section (ADR-0027 decision 2: the default always
+ * stands; deleting the line returns it).
+ */
+function cardFor(input: PacketInput): PacketCard | null {
+  if (input.includeCard !== true) return null;
+  return (
+    (input.cards ?? []).find((card) => card.game === input.entry.game) ?? null
+  );
+}
+
+/**
+ * The card's ONE line: `card: <game> — moves; conventions`. The moves half
+ * is DERIVED (the registry plus the ring's kinds, through the one helper);
+ * the conventions half is the person's prose, verbatim. Examples never ride.
+ */
+function cardLine(input: PacketInput, card: PacketCard): string {
+  const moves = gameMovesOf(
+    input.entry.game,
+    input.moves ?? MOVES,
+    input.creationKinds ?? [],
+  );
+  return (
+    "card: " +
+    input.entry.game +
+    " — " +
+    (moves.length === 0 ? "none" : moves.join(", ")) +
+    "; " +
+    card.conventions
+  );
+}
+
+/**
  * Render the packet's bytes from the inputs and the chosen region. Pure: same
  * inputs = same bytes. The fixed sections are the app's; the records are the
  * map's, verbatim; the move's shape and the boundary are the registry's.
@@ -426,9 +513,16 @@ function renderPacket(input: PacketInput, region: RegionSelection): string {
   );
   lines.push("");
 
+  // THE CARD REPLACES THE DEFAULT when the person included it (Epic 11 story 3);
+  // otherwise the fixed prose stands, exactly as it did before cards existed.
   lines.push("## The game this move belongs to");
   lines.push("");
-  for (const line of wrap(GAME_CONVENTIONS[entry.game])) lines.push(line);
+  const card = cardFor(input);
+  if (card === null) {
+    for (const line of wrap(GAME_CONVENTIONS[entry.game])) lines.push(line);
+  } else {
+    for (const line of wrap(cardLine(input, card))) lines.push(line);
+  }
   lines.push("");
 
   lines.push("## What this move does");

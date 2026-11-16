@@ -73,8 +73,12 @@ export interface GhostUiHandle {
   intakeIssues: readonly GhostIssue[];
   /** An act is running. */
   busy: boolean;
-  /** File a pasted/imported model reply (the intake). */
-  intake(raw: string): Promise<void>;
+  /**
+   * File a pasted/imported model reply (the intake), with the frozen packet's
+   * hash when the reply answers an ask (provenance only; never written to a
+   * record and never enforced).
+   */
+  intake(raw: string, packetHash?: string | null): Promise<void>;
   /** Open one ghost (at most one is open), or none. */
   open(id: string | null): void;
   /** Close the opened ghost quietly. */
@@ -167,11 +171,11 @@ export function useGhosts(options: GhostUiOptions): GhostUiHandle {
   );
 
   const intake = useCallback(
-    async (raw: string) => {
+    async (raw: string, packetHash?: string | null) => {
       if (deps === null || busy) return;
       setBusy(true);
       try {
-        const report = await intakeReply(deps, state, raw);
+        const report = await intakeReply(deps, state, raw, packetHash);
         setState(report.state);
         // A paste's refusal is the ask surface's line; the opened ghost's own
         // reading is untouched by it.

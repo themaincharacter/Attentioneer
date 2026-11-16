@@ -6,6 +6,7 @@ import {
   isPlainObject,
   mintGhostId,
   readEnvelope,
+  withPacketHash,
   type GhostEnvelope,
   type GhostGame,
   type GhostStep,
@@ -55,8 +56,15 @@ import { readGhostSnapshot } from "./snapshot";
  * session is where its two impure halves (the snapshot read and the write)
  * live.
  *
- * Provisional: the session's shape (the UI wiring is story 3's) and the fact
- * that a level/branch switch is passed per call rather than held.
+ * THE PACKET-HASH PROVENANCE (Epic 11 story 3) is attached HERE, after the
+ * grammar has spoken: the intake files the validated envelope with
+ * `withPacketHash` (the frozen packet the reply answers), and a reshape keeps
+ * the same proposal's hash. Nothing reads it back — the accept re-validates
+ * the bytes and the key is allowed but never inspected.
+ *
+ * Provisional: the session's shape (the UI wiring is story 3's), the fact
+ * that a level/branch switch is passed per call rather than held, and the
+ * intake's optional `packetHash` argument.
  */
 
 /** The app's running context at an intake/accept moment. */
@@ -127,8 +135,20 @@ export interface GhostSession {
   registered(): readonly string[];
   /** The open moment: discard the inbox (replay refused) and forget ids. */
   open(): Promise<DiscardReport>;
-  /** Paste/import raw model output -> wrap -> validate -> inbox. */
-  intake(raw: string, context: GhostContext): Promise<IntakeResult>;
+  /**
+   * Paste/import raw model output -> wrap -> validate -> inbox.
+   *
+   * `packetHash` is the frozen packet's hash when the reply answers an ask the
+   * person made (Epic 11 story 3). The app passes it; the agent never does
+   * (the body has no such key), and it is attached to the filed envelope as
+   * PROVENANCE ONLY — the grammar never reads it and no accept can refuse on
+   * its account.
+   */
+  intake(
+    raw: string,
+    context: GhostContext,
+    packetHash?: string | null,
+  ): Promise<IntakeResult>;
   /** Accept one registered ghost: marker -> apply -> delete. */
   accept(id: string, context: GhostContext): Promise<GhostAcceptResult>;
   /**
@@ -176,6 +196,7 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
   async function intakeInner(
     raw: string,
     context: GhostContext,
+    packetHash: string | null | undefined,
   ): Promise<IntakeResult> {
     const refused = (issues: readonly GhostIssue[]): IntakeResult => ({
       ok: false,
@@ -224,7 +245,11 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
         issue("append-only", "the file already holds this claim; v1 only appends"),
       ]);
     }
-    const envelope = validation.envelope;
+    // THE PACKET-HASH PROVENANCE (Epic 11 story 3): attached AFTER the grammar
+    // spoke. The hash names the frozen packet this reply answers; the filed
+    // envelope carries it so the ask is visible later, and nothing downstream
+    // reads it (accept, pin and grammar all ignore the key).
+    const envelope = withPacketHash(validation.envelope, packetHash);
     const path = await writeInboxEnvelope(workspacePath, envelope, fs);
     registeredIds.add(envelope.id);
     return { ok: true, envelope, path, issues: [] };
@@ -398,7 +423,10 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
         ],
       };
     }
-    const envelope = validation.envelope;
+    // The re-filed envelope keeps the ask it already answered: the reshape's
+    // own five fields stay in flight (ADR-0024 decision 5), and the intake's
+    // packet hash rides the SAME proposal it was minted for.
+    const envelope = withPacketHash(validation.envelope, read.value.packetHash);
     await writeInboxEnvelope(workspacePath, envelope, fs);
     return {
       outcome: "reshaped",
@@ -421,7 +449,7 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
       return report;
     },
 
-    async intake(raw, context) {
+    async intake(raw, context, packetHash) {
       let result: IntakeResult = {
         ok: false,
         envelope: null,
@@ -429,7 +457,7 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
         issues: [issue("write", "the intake did not run")],
       };
       await queue.push(async () => {
-        result = await intakeInner(raw, context);
+        result = await intakeInner(raw, context, packetHash);
       });
       return result;
     },

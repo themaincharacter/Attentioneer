@@ -324,7 +324,11 @@ describe("the ask surface is wired, minimally", () => {
     expect(APP).toContain("view: () => packetView,");
     expect(APP).toContain("context: () => ({ level, scenario })");
     expect(APP).toContain("void ghostRequest.ask(target);");
-    expect(APP).toContain("void ghosts.intake(raw);");
+    // The paste files through the intake WITH the frozen packet's hash when one
+    // is in flight (Epic 11 story 3): the envelope records the ask it answers.
+    expect(APP).toContain(
+      "void ghosts.intake(raw, ghostRequest.packet?.freeze.hash ?? null);",
+    );
     // The packet's own bytes and hash are shown; nothing is sent anywhere.
     expect(source("canvas/GhostPanel.tsx")).toContain("packet.freeze.bytes");
     expect(source("canvas/GhostPanel.tsx")).toContain("packet.freeze.hash.slice(0, 12)");
@@ -364,12 +368,15 @@ describe("the ask surface is wired, minimally", () => {
         packet: null,
         askIssues: [],
         intakeIssues: [],
+        includeCard: false,
+        onIncludeCard: noop,
         onAsk: noop,
         onPropose: noop,
         onClose: noop,
       }),
     );
     const text = textOfMarkup(html);
+    expect(text).toContain("include this game's card");
     expect(text).toContain("pick a word or a loop");
     expect(text).toContain("word: rain");
     expect(text).toContain("loop: the water cycle");

@@ -23,6 +23,10 @@ interface GhostPanelProps {
   askIssues: readonly string[];
   /** Why the last paste was refused (sentences; empty when it was not). */
   intakeIssues: readonly string[];
+  /** Does this game's card ride the packet? (The person's choice; OFF by default.) */
+  includeCard: boolean;
+  /** Set the inclusion choice (never the request's; the trial's shape). */
+  onIncludeCard: (include: boolean) => void;
   /** Ask for a packet about one target (the person's region is the fallback). */
   onAsk: (target: GhostTarget) => void;
   /** File a pasted/imported model reply (the intake). */
@@ -46,6 +50,12 @@ interface GhostPanelProps {
  * the ADR's fallback applies (the named target and the playing set). Wiring the
  * region's own picker is provisional and is not this story's.
  *
+ * THE CARD'S INCLUSION CHOICE is wired here (Epic 11 story 3, ADR-0027): one
+ * quiet checkbox, OFF by default — the card rides only when the person chooses
+ * it, and the default conventions stand otherwise (including when no card is
+ * written for the game). The choice is PERSON state, handed to the ask as its
+ * own argument; a pasted reply can never set it.
+ *
  * Esc, the ×, or a level switch close it. A press away does NOT: the panel can
  * hold typed prose, and a stray press must never discard it (the blur rule
  * belongs to the cards whose fields commit on Enter).
@@ -55,6 +65,8 @@ export function GhostPanel({
   packet,
   askIssues,
   intakeIssues,
+  includeCard,
+  onIncludeCard,
   onAsk,
   onPropose,
   onClose,
@@ -126,6 +138,20 @@ export function GhostPanel({
         >
           ask
         </button>
+      </div>
+
+      <div className="ghost-choice">
+        <label
+          className="ghost-card-choice"
+          title="carry this game's card in the packet; the default conventions stand when this is off or no card is written"
+        >
+          <input
+            type="checkbox"
+            checked={includeCard}
+            onChange={(e) => onIncludeCard(e.target.checked)}
+          />
+          include this game's card
+        </label>
       </div>
 
       {askIssues.length > 0 && (

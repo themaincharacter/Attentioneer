@@ -3,6 +3,7 @@ import { issue, type GhostIssue } from "./issues";
 import {
   assemblePacket,
   type Packet,
+  type PacketCard,
   type PacketView,
   type PersonRegion,
 } from "./packet";
@@ -16,15 +17,18 @@ import { readGhostSnapshot } from "./snapshot";
  * packet through, PROVISIONAL and deliberately plain (no UI polish; story 3
  * owns the verbs and the ghost UI).
  *
- * An ask is TWO things, kept apart on purpose:
+ * An ask is THREE things, kept apart on purpose:
  *   - the REQUEST (move + named target) — what the person asks the move about;
  *   - the PERSON'S REGION (their word selection, or none) — what the person
- *     chooses to show.
- * The request can never choose the region: the type carries no region-shaped
- * key (PACKET_REQUEST_KEYS is exactly move/target), and a hand-built object
- * with an extra key is simply ignored by the assembler (the negative test
- * smuggles one and gets the same bytes). Authorship by selection has no door
- * here (ADR-0026).
+ *     chooses to show;
+ *   - the PERSON'S INCLUSION CHOICE (Epic 11 story 3) — whether this game's
+ *     card rides the packet.
+ * The request can never choose the region, and it can never choose the card:
+ * the type carries no region-shaped and no card-shaped key (PACKET_REQUEST_KEYS
+ * is exactly move/target), and a hand-built object with an extra key is simply
+ * ignored by the assembler (the negative test smuggles one and gets the same
+ * bytes). Authorship by selection has no door here (ADR-0026); the card is the
+ * person's to include or leave (ADR-0027).
  *
  * The surface is where the packet's refusals live, before anything is frozen:
  * an unregistered move, another band than the move's game, an active branch
@@ -38,9 +42,10 @@ import { readGhostSnapshot } from "./snapshot";
  * would be built against — not a value remembered from an earlier moment. The
  * ask writes nothing: no record, no inbox file, no marker.
  *
- * Provisional: the surface's shape (one async function over the port) and the
+ * Provisional: the surface's shape (one async function over the port), the
  * absence of any pacing/queue machinery (Epic 9's pacing debt is story 3's
- * chrome, not the ask).
+ * chrome, not the ask), and the inclusion choice's flag name and its OFF
+ * default (Epic 11 story 3: the trial shape, the card rides only when chosen).
  */
 
 /** The ask's keys, exactly — a region has no key a request could use. */
@@ -66,6 +71,16 @@ export interface AskOptions {
   request: PacketRequest;
   /** The person's own region (their selection, or none). */
   person: PersonRegion;
+  /**
+   * The person's inclusion choice for the game's card (Epic 11 story 3).
+   * OFF (or absent) leaves the default conventions standing; the request has
+   * no key that could set it.
+   */
+  includeCard?: boolean;
+  /** The map's game notes, as data (read by the app; only the move's rides). */
+  cards?: readonly PacketCard[];
+  /** The canvas ring's authored kinds for the game (data; the moves line). */
+  creationKinds?: readonly string[];
   /** The map's records, as the app loaded them. */
   view: PacketView;
 }
@@ -190,6 +205,9 @@ export async function askForPacket(options: AskOptions): Promise<AskResult> {
       entry,
       target: request.target,
       person: options.person,
+      includeCard: options.includeCard === true,
+      cards: options.cards,
+      creationKinds: options.creationKinds,
       view: options.view,
       snapshot,
     }),
