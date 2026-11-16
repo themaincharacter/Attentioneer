@@ -24,6 +24,8 @@ import {
   type GestureMode,
 } from "./gates";
 import type { Point } from "./geometry";
+import { boxIsDrawable, capturedBox } from "./veilRules";
+import type { VeilBox } from "../map/veils";
 import { MAX_ZOOM, MIN_ZOOM, type Camera, type CameraIntents } from "./useCamera";
 import { closesPair, DOUBLE_CLICK_MS, type PlanePress } from "./planePress";
 import { centeringZoom, zoomChipPercent } from "../workspace/level";
@@ -109,6 +111,14 @@ interface CanvasPlaneProps {
   /** True while the playing-set selector's draw tool is armed (story 1). */
   lassoArmed?: boolean;
   /**
+   * True while the VEIL's draw-box is armed (Epic 9 story 1, ADR-0023). It is
+   * a SEPARATE arm from the lasso: the lasso lives inside the playing-set
+   * selector (a dynamics-only surface) and takes a polygon, while the veil must
+   * work at concept AND dynamics and takes a rectangle. The gate is armed too,
+   * so pan, creation and every word press already stand still.
+   */
+  boxArmed?: boolean;
+  /**
    * True while a mark ring is in flight (story 2): the wires' invisible hit
    * bands turn clickable, so the drop can bind the element under the pointer
    * without the wire ever intercepting an ordinary press (ADR-0016).
@@ -116,6 +126,12 @@ interface CanvasPlaneProps {
   picking?: boolean;
   /** Called with the lasso's world path when the draw tool is released. */
   onLasso?: (path: readonly Point[]) => void;
+  /**
+   * Called with the captured BOX when the veil's draw-box is released: its
+   * bounds in world space (the rectangle, never the stroke). A drag that never
+   * encloses an area reports nothing.
+   */
+  onDrawBox?: (box: VeilBox) => void;
   /**
    * Called when a zoom gesture SETTLES (d3's `end`) with the zoom it settled
    * on. The zoom is the level at runtime (ADR-0018): the app's handoff derives
@@ -134,8 +150,10 @@ export function CanvasPlane({
   gestureMode = "idle",
   creationHint = "double-click: word or lack",
   lassoArmed = false,
+  boxArmed = false,
   picking = false,
   onLasso,
+  onDrawBox,
   onZoomSettle,
   children,
 }: CanvasPlaneProps) {
@@ -143,6 +161,7 @@ export function CanvasPlane({
   const behaviorRef = useRef<ZoomBehavior<HTMLDivElement, unknown> | null>(null);
   const pressesRef = useRef<PlanePress[]>([]);
   const [lassoPath, setLassoPath] = useState<Point[] | null>(null);
+  const [boxDraft, setBoxDraft] = useState<VeilBox | null>(null);
 
   // Latest-value refs for the raw listeners and d3's filter, which are
   // attached once and must always see the current mode, camera and callback.
@@ -150,8 +169,12 @@ export function CanvasPlane({
   modeRef.current = gestureMode;
   const lassoArmedRef = useRef(lassoArmed);
   lassoArmedRef.current = lassoArmed;
+  const boxArmedRef = useRef(boxArmed);
+  boxArmedRef.current = boxArmed;
   const onLassoRef = useRef(onLasso);
   onLassoRef.current = onLasso;
+  const onDrawBoxRef = useRef(onDrawBox);
+  onDrawBoxRef.current = onDrawBox;
   const onZoomSettleRef = useRef(onZoomSettle);
   onZoomSettleRef.current = onZoomSettle;
   const cameraRef = useRef(camera);
@@ -275,20 +298,26 @@ export function CanvasPlane({
     };
     el.addEventListener("mousedown", countPlanePress);
 
-    // The selector's draw tool (story 1): a left drag on empty plane draws a
-    // world-space lasso. With the gate armed d3's filter refuses the pan, so
-    // the press is the lasso's; the path is reported on release and the
-    // selection rule (words only) lives in geometry.ts. A press on content is
-    // never a lasso, and a click with no drag encloses nothing.
+    // The TWO draw gestures — the selector's lasso (Epic 4 story 1) and the
+    // veil's box (Epic 9 story 1, ADR-0023): a left drag on empty plane draws
+    // in world space. They are separate ARMS (the lasso only inside the
+    // selector, the box at concept and dynamics) sharing ONE pointer capture.
+    // With the gate armed either way d3's filter refuses the pan, so the press
+    // is the draw's; the release reports the lasso's sampled path or the box's
+    // captured bounds. A press on content is never a draw, and a click with no
+    // drag encloses nothing.
     let path: Point[] | null = null;
-    const lassoDown = (event: MouseEvent) => {
-      if (event.button !== 0 || !lassoArmedRef.current) return;
+    let boxStart: Point | null = null;
+    const drawDown = (event: MouseEvent) => {
+      if (event.button !== 0) return;
+      const lasso = lassoArmedRef.current;
+      if (!lasso && !boxArmedRef.current) return;
       if (isContentTarget(event.target)) return;
       const el2 = planeRef.current;
       if (!el2) return;
       event.preventDefault();
       const rect = el2.getBoundingClientRect();
-      // The camera can still change by wheel zoom mid-lasso, so read it per
+      // The camera can still change by wheel zoom mid-draw, so read it per
       // sample rather than capturing it at the press.
       const toWorld = (clientX: number, clientY: number): Point => {
         const cam = cameraRef.current;
@@ -297,8 +326,11 @@ export function CanvasPlane({
           y: (clientY - rect.top - cam.y) / cam.zoom,
         };
       };
-      path = [toWorld(event.clientX, event.clientY)];
-      setLassoPath([...path]);
+      const start = toWorld(event.clientX, event.clientY);
+      path = [start];
+      boxStart = lasso ? null : start;
+      if (boxStart) setBoxDraft(capturedBox(start, start));
+      else setLassoPath([...path]);
       let lastX = event.clientX;
       let lastY = event.clientY;
 
@@ -308,20 +340,29 @@ export function CanvasPlane({
         lastX = ev.clientX;
         lastY = ev.clientY;
         path.push(toWorld(ev.clientX, ev.clientY));
-        setLassoPath([...path]);
+        if (boxStart) setBoxDraft(capturedBox(boxStart, path[path.length - 1]));
+        else setLassoPath([...path]);
       };
       const onUp = () => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
         const drawn = path ?? [];
+        const from = boxStart;
         path = null;
+        boxStart = null;
+        if (from) {
+          setBoxDraft(null);
+          const box = capturedBox(from, drawn[drawn.length - 1] ?? from);
+          if (boxIsDrawable(box)) onDrawBoxRef.current?.(box);
+          return;
+        }
         setLassoPath(null);
         if (drawn.length >= 3) onLassoRef.current?.(drawn);
       };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     };
-    el.addEventListener("mousedown", lassoDown);
+    el.addEventListener("mousedown", drawDown);
 
     const sel = select(el);
     sel.call(behavior);
@@ -329,7 +370,7 @@ export function CanvasPlane({
 
     return () => {
       el.removeEventListener("mousedown", countPlanePress);
-      el.removeEventListener("mousedown", lassoDown);
+      el.removeEventListener("mousedown", drawDown);
       sel.on(".zoom", null);
       behaviorRef.current = null;
     };
@@ -364,7 +405,7 @@ export function CanvasPlane({
     <PlaneContext.Provider value={planeApi}>
       <div
         ref={planeRef}
-        className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}${picking ? " ring-picking" : ""}`}
+        className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}${boxArmed ? " veil-armed" : ""}${picking ? " ring-picking" : ""}`}
         style={gridStyle}
         onDoubleClick={handleDoubleClick}
       >
@@ -381,6 +422,21 @@ export function CanvasPlane({
                 points={lassoPath.map((point) => `${point.x},${point.y}`).join(" ")}
               />
             </svg>
+          )}
+          {/* The veil's in-flight box (Epic 9 story 1): the rectangle being
+              dragged, in world space, so the person sees what the arc will
+              capture. It is content (gates.ts) and reports nothing. */}
+          {boxDraft && boxDraft.w > 0 && boxDraft.h > 0 && (
+            <div
+              className="veil-draft"
+              aria-hidden="true"
+              style={{
+                left: boxDraft.x,
+                top: boxDraft.y,
+                width: boxDraft.w,
+                height: boxDraft.h,
+              }}
+            />
           )}
         </div>
         {/* The chip reads through the band helpers (story 2): never a rounded

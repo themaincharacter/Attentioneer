@@ -50,6 +50,15 @@ interface ReferenceWordProps {
    * ADR-0013): dimmed but fully live, and unchanged in concept mode.
    */
   outOfSet?: boolean;
+  /**
+   * True while a VEIL covers this word (Epic 9 story 1, ADR-0023): the word's
+   * CENTRE is inside a veil's box, so the cover sets it aside. This is a
+   * position reading, never a record one — no field changes, and the class it
+   * wears carries visibility only, so the word's own quiet (pale and dashed
+   * when marked, the out-of-set wash) stays exactly what it is. Covered is not
+   * settled: retire the veil and the word reads as before.
+   */
+  covered?: boolean;
   /** How a gesture is armed right now — the interaction-mode gate (ADR-0016). */
   interactionMode?: GestureMode;
   /**
@@ -181,6 +190,7 @@ export function ReferenceWord({
   marked,
   shelved,
   outOfSet = false,
+  covered = false,
   interactionMode = "idle",
   onReject,
   onToggleMark,
@@ -559,7 +569,7 @@ export function ReferenceWord({
     <div
       ref={wordRef}
       data-slug={word.slug ?? undefined}
-      className={`word${marked ? " open" : ""}${shelved ? " shelved" : ""}${outOfSet ? " out-of-set" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}${followOpen ? " follow-open" : ""}`}
+      className={`word${marked ? " open" : ""}${shelved ? " shelved" : ""}${outOfSet ? " out-of-set" : ""}${covered ? " veil-covered" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}${followOpen ? " follow-open" : ""}`}
       style={{ transform }}
       onBlur={handleBlur}
       onMouseUp={handleDropMouseUp}

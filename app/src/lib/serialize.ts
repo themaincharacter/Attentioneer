@@ -160,7 +160,10 @@ export function workspaceYml(): string {
  * game and the `level` key is the resume hint, not the source. Story 2's pin
  * joins that contract (ADR-0018 decision 3): a crossing made while a gesture is
  * armed or a text field holds focus moves the camera and holds the game, so no
- * surface closes and typed text survives until the pin lifts. The scaffold is
+ * surface closes and typed text survives until the pin lifts. Epic 9 story 1
+ * adds the veil's orientation (ADR-0023): a named cover in `map/veils.jsonl`,
+ * Levels 1–2 only, the word-CENTRE region rule, covered ≠ settled, and the
+ * reason as prose kept verbatim. The scaffold is
  * WRITE-ONCE (ADR-0004): `scaffoldWorkspace`
  * writes only files that are missing, so an existing workspace keeps its own
  * text and only a NEW workspace gets this one — a story never rewrites the
@@ -205,6 +208,9 @@ export function agentsMd(workspaceName: string): string {
     "- `map/pointers.jsonl` — one line per reach beyond the map: the word it hangs",
     "  on (`on`) plus exactly one authored target form — `path`",
     "  (workspace-relative), `at` (absolute, machine-local) or `url` (any scheme).",
+    "- `map/veils.jsonl` — one line per named veil: the person's coined `name`,",
+    "  the covered rectangle (`x`, `y`, `w`, `h` — the captured BOX, never the",
+    "  stroke) and the `reason` (prose, stored verbatim and never interpreted).",
     "- `notes/` — working notes from before the map; kept untouched, no longer shown.",
     "- `ontology/` arrives in later efforts.",
     "",
@@ -219,6 +225,27 @@ export function agentsMd(workspaceName: string): string {
     "In a reference file `x` is the word's left edge, so `x` at or past `shelf_x`",
     "always means \"on the shelf\"; move it clearly below to bring it back. Change",
     "`shelf_x` only when the user asks to move the fold.",
+    "",
+    "## The veil (Levels 1–2)",
+    "",
+    "A veil is a NAMED COVER over a rectangle of the plane, in `map/veils.jsonl`.",
+    "It renders in Levels 1 and 2 ONLY: at ground the sheet is absent (the game",
+    "switch is the look-under), and no veil is coined there either.",
+    "",
+    "A word is COVERED iff the CENTRE of its word box is inside a veil's box —",
+    "the same 'in a region' rule the playing set's draw tool uses. The cover is a",
+    "render-time region test ONLY: no record carries a veil field, and covered is",
+    "not settled — the covered word is still tentative underneath, its mark still",
+    "open, its standing in the playing set unchanged. Sheets stack in file order",
+    "(later on top); wires cross through. Retiring a veil deletes the line",
+    "(no tombstone, no history); nothing else references a veil, so no record",
+    "follows. Name and reason are coined together: the name is the person's,",
+    "and the reason is prose — stored and returned verbatim, never judged.",
+    "The veil never surfaces on its own; it is read only when the person opens it",
+    "(and then only its name and reason, never what it covers).",
+    "",
+    "A veil is a committed-model record: a branch never copies it and a branch's",
+    "playing set never adds or retires one.",
     "",
     "## Level 2 — the dynamics model",
     "",
@@ -348,7 +375,7 @@ export function agentsMd(workspaceName: string): string {
     "Machine-written files (`workspace.yml`, `map/model.json`,",
     "`map/distances.jsonl`, `map/marks.jsonl`, `map/links.jsonl`,",
     "`map/loops.jsonl`, `map/assumptions.jsonl`, `map/quantities.jsonl`,",
-    "`map/pointers.jsonl`, and later",
+    "`map/pointers.jsonl`, `map/veils.jsonl`, and later",
     "the ontology) use one",
     "canonical style: LF newlines, 2-space indent, sorted keys, trailing newline;",
     "JSONL records are one compact JSON object per line. Hand edits are welcome; the",
@@ -366,9 +393,12 @@ export interface ScaffoldFile {
 }
 
 /**
- * The files a scaffold offers a folder (ADR-0004): `workspace.yml` and
- * `AGENTS.md`. Pure, so the scaffold's content is asserted without the fs
- * bridge and the write-once rule can be tested directly.
+ * The files a scaffold offers a folder (ADR-0004): `workspace.yml`,
+ * `AGENTS.md` and the veil record's empty file (`map/veils.jsonl`, Epic 9
+ * story 1 — an EMPTY canonical JSONL, so a new workspace carries the record
+ * from its first day rather than at its first veil). Pure, so the scaffold's
+ * content is asserted without the fs bridge and the write-once rule can be
+ * tested directly.
  */
 export function workspaceScaffold(
   path: string,
@@ -377,6 +407,7 @@ export function workspaceScaffold(
   return [
     { path: `${path}/workspace.yml`, content: workspaceYml() },
     { path: `${path}/AGENTS.md`, content: agentsMd(name) },
+    { path: `${path}/map/veils.jsonl`, content: canonicalJsonlLines([]) },
   ];
 }
 
@@ -405,12 +436,14 @@ export async function scaffoldWorkspace(path: string, name: string): Promise<voi
   for (const file of files) {
     if (await pathExists(file.path)) existing.add(file.path);
   }
-  for (const file of scaffoldWrites(files, existing)) {
-    await writeMachineFile(file.path, file.content);
-  }
+  // The folders come FIRST: `map/` (through `map/references`) must exist
+  // before the veil record's file can be written into it.
   await createDirAll(`${path}/notes`);
   await createDirAll(`${path}/map/references`);
   // The branches' home (Epic 8 story 2, ADR-0021): a user-owned area created
   // only when the folder is NEW, so an older workspace keeps its own layout.
   await createDirAll(`${path}/scenarios`);
+  for (const file of scaffoldWrites(files, existing)) {
+    await writeMachineFile(file.path, file.content);
+  }
 }

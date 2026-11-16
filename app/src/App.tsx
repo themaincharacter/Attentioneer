@@ -10,6 +10,13 @@ import {
 import { CanvasPlane } from "./canvas/CanvasPlane";
 import { DistanceWire } from "./canvas/DistanceWire";
 import {
+  VeilBar,
+  VeilCoinField,
+  VeilDraftBox,
+  VeilSheet,
+} from "./canvas/VeilSheet";
+import { veilLive } from "./canvas/veilRules";
+import {
   centerOf,
   DEFAULT_BOX,
   directedWireEndpoints,
@@ -107,6 +114,11 @@ import {
 } from "./map/quantities";
 import { recordsDirOf } from "./map/records";
 import type { Reference } from "./map/refs";
+import {
+  coveredWordSlugs,
+  veilKey,
+  type VeilBox,
+} from "./map/veils";
 import { activeModelKey, type StepModel } from "./map/step";
 import {
   DEFAULT_SHELF_X,
@@ -231,6 +243,18 @@ import type { Workspace } from "./workspace/lifecycle";
  * frame of two branches is refused with a word (no shared base), and a dangling
  * premise clears only by branching again.
  *
+ * Epic 9 story 1 adds THE VEIL (ADR-0023): a named cover over a rectangle of
+ * Levels 1–2. The level control's "veil" door arms the gate's own `veil` mode —
+ * a SEPARATE arm from the selector's lasso, level-uniform, so the box drag works
+ * at concept and dynamics alike — and the plane reports the captured BOX (never
+ * the stroke). The box then waits for the person's name and reason; Enter writes
+ * one line in `map/veils.jsonl`. The cover is a RENDER-TIME region test and
+ * nothing else: a word is covered iff its CENTRE is inside a box, it is set
+ * aside by its own class (visibility only — its mark and its standing are
+ * exactly what they were), the sheet owns its presses, sheets stack in file
+ * order, wires cross through, and at ground no sheet renders at all. Retiring a
+ * veil deletes its line; a word's rename or removal never touches it.
+ *
  * Epic 7 story 1 makes the playing set structurally required at AUTHORING: the
  * gate's `authoringLive` guards the three dynamics writers (a link, a loop, an
  * assumption) and echoes at the three affordances that would arm them, so with no
@@ -282,6 +306,8 @@ function App() {
     loops,
     malformedLoops,
     orphanLoops,
+    veils,
+    malformedVeils,
     assumptions,
     malformedAssumptions,
     duplicateAssumptions,
@@ -324,6 +350,8 @@ function App() {
     createLoop,
     renameLoop,
     removeLoop,
+    createVeil,
+    removeVeil,
     addAssumption,
     reviseAssumption,
     removeAssumption,
@@ -370,6 +398,11 @@ function App() {
     new Set(),
   );
   const [lassoArmed, setLassoArmed] = useState(false);
+  // The veil's draw-box (Epic 9 story 1, ADR-0023): its own arm — never the
+  // selector's lasso — plus the box it captured, which waits for the name and
+  // reason. The gate's `veil` mode is armed while either is live.
+  const [veilArmed, setVeilArmed] = useState(false);
+  const [veilBox, setVeilBox] = useState<VeilBox | null>(null);
   // Loop authoring (story 3): the path gesture's session (null = not arming),
   // and the loop whose walk is open (null = no walk).
   const [pathSession, setPathSession] = useState<PathSession | null>(null);
@@ -838,7 +871,13 @@ function App() {
           ? "sign-choice"
           : pathSession !== null
             ? "path"
-            : "idle";
+            : // The veil's box arm is LEVEL-UNIFORM: the same mode at concept
+              // and dynamics (its own arm, never the selector's lasso), and it
+              // stays armed while the coin field asks — so pan, creation and
+              // every word press stand still throughout the gesture.
+              veilArmed || veilBox !== null
+              ? "veil"
+              : "idle";
   // The gate's mode, readable from the focus and release paths, which run
   // outside render (a focusout microtask, a post-render focus refresh).
   const gestureModeRef = useRef<GestureMode>(gestureMode);
@@ -858,6 +897,20 @@ function App() {
           box: boxOf(word),
         })),
     [refs, posOf, boxOf],
+  );
+
+  /**
+   * The veil's covered set (Epic 9 story 1, ADR-0023): a word is covered iff
+   * the CENTRE of its measured box is inside a veil's box — the same "in a
+   * region" rule the playing-set selector's lasso uses. It is a RENDER-TIME
+   * reading only: it never enters a record, never changes a mark and never
+   * washes a word. The class it hands the word carries visibility alone, so a
+   * covered word's own quiet is exactly what it was, and retire shows it as
+   * before. Sheets render in FILE ORDER (later on top).
+   */
+  const coveredSlugs = useMemo(
+    () => coveredWordSlugs(veils, selectorWords),
+    [veils, selectorWords],
   );
 
   /**
@@ -921,6 +974,8 @@ function App() {
     setGrowAt(null);
     setSelectorOpen(false);
     setLassoArmed(false);
+    setVeilArmed(false);
+    setVeilBox(null);
     setPathSession(endPathSession());
     setAssumptionAt(null);
     setQuantityAt(null);
@@ -1539,6 +1594,70 @@ function App() {
   }, []);
 
   /**
+   * Arm the veil's draw-box (Epic 9 story 1, ADR-0023): the level control's
+   * `veil` door, the ONE level-uniform veil action. It runs the app's
+   * cancel-pending path first — one armed gesture at a time — and then the
+   * gate's `veil` mode owns the pointer: pan, double-click creation and every
+   * word press stand still, so a box drag can never move a word or open the
+   * ring menu. LEVELS 1–2 only (`veilLive`): at ground no sheet renders, so no
+   * veil is coined. Provisional: the door and the look.
+   */
+  const beginVeil = useCallback(() => {
+    if (!veilLive(level)) return;
+    cancelPendingGestures();
+    setVeilArmed(true);
+  }, [cancelPendingGestures, level]);
+
+  /** Esc or a level switch: the arm (or the captured box) goes, nothing written. */
+  const cancelVeil = useCallback(() => {
+    setVeilArmed(false);
+    setVeilBox(null);
+  }, []);
+
+  /**
+   * The plane reported the captured BOX: hold it while the coin field asks. The
+   * gate stays in the `veil` mode (the box is not null), so the plane's own
+   * gestures stay suspended while the person types — exactly as the loop's coin
+   * field keeps the path gate armed while it asks.
+   */
+  const captureVeilBox = useCallback((box: VeilBox) => {
+    setVeilArmed(false);
+    setVeilBox(box);
+  }, []);
+
+  /**
+   * The coin field's Enter: ONE line in `map/veils.jsonl` — the name exactly
+   * as coined (a key collision mints a suffix in the name), the captured box,
+   * and the reason exactly as typed (prose, never read by the app). Only the
+   * person coins a veil; nothing is written for a blank name (the field itself
+   * refuses, and `nameVeil` would write nothing anyway).
+   */
+  const coinVeil = useCallback(
+    (name: string, reason: string) => {
+      const box = veilBox;
+      setVeilBox(null);
+      if (!box) return;
+      createVeil(name, reason, box);
+    },
+    [veilBox, createVeil],
+  );
+
+  // Esc abandons the whole veil gesture — the arm before a box is captured, or
+  // the captured box while the coin field asks (nothing is written). The field's
+  // own Esc handler settles the same cancel; both are idempotent.
+  useEffect(() => {
+    if (!veilArmed && veilBox === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setVeilArmed(false);
+      setVeilBox(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [veilArmed, veilBox]);
+
+  /**
    * The coin field's Enter: one line in `map/loops.jsonl`, path rotated
    * canonically (ADR-0015 decision 5). The loop is a claim about the path, not
    * a change to the playing set — a path word outside play stays a gap the walk
@@ -1816,8 +1935,10 @@ function App() {
             : undefined
         }
         lassoArmed={selectorOpen && lassoArmed}
+        boxArmed={veilArmed}
         picking={markDrag.ghost !== null}
         onLasso={handleLasso}
+        onDrawBox={captureVeilBox}
         onZoomSettle={handleZoomSettle}
       >
         {/* the shelf's fold and margin: a place in world space (story 3). Its
@@ -1944,6 +2065,7 @@ function App() {
             }
             shelved={shelvedOf(word)}
             outOfSet={isOutOfSet(word)}
+            covered={word.slug !== null && coveredSlugs.has(word.slug)}
             interactionMode={gestureMode}
             onReject={() => rejectWord(word)}
             showAssumptions={cueShownIn("assumptions", level)}
@@ -1974,6 +2096,21 @@ function App() {
             onFollow={(next, screen) => handoff.jump(next, screen)}
           />
         ))}
+
+        {/* the veils' covers (Epic 9 story 1, ADR-0023): one sheet per line, in
+            FILE ORDER so later sheets sit on top. The sheet is the area's fill
+            (z-index 1, level with the wires that cross it and below the words),
+            and it owns its presses; the covered words are set aside by the
+            region test above, never by a field on a record. LEVELS 1–2 ONLY:
+            at ground no sheet renders (the game switch is the look-under). */}
+        {veilLive(level) &&
+          veils.map((veil) => (
+            <VeilSheet
+              key={veilKey(veil)}
+              veil={veil}
+              onRetire={() => removeVeil(veil)}
+            />
+          ))}
 
         {/* wires */}
         {distances.map((d) => {
@@ -2123,6 +2260,20 @@ function App() {
             words={selectorWords}
             selected={selectorDraft}
             onToggle={toggleSelectorWord}
+          />
+        )}
+
+        {/* the veil's captured box and its coin field (Epic 9 story 1): the
+            rectangle the arc caught, drawn while the person names the cover and
+            says why. Enter commits one line; Esc discards it. The gate is still
+            armed while the field asks, so a press can neither pan the plane nor
+            start a word gesture. */}
+        {veilBox && <VeilDraftBox box={veilBox} />}
+        {veilBox && (
+          <VeilCoinField
+            box={veilBox}
+            onCoin={coinVeil}
+            onCancel={cancelVeil}
           />
         )}
 
@@ -2284,6 +2435,7 @@ function App() {
         onJump={(next) => handoff.jump(next)}
         onEditPlayingSet={openSelector}
         onCoinLoop={beginLoop}
+        onDrawVeil={beginVeil}
         scenarios={scenarios}
         activeScenario={scenario}
         onChooseScenario={chooseScenario}
@@ -2333,6 +2485,11 @@ function App() {
         <PathBar collecting={pathSession.kind === "collecting"} />
       )}
 
+      {/* the veil's draw-box hint (Epic 9 story 1): what the drag does and how
+          it ends. Fixed in screen space, gone with the arm; the coin field
+          carries its own guidance. */}
+      {veilArmed && <VeilBar />}
+
       {/* the selector's controls, in screen space while it is open (story 1) */}
       {selectorOpen && (
         <PlayingSetBar
@@ -2358,6 +2515,7 @@ function App() {
         scenario={scenario}
         malformedLoops={malformedLoops}
         orphanLoops={orphanLoops}
+        malformedVeils={malformedVeils}
         malformedAssumptions={malformedAssumptions}
         duplicateAssumptions={duplicateAssumptions}
         orphanAssumptions={orphanAssumptions}
@@ -2420,6 +2578,7 @@ function MarkNotices({
   scenario,
   malformedLoops,
   orphanLoops,
+  malformedVeils,
   malformedAssumptions,
   duplicateAssumptions,
   orphanAssumptions,
@@ -2450,6 +2609,13 @@ function MarkNotices({
   scenario: string | null;
   malformedLoops: readonly string[];
   orphanLoops: readonly string[];
+  /**
+   * Unreadable `map/veils.jsonl` lines (Epic 9 story 1): a veil has no
+   * dependents, so it has no orphans — only lines the app keeps and cannot
+   * read. Surfaced wherever the person is (the record's hygiene is not the
+   * cover; the family table says so).
+   */
+  malformedVeils: readonly string[];
   malformedAssumptions: readonly string[];
   /** Hand-edited duplicate keys: preserved, never deduped (story 4). */
   duplicateAssumptions: readonly Assumption[];
@@ -2482,6 +2648,7 @@ function MarkNotices({
       orphanMembers.length > 0 ||
       ghostMembers.length > 0,
     loops: malformedLoops.length > 0 || orphanLoops.length > 0,
+    veils: malformedVeils.length > 0,
     assumptions:
       malformedAssumptions.length > 0 ||
       duplicateAssumptions.length > 0 ||
@@ -2589,6 +2756,16 @@ function MarkNotices({
             {malformedLoops.map((line, index) => (
               <div className="mark-notice" key={`malformed-loop-${index}`}>
                 unreadable line in map/loops.jsonl: {line}
+              </div>
+            ))}
+          </>
+        );
+      case "veils":
+        return (
+          <>
+            {malformedVeils.map((line, index) => (
+              <div className="mark-notice" key={`malformed-veil-${index}`}>
+                unreadable line in map/veils.jsonl: {line}
               </div>
             ))}
           </>

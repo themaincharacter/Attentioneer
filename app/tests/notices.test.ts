@@ -36,6 +36,9 @@ const FAMILIES: NoticeFamily[] = [
   "loops",
   "assumptions",
   "pointers",
+  // Epic 9 story 1: the veils' unreadable lines ride the shared group (a veil
+  // covers levels 1–2, so it is no single game's own record).
+  "veils",
 ];
 
 const names = new Map([
@@ -54,6 +57,10 @@ describe("the notices strip is band-scoped", () => {
     expect(noticeGame("loops")).toBe("dynamics");
     expect(noticeGame("assumptions")).toBe("dynamics");
     expect(noticeGame("pointers")).toBe("ground");
+    // A veil covers Levels 1–2 and its sheet is absent at ground, so the table
+    // cannot hand it one game: its notices are record hygiene and ride the
+    // shared group (ADR-0023).
+    expect(noticeGame("veils")).toBe("all");
     expect(NOTICE_FAMILY_GAME).toEqual({
       marks: "all",
       links: "dynamics",
@@ -61,6 +68,7 @@ describe("the notices strip is band-scoped", () => {
       loops: "dynamics",
       assumptions: "dynamics",
       pointers: "ground",
+      veils: "all",
     });
     // Every family is classified, so none can slip back into an aggregator.
     expect(Object.keys(NOTICE_FAMILY_GAME).sort()).toEqual([...FAMILIES].sort());
@@ -88,7 +96,7 @@ describe("the notices strip is band-scoped", () => {
   test("concept shows the shared group only; no other game's notices", () => {
     const groups = noticeGroups("concept");
     expect(groups).toEqual([
-      { game: "all", label: "every game", families: ["marks"] },
+      { game: "all", label: "every game", families: ["marks", "veils"] },
     ]);
     const families = groups.flatMap((group) => group.families);
     for (const own of ["links", "model", "loops", "assumptions", "pointers"]) {
@@ -102,7 +110,7 @@ describe("the notices strip is band-scoped", () => {
       "every game",
       "dynamics",
     ]);
-    expect(groups[0].families).toEqual(["marks"]);
+    expect(groups[0].families).toEqual(["marks", "veils"]);
     expect(groups[1].game).toBe("dynamics");
     expect(groups[1].families).toEqual([
       "links",

@@ -1,6 +1,7 @@
 import { LEVELS, type Level } from "../workspace/level";
 import type { Scenario } from "../scenarios/branch";
 import { ScenarioChooser } from "./ScenarioChooser";
+import { veilLive } from "./veilRules";
 
 interface LevelControlProps {
   /**
@@ -18,6 +19,12 @@ interface LevelControlProps {
   onEditPlayingSet: () => void;
   /** Arm the path gesture and click a loop's words in order (story 3). */
   onCoinLoop: () => void;
+  /**
+   * Arm the veil's draw-box (Epic 9 story 1, ADR-0023): drag a rectangle on
+   * empty plane, then name the cover and say why. Offered in Levels 1–2 only —
+   * at ground no sheet renders, so no veil is coined there either.
+   */
+  onDrawVeil: () => void;
   /** The branch folders the workspace holds (Epic 8 story 2, ADR-0021). */
   scenarios: readonly Scenario[];
   /** The branch running now, or null for the committed model. */
@@ -64,14 +71,21 @@ interface LevelControlProps {
  * branch against the committed model. It is offered only when a branch exists —
  * a reading needs one — and it opens the quiet panel outside `.plane`.
  *
+ * Epic 9 story 1 adds the VEIL door (ADR-0023): "veil" arms the draw-box. It is
+ * offered in Levels 1–2 only — the two games a veil covers — and never at
+ * ground, where no sheet renders and the game switch is the look-under. It is
+ * the ONE level-uniform veil action: the lasso inside the playing-set selector
+ * is a different arm and a different surface.
+ *
  * No badge, no count, no ceremony. Provisional: the wording, order and look
- * (ADR-0003/0016/0018/0021), and the landing zoom each jump arrives at.
+ * (ADR-0003/0016/0018/0021/0023), and the landing zoom each jump arrives at.
  */
 export function LevelControl({
   level,
   onJump,
   onEditPlayingSet,
   onCoinLoop,
+  onDrawVeil,
   scenarios,
   activeScenario,
   onChooseScenario,
@@ -98,6 +112,22 @@ export function LevelControl({
           {game}
         </button>
       ))}
+      {/* Epic 9 story 1's veil door (ADR-0023): LEVELS 1–2 ONLY, so it lives
+          outside the dynamics block — the draw-box works at concept AND
+          dynamics. It sits outside `.plane` beside the control's other
+          actions, so the plane's armed gate never reaches it; arming runs the
+          app's cancel-pending path, then the gate's `veil` mode owns the
+          pointer. Provisional: the wording and this being the door. */}
+      {veilLive(level) && (
+        <button
+          type="button"
+          className="level-veil"
+          title="draw a box around what to set aside, then name it and say why"
+          onClick={onDrawVeil}
+        >
+          veil
+        </button>
+      )}
       {level === "dynamics" && (
         <>
           <button

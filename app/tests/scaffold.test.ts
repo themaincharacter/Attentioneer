@@ -265,16 +265,19 @@ describe("the new workspace scaffold gains the Level 3 orientation", () => {
     expect(md).toContain(
       "- `map/pointers.jsonl` — one line per reach beyond the map",
     );
-    expect(md).toContain("`map/pointers.jsonl`, and later");
+    expect(md).toContain("`map/pointers.jsonl`, `map/veils.jsonl`, and later");
   });
 });
 
 describe("the scaffold is write-once (an older workspace keeps its text)", () => {
-  test("a new workspace gets both files, AGENTS.md with the new orientation", () => {
+  test("a new workspace gets its files, AGENTS.md with the new orientation", () => {
     const files = workspaceScaffold(WS, "garden");
     expect(files.map((file) => file.path)).toEqual([
       `${WS}/workspace.yml`,
       `${WS}/AGENTS.md`,
+      // Epic 9 story 1: the veil record ships as an EMPTY canonical JSONL, so
+      // a new workspace carries the file from its first day.
+      `${WS}/map/veils.jsonl`,
     ]);
     expect(scaffoldFile("workspace.yml").content).toBe(workspaceYml());
     expect(scaffoldFile("AGENTS.md").content).toBe(agentsMd("garden"));
@@ -286,15 +289,16 @@ describe("the scaffold is write-once (an older workspace keeps its text)", () =>
     );
   });
 
-  test("an old workspace is written nothing: its AGENTS.md bytes never change", () => {
+  test("an old workspace's AGENTS.md bytes never change (only missing files arrive)", () => {
     const disk = new Map<string, string>([
       [`${WS}/workspace.yml`, '# old\nformat: "attentioneer-workspace/1"\n'],
       [`${WS}/AGENTS.md`, OLD_AGENTS_MD],
     ]);
     const writes = scaffoldWrites(workspaceScaffold(WS, "garden"), new Set(disk.keys()));
 
-    // Nothing is offered to be written, so nothing can be overwritten.
-    expect(writes).toEqual([]);
+    // The only thing offered is the veil record's EMPTY file (Epic 9 story 1):
+    // no text file is rewritten, so no orientation can be overwritten.
+    expect(writes.map((file) => file.path)).toEqual([`${WS}/map/veils.jsonl`]);
     expect(disk.get(`${WS}/AGENTS.md`)).toBe(OLD_AGENTS_MD);
     expect(disk.get(`${WS}/AGENTS.md`)).not.toContain("Level 2");
     expect(disk.get(`${WS}/workspace.yml`)).toContain("old");
@@ -310,9 +314,10 @@ describe("the scaffold is write-once (an older workspace keeps its text)", () =>
       new Set(disk.keys()),
     );
 
-    // The scaffold offers nothing: no write path can touch the old text, so
-    // opening (which does not scaffold at all) leaves these bytes identical.
-    expect(writes).toEqual([]);
+    // The scaffold offers no TEXT file: no write path can touch the old text,
+    // so opening (which does not scaffold at all) leaves these bytes identical.
+    // Only the veil record's empty file is new (Epic 9 story 1).
+    expect(writes.map((file) => file.path)).toEqual([`${WS}/map/veils.jsonl`]);
     expect(disk.get(`${WS}/AGENTS.md`)).toBe(PRE_LEVEL_3_AGENTS_MD);
     expect(disk.get(`${WS}/AGENTS.md`)).not.toContain("Level 3");
     // The current scaffold, by contrast, carries the Level 3 orientation —
@@ -322,7 +327,7 @@ describe("the scaffold is write-once (an older workspace keeps its text)", () =>
     );
   });
 
-  test("a Level 2-era workspace missing its yml gains only the yml, not the new text", () => {
+  test("a Level 2-era workspace gains its missing files, never the new text", () => {
     const disk = new Map<string, string>([
       [`${WS}/AGENTS.md`, PRE_LEVEL_3_AGENTS_MD],
     ]);
@@ -330,6 +335,7 @@ describe("the scaffold is write-once (an older workspace keeps its text)", () =>
 
     expect(disk.get(`${WS}/workspace.yml`)).toBe(workspaceYml());
     expect(disk.get(`${WS}/AGENTS.md`)).toBe(PRE_LEVEL_3_AGENTS_MD);
+    expect(disk.get(`${WS}/map/veils.jsonl`)).toBe("\n");
   });
 
   test("a half-scaffolded folder gains only the missing file", () => {
@@ -379,9 +385,10 @@ describe("the zoom/level contract amendment is write-once (ADR-0018)", () => {
       new Set(disk.keys()),
     );
 
-    // Nothing is offered, so no write path can touch the old text: the old
-    // "only source / Zoom never changes it" contract stands exactly as it was.
-    expect(writes).toEqual([]);
+    // No text file is offered, so no write path can touch the old contract: the
+    // old "only source / Zoom never changes it" words stand exactly as they
+    // were (the veil record's empty file is the one new file, Epic 9 story 1).
+    expect(writes.map((file) => file.path)).toEqual([`${WS}/map/veils.jsonl`]);
     expect(disk.get(`${WS}/AGENTS.md`)).toBe(PRE_BINDING_AGENTS_MD);
     expect(disk.get(`${WS}/AGENTS.md`)).toContain(
       "the only source of the active game",
@@ -403,7 +410,81 @@ describe("the zoom/level contract amendment is write-once (ADR-0018)", () => {
       workspaceScaffold(WS, "garden"),
       new Set([`${WS}/AGENTS.md`]),
     );
-    expect(offered.map((file) => file.path)).toEqual([`${WS}/workspace.yml`]);
+    expect(offered.map((file) => file.path)).toEqual([
+      `${WS}/workspace.yml`,
+      `${WS}/map/veils.jsonl`,
+    ]);
+  });
+});
+
+describe("the new workspace scaffold gains the veil record and its level rule", () => {
+  const md = agentsMd("garden");
+
+  test("the veil record is named with its shape, in the inventory and the machine-file rule", () => {
+    expect(md).toContain("one line per named veil");
+    expect(md).toContain("map/veils.jsonl");
+    expect(md).toContain("the covered rectangle");
+    expect(md).toContain("captured BOX");
+    expect(md).toContain("stored verbatim and never interpreted");
+    // The machine-file style paragraph names it too (the same list the record
+    // files already ride).
+    expect(md.lastIndexOf("map/veils.jsonl")).toBeGreaterThan(
+      md.indexOf("Machine-written files"),
+    );
+  });
+
+  test("the level rule: Levels 1–2 only, and no sheet at ground", () => {
+    expect(md).toContain("## The veil (Levels 1–2)");
+    expect(md).toContain("It renders in Levels 1 and 2 ONLY");
+    expect(md).toContain("at ground the sheet is absent");
+    expect(md).toContain("no veil is coined there either");
+  });
+
+  test("the centre rule and covered ≠ settled are stated", () => {
+    expect(md).toContain("CENTRE of its word box is inside a veil's box");
+    expect(md).toContain("render-time region test ONLY");
+    expect(md).toContain("no record carries a veil field");
+    expect(md).toContain("not settled");
+    expect(md).toContain("the covered word is still tentative underneath");
+    expect(md).toContain("Sheets stack in file order");
+    expect(md).toContain("wires cross through");
+    expect(md).toContain("Retiring a veil deletes the line");
+    expect(md).toContain("(no tombstone, no history)");
+    expect(md).toContain("never judged");
+  });
+
+  test("the veil is a committed-model record: a branch never copies it", () => {
+    expect(md).toContain("a branch never copies it");
+    expect(md).toContain("never adds or retires one");
+  });
+
+  test("the scaffold offers the veil record as an EMPTY canonical JSONL", () => {
+    const file = scaffoldFile("veils.jsonl");
+    expect(file.path).toBe(`${WS}/map/veils.jsonl`);
+    expect(file.content).toBe("\n");
+  });
+
+  test("an existing veils.jsonl is never rewritten (write-once, per file)", () => {
+    const hand = '{"name":"kept","reason":"mine","x":0,"y":0,"w":10,"h":10}\n';
+    const disk = new Map<string, string>([
+      [`${WS}/workspace.yml`, workspaceYml()],
+      [`${WS}/AGENTS.md`, agentsMd("garden")],
+      [`${WS}/map/veils.jsonl`, hand],
+    ]);
+    scaffoldInto(disk, "garden");
+    expect(disk.get(`${WS}/map/veils.jsonl`)).toBe(hand);
+  });
+
+  test("the scaffold makes map/ before it writes the record into it", () => {
+    const source = readFileSync(
+      new URL("../src/lib/serialize.ts", import.meta.url),
+      "utf8",
+    );
+    const dirs = source.indexOf("await createDirAll(`${path}/map/references`)");
+    const write = source.indexOf("await writeMachineFile(file.path, file.content);");
+    expect(dirs).toBeGreaterThan(-1);
+    expect(write).toBeGreaterThan(-1);
+    expect(dirs).toBeLessThan(write);
   });
 });
 

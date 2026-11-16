@@ -49,6 +49,17 @@ import {
   type Loop,
 } from "../map/loops";
 import {
+  dedupeVeils,
+  loadVeils,
+  nameVeil as nameVeilRecord,
+  removeVeil as removeVeilRecord,
+  renameVeil as renameVeilRecord,
+  saveVeils,
+  type Veil,
+  type VeilBox,
+} from "../map/veils";
+import { veilLive } from "./veilRules";
+import {
   addAssumption as addAssumptionRecord,
   findDuplicateAssumptions,
   findOrphanAssumptions,
@@ -217,9 +228,10 @@ export interface UseMapOptions {
    * null/absent for the committed model. While a branch is active the three
    * variant-owned records — the playing set, the links and the quantities —
    * are read from and written to `scenarios/<slug>/`; the map's own records
-   * (references, distances, marks, loops, assumptions, pointers) stay in
-   * `map/`, because the map IS the committed model and a branch never edits
-   * it. The switch is the app's (a new slug here re-reads every record).
+   * (references, distances, marks, loops, assumptions, pointers and VEILS —
+   * a veil is spatial and has no branch, ADR-0023) stay in `map/`, because
+   * the map IS the committed model and a branch never edits it. The switch is
+   * the app's (a new slug here re-reads every record).
    */
   scenario?: string | null;
 }
@@ -253,6 +265,10 @@ export function useMap(
   const [malformedPointers, setMalformedPointers] = useState<string[]>([]);
   const [quantities, setQuantities] = useState<Quantity[]>([]);
   const [malformedQuantities, setMalformedQuantities] = useState<string[]>([]);
+  // Veils are COMMITTED-MODEL records (ADR-0023): they live in `map/` always,
+  // never in a branch's folder, so they never read `recordsDir`.
+  const [veils, setVeils] = useState<Veil[]>([]);
+  const [malformedVeils, setMalformedVeils] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [connect, setConnect] = useState<ConnectDraft | null>(null);
   const draftCount = useRef(0);
@@ -275,6 +291,9 @@ export function useMap(
   const quantitiesRef = useRef<Quantity[]>([]);
   const malformedQuantitiesRef = useRef<string[]>([]);
   const quantitiesWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const veilsRef = useRef<Veil[]>([]);
+  const malformedVeilsRef = useRef<string[]>([]);
+  const veilsWriteRef = useRef<Promise<void>>(Promise.resolve());
 
   /** Re-read every map file (first load and after an atomic patch). */
   const reloadMap = useCallback(async () => {
@@ -288,6 +307,7 @@ export function useMap(
       parsedAssumptions,
       parsedPointers,
       parsedQuantities,
+      parsedVeils,
     ] = await Promise.all([
       loadReferences(workspacePath),
       loadDistances(workspacePath),
@@ -298,6 +318,7 @@ export function useMap(
       loadAssumptions(workspacePath),
       loadPointers(workspacePath),
       loadQuantities(recordsDir),
+      loadVeils(workspacePath),
     ]);
     setRefs(referenceList);
     setDistances(parsedDistances.distances);
@@ -329,6 +350,10 @@ export function useMap(
     malformedQuantitiesRef.current = parsedQuantities.malformed;
     setQuantities(parsedQuantities.quantities);
     setMalformedQuantities(parsedQuantities.malformed);
+    veilsRef.current = parsedVeils.veils;
+    malformedVeilsRef.current = parsedVeils.malformed;
+    setVeils(parsedVeils.veils);
+    setMalformedVeils(parsedVeils.malformed);
     setLoaded(true);
     // The records folder is part of the dependency: a scenario switch changes
     // WHERE the three variant records are and must re-read them.
@@ -379,6 +404,12 @@ export function useMap(
   useEffect(() => {
     quantitiesRef.current = quantities;
   }, [quantities]);
+
+  // Veils follow the same mirror rule: a coin landing right after a retire must
+  // never be written from a stale line list.
+  useEffect(() => {
+    veilsRef.current = veils;
+  }, [veils]);
 
   /** Persist the distance file after each mutation (deduped by key). */
   const persistDistances = useCallback(
@@ -441,6 +472,26 @@ export function useMap(
       loopsWriteRef.current = loopsWriteRef.current
         .catch(() => undefined)
         .then(() => saveLoops(workspacePath, next, malformedLines));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * Persist the veils file after each move (ADR-0023). Same in-order queue: a
+   * coin landing right after a retire must land in the order the person made
+   * them. Malformed lines ride along from a ref, so an in-flight write can never
+   * drop a preserved line. File order is the stacking order, so it is written as
+   * the list stands — no sorting.
+   */
+  const persistVeils = useCallback(
+    (next: readonly Veil[]) => {
+      const deduped = dedupeVeils(next);
+      veilsRef.current = deduped;
+      setVeils(deduped);
+      const malformedLines = [...malformedVeilsRef.current];
+      veilsWriteRef.current = veilsWriteRef.current
+        .catch(() => undefined)
+        .then(() => saveVeils(workspacePath, deduped, malformedLines));
     },
     [workspacePath],
   );
@@ -1150,6 +1201,52 @@ export function useMap(
   );
 
   /**
+   * Coin a veil (ADR-0023, Epic 9 story 1): the captured BOX plus the person's
+   * name and reason, one line appended in file order (the stacking order). The
+   * name is minted with the loops rules at coin time; the reason is stored
+   * exactly as it arrived. The veil lives in `map/` — never a branch folder —
+   * and nothing else writes it: a word's rename or removal leaves it alone
+   * (no record references a veil).
+   *
+   * The LEVELS 1–2 rule is enforced here too (`veilLive`): at ground a veil
+   * could never show, so one is never coined — the same "the write is where the
+   * rule is enforced" seam as `authoringLive`.
+   */
+  const createVeil = useCallback(
+    (name: string, reason: string, box: VeilBox) => {
+      if (!veilLive(level)) return;
+      persistVeils(nameVeilRecord(veilsRef.current, name, box, reason));
+    },
+    [persistVeils, level],
+  );
+
+  /**
+   * Rename a veil: one in-place rewrite — the name and its natural key in one
+   * move, the box, the reason and unknown keys preserved (a collision mints the
+   * numeric suffix, exactly as at coin). No other record follows: nothing
+   * addresses a veil, so nothing can dangle. Provisional until the look-under
+   * offers the rename (Epic 9 story 2).
+   */
+  const renameVeil = useCallback(
+    (veil: Veil, newName: string) => {
+      persistVeils(renameVeilRecord(veilsRef.current, veil, newName));
+    },
+    [persistVeils],
+  );
+
+  /**
+   * Retire a veil — ammo, one click, no ceremony: its line goes and nothing
+   * else (no tombstone, no dependent record, no scenario copy). The covered
+   * words were never touched, so they read exactly as before.
+   */
+  const removeVeil = useCallback(
+    (veil: Veil) => {
+      persistVeils(removeVeilRecord(veilsRef.current, veil));
+    },
+    [persistVeils],
+  );
+
+  /**
    * State a claim about a target (story 4): one new line, appended in file
    * order. Stating a rival is the SAME move — another line on the same target
    * — and stating the identical claim again rewrites its one line in place.
@@ -1323,6 +1420,8 @@ export function useMap(
     loops,
     malformedLoops,
     orphanLoops,
+    veils,
+    malformedVeils,
     assumptions,
     malformedAssumptions,
     duplicateAssumptions,
@@ -1365,6 +1464,9 @@ export function useMap(
     createLoop,
     renameLoop,
     removeLoop,
+    createVeil,
+    renameVeil,
+    removeVeil,
     addAssumption,
     reviseAssumption,
     removeAssumption,

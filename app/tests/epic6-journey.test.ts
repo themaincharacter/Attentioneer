@@ -1246,6 +1246,9 @@ describe("the say-it structural test: a word's faces are never aggregated (ADR-0
       loops: "dynamics",
       assumptions: "dynamics",
       pointers: "ground",
+      // Epic 9 story 1: the veil's unreadable lines are shared-group hygiene —
+      // a veil covers Levels 1–2, so no single game owns its notices (ADR-0023).
+      veils: "all",
     });
     for (const family of Object.keys(NOTICE_FAMILY_GAME) as Array<
       keyof typeof NOTICE_FAMILY_GAME

@@ -3,8 +3,8 @@
  *
  * The map is the COMMITTED MODEL, and that stays literal: `map/references/`,
  * `map/distances.jsonl`, `map/marks.jsonl`, `map/loops.jsonl`,
- * `map/assumptions.jsonl` and `map/pointers.jsonl` are the person's one model
- * and never move. But three of the map's records are the dynamics MODEL's
+ * `map/assumptions.jsonl`, `map/pointers.jsonl` and `map/veils.jsonl` are the
+ * person's one model and never move. But three of the map's records are the dynamics MODEL's
  * records — the playing set (`model.json`), the signed links
  * (`links.jsonl`) and the authored quantities (`quantities.jsonl`) — and a
  * branch (a scenario, ADR-0021 decision 1) carries byte-copies of exactly
@@ -12,7 +12,11 @@
  * records the app reads and writes; the committed copies are untouched.
  *
  * So the three records have a FOLDER, not a fixed path: `map/` for the
- * committed model, `scenarios/<slug>/` for a branch. This module owns that
+ * committed model, `scenarios/<slug>/` for a branch. Every other map record —
+ * the veils included (Epic 9 story 1, ADR-0023) — has a FIXED path in `map/`
+ * and is never copied into a branch: a veil is spatial, so a branch's model
+ * variant does not change which area of the plane is covered, and a branch can
+ * neither add nor retire one. This module owns that
  * one piece of arithmetic so no caller hand-joins a record path, and so the
  * chooser, the branch writer and the atomic batches all agree on where a
  * branch lives.

@@ -4,7 +4,13 @@
  * behaviors, pan and creation all suspend — and the armed gesture owns the
  * pointer. The selector is the first mode; `sign-choice` (a link's sign, story
  * 2) is the second; `path` (loop authoring, story 3) is the third — it arms
- * while the words of a cycle are clicked in order and named.
+ * while the words of a cycle are clicked in order and named. The veil's
+ * draw-box is the fifth mode (Epic 9 story 1, ADR-0023): armed from the level
+ * control, it captures a RECTANGLE of plane and stands every plane gesture
+ * still exactly as the others do — a box drag can never move a word, open the
+ * ring menu or pan. It is its own arm, never the selector's lasso: the lasso
+ * lives inside a dynamics-only surface and takes a polygon, while the veil must
+ * work at concept AND dynamics.
  *
  * The gate also owns the content-element list: presses on content are never
  * plane gestures. New canvas elements join `CONTENT_CLASSES` as they land, and
@@ -92,7 +98,8 @@ export type GestureMode =
   | "selector"
   | "path"
   | "sign-choice"
-  | "pointer";
+  | "pointer"
+  | "veil";
 
 /** The one method the gate needs from a class list (a DOMTokenList works). */
 export interface ClassListLike {
@@ -205,6 +212,19 @@ export const CONTENT_CLASSES = [
   "quantity-amount",
   "quantity-remove",
   "quantity-close",
+  // Epic 9 story 1's veil (ADR-0023): the cover sheet and its quiet retire ×,
+  // the in-flight rectangle draft, and the name/reason coin field. The sheet
+  // OWNS presses over the area it covers, so a press on it can never pan the
+  // plane, create anything or start a word gesture; the covered words under it
+  // are set aside (the region test, map/veils.ts) and the cover adds no quiet
+  // of its own.
+  "veil-sheet",
+  "veil-retire",
+  "veil-draft",
+  "veil-bar",
+  "veil-coinfield",
+  "veil-coinfield-input",
+  "veil-reason-input",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */
@@ -317,6 +337,16 @@ export const WORD_CONTROL_CLASSES = [
   "quantity-amount",
   "quantity-remove",
   "quantity-close",
+  // Epic 9 story 1's veil: the sheet, its retire ×, the draft rectangle and the
+  // coin field are content, so the word handler's early-return list covers them
+  // too — no veil element can ever start a word drag or a click-to-center.
+  "veil-sheet",
+  "veil-retire",
+  "veil-draft",
+  "veil-bar",
+  "veil-coinfield",
+  "veil-coinfield-input",
+  "veil-reason-input",
 ] as const;
 
 /**

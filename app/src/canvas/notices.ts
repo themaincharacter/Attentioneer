@@ -13,8 +13,12 @@ import type { Level } from "../workspace/level";
  * honest partition say otherwise — a dynamics-only record's notice belongs to
  * dynamics, a pointer's to ground. Each family is assigned to its game here,
  * and the strip renders ONLY the running game's groups plus the one group every
- * game shares (marks, distances and the shelf render in every game). Each group
- * is headed by its game's name, so a line always says which game it is about.
+ * game shares (marks, distances and the shelf render in every game). Veils are
+ * the exception the table states out loud (ADR-0023): they cover levels 1–2,
+ * so they belong to no single game, and their notices are record hygiene —
+ * unreadable `map/veils.jsonl` lines ride the shared group wherever the person
+ * is (the strip is not the cover). Each group is headed by its game's name, so
+ * a line always says which game it is about.
  * Provisional: grouping per game rather than prefixing every line (both satisfy
  * the rule; the grouping is the quieter look).
  *
@@ -33,7 +37,8 @@ export type NoticeFamily =
   | "model"
   | "loops"
   | "assumptions"
-  | "pointers";
+  | "pointers"
+  | "veils";
 
 /** A family's game, or "all" for the content every game renders. */
 export type NoticeGame = Level | "all";
@@ -42,6 +47,13 @@ export type NoticeGame = Level | "all";
  * Which game owns each family's notice (RENDER_MAP's readings, one table):
  * marks render in every game; links, the playing set, loops and assumptions
  * are dynamics' own records; pointers are ground's.
+ *
+ * VEILS are the one family that is not a game's OWN record (ADR-0023): a veil
+ * covers levels 1–2 and its sheet is absent at ground, so the table cannot say
+ * "one game". Its notices are also RECORD HYGIENE, not the cover — an
+ * unreadable `map/veils.jsonl` line is surfaced wherever the person is, never
+ * hidden because the sheet is. They ride the shared "every game" group with the
+ * marks, and `veils.jsonl` is the only file they name.
  */
 export const NOTICE_FAMILY_GAME: Record<NoticeFamily, NoticeGame> = {
   marks: "all",
@@ -50,6 +62,7 @@ export const NOTICE_FAMILY_GAME: Record<NoticeFamily, NoticeGame> = {
   loops: "dynamics",
   assumptions: "dynamics",
   pointers: "ground",
+  veils: "all",
 };
 
 /** The game a family's notices belong to. */
@@ -78,8 +91,13 @@ export interface NoticeGroup {
  * only the shared group.
  */
 export function noticeGroups(level: Level): NoticeGroup[] {
+  // The shared group is every family assigned to "all" — read from the table so
+  // a new shared family (the veils, ADR-0023) can never be stranded.
+  const shared = (Object.keys(NOTICE_FAMILY_GAME) as NoticeFamily[]).filter(
+    (family) => noticeGame(family) === "all",
+  );
   const groups: NoticeGroup[] = [
-    { game: "all", label: "every game", families: ["marks"] },
+    { game: "all", label: "every game", families: shared },
   ];
   const own = (Object.keys(NOTICE_FAMILY_GAME) as NoticeFamily[]).filter(
     (family) => noticeGame(family) === level,
