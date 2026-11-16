@@ -4,6 +4,7 @@ import {
   addAssumption,
   findOrphanAssumptions,
   parseAssumptions,
+  serializeAssumptionLine,
   serializeAssumptions,
   type Assumption,
   type AssumptionTarget,
@@ -114,6 +115,8 @@ import {
   type Level,
 } from "../src/workspace/level";
 import { createLevelHandoff } from "../src/workspace/levelHandoff";
+import { createGhostSession } from "../src/ghost/session";
+import { agentReply, withWorkspace, type Workspace } from "./ghost-harness";
 
 /**
  * Story-5 cross-record hardening: the four records (model, links, loops,
@@ -1948,5 +1951,136 @@ describe("the veil writer is its own: no batch, no rename, no remove", () => {
     );
     expect(records).toContain("map/veils.jsonl");
     expect(records).toContain("never copied into a branch");
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * 13. The ghost's accepted claim is an ordinary assumption (Epic 10 story 4).
+ *
+ * The cross-record question the ghost suite cannot answer alone: once accepted,
+ * is the ghost's line a claim like any other? The accept APPENDS exactly one
+ * canonical line (a hand-formatted base keeps every byte), and the ordinary
+ * rename/remove batch then carries it like the claims the person authored
+ * directly - its target follows the word, its text is never rewritten, and a
+ * removal takes it with its word.
+ * ---------------------------------------------------------------------- */
+
+describe("the ghost's accepted claim is an ordinary assumption (Epic 10 story 4)", () => {
+  const GHOST_CONTEXT = { level: "dynamics" as const, scenario: null };
+  const GHOST_TEXT = "rain follows the soil's temperature";
+
+  /** File and accept one add-assumption ghost; return its appended line. */
+  async function acceptGhost(scratch: Workspace): Promise<string> {
+    const session = createGhostSession({
+      workspacePath: scratch.path,
+      fs: scratch.fs,
+    });
+    const filed = await session.intake(
+      agentReply({
+        target: { kind: "word", slug: "rain" },
+        params: { text: GHOST_TEXT },
+      }),
+      GHOST_CONTEXT,
+    );
+    expect(filed.ok).toBe(true);
+    if (!filed.envelope) throw new Error("expected an envelope");
+    const accepted = await session.accept(filed.envelope.id, GHOST_CONTEXT);
+    expect(accepted.outcome).toBe("applied");
+    return filed.envelope.steps[0].line;
+  }
+
+  test("accept appends exactly one canonical line and rewrites nothing", async () => {
+    await withWorkspace(async (scratch) => {
+      // A HAND-FORMATTED base: the append must keep every byte.
+      const base = '{ "on": "soil", "text": "the soil holds water" }\n';
+      scratch.write("map/assumptions.jsonl", base);
+      const line = await acceptGhost(scratch);
+      const after = scratch.read("map/assumptions.jsonl") ?? "";
+      expect(after).toBe(base + line + "\n");
+
+      // The family's own reader reads it; its writer reproduces the line.
+      const parsed = parseAssumptions(after);
+      expect(parsed.malformed).toEqual([]);
+      expect(parsed.assumptions.map((assumption) => assumption.text)).toEqual([
+        "the soil holds water",
+        GHOST_TEXT,
+      ]);
+      expect(serializeAssumptionLine(parsed.assumptions[1])).toBe(line);
+      expect(serializeAssumptions(parsed.assumptions)).toBe(
+        '{"on":"soil","text":"the soil holds water"}\n' + line + "\n",
+      );
+    });
+  });
+
+  test("a rename carries the accepted claim's target and never its text", async () => {
+    await withWorkspace(async (scratch) => {
+      const line = await acceptGhost(scratch);
+      const accepted = parseAssumptions(
+        scratch.read("map/assumptions.jsonl") ?? "",
+      ).assumptions[1];
+      expect(serializeAssumptionLine(accepted)).toBe(line);
+
+      // The accepted line joins the batch document exactly like a direct
+      // author's claim: the base bytes plus the one canonical line.
+      const batch: Batch = {
+        ...base(),
+        assumptions: [...base().assumptions, accepted],
+      };
+      expect(serializeAssumptions(batch.assumptions)).toBe(
+        serializeAssumptions(base().assumptions) + line + "\n",
+      );
+
+      const renamed = renameThrough(batch, "rain", "rainfall");
+      const carried = renamed.assumptions.find(
+        (assumption) => assumption.text === GHOST_TEXT,
+      );
+      expect(carried).toBeDefined();
+      expect(carried!.target).toEqual({ type: "word", slug: "rainfall" });
+      // Every claim's TEXT is byte-identical: a rename rewrites addresses only.
+      expect(renamed.assumptions.map((assumption) => assumption.text)).toEqual(
+        batch.assumptions.map((assumption) => assumption.text),
+      );
+      const bytes = recordBytes(renamed)["map/assumptions.jsonl"];
+      expect(bytes).toContain(
+        '{"on":"rainfall","text":"rain follows the soil\'s temperature"}',
+      );
+      expect(bytes).not.toContain(
+        '"on":"rain","text":"rain follows the soil',
+      );
+      expectNoDanglingSlugs(renamed);
+      reopenRecords(renamed);
+    });
+  });
+
+  test("a removal takes the accepted claim with its word; the rest stays", async () => {
+    await withWorkspace(async (scratch) => {
+      await acceptGhost(scratch);
+      const accepted = parseAssumptions(
+        scratch.read("map/assumptions.jsonl") ?? "",
+      ).assumptions[1];
+      const batch: Batch = {
+        ...base(),
+        assumptions: [...base().assumptions, accepted],
+      };
+
+      const removed = removeThrough(batch, "rain");
+      expect(removed.assumptions.map((assumption) => assumption.text)).toEqual([
+        "mulch is a slow sponge",
+        "something is missing here",
+      ]);
+      expect(
+        removed.assumptions.some((assumption) => assumption.text === GHOST_TEXT),
+      ).toBe(false);
+      // The family's bytes: the removed word's claim is gone, the surviving
+      // claims keep their exact canonical lines.
+      const bytes = recordBytes(removed)["map/assumptions.jsonl"];
+      expect(bytes).not.toContain(GHOST_TEXT);
+      expect(bytes).toBe(
+        '{"on":"mulch","text":"mulch is a slow sponge"}\n' +
+          '{"text":"something is missing here","x":40,"y":60}\n',
+      );
+      expectNoDanglingSlugs(removed);
+      reopenRecords(removed);
+    });
   });
 });
