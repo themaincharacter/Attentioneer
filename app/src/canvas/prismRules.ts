@@ -135,17 +135,64 @@ export function factsWords(bounds: HeadBounds): string {
 }
 
 /**
- * One Change's detail line: the read-head Change says its exact bounds, its
- * decode status and (on a Measure) its declared facts; the other kinds carry
- * no detail yet (their flows are the egress story's). Words only — no count,
- * no summary.
+ * One logged citation as the window reads it: the natural key is
+ * anchor + form + value joined by NULs, and the window names the anchor with
+ * the word's coined NAME on its header — so the detail line shows the reach's
+ * form and value (the parts the person authored). A key that is not in the
+ * family's shape is shown verbatim, never guessed at (PROVISIONAL display
+ * decomposition; the record's own key never changes).
+ */
+export function citationWords(key: string): string {
+  const parts = key.split("\u0000");
+  if (parts.length < 3) return key;
+  return parts[1] + " " + parts.slice(2).join("\u0000");
+}
+
+/** The inclusion set as the window reads it: the reaches' citations, or none. */
+export function inclusionWords(included: string[] | null): string {
+  const parts = included === null ? [] : included.map(citationWords);
+  return "included: " + (parts.length === 0 ? "none" : parts.join(", "));
+}
+
+/**
+ * One Change's detail line, said exactly and quietly:
+ *   - read-head: the exact bounds, the decode status and (on a Measure) the
+ *     declared facts;
+ *   - mint-pointer: the minted reach's citation (the log's target);
+ *   - write-text: the authored text's exact byte size;
+ *   - open-os: nothing beyond its outcome (the reach is on the header, and the
+ *     app knows only the handoff);
+ *   - ask: the inclusion SET (the reaches' citations, or none) and, when a
+ *     response came back, its exact size + decode.
+ * Words and exact numbers only — no count, no summary, no content.
  */
 export function changeDetail(change: Change): string {
-  if (change.kind !== "read-head") return "";
-  const parts = [boundsWords(change.bounds)];
-  const decode = decodeWords(change.decode);
-  if (decode !== "") parts.push(decode);
-  const facts = factsWords(change.bounds);
-  if (facts !== "") parts.push(facts);
-  return parts.join(" · ");
+  switch (change.kind) {
+    case "read-head": {
+      const parts = [boundsWords(change.bounds)];
+      const decode = decodeWords(change.decode);
+      if (decode !== "") parts.push(decode);
+      const facts = factsWords(change.bounds);
+      if (facts !== "") parts.push(facts);
+      return parts.join(" · ");
+    }
+    case "mint-pointer":
+      return citationWords(change.target);
+    case "write-text":
+      return "size " + change.size + " bytes";
+    case "open-os":
+      return "";
+    case "ask": {
+      const parts = [inclusionWords(change.included)];
+      if (change.outcome === "answered") {
+        const size =
+          change.responseSize === null
+            ? "size unknown"
+            : "response: size " + change.responseSize + " bytes";
+        const decode = decodeWords(change.decode);
+        parts.push(decode === "" ? size : size + " · " + decode);
+      }
+      return parts.join(" · ");
+    }
+  }
 }

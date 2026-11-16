@@ -22,6 +22,8 @@ import {
   factsWords,
   mtimeWords,
   prismLabel,
+  citationWords,
+  inclusionWords,
 } from "../src/canvas/prismRules";
 import { pointerKey } from "../src/map/pointers";
 import type { Prism, ReadHeadChange } from "../src/map/prisms";
@@ -199,8 +201,52 @@ describe("the window's words: the contact on the header, the exact facts", () =>
     expect(changeDetail(readHead({ outcome: "not-text", decode: null }))).toBe(
       "bounds: 20 lines, 1600 bytes",
     );
-    // The other Change kinds' flows are the egress story's: a quiet line.
-    expect(changeDetail({ kind: "mint-pointer", target: "t", outcome: "minted" })).toBe("");
+  });
+
+  test("story 3's Changes say their declared facts, exactly", () => {
+    const key = pointerKey("rain", "path", "notes/x.md");
+    // The mint's target is a citation; the window shows its authored parts.
+    expect(citationWords(key)).toBe("path notes/x.md");
+    expect(changeDetail({ kind: "mint-pointer", target: key, outcome: "minted" })).toBe(
+      "path notes/x.md",
+    );
+    // A key not in the family's shape is shown verbatim, never guessed at.
+    expect(citationWords("t")).toBe("t");
+    // A write's size is the authored text's exact bytes.
+    expect(
+      changeDetail({ kind: "write-text", pointer: key, outcome: "written", size: 1234 }),
+    ).toBe("size 1234 bytes");
+    expect(
+      changeDetail({ kind: "write-text", pointer: key, outcome: "failed", size: 0 }),
+    ).toBe("size 0 bytes");
+    // The egress says nothing beyond its outcome: the reach is on the header.
+    expect(
+      changeDetail({ kind: "open-os", pointer: key, outcome: "handed" }),
+    ).toBe("");
+    // An Ask logs its inclusion SET (citations, or none) and its response
+    // facts — never a byte.
+    expect(inclusionWords(null)).toBe("included: none");
+    expect(inclusionWords([key])).toBe("included: path notes/x.md");
+    expect(
+      changeDetail({
+        kind: "ask",
+        pointer: null,
+        outcome: "answered",
+        included: null,
+        responseSize: 12,
+        decode: "clean",
+      }),
+    ).toBe("included: none · response: size 12 bytes · decoded clean");
+    expect(
+      changeDetail({
+        kind: "ask",
+        pointer: key,
+        outcome: "no-response",
+        included: [key],
+        responseSize: null,
+        decode: null,
+      }),
+    ).toBe("included: path notes/x.md");
   });
 });
 

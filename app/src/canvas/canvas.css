@@ -4192,3 +4192,284 @@ body {
   pointer-events: none;
   animation: fade-in 160ms ease-out;
 }
+
+
+/* Epic 12 story 3 — the person's other verbs. Provisional: the panels' look
+   (ADR-0003's seam), the row's ask / hand-off buttons and the add entry's
+   make / ask doors. Both panels sit OUTSIDE .plane (the ghost panel's
+   neighbours), so the plane's armed gate never reaches them; they hold typed
+   prose, so Esc or their × closes them and a press away does not. */
+
+.pointer-ask,
+.pointer-handoff {
+  /* The base .pointer-contact rules carry the quiet look; these only keep the
+     two new words from wrapping in a crowded row. */
+  white-space: nowrap;
+}
+
+.pointer-verbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pointer-make,
+.pointer-ask-word {
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: #8d887c;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 7px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.pointer-make:hover,
+.pointer-make:focus-visible,
+.pointer-ask-word:hover,
+.pointer-ask-word:focus-visible {
+  opacity: 1;
+  color: #1e2126;
+  border-color: #ddd7cc;
+  outline: none;
+}
+
+.make-panel,
+.ask-panel {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: min(440px, 48vw);
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+  padding: 7px 10px 9px;
+  background: rgba(255, 253, 248, 0.95);
+  border: 1px solid #e4dfd4;
+  border-radius: 10px;
+  box-shadow: 0 3px 14px rgba(40, 35, 25, 0.1);
+  animation: fade-in 160ms ease-out;
+}
+
+.make-head,
+.ask-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.make-title,
+.ask-title {
+  font-size: 9.5px;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.make-close,
+.ask-close {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #b3ac9e;
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.make-close:hover,
+.make-close:focus-visible,
+.ask-close:hover,
+.ask-close:focus-visible {
+  color: #1e2126;
+  outline: none;
+}
+
+.make-word,
+.ask-word {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: #4c4a44;
+  overflow-wrap: anywhere;
+}
+
+.make-path,
+.ask-attach {
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #1e2126;
+  padding: 3px 4px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #eee9df;
+  outline: none;
+}
+
+.make-path:focus,
+.ask-attach:focus {
+  border-bottom-color: #c9c2b4;
+}
+
+.make-text,
+.ask-question,
+.ask-response {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #1e2126;
+  padding: 5px 7px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid #eee9df;
+  border-radius: 6px;
+  outline: none;
+  resize: vertical;
+}
+
+.make-text:focus,
+.ask-question:focus,
+.ask-response:focus {
+  border-color: #d5cfc3;
+}
+
+.make-actions,
+.ask-actions,
+.ask-transports {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.make-go,
+.ask-copy,
+.ask-handoff,
+.ask-log,
+.ask-none,
+.ask-keep,
+.ask-show-log {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #6b675e;
+  background: transparent;
+  border: 1px solid #ddd7cc;
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.make-go:hover,
+.make-go:focus-visible,
+.ask-copy:hover,
+.ask-copy:focus-visible,
+.ask-handoff:hover,
+.ask-handoff:focus-visible,
+.ask-log:hover,
+.ask-log:focus-visible,
+.ask-none:hover,
+.ask-none:focus-visible,
+.ask-keep:hover,
+.ask-keep:focus-visible,
+.ask-show-log:hover,
+.ask-show-log:focus-visible {
+  color: #1e2126;
+  border-color: #8d887c;
+  outline: none;
+}
+
+.make-go:disabled,
+.ask-copy:disabled,
+.ask-handoff:disabled,
+.ask-log:disabled,
+.ask-none:disabled,
+.ask-keep:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ask-rides {
+  display: flex;
+  gap: 4px;
+  font-size: 10.5px;
+  color: #8d887c;
+  overflow-wrap: anywhere;
+}
+
+.ask-rides-label {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 9px;
+  color: #b3ac9e;
+}
+
+.ask-included {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 26vh;
+  overflow-y: auto;
+}
+
+.ask-include {
+  display: inline-flex;
+  gap: 4px;
+  align-items: baseline;
+  font-size: 11px;
+  color: #6b675e;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.ask-include input {
+  margin: 0;
+  accent-color: #8d887c;
+}
+
+.ask-packet,
+.ask-response-text {
+  margin: 0;
+  max-height: 30vh;
+  overflow: auto;
+  padding: 5px 7px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: #4c4a44;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid #eee9df;
+  border-radius: 6px;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+.ask-sent,
+.ask-response-stats {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #8d887c;
+}
+
+.ask-note,
+.make-note {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #8d887c;
+}

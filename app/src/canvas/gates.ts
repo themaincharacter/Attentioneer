@@ -216,6 +216,12 @@ export const CONTENT_CLASSES = [
   "pointer-look",
   "pointer-measure",
   "pointer-log",
+  // Epic 12 story 3: the row's ask and hand-off, and the add entry's make / ask
+  // doors — plain buttons inside the chooser, so their presses are content too.
+  "pointer-ask",
+  "pointer-handoff",
+  "pointer-make",
+  "pointer-ask-word",
   "prism-window",
   "prism-header",
   "prism-contact",
@@ -378,6 +384,12 @@ export const WORD_CONTROL_CLASSES = [
   "pointer-look",
   "pointer-measure",
   "pointer-log",
+  // Epic 12 story 3: the row's ask and hand-off, and the add entry's make / ask
+  // doors — the person's other verbs, plain buttons that own their presses.
+  "pointer-ask",
+  "pointer-handoff",
+  "pointer-make",
+  "pointer-ask-word",
   "prism-window",
   "prism-header",
   "prism-contact",

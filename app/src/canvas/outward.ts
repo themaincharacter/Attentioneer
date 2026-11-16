@@ -10,7 +10,10 @@ import {
 /**
  * The outward actions (Epic 5 story 2): the app hands a target to the OS. This
  * is the ONLY place that calls the opener plugin, and it goes through the
- * plugin's IPC/JS API — NEVER through a Rust-side command. The plugin's own
+ * plugin's IPC/JS API — NEVER through a Rust-side command. (Epic 12 story 3's
+ * contact egress reuses this door: open-os hands a url off through
+ * `openOutward`, so the capability's scope stays the ONE authority and no
+ * second call site can ever bypass it.) The plugin's own
  * docs are explicit that its Rust methods do no scope check; only the IPC
  * wrappers build the Scope, so a Rust-side `open_path` would silently evade
  * the capability. Convention, not boundary: the scope lives in

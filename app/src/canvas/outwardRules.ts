@@ -16,8 +16,18 @@
  */
 
 import type { PointerForm } from "../map/pointers";
+import {
+  DEFAULT_URL_SCHEMES,
+  schemeAllowed,
+  urlScheme,
+} from "../lib/openerSchemes";
 import { chooserFocusSelector } from "./pointerRules";
 import type { Point } from "./geometry";
+
+// The scheme vocabulary is the lib's now (Epic 12 story 3's open-os decides
+// the same question before logging an outcome); this module keeps re-exporting
+// it, so every outward caller reads exactly what it read before.
+export { DEFAULT_URL_SCHEMES, schemeAllowed, urlScheme };
 
 /**
  * The window's quiet tooltip/aria line: a snapshot of the open moment, not a
@@ -36,26 +46,6 @@ export const CANNOT_OPEN_SCHEME = "cannot open this scheme";
 
 /** The reveal-in-dir failed (no file manager, or the item is gone). */
 export const CANNOT_REVEAL = "cannot reveal";
-
-/**
- * The URL schemes `opener:default` already allows in this build (the research's
- * section 1.2: allow-open-url + allow-default-urls with mailto/tel/http/https
- * scopes). Any other scheme is refused by the IPC authority, so the app says
- * "cannot open this scheme" before ever calling it.
- */
-export const DEFAULT_URL_SCHEMES = ["http", "https", "mailto", "tel"] as const;
-
-/** The scheme of a url as written, lowercased; null when there is none. */
-export function urlScheme(value: string): string | null {
-  const match = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(value);
-  return match === null ? null : match[1].toLowerCase();
-}
-
-/** Is this url inside opener:default's four scheme surfaces? */
-export function schemeAllowed(value: string): boolean {
-  const scheme = urlScheme(value);
-  return scheme !== null && (DEFAULT_URL_SCHEMES as readonly string[]).includes(scheme);
-}
 
 /**
  * The pure guard's answer: null when the url may go to `openUrl`, otherwise the

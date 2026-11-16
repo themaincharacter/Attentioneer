@@ -68,6 +68,12 @@ const REACH_ELEMENTS = [
   "pointer-close",
   // Story 2's row open action lives in the chooser too.
   "pointer-open",
+  // Epic 12 story 3's verbs: the row's ask and hand-off, and the add entry's
+  // make / ask doors.
+  "pointer-ask",
+  "pointer-handoff",
+  "pointer-make",
+  "pointer-ask-word",
 ];
 
 function pointer(on: string, form: "path" | "at" | "url", value: string): Pointer {

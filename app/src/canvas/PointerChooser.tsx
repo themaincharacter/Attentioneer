@@ -41,6 +41,14 @@ interface PointerChooserProps {
   onMeasure: (pointer: Pointer) => void;
   /** Reopen this reach's latest PRISM (Epic 12 story 2, PROVISIONAL). */
   onLog: (pointer: Pointer) => void;
+  /** Ask on this reach (Epic 12 story 3): the question out, the response back. */
+  onAsk: (pointer: Pointer) => void;
+  /** Hand this url to the OS (Epic 12 story 3's open-os egress). */
+  onHandOff: (pointer: Pointer) => void;
+  /** Ask on the WORD, riding no reach at all (the table's `none`). */
+  onAskWord: () => void;
+  /** Make an artifact on this word (Epic 12 story 3's write path). */
+  onMake: () => void;
   /** Esc, a press outside, or the card's own ×: nothing more is written. */
   onClose: () => void;
 }
@@ -61,6 +69,15 @@ interface PointerChooserProps {
  * latest PRISM (the tail of an append-only log, never a list). A url row offers
  * no head read — its Look is the egress story's open-os — so it carries no
  * look/measure buttons; the glimpse and the log stay.
+ *
+ * Epic 12 story 3 adds the person's other verbs. ASK opens the quiet ask panel
+ * on this reach (the question out, the response back, the keep a separate
+ * Finding); the add entry's MAKE opens the quiet make panel on the word (one
+ * Move: mint the artifact's pointer, write its raw text); the add entry's ASK
+ * opens the same panel riding NO reach (the table's `none`); and a url row
+ * gains HAND OFF, the open-os egress (the log says handed, never opened).
+ * Every one of them is a plain button — no proposal, no accept gate (an
+ * agent's Make is a ghost, never this).
  *
  * Under the rows sits the "add a pointer" entry. Its FORM PICK STARTS
  * UNPICKED — no pick, no write (World B: the person picks the form, the app
@@ -93,6 +110,10 @@ export function PointerChooser({
   onLook,
   onMeasure,
   onLog,
+  onAsk,
+  onHandOff,
+  onAskWord,
+  onMake,
   onClose,
 }: PointerChooserProps) {
   const { camera } = usePlane();
@@ -308,6 +329,34 @@ export function PointerChooser({
             )}
             <button
               type="button"
+              className="pointer-contact pointer-ask"
+              aria-label="ask on this reach"
+              title="ask — the question out, the response back"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (editing === pointer) cancelEdit();
+                onAsk(pointer);
+              }}
+            >
+              ask
+            </button>
+            {pointer.form === "url" && (
+              <button
+                type="button"
+                className="pointer-contact pointer-handoff"
+                aria-label="hand this url to the system"
+                title="hand off to the OS — the log says handed"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (editing === pointer) cancelEdit();
+                  onHandOff(pointer);
+                }}
+              >
+                hand off
+              </button>
+            )}
+            <button
+              type="button"
               className="pointer-contact pointer-log"
               aria-label="show this reach's log"
               title="log — this reach's latest PRISM"
@@ -368,6 +417,35 @@ export function PointerChooser({
         onKeyDown={handleAddKeyDown}
       >
         <span className="pointer-add-hint">add a pointer</span>
+        {/* Epic 12 story 3's two word-level verbs: make an artifact (one Move:
+            mint its pointer and write its raw text) and ask riding no reach at
+            all. Plain buttons; no proposal, no gate. */}
+        <div className="pointer-verbs">
+          <button
+            type="button"
+            className="pointer-make"
+            aria-label="make an artifact on this word"
+            title="make — mint the artifact's pointer and write its text"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMake();
+            }}
+          >
+            make
+          </button>
+          <button
+            type="button"
+            className="pointer-ask-word"
+            aria-label="ask on this word, riding no reach"
+            title="ask — no reach rides"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAskWord();
+            }}
+          >
+            ask
+          </button>
+        </div>
         <div className="pointer-picks">
           {POINTER_PICKS.map((form) => (
             <button

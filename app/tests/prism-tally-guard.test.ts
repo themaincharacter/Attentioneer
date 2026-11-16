@@ -63,6 +63,14 @@ const SCOPED_AWAY = [
 const SURFACES = [
   "contacts/read.ts",
   "contacts/prismLog.ts",
+  // Epic 12 story 3's flows and their two quiet panels: every surface that
+  // writes, reads or shows a Move is inside the scan.
+  "contacts/make.ts",
+  "contacts/egress.ts",
+  "contacts/ask.ts",
+  "canvas/contactRules.ts",
+  "canvas/AskPanel.tsx",
+  "canvas/MakePanel.tsx",
   "canvas/prismRules.ts",
   "canvas/PrismWindow.tsx",
 ];
@@ -158,7 +166,7 @@ describe("transients mint no PRISM (the story 1 scan, extended)", () => {
     }
   });
 
-  test("only the record module and the read path append a PRISM", () => {
+  test("only the contact flows and the record module append a PRISM", () => {
     const appenders: string[] = [];
     const minters: string[] = [];
     for (const file of sourceFiles()) {
@@ -166,13 +174,18 @@ describe("transients mint no PRISM (the story 1 scan, extended)", () => {
       if (code.includes("appendPrismLine(")) appenders.push(file);
       if (code.includes("mintPrismId(")) minters.push(file);
     }
+    // The four contact flows (read, make, egress, ask) each append THEIR Move
+    // through the record module's append door; the panels never do.
     expect(appenders.sort()).toEqual([
+      "contacts/ask.ts",
+      "contacts/egress.ts",
+      "contacts/make.ts",
       "contacts/read.ts",
       "map/prisms.ts",
     ]);
-    // The adapter only references the minter (mintId: mintPrismId); the
-    // read path calls the injected dep, so the record module is the one place
-    // that actually mints an id.
+    // The adapter only references the minter (mintId: mintPrismId); the flows
+    // call the injected dep, so the record module is the one place that
+    // actually mints an id.
     expect(minters.sort()).toEqual(["map/prisms.ts"]);
   });
 

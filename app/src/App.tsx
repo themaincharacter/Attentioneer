@@ -79,7 +79,29 @@ import { OutwardWindow } from "./canvas/OutwardWindow";
 import { PlaneMenu } from "./canvas/PlaneMenu";
 import { PrismWindow } from "./canvas/PrismWindow";
 import { CANNOT_READ_LOG, NOT_LOGGED } from "./canvas/prismRules";
-import { readLatestPrism, runReadMove, savePrismExplanation } from "./contacts/prismLog";
+import { AskPanel, type AskSessionView } from "./canvas/AskPanel";
+import { MakePanel } from "./canvas/MakePanel";
+import {
+  ASK_KEEP_FAILED,
+  ASK_NEEDS_QUESTION,
+  ASK_SEND_FAILED,
+} from "./canvas/contactRules";
+import {
+  readLatestPrism,
+  runEgressMove,
+  runMakeMove,
+  runReadMove,
+  savePrismExplanation,
+  sendAskOut,
+  intakeAsk,
+  closeAsk,
+} from "./contacts/prismLog";
+import type {
+  AskPointer,
+  AskResponse,
+  AskTransport,
+  InFlightAsk,
+} from "./contacts/ask";
 import type { ReadContactKind } from "./contacts/read";
 import type { Prism } from "./map/prisms";
 import {
@@ -533,6 +555,34 @@ function App() {
   } | null>(null);
   // The word the PRISM window belongs to, kept for the focus return.
   const prismSlugRef = useRef<string | null>(null);
+  // The quiet MAKE panel (Epic 12 story 3): the word whose artifact is being
+  // written and the world point the panel hangs beside. One at a time; the
+  // person's press IS the accept (no gate).
+  const [makeAt, setMakeAt] = useState<{
+    on: string;
+    anchor: Point;
+  } | null>(null);
+  // The panel's quiet sentence and its in-flight write.
+  const [makeNote, setMakeNote] = useState<string | null>(null);
+  const [makeBusy, setMakeBusy] = useState(false);
+  // The quiet ASK panel (Epic 12 story 3): the word it asks on, the world
+  // point, and the reach the question rides (null = no reach at all).
+  const [askAt, setAskAt] = useState<{
+    on: string;
+    anchor: Point;
+    ride: AskPointer | null;
+  } | null>(null);
+  // The ask's in-flight Move and its CONTENT. Both are EPHEMERAL app state:
+  // the question's packet and the response's text live here (and in the panel)
+  // until the person keeps the response — the app writes neither.
+  const [askSession, setAskSession] = useState<InFlightAsk | null>(null);
+  const [askResponse, setAskResponse] = useState<AskResponse | null>(null);
+  // The ONE PRISM the completed Ask appended, held for its window (one Move).
+  const [askPrism, setAskPrism] = useState<Prism | null>(null);
+  const [askSentNote, setAskSentNote] = useState<string | null>(null);
+  const [askNote, setAskNote] = useState<string | null>(null);
+  const [askKept, setAskKept] = useState(false);
+  const [askBusy, setAskBusy] = useState(false);
   // The ghost's ask surface (Epic 10 story 3): the one panel where the person
   // asks for a packet or hands a model's reply back. It sits outside `.plane`
   // like the control's other actions; closed by Esc, its ×, or a level switch
@@ -1361,6 +1411,19 @@ function App() {
     // state and stays in its rows (it is the dynamics game's own move).
     closeGhosts();
     setGhostPanelOpen(false);
+    // The person's contact panels are the ground game's transients (Epic 12
+    // story 3): a switch closes them quietly. An Ask still in flight appends
+    // NOTHING when it closes — an unfinished Move has no record — and the
+    // response it held was content, held in app state alone.
+    setMakeAt(null);
+    setMakeNote(null);
+    setAskAt(null);
+    setAskSession(null);
+    setAskResponse(null);
+    setAskPrism(null);
+    setAskSentNote(null);
+    setAskNote(null);
+    setAskKept(false);
     cancelConnect();
   }, [
     cancelConnect,
@@ -1369,6 +1432,322 @@ function App() {
     closePrismQuietly,
     closeGhosts,
   ]);
+
+  /**
+   * Open the quiet MAKE panel (Epic 12 story 3) on the word the chooser speaks
+   * about. It closes the chooser and every other transient: the panel is the
+   * one live surface while it holds the person's prose.
+   */
+  const openMake = useCallback(() => {
+    const at = pointerAt;
+    if (at === null) return;
+    cancelPendingGestures();
+    setMakeNote(null);
+    setMakeAt({ on: at.on, anchor: at.anchor });
+  }, [pointerAt, cancelPendingGestures]);
+
+  /** Close the Make panel: nothing is written, and typed prose is dropped. */
+  const closeMake = useCallback(() => {
+    setMakeAt(null);
+    setMakeNote(null);
+  }, []);
+
+  /**
+   * MAKE — the person's whole accept (Epic 12 story 3, NO gate). One Move:
+   * mint the artifact's pointer, write its raw text and append the ONE PRISM.
+   * The map reloads so the minted pointer is on its word at once, and the
+   * Move's window opens AT ITS COMPLETION (the Move's own log). A table or
+   * boundary refusal wrote nothing and says so in the panel; a failed log says
+   * the move's log could not be written rather than claiming one.
+   */
+  const submitMake = useCallback(
+    (path: string, text: string) => {
+      const at = makeAt;
+      if (at === null || workspace === null) return;
+      setMakeBusy(true);
+      void runMakeMove({
+        on: at.on,
+        form: "path",
+        value: path,
+        text,
+        workspacePath: workspace.path,
+      })
+        .then((result) => {
+          setMakeBusy(false);
+          if (result.kind === "refused") {
+            setMakeNote(result.reason);
+            return;
+          }
+          setMakeAt(null);
+          setMakeNote(null);
+          prismSlugRef.current = at.on;
+          setPrismAt({
+            on: at.on,
+            anchor: at.anchor,
+            prism: result.prism,
+            note: null,
+          });
+          // The minted pointer appears on the map at once (the atomic-patch
+          // reload idiom); the PRISM window stays open on the Move.
+          void reload();
+        })
+        .catch(() => {
+          setMakeBusy(false);
+          setMakeNote(NOT_LOGGED);
+        });
+    },
+    [makeAt, workspace, reload],
+  );
+
+  /**
+   * HAND OFF one url to the OS (Epic 12 story 3's open-os egress). One Move:
+   * the app hands the address over and the PRISM says handed / handoff-failed
+   * / refused — NEVER "opened", because the app only knows the handoff. A
+   * table refusal is not a Move (nothing leaves) and reads its own sentence in
+   * the window.
+   */
+  const handOffFromPointer = useCallback(
+    (pointer: Pointer) => {
+      const at = pointerAt;
+      if (at === null || workspace === null) return;
+      closePointersQuietly();
+      closePeekQuietly();
+      setPrismAt(null);
+      prismSlugRef.current = at.on;
+      void runEgressMove({
+        on: at.on,
+        contact: "look",
+        form: pointer.form,
+        value: pointer.value,
+        workspacePath: workspace.path,
+      })
+        .then((result) => {
+          setPrismAt(
+            result.kind === "moved"
+              ? {
+                  on: at.on,
+                  anchor: at.anchor,
+                  prism: result.prism,
+                  note: null,
+                }
+              : {
+                  on: at.on,
+                  anchor: at.anchor,
+                  prism: null,
+                  note: result.reason,
+                },
+          );
+        })
+        .catch(() => {
+          setPrismAt({
+            on: at.on,
+            anchor: at.anchor,
+            prism: null,
+            note: NOT_LOGGED,
+          });
+        });
+    },
+    [pointerAt, workspace, closePointersQuietly, closePeekQuietly],
+  );
+
+  /** Reset the ephemeral Ask state (a new question, or a closed panel). */
+  const resetAsk = useCallback(() => {
+    setAskSession(null);
+    setAskResponse(null);
+    setAskPrism(null);
+    setAskSentNote(null);
+    setAskNote(null);
+    setAskKept(false);
+  }, []);
+
+  /**
+   * Open the quiet ASK panel (Epic 12 story 3) on the chooser's word, riding
+   * this reach (or none at all). Nothing is tracked yet: the panel holds the
+   * question's prose until it is sent, and a question that never leaves is not
+   * a Move.
+   */
+  const openAsk = useCallback(
+    (ride: Pointer | null) => {
+      const at = pointerAt;
+      if (at === null) return;
+      cancelPendingGestures();
+      resetAsk();
+      setAskAt({
+        on: at.on,
+        anchor: at.anchor,
+        ride:
+          ride === null ? null : { form: ride.form, value: ride.value },
+      });
+    },
+    [pointerAt, cancelPendingGestures, resetAsk],
+  );
+
+  /**
+   * Close the Ask panel. An Ask still in flight appends NOTHING — an
+   * unfinished Move has no record — and the response it held was CONTENT in
+   * app state, never a file.
+   */
+  const closeAskPanel = useCallback(() => {
+    setAskAt(null);
+    resetAsk();
+  }, [resetAsk]);
+
+  /**
+   * SEND the question out (Epic 12 story 3): by copy (the clipboard) or by the
+   * OS handoff when it rides a url. Nothing is appended — the Move completes
+   * when the response comes back (or the person ends the ask). The inclusion
+   * set is the reaches whose CITATIONS ride in the packet; their content never
+   * does (the app pre-reads nothing to compose a question).
+   */
+  const askSend = useCallback(
+    (question: string, included: Pointer[], transport: AskTransport) => {
+      const at = askAt;
+      if (at === null || workspace === null) return;
+      if (question.trim() === "") {
+        setAskNote(ASK_NEEDS_QUESTION);
+        return;
+      }
+      setAskBusy(true);
+      setAskNote(null);
+      void sendAskOut({
+        on: at.on,
+        contact: "ask",
+        pointer: at.ride,
+        included: included.map((pointer) => ({
+          form: pointer.form,
+          value: pointer.value,
+        })),
+        question,
+        transport,
+        workspacePath: workspace.path,
+      })
+        .then((result) => {
+          setAskBusy(false);
+          if (result.kind === "refused") {
+            setAskNote(result.reason);
+            return;
+          }
+          setAskSession(result.ask);
+          setAskSentNote(result.note);
+        })
+        .catch(() => {
+          setAskBusy(false);
+          setAskNote(ASK_SEND_FAILED);
+        });
+    },
+    [askAt, workspace],
+  );
+
+  /**
+   * INTAKE the pasted response (Epic 12 story 3): the app WRAPS the text — its
+   * exact byte size and decode status at intake — and appends the ONE PRISM
+   * with the answered Change and the inclusion set (keys only, never bytes).
+   * The response is handed back as CONTENT and held in app state: it is never
+   * written by the intake.
+   */
+  const askIntake = useCallback(
+    (raw: string, attachmentPath: string) => {
+      const session = askSession;
+      if (session === null) return;
+      setAskBusy(true);
+      setAskNote(null);
+      void intakeAsk(
+        session,
+        raw,
+        attachmentPath.trim() === ""
+          ? null
+          : { form: "path", value: attachmentPath },
+      )
+        .then((result) => {
+          setAskBusy(false);
+          if (result.kind === "refused") {
+            setAskNote(result.reason);
+            return;
+          }
+          setAskResponse(result.response);
+          setAskPrism(result.prism);
+        })
+        .catch(() => {
+          setAskBusy(false);
+          setAskNote(NOT_LOGGED);
+        });
+    },
+    [askSession],
+  );
+
+  /**
+   * END the ask with nothing back (Epic 12 story 3): the SAME ONE PRISM,
+   * no-response and no response facts. The honest close of a question that
+   * left. The panel closes and the Move's window opens on the log.
+   */
+  const askAbandon = useCallback(() => {
+    const session = askSession;
+    const at = askAt;
+    if (session === null || at === null) return;
+    setAskBusy(true);
+    setAskNote(null);
+    void closeAsk(session)
+      .then((result) => {
+        setAskBusy(false);
+        if (result.kind === "refused") {
+          setAskNote(result.reason);
+          return;
+        }
+        closeAskPanel();
+        prismSlugRef.current = at.on;
+        setPrismAt({
+          on: at.on,
+          anchor: at.anchor,
+          prism: result.prism,
+          note: null,
+        });
+      })
+      .catch(() => {
+        setAskBusy(false);
+        setAskNote(NOT_LOGGED);
+      });
+  }, [askSession, askAt, closeAskPanel]);
+
+  /**
+   * THE KEEP (Epic 12 story 3) — the existing FINDING move, and a SEPARATE
+   * act. The response goes into this word's memory (the same write the memory
+   * field makes); the PRISM was closed at intake and is never extended. This
+   * callback touches no prism writer by construction.
+   */
+  const askKeep = useCallback(() => {
+    const at = askAt;
+    const response = askResponse;
+    if (at === null || response === null) return;
+    const word = refs.find((reference) => reference.slug === at.on);
+    if (word === undefined) {
+      setAskNote(ASK_KEEP_FAILED);
+      return;
+    }
+    updateReference({ ...word, body: response.text });
+    setAskKept(true);
+    setAskNote(null);
+  }, [askAt, askResponse, refs, updateReference]);
+
+  /**
+   * Show the completed Ask's ONE PRISM (record != visible: one Move's log,
+   * opened from the panel that made it). No gallery, no series.
+   */
+  const askLog = useCallback(() => {
+    const at = askAt;
+    const prism = askPrism;
+    if (at === null || prism === null) return;
+    prismSlugRef.current = at.on;
+    setPrismAt({ on: at.on, anchor: at.anchor, prism, note: null });
+  }, [askAt, askPrism]);
+
+  /** What the Ask panel reads: the in-flight question and its content. */
+  const askSessionView = useMemo<AskSessionView | null>(
+    () =>
+      askSession === null
+        ? null
+        : { ask: askSession, response: askResponse, note: askSentNote },
+    [askSession, askResponse, askSentNote],
+  );
 
   /**
    * Open one held ghost — the person's opening, and the ONLY door to the
@@ -2947,6 +3326,10 @@ function App() {
             onLook={(pointer) => void readFromPointer("look", pointer)}
             onMeasure={(pointer) => void readFromPointer("measure", pointer)}
             onLog={(pointer) => void reopenPrism(pointer)}
+            onAsk={(pointer) => openAsk(pointer)}
+            onHandOff={(pointer) => handOffFromPointer(pointer)}
+            onAskWord={() => openAsk(null)}
+            onMake={openMake}
             onClose={() => closePointers("dismiss")}
           />
         )}
@@ -3018,6 +3401,52 @@ function App() {
           <GhostDiamond at={ghostPoint} />
         )}
       </CanvasPlane>
+
+      {/* THE MAKE PANEL (Epic 12 story 3): the person's own contact write, in
+          ONE Move — name the artifact, write the text, press make. The minted
+          pointer and its raw bytes are written in the same Move and the ONE
+          PRISM is appended; there is NO accept gate, because the person IS the
+          acceptor (an agent's Make is a ghost, never this). It sits outside
+          `.plane` like the app's other quiet surfaces; Esc / its × close it
+          (a press away does not — it can hold typed prose). */}
+      {level === "ground" && makeAt && (
+        <MakePanel
+          name={nameOf(makeAt.on)}
+          note={makeNote}
+          busy={makeBusy}
+          onMake={submitMake}
+          onClose={closeMake}
+        />
+      )}
+
+      {/* THE ASK PANEL (Epic 12 story 3): the question out by copy or OS
+          handoff, the response back by paste intake (the ghost intake's
+          sibling: size + decode at intake), the inclusion set logged as the
+          reaches' natural keys — never their bytes. The response is CONTENT,
+          ephemeral here until the person KEEPS it (the existing Finding move,
+          a separate act that never extends the PRISM). Outside `.plane`, held
+          prose is never thrown away by a press; Esc / its × close it. */}
+      {level === "ground" && askAt && (
+        <AskPanel
+          name={nameOf(askAt.on)}
+          rows={findPointers(pointers, askAt.on).map((found) => found.pointer)}
+          ride={
+            askAt.ride === null
+              ? null
+              : { on: askAt.on, form: askAt.ride.form, value: askAt.ride.value, extra: {} }
+          }
+          session={askSessionView}
+          kept={askKept}
+          busy={askBusy}
+          note={askNote}
+          onSend={askSend}
+          onIntake={askIntake}
+          onAbandon={askAbandon}
+          onKeep={askKeep}
+          onLog={askLog}
+          onClose={closeAskPanel}
+        />
+      )}
 
       {/* the quiet level control (ADR-0018): an indicator of the band's game
           and a jumper between bands — the wheel is the other way */}
