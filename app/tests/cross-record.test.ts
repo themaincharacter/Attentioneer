@@ -49,6 +49,15 @@ import {
   type PlayingSet,
 } from "../src/map/model";
 import {
+  CARD_KEYS,
+  CARDS_FILE,
+  cardOf,
+  parseCards,
+  serializeCards,
+  setCard,
+  type Card,
+} from "../src/map/cards";
+import {
   dropAssumptionsTouching,
   dropLinkAssumptions,
   dropLoopAssumptions,
@@ -2081,6 +2090,188 @@ describe("the ghost's accepted claim is an ordinary assumption (Epic 10 story 4)
       );
       expectNoDanglingSlugs(removed);
       reopenRecords(removed);
+    });
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * 14. The game card's lifecycle beside the record families (Epic 11 story 4).
+ *
+ * The cross-record question the card's own suite cannot answer alone: does a
+ * card live ALONGSIDE the seven record families? It converges by the game key
+ * (one line, a rewrite replaces, a hand duplicate resolves), it keeps the
+ * family's posture (unknown keys preserved; malformed lines preserved and
+ * surfaced), and it names no slug - so a rename or a remove moves every record
+ * the batch owns and leaves `map/cards.jsonl` byte-identical.
+ * No batch has a cards writer, and a branch copies only the three
+ * model records: the card stays committed.
+ * ---------------------------------------------------------------------- */
+
+function gameCard(
+  conventions = "a dynamics note",
+  extra: Record<string, unknown> = {},
+): Card {
+  return {
+    game: "dynamics",
+    conventions,
+    examples: ["a placeholder word -> another placeholder word"],
+    extra,
+  };
+}
+
+describe("a game card lives beside the record families (Epic 11 story 4)", () => {
+  test("convergence: one line per game, a rewrite replaces, a hand duplicate resolves", () => {
+    const first = gameCard("first");
+    const second = gameCard("second");
+    expect(serializeCards([first]).split("\n").filter(Boolean)).toHaveLength(1);
+    // A rewrite replaces the standing line: still one line, the new note.
+    const rewritten = setCard([first], second);
+    expect(rewritten).toHaveLength(1);
+    expect(cardOf(rewritten, "dynamics")?.conventions).toBe("second");
+    // A hand-duplicated key is preserved on read, surfaced, and resolved on write.
+    const hand = serializeCards([first]) + serializeCards([second]);
+    const parsed = parseCards(hand);
+    expect(parsed.cards).toHaveLength(2);
+    expect(parsed.duplicates).toHaveLength(1);
+    expect(cardOf(parsed.cards, "dynamics")?.conventions).toBe("second");
+    expect(
+      serializeCards(parsed.cards, parsed.malformed).split("\n").filter(Boolean),
+    ).toHaveLength(1);
+    // Deleting the line returns the default: no card for the game.
+    expect(cardOf([], "dynamics")).toBeNull();
+  });
+
+  test("the family posture beside the records: unknown keys kept, malformed lines surfaced", () => {
+    const kept = gameCard("kept note", { note: "kept", z: 2 });
+    const malformed = '{"game":"dynamics","conventions":"","examples":["x"]}';
+    // A hand edit may carry a BOM and CRLF; the reader tolerates both.
+    const text = "\uFEFF" + serializeCards([kept]) + "\r\n" + malformed + "\r\n";
+    const parsed = parseCards(text);
+    expect(parsed.cards).toHaveLength(1);
+    expect(parsed.cards[0].extra).toEqual({ note: "kept", z: 2 });
+    expect(parsed.malformed).toEqual([malformed]);
+    expect(serializeCards(parsed.cards, parsed.malformed)).toBe(
+      serializeCards([kept]) + malformed + "\n",
+    );
+    // The shape's looked-for keys are the game and its two authored parts; it
+    // names no slug, so no batch's dangling-slug rule can reach it.
+    expect(CARD_KEYS).toEqual(["game", "conventions", "examples"]);
+    expect(CARD_KEYS as readonly string[]).not.toContain("name");
+  });
+
+  test("a card edit touches only map/cards.jsonl", () => {
+    return withWorkspace(async (scratch) => {
+      // The map's seven record families, as the app writes them.
+      const records = recordBytes(base());
+      for (const [path, bytes] of Object.entries(records)) scratch.write(path, bytes);
+      for (const ref of base().refs) {
+        scratch.write(
+          "map/references/" + ref.slug + ".md",
+          serializeReference(ref),
+        );
+      }
+      scratch.write(CARDS_FILE, serializeCards([gameCard("before")]));
+      const watched = [
+        ...Object.keys(records),
+        ...base().refs.map((ref) => "map/references/" + ref.slug + ".md"),
+      ];
+      const before: Record<string, string> = {};
+      for (const path of watched) before[path] = scratch.read(path) ?? "";
+      before[CARDS_FILE] = scratch.read(CARDS_FILE) ?? "";
+
+      // The card's own read -> edit -> write.
+      const parsed = parseCards(scratch.read(CARDS_FILE) ?? "");
+      scratch.write(
+        CARDS_FILE,
+        serializeCards(setCard(parsed.cards, gameCard("after")), parsed.malformed),
+      );
+
+      // Only the cards file moved: every batch record AND every reference file
+      // is byte-identical.
+      for (const path of watched) {
+        expect({ path, same: scratch.read(path) === before[path] }).toEqual({
+          path,
+          same: true,
+        });
+      }
+      expect(scratch.read(CARDS_FILE)).not.toBe(before[CARDS_FILE]);
+      expect(scratch.read(CARDS_FILE)).toContain('"after"');
+      // The records still round-trip exactly: the card's edit repaired nothing.
+      expect(
+        serializeDistances(parseDistances(before["map/distances.jsonl"]).distances),
+      ).toBe(before["map/distances.jsonl"]);
+      expect(serializeLinks(parseLinks(before["map/links.jsonl"]).links)).toBe(
+        before["map/links.jsonl"],
+      );
+    });
+  });
+
+  test("a rename and a remove move the records and leave the card byte-identical", () => {
+    return withWorkspace(async (scratch) => {
+      const records = recordBytes(base());
+      for (const [path, bytes] of Object.entries(records)) scratch.write(path, bytes);
+      for (const ref of base().refs) {
+        scratch.write(
+          "map/references/" + ref.slug + ".md",
+          serializeReference(ref),
+        );
+      }
+      const cardBytes = serializeCards([gameCard()]);
+      scratch.write(CARDS_FILE, cardBytes);
+
+      // A rename, in the batch's own documented order.
+      const renamed = renameThrough(base(), "rain", "rainfall");
+      for (const [path, bytes] of Object.entries(recordBytes(renamed))) {
+        scratch.write(path, bytes);
+      }
+      for (const ref of renamed.refs) {
+        scratch.write(
+          "map/references/" + ref.slug + ".md",
+          serializeReference(ref),
+        );
+      }
+      scratch.remove("map/references/rain.md");
+      // The batch really moved the records; the card did not notice.
+      expect(scratch.read("map/distances.jsonl")).toContain("rainfall");
+      expect(scratch.read(CARDS_FILE)).toBe(cardBytes);
+
+      // A remove, likewise.
+      const removed = removeThrough(renamed, "soil");
+      for (const [path, bytes] of Object.entries(recordBytes(removed))) {
+        scratch.write(path, bytes);
+      }
+      for (const ref of removed.refs) {
+        scratch.write(
+          "map/references/" + ref.slug + ".md",
+          serializeReference(ref),
+        );
+      }
+      scratch.remove("map/references/soil.md");
+      // The removal took the word's records with it; the card stayed.
+      expect(scratch.read("map/links.jsonl")).not.toContain("soil");
+      expect(scratch.read(CARDS_FILE)).toBe(cardBytes);
+
+      // The batches carry no card: no writer, no file in their record set.
+      expect(Object.keys(recordBytes(removed))).not.toContain(CARDS_FILE);
+      const patches = readFileSync(
+        new URL("../src/map/patches.ts", import.meta.url),
+        "utf8",
+      );
+      expect(patches).not.toMatch(/saveCards|cardsPath|serializeCards|parseCards/);
+      for (const name of ["renameReference", "removeReference"]) {
+        expect({
+          name,
+          card: functionBody(patches, name).toLowerCase().includes("card"),
+        }).toEqual({ name, card: false });
+      }
+      // A branch copies exactly the three model records: the card stays committed.
+      expect(Object.keys(RECORD_FILE)).not.toContain("cards");
+      expect(
+        readFileSync(
+          new URL("../src/scenarios/branch.ts", import.meta.url),
+          "utf8",
+        ),
+      ).not.toContain("cards");
     });
   });
 });

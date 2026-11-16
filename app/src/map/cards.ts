@@ -42,8 +42,9 @@ import { canonicalJsonlLine, canonicalJsonlLines } from "../lib/serialize";
  * tempt the author.
  *
  * THE FAMILY POSTURE holds: unknown keys on a known card survive a rewrite;
- * malformed lines are preserved verbatim AND surfaced by the read (the notices
- * strip names them — never silently hidden); CRLF and a BOM are tolerated; a
+ * malformed lines are preserved verbatim AND surfaced by the record read's own
+ * `malformed` list — never silently hidden (no card notice renders yet: a named
+ * limit, not a promise); CRLF and a BOM are tolerated; a
  * missing file means no cards. Canonical serialization is serialize.ts's job
  * (ADR-0004); this module only turns the file's bytes into records and back.
  *
