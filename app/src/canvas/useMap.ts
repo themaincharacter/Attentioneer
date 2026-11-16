@@ -1450,6 +1450,13 @@ export function useMap(
     orphanQuantities,
     outOfPlayQuantities,
     loaded,
+    /**
+     * Re-read every record from disk (Epic 10 story 3's accept): a ghost's
+     * apply writes through the ghost's own fs port, outside this hook, so the
+     * app asks for the same reload a rename or a removal runs. It writes
+     * nothing and resets no gesture.
+     */
+    reload: reloadMap,
     acceptPlayingSet,
     connect,
     coinReference,

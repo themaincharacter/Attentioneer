@@ -52,6 +52,10 @@ import {
   type GestureMode,
   type LevelPin,
 } from "./canvas/gates";
+import { GhostDiamond } from "./canvas/GhostDiamond";
+import { GhostList } from "./canvas/GhostList";
+import { GhostPanel } from "./canvas/GhostPanel";
+import { GhostPreview } from "./canvas/GhostPreview";
 import { LevelControl } from "./canvas/LevelControl";
 import { LackMark } from "./canvas/LackMark";
 import { LinkWire } from "./canvas/LinkWire";
@@ -129,6 +133,15 @@ import {
   type VeilBox,
 } from "./map/veils";
 import { activeModelKey, type StepModel } from "./map/step";
+import {
+  packetWordOf,
+  type PacketView,
+  type PacketWord,
+} from "./ghost/packet";
+import type { GhostTarget } from "./ghost/envelope";
+import { previewPoint } from "./ghost/preview";
+import { useGhostRequest } from "./ghost/useRequest";
+import { useGhosts } from "./ghost/useGhosts";
 import {
   DEFAULT_SHELF_X,
   foldExtent,
@@ -280,6 +293,16 @@ import type { Workspace } from "./workspace/lifecycle";
  * opens through the veil — there the game switch IS the look-under, the
  * person's own move.
  *
+ * Epic 10 story 3 adds the GHOST's verbs and surface (ADR-0024/0026): the
+ * quiet list of held proposals (TEXT only, in arrival order — a held ghost
+ * draws NOTHING on the map), the preview the person OPENS (the read-only
+ * derived steps, the why, the faint diamond at the target, and the two verbs),
+ * reshape (the params and a reason of the person's own; the deriver re-derives
+ * the steps; the five fields stay in flight only), ACCEPT (the only apply:
+ * marker, apply, release, delete — the crash story is the session's) and
+ * REJECT (delete). The ask surface is the minimal wiring of the quiet request
+ * and the intake; ONE ghost is open at a time. Provisional: the looks.
+ *
  * Epic 7 story 1 makes the playing set structurally required at AUTHORING: the
  * gate's `authoringLive` guards the three dynamics writers (a link, a loop, an
  * assumption) and echoes at the three affordances that would arm them, so with no
@@ -347,6 +370,7 @@ function App() {
     orphanQuantities,
     outOfPlayQuantities,
     loaded,
+    reload,
     acceptPlayingSet,
     connect,
     coinReference,
@@ -490,6 +514,11 @@ function App() {
   } | null>(null);
   // The word the window belongs to, kept for the focus return after it closes.
   const peekSlugRef = useRef<string | null>(null);
+  // The ghost's ask surface (Epic 10 story 3): the one panel where the person
+  // asks for a packet or hands a model's reply back. It sits outside `.plane`
+  // like the control's other actions; closed by Esc, its ×, or a level switch
+  // (never by a press away: it can hold typed prose).
+  const [ghostPanelOpen, setGhostPanelOpen] = useState(false);
   // A workspace that resumed in dynamics with no set prompts the selector once.
   const autoPromptedRef = useRef<string | null>(null);
 
@@ -1040,6 +1069,111 @@ function App() {
     [level, model, selectorOpen, selectorDraft],
   );
 
+  /* --------------------------------------------------------------------- *
+   * Epic 10 story 3: the ghosts (ADR-0024 decisions 1 and 5, ADR-0026
+   * decision 4). A ghost is TEXT in a quiet list until the person opens one;
+   * the opening shows the read-only derived steps and the why, and offers the
+   * only apply (accept) and the delete (reject). Reshape edits the params and
+   * the person's reason; the deriver re-derives the steps. Nothing of a ghost
+   * is ambient: no glyph on the plane while one is held, no counts, no age.
+   * --------------------------------------------------------------------- */
+
+  // The packet's view of the running map (Epic 10 story 2): the records as the
+  // app holds them, VERBATIM — the words with their measured boxes, the playing
+  // set, the marks, the claims, the loops and the whole veils. Nothing here is
+  // a request's: the ask's region is the person's own (ADR-0026).
+  const packetView = useMemo<PacketView>(
+    () => ({
+      words: refs
+        .map((word) =>
+          packetWordOf(
+            word,
+            word.slug === null ? DEFAULT_BOX : boxes[word.slug] ?? DEFAULT_BOX,
+          ),
+        )
+        .filter((word): word is PacketWord => word !== null),
+      playing: model?.words ?? [],
+      marks,
+      claims: assumptions,
+      loops,
+      veils,
+    }),
+    [refs, boxes, model, marks, assumptions, loops, veils],
+  );
+
+  // The ghosts' app state (the rows, the ONE opening, the reshape in flight)
+  // and the quiet ask's own. One session per workspace path: the session's
+  // open moment discards the inbox, so a proposal from an earlier session is
+  // refused by replay and an id the app did not mint cannot be accepted.
+  const ghosts = useGhosts({
+    workspacePath: workspace?.path ?? null,
+    context: () => ({ level, scenario }),
+    nameOf,
+  });
+  const ghostRequest = useGhostRequest({
+    workspacePath: workspace?.path ?? "",
+    context: () => ({ level, scenario }),
+    view: () => packetView,
+  });
+  const { close: closeGhosts } = ghosts;
+
+  // The loops' name marks, for the opened ghost's diamond when its target is a
+  // loop (the route's coined name is where the claim would read).
+  const ghostLoops = useMemo(
+    () =>
+      loopRoutes.map(({ loop, nameAt }) => ({
+        slug: loopSlug(loop.name),
+        nameAt,
+      })),
+    [loopRoutes],
+  );
+
+  /**
+   * THE ONE PLANE READING (the preview-only-when-open rule, structural): the
+   * opened ghost's target point, or null. Null for every HELD proposal — the
+   * diamond cannot be drawn until the person opens one — and null when the
+   * target is gone from the map (a removed word has no place to mark).
+   */
+  const ghostPoint = useMemo(
+    () => previewPoint(ghosts.ghosts, ghosts.openId, selectorWords, ghostLoops),
+    [ghosts.ghosts, ghosts.openId, selectorWords, ghostLoops],
+  );
+
+  // The sentences the surfaces read (the app never renders a code, only the
+  // session's own words).
+  const ghostIssues = useMemo(
+    () => ghosts.issues.map((entry) => entry.message),
+    [ghosts.issues],
+  );
+  const ghostAskIssues = useMemo(
+    () => ghostRequest.issues.map((entry) => entry.message),
+    [ghostRequest.issues],
+  );
+  const ghostIntakeIssues = useMemo(
+    () => ghosts.intakeIssues.map((entry) => entry.message),
+    [ghosts.intakeIssues],
+  );
+
+  // The ask's targets: the running map's words, then its loops, in map order.
+  // The ask is about ONE of them (the move's target count).
+  const ghostTargets = useMemo(
+    () => [
+      ...selectorWords.map((word) => ({
+        key: "word\u0000" + word.slug,
+        kind: "word" as const,
+        slug: word.slug,
+        label: word.name,
+      })),
+      ...loops.map((loop) => ({
+        key: "loop\u0000" + loopSlug(loop.name),
+        kind: "loop" as const,
+        slug: loopSlug(loop.name),
+        label: loop.name,
+      })),
+    ],
+    [selectorWords, loops],
+  );
+
   /** Switching games cancels any pending gesture (ADR-0016). */
   const cancelPendingGestures = useCallback(() => {
     setMenuAt(null);
@@ -1057,8 +1191,86 @@ function App() {
     setQuantityAt(null);
     closePointersQuietly();
     closePeekQuietly();
+    // The ghosts are transients too (Epic 10 story 3): the opened preview and
+    // the ask surface close with the switch, quietly — a held proposal is app
+    // state and stays in its rows (it is the dynamics game's own move).
+    closeGhosts();
+    setGhostPanelOpen(false);
     cancelConnect();
-  }, [cancelConnect, closePointersQuietly, closePeekQuietly]);
+  }, [cancelConnect, closePointersQuietly, closePeekQuietly, closeGhosts]);
+
+  /**
+   * Open one held ghost — the person's opening, and the ONLY door to the
+   * preview. ONE ghost is open at a time (the hook's one-open rule): opening a
+   * second opens it and closes the first quietly. The app's cancel-pending path
+   * runs first, so a menu or a card behind the row closes instead of standing
+   * under the reading; that path also closes the preview quietly, and the row's
+   * own opening is the call that follows it.
+   */
+  const openGhostPreview = useCallback(
+    (id: string) => {
+      cancelPendingGestures();
+      ghosts.open(id);
+    },
+    [cancelPendingGestures, ghosts],
+  );
+
+  /** Open the ask surface (the level control's door), closing the behind. */
+  const openGhostPanel = useCallback(() => {
+    cancelPendingGestures();
+    setGhostPanelOpen(true);
+  }, [cancelPendingGestures]);
+
+  /** Close the ask surface quietly (Esc, its ×, a level switch). */
+  const closeGhostPanel = useCallback(() => setGhostPanelOpen(false), []);
+
+  /**
+   * ACCEPT — the only apply (ADR-0024 decision 5). The session writes the line
+   * in its own order (marker, apply, release, delete); the app then re-reads the
+   * map, so the accepted claim appears at once and nothing else of the ghost
+   * remains — no trace of the reshaping, no record of the proposal.
+   */
+  const acceptGhostPreview = useCallback(() => {
+    void ghosts.accept().then((outcome) => {
+      if (outcome === null) return;
+      if (
+        outcome.outcome === "applied" ||
+        outcome.outcome === "already-applied"
+      ) {
+        void reload();
+      }
+    });
+  }, [ghosts, reload]);
+
+  /** REJECT: the session deletes the proposal, and the row goes with it. */
+  const rejectGhostPreview = useCallback(() => {
+    void ghosts.reject();
+  }, [ghosts]);
+
+  /** The ask: freeze a packet for one target. It writes nothing. */
+  const askForGhost = useCallback(
+    (target: GhostTarget) => {
+      void ghostRequest.ask(target);
+    },
+    [ghostRequest],
+  );
+
+  /** The paste: wrap, validate and file a model's reply as a proposal. */
+  const proposeGhost = useCallback(
+    (raw: string) => {
+      void ghosts.intake(raw);
+    },
+    [ghosts],
+  );
+
+  /**
+   * Begin the reshape over the opened ghost: the five fields open with the
+   * envelope as proposed, the new params, the person's reason, the base pin and
+   * the packet hash the ask froze (null when no packet is in flight).
+   */
+  const beginGhostReshape = useCallback(() => {
+    ghosts.beginReshape(ghostRequest.packet?.freeze.hash ?? null);
+  }, [ghosts, ghostRequest.packet]);
 
   /**
    * Close the comparison (Epic 8 story 4). It is a transient of the dynamics
@@ -2593,6 +2805,15 @@ function App() {
             onClose={() => closeLookUnder("dismiss")}
           />
         )}
+
+        {/* THE GHOST'S DIAMOND (Epic 10 story 3): the opened preview's target,
+            as the ghost's own faint hollow diamond. It is mounted from
+            `previewPoint`, which answers null for every HELD proposal — so the
+            map is exactly as it was while a ghost is merely held, and this is
+            the ONLY ghost thing the plane ever draws. Read-only (no press). */}
+        {level === "dynamics" && ghostPoint !== null && (
+          <GhostDiamond at={ghostPoint} />
+        )}
       </CanvasPlane>
 
       {/* the quiet level control (ADR-0018): an indicator of the band's game
@@ -2609,7 +2830,57 @@ function App() {
         onBranchScenario={branchModel}
         onRetireScenario={retireBranch}
         onCompare={openComparison}
+        onAsk={openGhostPanel}
       />
+
+      {/* the ghosts (Epic 10 story 3): the held proposals as TEXT, in arrival
+          order, and — only when the person opens one — the preview with the
+          read-only derived steps, the why, the reshape and the two verbs. The
+          stack sits outside `.plane` beside the app's other quiet surfaces, so
+          a held proposal draws nothing on the map; the dynamics game only, as
+          the move belongs to it. */}
+      {level === "dynamics" && (ghosts.rows.length > 0 || ghosts.opened !== null) && (
+        <div className="ghost-stack">
+          {ghosts.opened !== null && (
+            <GhostPreview
+              envelope={ghosts.opened}
+              original={ghosts.draft?.original ?? null}
+              nameOf={nameOf}
+              draft={ghosts.draft}
+              issues={ghostIssues}
+              busy={ghosts.busy}
+              onBeginReshape={beginGhostReshape}
+              onText={ghosts.setText}
+              onReason={ghosts.setReason}
+              onCommit={() => void ghosts.commitReshape()}
+              onCancel={ghosts.cancelReshape}
+              onAccept={acceptGhostPreview}
+              onReject={rejectGhostPreview}
+              onClose={ghosts.close}
+            />
+          )}
+          {ghosts.rows.length > 0 && (
+            <GhostList rows={ghosts.rows} onOpen={openGhostPreview} />
+          )}
+        </div>
+      )}
+
+      {/* the ask surface (Epic 10 story 3): the minimal wiring of the quiet
+          request and the intake. Pick one target, ask — the frozen packet's
+          bytes appear — then paste a model's reply back and file it. The
+          person's region is not wired here (the ADR's fallback applies), and
+          the panel is deliberately plain (story 3's "no polish"). */}
+      {level === "dynamics" && ghostPanelOpen && (
+        <GhostPanel
+          targets={ghostTargets}
+          packet={ghostRequest.packet}
+          askIssues={ghostAskIssues}
+          intakeIssues={ghostIntakeIssues}
+          onAsk={askForGhost}
+          onPropose={proposeGhost}
+          onClose={closeGhostPanel}
+        />
+      )}
 
       {/* the crank (Epic 8 story 3, ADR-0022): ONE hand-cranked step and,
           beneath it, that crank's OWN notes. Level 2 only — a step is the

@@ -57,6 +57,8 @@ export const GHOST_ISSUE_CODES = [
   "intake",
   /** The app could not write/claim its marker (an fs failure, not a refusal). */
   "write",
+  /** A reshape is refused before the grammar sees it (no text, or no reason). */
+  "reshape",
 ] as const;
 
 /** What a refusal is about (the one union the array above spells). */

@@ -102,6 +102,23 @@ export type GhostAcceptResult =
   | { outcome: "not-registered"; id: string }
   | { outcome: "missing"; id: string };
 
+/**
+ * What a reshape did (Epic 10 story 3): the re-validated envelope with the
+ * DERIVED steps, filed back into the inbox under the same in-session id. The
+ * person's reason is not here — it is in flight only (reshape.ts), never a
+ * value the session writes.
+ */
+export type GhostReshapeResult =
+  | {
+      outcome: "reshaped";
+      id: string;
+      envelope: GhostEnvelope;
+      steps: readonly GhostStep[];
+    }
+  | { outcome: "refused"; id: string; issues: readonly GhostIssue[] }
+  | { outcome: "not-registered"; id: string }
+  | { outcome: "missing"; id: string };
+
 /** The app's handle on one open moment's ghosts. */
 export interface GhostSession {
   /** The workspace root this session works in. */
@@ -114,6 +131,18 @@ export interface GhostSession {
   intake(raw: string, context: GhostContext): Promise<IntakeResult>;
   /** Accept one registered ghost: marker -> apply -> delete. */
   accept(id: string, context: GhostContext): Promise<GhostAcceptResult>;
+  /**
+   * Reshape one registered ghost: the NEW params re-validate against the bytes
+   * on disk (the same grammar as the accept) and the re-derived envelope is
+   * filed back into the inbox under the same id. The steps are the deriver's
+   * again; a stored list is never read. Nothing else is written, and the
+   * person's reason never reaches this call.
+   */
+  reshape(
+    id: string,
+    params: Record<string, unknown>,
+    context: GhostContext,
+  ): Promise<GhostReshapeResult>;
   /** Reject one registered ghost: delete it (and any marker) quietly. */
   reject(id: string): Promise<boolean>;
 }
@@ -312,6 +341,73 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
     };
   }
 
+  async function reshapeInner(
+    id: string,
+    params: Record<string, unknown>,
+    context: GhostContext,
+  ): Promise<GhostReshapeResult> {
+    if (!registeredIds.has(id)) return { outcome: "not-registered", id };
+    const text = await readInboxEnvelope(workspacePath, id, fs);
+    if (text === null) return { outcome: "missing", id };
+
+    const read = readEnvelope(text);
+    if (read.value === null) {
+      return {
+        outcome: "refused",
+        id,
+        issues: read.problems.map((problem) => issue("format", problem)),
+      };
+    }
+    if (read.value.id !== id) {
+      return {
+        outcome: "refused",
+        id,
+        issues: [
+          issue(
+            "id",
+            `the file was filed under "${id}" but its envelope carries another id`,
+          ),
+        ],
+      };
+    }
+
+    const entry = findMove(read.value.move);
+    const snapshot = await readGhostSnapshot(fs, workspacePath, {
+      level: context.level,
+      scenario: context.scenario,
+      files: entry?.files ?? [],
+    });
+    const validation = validateGhost(
+      { ...read.value, params: canonicalParams(params) },
+      snapshot,
+    );
+    if (!validation.ok || validation.envelope === null) {
+      return { outcome: "refused", id, issues: validation.issues };
+    }
+    // The reshaped claim already stands on the target: the append-only move has
+    // nothing to add, so the reshape is refused rather than pretending to move.
+    if (validation.applied) {
+      return {
+        outcome: "refused",
+        id,
+        issues: [
+          issue(
+            "append-only",
+            "the claim this reshaping would state already stands on that target; v1 only appends",
+          ),
+        ],
+      };
+    }
+    const envelope = validation.envelope;
+    await writeInboxEnvelope(workspacePath, envelope, fs);
+    return {
+      outcome: "reshaped",
+      id,
+      envelope,
+      steps: validation.run?.steps ?? envelope.steps,
+    };
+  }
+
   return {
     workspacePath,
 
@@ -342,6 +438,14 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
       let result: GhostAcceptResult = { outcome: "missing", id };
       await queue.push(async () => {
         result = await acceptInner(id, context);
+      });
+      return result;
+    },
+
+    async reshape(id, params, context) {
+      let result: GhostReshapeResult = { outcome: "missing", id };
+      await queue.push(async () => {
+        result = await reshapeInner(id, params, context);
       });
       return result;
     },

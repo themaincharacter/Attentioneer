@@ -243,6 +243,14 @@ export const CONTENT_CLASSES = [
   "veil-lookunder-rename",
   "veil-lookunder-reason",
   "veil-lookunder-close",
+  // Epic 10 story 3's ghost: the ONLY ghost element inside the plane is the
+  // opened preview's faint diamond at the target. It is read-only by
+  // construction (pointer-events: none), and it exists only inside the
+  // person's opening; it is listed anyway so the door cannot quietly open if
+  // that rendering ever changes. The list, the preview card and the ask panel
+  // sit OUTSIDE .plane (beside the comparison and the crank), so the plane's
+  // armed gate never reaches them — and a held ghost draws nothing on the map.
+  "ghost-diamond",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */
@@ -372,6 +380,9 @@ export const WORD_CONTROL_CLASSES = [
   "veil-lookunder-rename",
   "veil-lookunder-reason",
   "veil-lookunder-close",
+  // Epic 10 story 3's ghost diamond (see the content list above): read-only,
+  // but on both lists so it can never fall through to a word's press behavior.
+  "ghost-diamond",
 ] as const;
 
 /**

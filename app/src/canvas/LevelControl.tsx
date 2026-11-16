@@ -37,6 +37,13 @@ interface LevelControlProps {
   onRetireScenario: (slug: string) => void;
   /** Open the comparison — a branch read against the committed model (story 4). */
   onCompare: () => void;
+  /**
+   * Open the ghost's ask surface (Epic 10 story 3): ask for a context packet
+   * about one target, or paste a model's reply back as a proposal. It sits
+   * outside `.plane` like the control's other actions, so the plane's armed
+   * gate never reaches it.
+   */
+  onAsk: () => void;
 }
 
 /**
@@ -92,6 +99,7 @@ export function LevelControl({
   onBranchScenario,
   onRetireScenario,
   onCompare,
+  onAsk,
 }: LevelControlProps) {
   return (
     <div
@@ -149,6 +157,19 @@ export function LevelControl({
             onClick={onCoinLoop}
           >
             coin a loop
+          </button>
+          {/* Epic 10 story 3's door: the ghost's ask surface — ask for a packet
+              about one target, or hand a model's reply back as a proposal. It
+              sits outside `.plane` like the control's other actions, so the
+              plane's armed gate never reaches it. Provisional: the wording and
+              this being the door. */}
+          <button
+            type="button"
+            className="level-ask"
+            title="ask for a context packet, or file a model's proposal"
+            onClick={onAsk}
+          >
+            ask…
           </button>
           {/* Epic 8 story 2's branch chooser (ADR-0021): the list of named
               branches, the committed model, and the quiet × that RETIRES a

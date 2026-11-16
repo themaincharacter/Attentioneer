@@ -1016,6 +1016,7 @@ body {
 .level-edit:focus-visible,
 .level-loop:focus-visible,
 .level-veil:focus-visible,
+.level-ask:focus-visible,
 .playing-set-bar button:focus-visible,
 .playing-set-word:focus-visible {
   outline: 1.5px solid #6b675e;
@@ -1025,7 +1026,8 @@ body {
 /* "edit the playing set" / "coin a loop" / "veil": the control's quiet actions. */
 .level-edit,
 .level-loop,
-.level-veil {
+.level-veil,
+.level-ask {
   font: inherit;
   font-size: 11px;
   line-height: 1;
@@ -1043,7 +1045,8 @@ body {
 
 .level-edit:hover,
 .level-loop:hover,
-.level-veil:hover {
+.level-veil:hover,
+.level-ask:hover {
   color: #1e2126;
 }
 
@@ -3636,4 +3639,321 @@ body {
 .veil-lookunder-close:focus-visible {
   outline: 1.5px solid #6b675e;
   outline-offset: 1px;
+}
+
+
+/* ========================================================================= *
+ * Epic 10 story 3: the ghosts (a held Patch, its opening, and the ask).
+ * A ghost is TEXT until the person opens one: the list draws nothing on the
+ * plane, and the faint diamond at the target exists only inside the opening.
+ * Quiet motion (fade-in), no badges, no counts.
+ * Provisional: the placement, sizes and typography (ADR-0003's seam).
+ * ========================================================================= */
+
+/* The held proposals' stack, outside .plane beside the app's other surfaces. */
+.ghost-stack {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: min(360px, 46vw);
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+/* The quiet list: text only, one row per held Patch, in arrival order. */
+.ghost-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: rgba(255, 253, 248, 0.9);
+  border: 1px solid #e4dfd4;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.07);
+  animation: fade-in 160ms ease-out;
+}
+
+.ghost-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 4px;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ghost-row:hover {
+  background: rgba(141, 136, 124, 0.09);
+}
+
+.ghost-row:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+.ghost-row-move {
+  font-size: 11.5px;
+  color: #4c4a44;
+}
+
+.ghost-row-why {
+  font-size: 11px;
+  color: #8d887c;
+  font-style: italic;
+}
+
+/* The opened ghost's card: the reading and the two verbs. */
+.ghost-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 10px 9px;
+  background: rgba(255, 253, 248, 0.95);
+  border: 1px solid rgba(141, 136, 124, 0.3);
+  border-radius: 10px;
+  box-shadow: 0 3px 14px rgba(40, 35, 25, 0.1);
+  user-select: text;
+  animation: rise-in 150ms ease-out;
+}
+
+.ghost-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.ghost-title {
+  flex: 1;
+  font-size: 12px;
+  color: #4c4a44;
+}
+
+.ghost-close {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+.ghost-close:hover {
+  color: #1e2126;
+}
+
+.ghost-close:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+.ghost-why {
+  font-size: 11.5px;
+  font-style: italic;
+  color: #6b675e;
+}
+
+.ghost-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 0 2px;
+  border-top: 1px solid #eee9df;
+}
+
+.ghost-step {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11.5px;
+  color: #4c4a44;
+}
+
+.ghost-step-does {
+  font-size: 10.5px;
+  color: #8d887c;
+}
+
+.ghost-step-about {
+  color: #8d887c;
+}
+
+.ghost-step-changed {
+  font-size: 10.5px;
+  color: #6b675e;
+  font-style: italic;
+}
+
+/* A step a reshape changed reads a little darker — and says "changed". */
+.ghost-step.changed .ghost-step-claim {
+  color: #1e2126;
+}
+
+.ghost-reshape-open {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 3px;
+  border-top: 1px solid #eee9df;
+}
+
+.ghost-input,
+.ghost-reason,
+.ghost-intake,
+.ghost-pick {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 11.5px;
+  color: #1e2126;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #e4dfd4;
+  border-radius: 5px;
+}
+
+.ghost-intake {
+  min-height: 64px;
+  resize: vertical;
+}
+
+.ghost-inflight-line {
+  font-size: 10.5px;
+  color: #8d887c;
+}
+
+.ghost-inflight-label {
+  color: #b5ad9e;
+}
+
+.ghost-actions {
+  display: flex;
+  gap: 6px;
+  padding-top: 3px;
+}
+
+.ghost-reshape,
+.ghost-accept,
+.ghost-reject,
+.ghost-commit,
+.ghost-drop,
+.ghost-ask-go,
+.ghost-propose {
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: #4c4a44;
+  background: transparent;
+  border: 1px solid #e4dfd4;
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.ghost-reshape:hover,
+.ghost-accept:hover,
+.ghost-reject:hover,
+.ghost-commit:hover,
+.ghost-drop:hover,
+.ghost-ask-go:hover,
+.ghost-propose:hover {
+  color: #1e2126;
+  border-color: #b5ad9e;
+}
+
+.ghost-reshape:focus-visible,
+.ghost-accept:focus-visible,
+.ghost-reject:focus-visible,
+.ghost-commit:focus-visible,
+.ghost-drop:focus-visible,
+.ghost-ask-go:focus-visible,
+.ghost-propose:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+.ghost-reshape:disabled,
+.ghost-accept:disabled,
+.ghost-reject:disabled,
+.ghost-commit:disabled,
+.ghost-ask-go:disabled,
+.ghost-propose:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ghost-issue {
+  font-size: 10.5px;
+  color: #8a5a4a;
+}
+
+/* The ask's own panel: the packet's bytes and the paste. */
+.ghost-panel {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(440px, 48vw);
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+  padding: 7px 10px 9px;
+  background: rgba(255, 253, 248, 0.95);
+  border: 1px solid #e4dfd4;
+  border-radius: 10px;
+  box-shadow: 0 3px 14px rgba(40, 35, 25, 0.1);
+  animation: fade-in 160ms ease-out;
+}
+
+.ghost-ask {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.ghost-packet {
+  margin: 0;
+  max-height: 40vh;
+  overflow: auto;
+  padding: 5px 7px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: #4c4a44;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid #eee9df;
+  border-radius: 6px;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+/* The opened ghost's diamond, at its target — the opening's own mark. */
+.ghost-diamond {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border: 1.2px dashed #b5ad9e;
+  border-radius: 1px;
+  background: transparent;
+  transform: rotate(45deg) scale(1.05);
+  opacity: 0.45;
+  pointer-events: none;
+  animation: fade-in 160ms ease-out;
 }
