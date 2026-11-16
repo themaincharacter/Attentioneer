@@ -26,6 +26,7 @@ import {
 } from "../src/map/loops";
 import {
   findOrphanMarks,
+  hasMark,
   parseMarks,
   serializeMarks,
   type Mark,
@@ -86,12 +87,25 @@ import {
   serializePins,
 } from "../src/scenarios/pins";
 import { parseReference, serializeReference, type Reference } from "../src/map/refs";
+import {
+  coveredWordSlugs,
+  nameVeil,
+  parseVeils,
+  serializeVeils,
+  veilKey,
+  veilsPath,
+  type PlacedWord,
+  type Veil,
+  type VeilBox,
+} from "../src/map/veils";
+import { DEFAULT_BOX } from "../src/canvas/geometry";
 import { BAND_ZOOM, GROUND_FROM } from "../src/canvas/zoomBands";
 import {
   authoringLive,
   createLevelPin,
   shouldPinLevel,
 } from "../src/canvas/gates";
+import { RECORD_FILE } from "../src/map/records";
 import { workspaceYml } from "../src/lib/serialize";
 import {
   DEFAULT_LEVEL,
@@ -113,6 +127,12 @@ import { createLevelHandoff } from "../src/workspace/levelHandoff";
  * applies the SAME pure steps in the SAME documented order and then asserts the
  * records' bytes. The order itself is read from the source the app runs; no fs
  * stub is invented (the real batch is the human pass).
+ *
+ * Epic 9 story 3 grows it by the veils' INDEPENDENCE (ADR-0023): a veil is a
+ * spatial, named cover that no batch writes, no slug references and no branch
+ * copies. A rename or a removal moves every record the batch owns and leaves
+ * the veil's bytes untouched - the cover simply re-derives from where the
+ * words now sit.
  */
 
 const SLUGS = ["mulch", "rain", "soil"];
@@ -1773,3 +1793,160 @@ function pinTouches(
   }
   return false;
 }
+
+/* -------------------------------------------------------------------------
+ * 12. The veils' independence in the batch interplay (Epic 9 story 3).
+ * ---------------------------------------------------------------------- */
+
+/** The base batch's words SPREAD OUT, so a rectangle can select two of them. */
+function spreadBatch(): Batch {
+  const batch = base();
+  const xs: Record<string, number> = { mulch: 100, rain: 300, soil: 500 };
+  return {
+    ...batch,
+    refs: batch.refs.map((ref) => ({
+      ...ref,
+      x: ref.slug === null ? ref.x : xs[ref.slug],
+      y: 120,
+    })),
+  };
+}
+
+/** The veils in play: ONE named cover over the first two words' places. */
+function veilsOf(): Veil[] {
+  const box: VeilBox = { x: 80, y: 80, w: 300, h: 120 };
+  return nameVeil([], "the wet corner", box, "not settled yet");
+}
+
+/** The batch's words as the cover's region test needs them (the default box). */
+function placedWords(batch: Batch): PlacedWord[] {
+  return batch.refs
+    .filter((ref): ref is Reference & { slug: string } => ref.slug !== null)
+    .map((ref) => ({
+      slug: ref.slug,
+      pos: { x: ref.x, y: ref.y },
+      box: { ...DEFAULT_BOX },
+    }));
+}
+
+/** The words this batch's veils cover, sorted (the render-time reading only). */
+function coveredWords(batch: Batch, veils: readonly Veil[]): string[] {
+  return [...coveredWordSlugs(veils, placedWords(batch))].sort();
+}
+
+/** One app callback's source, from its declaration to its closing line. */
+function callbackBody(text: string, name: string): string {
+  const start = text.indexOf("const " + name + " = useCallback(");
+  expect(start).toBeGreaterThan(-1);
+  const end = text.indexOf("\n  );", start);
+  expect(end).toBeGreaterThan(start);
+  return text.slice(start, end);
+}
+
+describe("a rename moves every record and never touches a veil", () => {
+  test("the veil's bytes are the batch's untouched side; the cover re-derives", () => {
+    const before = spreadBatch();
+    const veils = veilsOf();
+    const veilBytes = serializeVeils(veils);
+    // The veil covers mulch and rain; soil is outside the box.
+    expect(coveredWords(before, veils)).toEqual(["mulch", "rain"]);
+
+    const after = renameThrough(before, "mulch", "woodchip");
+
+    // The batch moved its own records (the file the rename is about).
+    expect(after.refs.map((ref) => ref.slug).sort()).toEqual([
+      "rain",
+      "soil",
+      "woodchip",
+    ]);
+    // The veil is not one of the batch's records: no veil path in its bytes.
+    expect(Object.keys(recordBytes(after))).not.toContain("map/veils.jsonl");
+    // And the veil itself is byte-identical after the batch.
+    expect(serializeVeils(veils)).toBe(veilBytes);
+    expect(serializeVeils(parseVeils(veilBytes).veils)).toBe(veilBytes);
+    // The cover follows the WORD, not its name: at the same place, the renamed
+    // word is still covered - nothing in the veil named it.
+    expect(coveredWords(after, veils)).toEqual(["rain", "woodchip"]);
+    // The marked word's mark followed the rename (the batch's job); the veil
+    // never moved it.
+    expect(
+      hasMark(after.marks, "open", { type: "word", slug: "woodchip" }),
+    ).toBe(true);
+    // A veil is addressed by its own natural key, never by a word slug.
+    expect(veilKey(veils[0])).toBe("the-wet-corner");
+    expect(veilKey(veils[0])).not.toContain("mulch");
+  });
+});
+
+describe("a remove drops its records and leaves a veil alone", () => {
+  test("the cover shrinks to the words that remain; the veil's line stands", () => {
+    const before = spreadBatch();
+    const veils = veilsOf();
+    const veilBytes = serializeVeils(veils);
+    expect(coveredWords(before, veils)).toEqual(["mulch", "rain"]);
+
+    const after = removeThrough(before, "rain");
+
+    // The word is gone from the records the batch owns ...
+    expect(after.refs.map((ref) => ref.slug).sort()).toEqual(["mulch", "soil"]);
+    expect(
+      after.marks.some(
+        (mark) => mark.target.type === "word" && mark.target.slug === "rain",
+      ),
+    ).toBe(false);
+    // ... and the veil is untouched: it referenced nothing, so nothing died
+    // with the word, and the cover now reads only the surviving word.
+    expect(serializeVeils(veils)).toBe(veilBytes);
+    expect(coveredWords(after, veils)).toEqual(["mulch"]);
+    // No orphan machinery exists for a veil: it names no slug, ever.
+    expect(veilBytes).not.toContain("mulch");
+    expect(veilBytes).not.toContain("rain");
+  });
+});
+
+describe("the veil writer is its own: no batch, no rename, no remove", () => {
+  test("the atomic batches have no veil writer (source-scanned)", () => {
+    const patches = readFileSync(
+      new URL("../src/map/patches.ts", import.meta.url),
+      "utf8",
+    );
+    expect(patches.toLowerCase()).not.toContain("veil");
+    // The two batches that reach records with slugs in them name no veil.
+    const renameBody = functionBody(patches, "renameReference");
+    const removeBody = functionBody(patches, "removeReference");
+    for (const body of [renameBody, removeBody]) {
+      expect(body.toLowerCase()).not.toContain("veil");
+      expect(body).not.toContain("saveVeils");
+      expect(body).not.toContain("veilsPath");
+    }
+  });
+
+  test("the app's rename and remove reload the map; they never write a veil", () => {
+    const map = readFileSync(
+      new URL("../src/canvas/useMap.ts", import.meta.url),
+      "utf8",
+    );
+    for (const name of ["rename", "remove"]) {
+      const body = callbackBody(map, name);
+      expect({ name, veil: body.toLowerCase().includes("veil") }).toEqual({
+        name,
+        veil: false,
+      });
+      expect(body).not.toContain("persistVeils");
+    }
+    // The veil writer has exactly three call sites: coin, rename, retire.
+    expect((map.match(/persistVeils\(/g) ?? []).length).toBe(3);
+    for (const name of ["createVeil", "renameVeil", "removeVeil"]) {
+      expect(callbackBody(map, name)).toContain("persistVeils(");
+    }
+    // A veil is a committed-model record: its path is map/, never a branch's.
+    expect(veilsPath("/maps/garden")).toBe("/maps/garden/map/veils.jsonl");
+    expect(Object.keys(RECORD_FILE)).not.toContain("veils");
+    const records = readFileSync(
+      new URL("../src/map/records.ts", import.meta.url),
+      "utf8",
+    );
+    expect(records).toContain("map/veils.jsonl");
+    expect(records).toContain("never copied into a branch");
+  });
+});
