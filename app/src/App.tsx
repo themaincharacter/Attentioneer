@@ -60,7 +60,12 @@ import { GhostPreview } from "./canvas/GhostPreview";
 import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
 import { SketchToolbar } from "./canvas/SketchToolbar";
-import { DEFAULT_PEN_COLOR, DEFAULT_PEN_SIZE } from "./canvas/sketchRules";
+import {
+  DEFAULT_DRAW_TOOL,
+  DEFAULT_PEN_COLOR,
+  DEFAULT_PEN_SIZE,
+  type DrawTool,
+} from "./canvas/sketchRules";
 import { LackMark } from "./canvas/LackMark";
 import { LinkWire } from "./canvas/LinkWire";
 import {
@@ -394,6 +399,7 @@ function App() {
     // The map's ink (added 2026-11-16 per user review).
     sketches,
     malformedSketches,
+    canUndoSketch,
     assumptions,
     malformedAssumptions,
     duplicateAssumptions,
@@ -435,6 +441,7 @@ function App() {
     recoinDistance,
     removeDistance,
     addSketch,
+    eraseSketch,
     undoSketch,
     clearSketch,
     createLoop,
@@ -502,6 +509,12 @@ function App() {
   const [drawArmed, setDrawArmed] = useState(false);
   const [penColor, setPenColor] = useState<string>(DEFAULT_PEN_COLOR);
   const [penSize, setPenSize] = useState<number>(DEFAULT_PEN_SIZE);
+  // The tool the armed drag carries (added 2026-11-16 per user review): the pen
+  // draws, the eraser takes whole strokes away. PROVISIONAL — the eraser is NOT
+  // a second arm; it reuses the pen's `draw` gate and this state chooses the
+  // gesture's meaning, so the arming discipline is identical. The choice
+  // outlives one arm: putting the pen down and picking it up keeps the tool.
+  const [penTool, setPenTool] = useState<DrawTool>(DEFAULT_DRAW_TOOL);
   // The look-under (Epic 9 story 2, ADR-0023 decision 3): the veil whose cover
   // is LIFTED for a read-only reading of its name and reason, addressed by its
   // natural key (or null). The record itself is derived from `veils` on every
@@ -2611,6 +2624,22 @@ function App() {
   );
 
   /**
+   * One ERASE gesture from the plane (added 2026-11-16 per user review): the
+   * drag's world path, and the reach the strip's selected size buys (useMap
+   * computes it with `eraserRadius`: the size drives whichever tool is live).
+   * Every stroke the path reaches goes WHOLE, and the rewrite is the drawing's
+   * ordinary one — survivors keep their order and their exact record, the
+   * malformed lines stay verbatim, one gesture is one undo. The gesture says
+   * nothing about itself: no counter, no notice, no history.
+   */
+  const handleErase = useCallback(
+    (path: readonly { x: number; y: number }[]) => {
+      eraseSketch(penSize, path);
+    },
+    [eraseSketch, penSize],
+  );
+
+  /**
    * The plane reported the captured BOX: hold it while the coin field asks. The
    * gate stays in the `veil` mode (the box is not null), so the plane's own
    * gestures stay suspended while the person types — exactly as the loop's coin
@@ -3001,7 +3030,9 @@ function App() {
         boxArmed={veilArmed}
         drawArmed={drawArmed}
         drawPen={{ color: penColor, size: penSize }}
+        drawTool={penTool}
         onSketch={handleSketch}
+        onErase={handleErase}
         picking={markDrag.ghost !== null}
         onLasso={handleLasso}
         onDrawBox={captureVeilBox}
@@ -3759,9 +3790,11 @@ function App() {
         <SketchToolbar
           color={penColor}
           size={penSize}
-          canUndo={sketches.length > 0}
+          tool={penTool}
+          canUndo={canUndoSketch}
           onColor={setPenColor}
           onSize={setPenSize}
+          onTool={setPenTool}
           onUndo={undoSketch}
           onClear={clearSketch}
         />

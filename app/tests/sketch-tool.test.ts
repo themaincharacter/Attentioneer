@@ -271,7 +271,9 @@ describe("the pen's quiet controls", () => {
       "PEN_SIZES.map",
       "PEN_COLORS.map",
       'type="color"',
-      'aria-label="undo the last stroke"',
+      // Undo now takes back the last CHANGE (a stroke, or one erase gesture)
+      // — the label says exactly that, and it is still a button, never a tally.
+      'aria-label="undo the last change"',
       'aria-label="clear the drawing (no undo)"',
     ]) {
       expect(bar).toContain(needle);

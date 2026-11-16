@@ -142,3 +142,186 @@ export function strokesToPaths(
     size: stroke.size,
   }));
 }
+
+/* ----------------------------------------------------------------------- *
+ * The eraser (PROVISIONAL, added 2026-11-16 per user review).
+ * ----------------------------------------------------------------------- */
+
+/**
+ * What a drag on the armed capture surface MEANS. The eraser is not a second
+ * arm: the pen's `draw` gate is reused and this state chooses the gesture's
+ * meaning, so the arming discipline stays exactly the pen's — pan, double-click
+ * creation and every word press stand still, and the capture surface owns the
+ * pointer (a press can never move a word, open a ring menu or pan the map).
+ *
+ * PROVISIONAL: the review asked only for "an eraser option as well that removes
+ * the drawing as usual"; the tool pair and the reach below are the smallest
+ * reading of that ask.
+ */
+export type DrawTool = "pen" | "eraser";
+
+/** The pen opens (a drawing layer, with erasing beside it). */
+export const DEFAULT_DRAW_TOOL: DrawTool = "pen";
+
+/**
+ * The eraser's reach, in WORLD units, as a multiple of the selected pen size:
+ * the strip's ONE size selector drives whichever tool is live (the review's
+ * "the size selector drives the active tool"). PROVISIONAL — twice the pen's
+ * width is a first feel for a whole-stroke eraser (the ink's own width plus a
+ * margin), not a settled rule.
+ */
+export const ERASER_RADIUS_FACTOR = 2;
+
+/** The eraser's reach for the size the person has chosen right now. */
+export function eraserRadius(penSize: number): number {
+  return (isPenSize(penSize) ? penSize : DEFAULT_PEN_SIZE) * ERASER_RADIUS_FACTOR;
+}
+
+/** Distance from `point` to the segment `a`—`b`, in world units. */
+export function pointSegmentDistance(
+  point: SketchPoint,
+  a: SketchPoint,
+  b: SketchPoint,
+): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return Math.hypot(point.x - a.x, point.y - a.y);
+  const along = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq;
+  const t = Math.max(0, Math.min(1, along));
+  return Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy));
+}
+
+/** The side of `r` the segment `a`—`b` puts it on (0 = on the line). */
+function side(a: SketchPoint, b: SketchPoint, r: SketchPoint): number {
+  return (b.y - a.y) * (r.x - b.x) - (b.x - a.x) * (r.y - b.y);
+}
+
+/** Do the two segments properly cross (their endpoints straddle each other)? */
+function segmentsCross(
+  a1: SketchPoint,
+  a2: SketchPoint,
+  b1: SketchPoint,
+  b2: SketchPoint,
+): boolean {
+  const d1 = side(a1, a2, b1);
+  const d2 = side(a1, a2, b2);
+  const d3 = side(b1, b2, a1);
+  const d4 = side(b1, b2, a2);
+  return (
+    ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+  );
+}
+
+/**
+ * Distance between the segments `a1`—`a2` and `b1`—`b2`, in world units —
+ * zero when they cross. The eraser's reach is SEGMENT-to-segment, not
+ * point-to-segment: a drag that crosses a stroke between two of its samples
+ * (or between two of the drag's own samples) must still reach it, because a
+ * fast hand's samples can be far apart.
+ */
+export function segmentDistance(
+  a1: SketchPoint,
+  a2: SketchPoint,
+  b1: SketchPoint,
+  b2: SketchPoint,
+): number {
+  if (segmentsCross(a1, a2, b1, b2)) return 0;
+  return Math.min(
+    pointSegmentDistance(a1, b1, b2),
+    pointSegmentDistance(a2, b1, b2),
+    pointSegmentDistance(b1, a1, a2),
+    pointSegmentDistance(b2, a1, a2),
+  );
+}
+
+/**
+ * The points as segments (one per consecutive pair). A lone point is its own
+ * degenerate segment, so a TAP that never moved still has somewhere to reach
+ * from — the drawing tool needs two points to be a stroke, the eraser does not.
+ */
+function segmentsOf(
+  points: readonly SketchPoint[],
+): Array<readonly [SketchPoint, SketchPoint]> {
+  if (points.length === 0) return [];
+  if (points.length === 1) return [[points[0], points[0]]];
+  const segments: Array<readonly [SketchPoint, SketchPoint]> = [];
+  for (let at = 0; at + 1 < points.length; at += 1) {
+    segments.push([points[at], points[at + 1]]);
+  }
+  return segments;
+}
+
+/**
+ * How far the drag path passes from a stroke, in world units: the shortest
+ * distance between any segment of the stroke and any segment of the path.
+ * Infinity when either side has no points (nothing to reach, nothing reaching).
+ */
+export function strokeDistance(
+  stroke: readonly SketchPoint[],
+  path: readonly SketchPoint[],
+): number {
+  const ink = segmentsOf(stroke);
+  const drag = segmentsOf(path);
+  if (ink.length === 0 || drag.length === 0) return Number.POSITIVE_INFINITY;
+  let nearest = Number.POSITIVE_INFINITY;
+  for (const [a1, a2] of ink) {
+    for (const [b1, b2] of drag) {
+      const distance = segmentDistance(a1, a2, b1, b2);
+      if (distance < nearest) nearest = distance;
+      if (nearest === 0) return 0;
+    }
+  }
+  return nearest;
+}
+
+/** Does the drag path pass within `radius` of this stroke? (the atom test) */
+export function strokeInReach(
+  stroke: readonly SketchPoint[],
+  path: readonly SketchPoint[],
+  radius: number,
+): boolean {
+  return strokeDistance(stroke, path) <= radius;
+}
+
+/** One stroke the eraser took, with the FILE POSITION it came from. */
+export interface ErasedStroke {
+  /** The stroke's index in the drawing when the gesture took it. */
+  at: number;
+  stroke: Sketch;
+}
+
+/** One gesture's take: the strokes still standing, and the ones that went. */
+export interface EraseResult {
+  kept: Sketch[];
+  removed: ErasedStroke[];
+}
+
+/**
+ * Apply one erase gesture to the drawing: every stroke the path reaches goes
+ * WHOLE (a stroke is the atom — there is no partial-point surgery, so the
+ * record's stroke shape is never rewritten point by point), and the survivors
+ * keep their order and their exact record (unknown keys included: they are the
+ * same objects, so the family's preservation posture holds through the
+ * rewrite). Each removal reports the POSITION it held, so one undo can put the
+ * gesture's take back where it was.
+ *
+ * The gesture is one action: two strokes reached by one drag are one undo.
+ */
+export function eraseStrokes(
+  strokes: readonly Sketch[],
+  path: readonly SketchPoint[],
+  radius: number,
+): EraseResult {
+  const kept: Sketch[] = [];
+  const removed: ErasedStroke[] = [];
+  strokes.forEach((stroke, at) => {
+    if (strokeInReach(stroke.points, path, radius)) {
+      removed.push({ at, stroke });
+    } else {
+      kept.push(stroke);
+    }
+  });
+  return { kept, removed };
+}

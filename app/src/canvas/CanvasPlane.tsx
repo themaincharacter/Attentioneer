@@ -25,12 +25,14 @@ import {
 } from "./gates";
 import type { SketchPoint } from "../map/sketches";
 import {
+  DEFAULT_DRAW_TOOL,
   DEFAULT_PEN_COLOR,
   DEFAULT_PEN_SIZE,
   isDrawableStroke,
   penInk,
   SKETCH_STEP_PX,
   strokePath,
+  type DrawTool,
 } from "./sketchRules";
 import type { Point } from "./geometry";
 import { boxIsDrawable, capturedBox } from "./veilRules";
@@ -153,8 +155,24 @@ interface CanvasPlaneProps {
    * reading, so the plane is usable without the app passing anything.
    */
   drawPen?: { color: string; size: number };
+  /**
+   * Which meaning a pen drag carries right now (added 2026-11-16 per user
+   * review). The eraser does NOT arm its own gate: the pen's `draw` mode is
+   * reused and this state chooses what the drag does, so the arming discipline
+   * (pan, creation and every word press stand still; the capture surface owns
+   * the pointer) is exactly the pen's. Defaulted to the pen.
+   */
+  drawTool?: DrawTool;
   /** Called with the stroke's world path when a pen drag is released. */
   onSketch?: (points: readonly SketchPoint[]) => void;
+  /**
+   * Called with the drag's world PATH when an eraser drag is released, so the
+   * reach rule (sketchRules' whole-stroke hit test) can see every segment the
+   * hand passed over. A tap that never moved reports its one point — it still
+   * reaches the ink it landed on (the eraser's atom is the stroke, not a
+   * two-point drawing).
+   */
+  onErase?: (path: readonly SketchPoint[]) => void;
   /** Called with the lasso's world path when the draw tool is released. */
   onLasso?: (path: readonly Point[]) => void;
   /**
@@ -187,10 +205,12 @@ export function CanvasPlane({
   boxArmed = false,
   drawArmed = false,
   drawPen = { color: DEFAULT_PEN_COLOR, size: DEFAULT_PEN_SIZE },
+  drawTool = DEFAULT_DRAW_TOOL,
   picking = false,
   onLasso,
   onDrawBox,
   onSketch,
+  onErase,
   onZoomSettle,
   children,
 }: CanvasPlaneProps) {
@@ -222,6 +242,10 @@ export function CanvasPlane({
   drawArmedRef.current = drawArmed;
   const onSketchRef = useRef(onSketch);
   onSketchRef.current = onSketch;
+  const onEraseRef = useRef(onErase);
+  onEraseRef.current = onErase;
+  const drawToolRef = useRef(drawTool);
+  drawToolRef.current = drawTool;
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
 
@@ -423,12 +447,21 @@ export function CanvasPlane({
 
   // The map's pen (added 2026-11-16 per user review): while the mode is armed
   // a full-plane capture surface owns the pointer, so a stroke can never reach
-  // d3-zoom (no pan), the plane's press counter (no creation) or a word's own
+  // d3-zoom (no pan), the plane's press count (no creation) or a word's own
   // raw handler (no drag, no click-to-center). The stroke is sampled in SCREEN
   // space (SKETCH_STEP_PX) and stored in WORLD coordinates, read through the
   // live camera ref so a wheel zoom mid-stroke still lands the samples under
   // the pointer. The release reports the stroke only when the drag actually
   // moved (a press with no movement draws nothing — the veil box's rule).
+  //
+  // The ERASER (added 2026-11-16 per user review) keeps this surface and this
+  // arming; only the gesture's MEANING changes, chosen by `drawTool` at the
+  // press. It samples the same way and reports the drag's world path, because
+  // its reach rule is segment-to-polyline (sketchRules' `strokeDistance`): the
+  // ink a fast hand passed over between two samples must still be reached. It
+  // paints no draft — the eraser is quiet, and what it does is on release.
+  // A tap that never moved reaches what it landed on (the eraser's atom is the
+  // stroke, not a two-point path); the drawing tool keeps the two-point rule.
   useEffect(() => {
     if (!drawArmed) return;
     const surface = drawSurfaceRef.current;
@@ -439,6 +472,9 @@ export function CanvasPlane({
       if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
+      // The gesture's meaning is fixed at the PRESS: toggling the tool with the
+      // button held must not turn a stroke into an erase halfway through.
+      const tool = drawToolRef.current;
       const rect = plane.getBoundingClientRect();
       const toWorld = (clientX: number, clientY: number): SketchPoint => {
         const cam = cameraRef.current;
@@ -448,7 +484,7 @@ export function CanvasPlane({
         };
       };
       let points: SketchPoint[] = [toWorld(event.clientX, event.clientY)];
-      setStrokeDraft([...points]);
+      if (tool === "pen") setStrokeDraft([...points]);
       let lastX = event.clientX;
       let lastY = event.clientY;
 
@@ -459,7 +495,7 @@ export function CanvasPlane({
         lastX = ev.clientX;
         lastY = ev.clientY;
         points = [...points, toWorld(ev.clientX, ev.clientY)];
-        setStrokeDraft([...points]);
+        if (tool === "pen") setStrokeDraft([...points]);
       };
       const onUp = () => {
         window.removeEventListener("mousemove", onMove);
@@ -467,6 +503,10 @@ export function CanvasPlane({
         setStrokeDraft(null);
         // Esc (or a game switch) ended the arm mid-stroke: nothing is written.
         if (!drawArmedRef.current) return;
+        if (tool === "eraser") {
+          onEraseRef.current?.(points);
+          return;
+        }
         if (!isDrawableStroke(points)) return;
         onSketchRef.current?.(points);
       };

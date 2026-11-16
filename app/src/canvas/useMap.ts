@@ -29,6 +29,13 @@ import {
   type Sketch,
   type SketchPoint,
 } from "../map/sketches";
+import { eraseStrokes, eraserRadius } from "./sketchRules";
+import {
+  recordDraw,
+  recordErase,
+  undoStep,
+  type SketchAction,
+} from "./sketchHistory";
 import {
   dedupeLinks,
   drawLink as drawLinkRecord,
@@ -284,6 +291,11 @@ export function useMap(
   // they never read `recordsDir` (a branch has no drawing of its own).
   const [sketches, setSketches] = useState<Sketch[]>([]);
   const [malformedSketches, setMalformedSketches] = useState<string[]>([]);
+  // Whether the session remembers a change undo can take back (added
+  // 2026-11-16 per user review). The stack itself is a ref (the writers read it
+  // synchronously), so its emptiness is mirrored for the strip's one quiet
+  // button. A boolean, never a number: the strip shows no tally.
+  const [sketchUndoable, setSketchUndoable] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [connect, setConnect] = useState<ConnectDraft | null>(null);
   const draftCount = useRef(0);
@@ -312,6 +324,12 @@ export function useMap(
   const sketchesRef = useRef<Sketch[]>([]);
   const malformedSketchesRef = useRef<string[]>([]);
   const sketchesWriteRef = useRef<Promise<void>>(Promise.resolve());
+  // The drawing's UNDO MEMORY (added 2026-11-16 per user review): the
+  // session's changes in the order they were made, so undo takes back the last
+  // one — a drawn stroke or one erase gesture. PROVISIONAL and session-only:
+  // never persisted, never rendered, no redo, and empty after a workspace
+  // change (undo then falls back to the last line's rule).
+  const sketchActionsRef = useRef<SketchAction[]>([]);
 
   /** Re-read every map file (first load and after an atomic patch). */
   const reloadMap = useCallback(async () => {
@@ -388,6 +406,14 @@ export function useMap(
     setLoaded(false);
     void reloadMap();
   }, [workspacePath, reloadMap]);
+
+  // A different drawing (another workspace or records folder) starts with no
+  // session memory: the stack belongs to the drawing the person just opened,
+  // and undo falls back to the record's own order rule there.
+  useEffect(() => {
+    sketchActionsRef.current = [];
+    setSketchUndoable(false);
+  }, [workspacePath, recordsDir]);
 
   // Keep the synchronous mirror in step when marks change from a reload (all
   // other writers below set it themselves before handing the list to React).
@@ -1277,19 +1303,72 @@ export function useMap(
       const next = appendSketch(current, { color, size, points });
       if (next.length === current.length) return;
       persistSketches(next);
+      // One drawn stroke = one undoable change, remembered at the position it
+      // took (the drawing's last). Session memory only: the record says the
+      // stroke, never that it was the session's newest.
+      sketchActionsRef.current = recordDraw(
+        sketchActionsRef.current,
+        current.length,
+      );
+      setSketchUndoable(true);
     },
     [persistSketches],
   );
 
   /**
-   * Undo the last stroke: its LINE goes (no tombstone, no redo). The drawing's
-   * order is the undo order, so this is always the stroke just drawn — the
-   * malformed lines a hand edit left behind are preserved untouched.
+   * Erase the drawing's ink with ONE gesture (added 2026-11-16 per user
+   * review): the eraser's drag path, in world space, and the reach the strip's
+   * selected size buys (`eraserRadius`). Every stroke the path reaches goes
+   * WHOLE — a stroke is the atom, no partial-point surgery — and the rewrite is
+   * the family's ordinary one through `persistSketches`: survivors keep their
+   * file order, their exact record and unknown keys, malformed lines stay
+   * verbatim, and a gesture that reaches nothing writes nothing (no rewrite,
+   * no remembered action, nothing to say).
+   *
+   * PROVISIONAL: one gesture = one action; the take is remembered with each
+   * stroke's ORIGINAL position, so one undo restores the whole gesture.
+   */
+  const eraseSketch = useCallback(
+    (size: number, path: readonly SketchPoint[]) => {
+      const current = sketchesRef.current;
+      const { kept, removed } = eraseStrokes(current, path, eraserRadius(size));
+      if (removed.length === 0) return;
+      persistSketches(kept);
+      sketchActionsRef.current = recordErase(sketchActionsRef.current, removed);
+      setSketchUndoable(true);
+    },
+    [persistSketches],
+  );
+
+  /**
+   * Undo the LAST CHANGE to the drawing (added 2026-11-16 per user review): the
+   * session remembers what it did, so this takes back a stroke just drawn (its
+   * line goes, as it always did) OR one erase gesture (every stroke that
+   * gesture took, back at its ORIGINAL position — the take's positions are the
+   * drawing's own, so a rewrite puts the file back exactly as it stood).
+   *
+   * When the session remembers nothing (a workspace just opened, or the stack
+   * was dropped by the quiet clear), it falls back to the drawing's own order
+   * rule: the last stroke's line goes. No tombstone, no redo, and the malformed
+   * lines a hand edit left behind are preserved untouched either way.
    */
   const undoSketch = useCallback(() => {
     const current = sketchesRef.current;
-    if (current.length === 0) return;
-    persistSketches(undoLastSketch(current));
+    // The RECORD may be empty and still have something to undo: an erase that
+    // took the drawing's last stroke away is remembered, and one undo puts the
+    // whole take back. Only an empty record with no memory has nothing to do.
+    const step = undoStep(sketchActionsRef.current, current);
+    if (step === null) {
+      if (current.length === 0) return;
+      // The session remembers nothing about this drawing: the record's own
+      // order rule stands, and the stack stays empty.
+      persistSketches(undoLastSketch(current));
+      setSketchUndoable(false);
+      return;
+    }
+    sketchActionsRef.current = step.actions;
+    setSketchUndoable(step.actions.length > 0);
+    persistSketches(step.sketches);
   }, [persistSketches]);
 
   /**
@@ -1300,6 +1379,11 @@ export function useMap(
   const clearSketch = useCallback(() => {
     if (sketchesRef.current.length === 0) return;
     persistSketches(clearSketchesRecord(sketchesRef.current));
+    // The quiet × is "no undo": the drawing it took is gone, so the session's
+    // memory of it goes too rather than pointing at positions that no longer
+    // exist. PROVISIONAL (the review's clear-all stays a quiet ×).
+    sketchActionsRef.current = [];
+    setSketchUndoable(false);
   }, [persistSketches]);
 
   /**
@@ -1519,6 +1603,13 @@ export function useMap(
     malformedVeils,
     sketches,
     malformedSketches,
+    /**
+     * Whether undo has something to take back right now: the record still holds
+     * a stroke, or the session remembers a change (an erase that took the last
+     * stroke away can still be undone). A boolean — the strip's one quiet
+     * button, never a tally.
+     */
+    canUndoSketch: sketches.length > 0 || sketchUndoable,
     assumptions,
     malformedAssumptions,
     duplicateAssumptions,
@@ -1572,6 +1663,7 @@ export function useMap(
     renameVeil,
     removeVeil,
     addSketch,
+    eraseSketch,
     undoSketch,
     clearSketch,
     addAssumption,

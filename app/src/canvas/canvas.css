@@ -4622,11 +4622,18 @@ body {
 
 /* While the pen is armed this surface owns every press on the plane: the gate
    mode already stands pan, creation and word presses still, and the surface
-   makes that physical (a stroke can never reach d3-zoom or a word's handler). */
+   makes that physical (a stroke can never reach d3-zoom or a word's handler).
+   Its LEVEL is the plane's top capture layer, not a window's: it must outrank
+   the plane's own content and labels (the zoom chip and the hint at 5), and it
+   must stay BELOW every screen-space bar (the level control at 7, the fixed
+   bars at 8 and up). It used to be 10 — above `.sketch-bar`'s 8, because
+   neither the plane nor any ancestor made a stacking context — so the strip's
+   buttons never received a press while the pen was armed (fixed 2026-11-16 per
+   user review). Keep this level under 7: screen-space chrome wins. */
 .draw-surface {
   position: absolute;
   inset: 0;
-  z-index: 10;
+  z-index: 6;
   cursor: crosshair;
 }
 
@@ -4665,6 +4672,7 @@ body {
   color: #8d887c;
 }
 
+.sketch-tools,
 .sketch-sizes,
 .sketch-colors {
   display: flex;
@@ -4675,6 +4683,7 @@ body {
 }
 
 .sketch-size,
+.sketch-tool,
 .sketch-color,
 .sketch-undo,
 .sketch-clear {
@@ -4694,10 +4703,17 @@ body {
     border-color 140ms ease;
 }
 
-.sketch-size {
+.sketch-size,
+.sketch-tool {
   width: 22px;
   height: 22px;
   padding: 0;
+}
+
+.sketch-tool-glyph {
+  font-size: 13px;
+  line-height: 1;
+  color: inherit;
 }
 
 .sketch-size-dot {
@@ -4707,6 +4723,7 @@ body {
 }
 
 .sketch-size:hover,
+.sketch-tool:hover,
 .sketch-undo:hover,
 .sketch-clear:hover {
   color: #1e2126;
@@ -4714,6 +4731,7 @@ body {
 }
 
 .sketch-size.active,
+.sketch-tool.active,
 .sketch-color.active {
   border-color: #8d887c;
   background: rgba(141, 136, 124, 0.14);
@@ -4736,6 +4754,17 @@ body {
   cursor: pointer;
 }
 
+/* PROVISIONAL (added 2026-11-16 per user review): the palette is the PEN's —
+   ink means nothing to an eraser — so while the eraser is the live tool the
+   colour row is disabled (dimmed and inert, never removed: the strip does not
+   jump when the tool changes). The eraser's reach follows the size selector,
+   so the sizes stay live for both tools. */
+.sketch-color:disabled,
+.sketch-picker:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .sketch-undo {
   width: 24px;
   height: 24px;
@@ -4756,6 +4785,7 @@ body {
 }
 
 .sketch-size:focus-visible,
+.sketch-tool:focus-visible,
 .sketch-color:focus-visible,
 .sketch-picker:focus-visible,
 .sketch-undo:focus-visible,
