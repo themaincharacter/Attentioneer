@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { parseYamlFields, workspaceYml } from "../src/lib/serialize";
-import { creationKinds, type CreationKind } from "../src/canvas/gates";
+import {
+  creationKinds,
+  offeredCreationKinds,
+  type CreationKind,
+} from "../src/canvas/gates";
 import {
   DEFAULT_LEVEL,
   LEVEL_KEY,
@@ -145,6 +149,20 @@ describe("creation kinds are per game (an ADD, never a take-away)", () => {
       expect(creationKinds(level)).toEqual(["word", "lack"]);
       expect(creationKinds(level)).not.toContain("assumption");
       expect(creationKinds(level)).toHaveLength(2);
+    }
+  });
+
+  // DEPRECATED (hidden 2026-11-16 per user review): the RING MENU offers only
+  // the word option now. The grammar above is the record machinery's (the
+  // ghost packet's card, the empty-space records' own tests) and stays; the
+  // OFFER is what the person sees, and it is the word alone in every game.
+  test("the ring menu offers only the word (hidden 2026-11-16)", () => {
+    for (const level of LEVELS) {
+      expect(offeredCreationKinds(level)).toEqual(["word"]);
+      expect(offeredCreationKinds(level)).not.toContain("lack");
+      expect(offeredCreationKinds(level)).not.toContain("assumption");
+      // The machinery's full list is untouched, so a sweep can restore it.
+      expect(creationKinds(level).length).toBeGreaterThanOrEqual(2);
     }
   });
 

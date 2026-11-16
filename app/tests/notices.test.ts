@@ -39,6 +39,9 @@ const FAMILIES: NoticeFamily[] = [
   // Epic 9 story 1: the veils' unreadable lines ride the shared group (a veil
   // covers levels 1–2, so it is no single game's own record).
   "veils",
+  // The map's ink (added 2026-11-16 per user review): the drawing renders in
+  // every game, so its unreadable lines ride the shared group too.
+  "sketches",
 ];
 
 const names = new Map([
@@ -61,6 +64,8 @@ describe("the notices strip is band-scoped", () => {
     // cannot hand it one game: its notices are record hygiene and ride the
     // shared group (ADR-0023).
     expect(noticeGame("veils")).toBe("all");
+    // The map's ink is every game's record (added 2026-11-16 per user review).
+    expect(noticeGame("sketches")).toBe("all");
     expect(NOTICE_FAMILY_GAME).toEqual({
       marks: "all",
       links: "dynamics",
@@ -69,6 +74,7 @@ describe("the notices strip is band-scoped", () => {
       assumptions: "dynamics",
       pointers: "ground",
       veils: "all",
+      sketches: "all",
     });
     // Every family is classified, so none can slip back into an aggregator.
     expect(Object.keys(NOTICE_FAMILY_GAME).sort()).toEqual([...FAMILIES].sort());
@@ -96,7 +102,11 @@ describe("the notices strip is band-scoped", () => {
   test("concept shows the shared group only; no other game's notices", () => {
     const groups = noticeGroups("concept");
     expect(groups).toEqual([
-      { game: "all", label: "every game", families: ["marks", "veils"] },
+      {
+        game: "all",
+        label: "every game",
+        families: ["marks", "veils", "sketches"],
+      },
     ]);
     const families = groups.flatMap((group) => group.families);
     for (const own of ["links", "model", "loops", "assumptions", "pointers"]) {
@@ -110,7 +120,7 @@ describe("the notices strip is band-scoped", () => {
       "every game",
       "dynamics",
     ]);
-    expect(groups[0].families).toEqual(["marks", "veils"]);
+    expect(groups[0].families).toEqual(["marks", "veils", "sketches"]);
     expect(groups[1].game).toBe("dynamics");
     expect(groups[1].families).toEqual([
       "links",

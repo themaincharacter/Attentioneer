@@ -41,6 +41,7 @@ import {
   authoringDoorLive,
   authoringLive,
   creationKinds,
+  offeredCreationKinds,
   createLevelPin,
   didReleaseFocusPin,
   focusStateOf,
@@ -57,6 +58,9 @@ import { GhostList } from "./canvas/GhostList";
 import { GhostPanel } from "./canvas/GhostPanel";
 import { GhostPreview } from "./canvas/GhostPreview";
 import { LevelControl } from "./canvas/LevelControl";
+import { SketchLayer } from "./canvas/SketchLayer";
+import { SketchToolbar } from "./canvas/SketchToolbar";
+import { DEFAULT_PEN_COLOR, DEFAULT_PEN_SIZE } from "./canvas/sketchRules";
 import { LackMark } from "./canvas/LackMark";
 import { LinkWire } from "./canvas/LinkWire";
 import {
@@ -387,6 +391,9 @@ function App() {
     orphanLoops,
     veils,
     malformedVeils,
+    // The map's ink (added 2026-11-16 per user review).
+    sketches,
+    malformedSketches,
     assumptions,
     malformedAssumptions,
     duplicateAssumptions,
@@ -427,6 +434,9 @@ function App() {
     cancelConnect,
     recoinDistance,
     removeDistance,
+    addSketch,
+    undoSketch,
+    clearSketch,
     createLoop,
     renameLoop,
     removeLoop,
@@ -484,6 +494,14 @@ function App() {
   // reason. The gate's `veil` mode is armed while either is live.
   const [veilArmed, setVeilArmed] = useState(false);
   const [veilBox, setVeilBox] = useState<VeilBox | null>(null);
+  // The map's pen (added 2026-11-16 per user review): its own gate mode, its
+  // ink and its thickness. The mode is an ARM like the veil's draw box — while
+  // it is live pan, creation and every word press stand still — and the pen's
+  // capture surface (CanvasPlane) owns the pointer. The strokes themselves are
+  // committed-model records through useMap (`map/sketches.jsonl`).
+  const [drawArmed, setDrawArmed] = useState(false);
+  const [penColor, setPenColor] = useState<string>(DEFAULT_PEN_COLOR);
+  const [penSize, setPenSize] = useState<number>(DEFAULT_PEN_SIZE);
   // The look-under (Epic 9 story 2, ADR-0023 decision 3): the veil whose cover
   // is LIFTED for a read-only reading of its name and reason, addressed by its
   // natural key (or null). The record itself is derived from `veils` on every
@@ -1147,7 +1165,13 @@ function App() {
               // every word press stand still throughout the gesture.
               veilArmed || veilBox !== null
               ? "veil"
-              : "idle";
+              : // The map's pen (added 2026-11-16 per user review) is its own
+                // arm, level-uniform: while it is live the plane's own gestures
+                // all stand still (shouldPan/shouldCreate/shouldStartWordPress)
+                // and the pen's capture surface owns the pointer.
+                drawArmed
+                ? "draw"
+                : "idle";
   // The gate's mode, readable from the focus and release paths, which run
   // outside render (a focusout microtask, a post-render focus refresh).
   const gestureModeRef = useRef<GestureMode>(gestureMode);
@@ -1408,6 +1432,10 @@ function App() {
     setLassoArmed(false);
     setVeilArmed(false);
     setVeilBox(null);
+    // The pen's arm closes with every other one (added 2026-11-16 per user
+    // review): a level switch, a branch switch or a deliberate arm elsewhere
+    // ends the drawing mode; the strokes are records and stay.
+    setDrawArmed(false);
     // The look-under is a transient: the switch path closes it with every
     // other one (a level switch, a branch switch and any deliberate entry that
     // runs this path). It closes QUIETLY — the wheel never yanks focus.
@@ -2540,6 +2568,49 @@ function App() {
   }, []);
 
   /**
+   * The level control's `draw` toggle (added 2026-11-16 per user review): the
+   * map's pen. Pressing it while the pen is armed ends the mode — the strokes
+   * are already written, so putting the pen down writes nothing. Arming runs
+   * the app's one cancel-pending path first (one armed gesture at a time) and
+   * the gate's `draw` mode takes the pointer, exactly as the veil's box arm
+   * does: pan, double-click creation and every word press stand still.
+   */
+  const toggleDraw = useCallback(() => {
+    if (drawArmed) {
+      setDrawArmed(false);
+      return;
+    }
+    cancelPendingGestures();
+    setDrawArmed(true);
+  }, [drawArmed, cancelPendingGestures]);
+
+  // Esc ends the drawing mode (the veil's arm idiom): the strokes stay, the
+  // capture surface goes, and the plane's own gestures come back.
+  useEffect(() => {
+    if (!drawArmed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setDrawArmed(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawArmed]);
+
+  /**
+   * One stroke from the plane (added 2026-11-16 per user review): the pen's
+   * ink and thickness as they stand, and the world-space path the drag
+   * reported — one line appended to `map/sketches.jsonl` through useMap, in
+   * the same in-order queue as every other record write.
+   */
+  const handleSketch = useCallback(
+    (points: readonly { x: number; y: number }[]) => {
+      addSketch(penColor, penSize, points);
+    },
+    [addSketch, penColor, penSize],
+  );
+
+  /**
    * The plane reported the captured BOX: hold it while the coin field asks. The
    * gate stays in the `veil` mode (the box is not null), so the plane's own
    * gestures stay suspended while the person types — exactly as the loop's coin
@@ -2916,18 +2987,21 @@ function App() {
 
   return (
     <>
+      {/* DEPRECATED (hidden 2026-11-16 per user review): this plane used to
+          take a dynamics-only creation hint naming the ring menu's lack and
+          assumption. The menu offers the word option alone now, so the
+          plane's default hint ("double-click: word") stands in every game —
+          delete in the deprecated sweep. */}
       <CanvasPlane
         camera={camera}
         intents={intents}
         onPlaneDoubleClick={handlePlaneDoubleClick}
         gestureMode={gestureMode}
-        creationHint={
-          level === "dynamics"
-            ? "double-click: word, lack or assumption"
-            : undefined
-        }
         lassoArmed={selectorOpen && lassoArmed}
         boxArmed={veilArmed}
+        drawArmed={drawArmed}
+        drawPen={{ color: penColor, size: penSize }}
+        onSketch={handleSketch}
         picking={markDrag.ghost !== null}
         onLasso={handleLasso}
         onDrawBox={captureVeilBox}
@@ -3111,6 +3185,14 @@ function App() {
               onRetire={() => removeVeil(veil)}
             />
           ))}
+
+        {/* The map's ink (added 2026-11-16 per user review): every stroke of
+            `map/sketches.jsonl` in world space, in FILE ORDER (later ink on
+            top), drawn over the words and wires — the drawing is an annotation
+            on the map, exactly as the pen's in-flight stroke previews it. The
+            layer takes no press; the pen's own capture surface handles the
+            stroke while its mode is armed. */}
+        <SketchLayer strokes={sketches} />
 
         {/* wires */}
         {distances.map((d) => {
@@ -3330,12 +3412,17 @@ function App() {
         )}
 
         {/* the double-click creation menu: word or lack at Level 1; Level 2
-            grows the third kind, assumption, about the bare spot (story 4) */}
+            grows the third kind, assumption, about the bare spot (story 4).
+            DEPRECATED (hidden 2026-11-16 per user review): the ring menu
+            offered lack (every game) and assumption (dynamics); it offers ONLY
+            the word option now, through gates.ts's `offeredCreationKinds`.
+            `creationKinds` still names each game's full grammar for the record
+            machinery — delete in the deprecated sweep. */}
         {menuAt && (
           <PlaneMenu
             x={menuAt.x}
             y={menuAt.y}
-            kinds={creationKinds(level)}
+            kinds={offeredCreationKinds(level)}
             onWord={chooseWord}
             onLack={chooseLack}
             onAssumption={chooseAssumption}
@@ -3539,6 +3626,8 @@ function App() {
         onEditPlayingSet={openSelector}
         onCoinLoop={beginLoop}
         onDrawVeil={beginVeil}
+        onDraw={toggleDraw}
+        drawArmed={drawArmed}
         scenarios={scenarios}
         activeScenario={scenario}
         onChooseScenario={chooseScenario}
@@ -3661,6 +3750,23 @@ function App() {
           carries its own guidance. */}
       {veilArmed && <VeilBar />}
 
+      {/* The pen's quiet controls (added 2026-11-16 per user review): pen size,
+          a few inks plus a picker, undo, and the quiet × that clears the
+          drawing. Screen space and OUTSIDE `.plane`, so the plane's armed gate
+          never reaches it; Esc or the level control's toggle puts the pen
+          down. */}
+      {drawArmed && (
+        <SketchToolbar
+          color={penColor}
+          size={penSize}
+          canUndo={sketches.length > 0}
+          onColor={setPenColor}
+          onSize={setPenSize}
+          onUndo={undoSketch}
+          onClear={clearSketch}
+        />
+      )}
+
       {/* the selector's controls, in screen space while it is open (story 1) */}
       {selectorOpen && (
         <PlayingSetBar
@@ -3687,6 +3793,7 @@ function App() {
         malformedLoops={malformedLoops}
         orphanLoops={orphanLoops}
         malformedVeils={malformedVeils}
+        malformedSketches={malformedSketches}
         malformedAssumptions={malformedAssumptions}
         duplicateAssumptions={duplicateAssumptions}
         orphanAssumptions={orphanAssumptions}
@@ -3750,6 +3857,7 @@ function MarkNotices({
   malformedLoops,
   orphanLoops,
   malformedVeils,
+  malformedSketches,
   malformedAssumptions,
   duplicateAssumptions,
   orphanAssumptions,
@@ -3787,6 +3895,13 @@ function MarkNotices({
    * cover; the family table says so).
    */
   malformedVeils: readonly string[];
+  /**
+   * Unreadable `map/sketches.jsonl` lines (added 2026-11-16 per user review):
+   * a stroke has no dependents, so it has no orphans — only lines the app keeps
+   * and cannot read. Surfaced wherever the person is (the drawing is every
+   * game's record, the veils' reading).
+   */
+  malformedSketches: readonly string[];
   malformedAssumptions: readonly string[];
   /** Hand-edited duplicate keys: preserved, never deduped (story 4). */
   duplicateAssumptions: readonly Assumption[];
@@ -3820,6 +3935,7 @@ function MarkNotices({
       ghostMembers.length > 0,
     loops: malformedLoops.length > 0 || orphanLoops.length > 0,
     veils: malformedVeils.length > 0,
+    sketches: malformedSketches.length > 0,
     assumptions:
       malformedAssumptions.length > 0 ||
       duplicateAssumptions.length > 0 ||
@@ -3937,6 +4053,16 @@ function MarkNotices({
             {malformedVeils.map((line, index) => (
               <div className="mark-notice" key={`malformed-veil-${index}`}>
                 unreadable line in map/veils.jsonl: {line}
+              </div>
+            ))}
+          </>
+        );
+      case "sketches":
+        return (
+          <>
+            {malformedSketches.map((line, index) => (
+              <div className="mark-notice" key={`malformed-sketch-${index}`}>
+                unreadable line in map/sketches.jsonl: {line}
               </div>
             ))}
           </>

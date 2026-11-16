@@ -1098,8 +1098,10 @@ describe("(h) the negative space: nothing announces a pull is waiting", () => {
       const close = css.indexOf("}", open);
       return css.slice(open + 1, close);
     }
+    // The selector group gains the pen's toggle (added 2026-11-16 per user
+    // review): the same quiet action vocabulary, scanned by the same rule.
     const door = ruleBody(
-      ".level-edit,\n.level-loop,\n.level-veil,\n.level-ask,\n.pull-door",
+      ".level-edit,\n.level-loop,\n.level-veil,\n.level-draw,\n.level-ask,\n.pull-door",
     );
     expect(door).not.toMatch(/animation|glow|pulse|red|orange/i);
     const lines = ruleBody(".pull-lines");

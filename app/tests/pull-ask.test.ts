@@ -717,8 +717,10 @@ describe("no cursor, order, count or score strings", () => {
       const close = css.indexOf("}", open);
       return css.slice(open + 1, close);
     }
+    // The selector group gains the pen's toggle (added 2026-11-16 per user
+    // review): the same quiet action vocabulary, scanned by the same rule.
     const door = ruleBody(
-      ".level-edit,\n.level-loop,\n.level-veil,\n.level-ask,\n.pull-door",
+      ".level-edit,\n.level-loop,\n.level-veil,\n.level-draw,\n.level-ask,\n.pull-door",
     );
     expect(door).toContain("color: #8d887c");
     expect(door).not.toMatch(/animation|glow|pulse|red|orange/i);

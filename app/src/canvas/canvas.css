@@ -907,6 +907,25 @@ body {
   animation-delay: 28ms;
 }
 
+/* DEPRECATED (hidden 2026-11-16 per user review): with the lack (and the
+   assumption) hidden the word bubble is the menu's ONLY choice, so it keeps the
+   upper position it always had — a stem reaching DOWN to the anchor dot and no
+   stagger — where the `:last-of-type` rules above would otherwise read it as
+   the lower bubble. Delete in the deprecated sweep. */
+.plane-menu-option:only-of-type::after {
+  top: auto;
+  bottom: -9px;
+  background: linear-gradient(
+    to bottom,
+    rgba(141, 136, 124, 0.34),
+    rgba(141, 136, 124, 0.1)
+  );
+}
+
+.plane-menu-option:only-of-type {
+  animation-delay: 0ms;
+}
+
 .plane-menu-option:hover {
   color: #1e2126;
   background: rgba(255, 253, 248, 0.92);
@@ -1016,6 +1035,7 @@ body {
 .level-edit:focus-visible,
 .level-loop:focus-visible,
 .level-veil:focus-visible,
+.level-draw:focus-visible,
 .level-ask:focus-visible,
 .pull-door:focus-visible,
 .playing-set-bar button:focus-visible,
@@ -1030,6 +1050,7 @@ body {
 .level-edit,
 .level-loop,
 .level-veil,
+.level-draw,
 .level-ask,
 .pull-door {
   font: inherit;
@@ -1050,6 +1071,7 @@ body {
 .level-edit:hover,
 .level-loop:hover,
 .level-veil:hover,
+.level-draw:hover,
 .level-ask:hover,
 .pull-door:hover {
   color: #1e2126;
@@ -4557,4 +4579,187 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+
+/* ------------------------------------------------------------------------- *
+ * The map's pen (added 2026-11-16 per user review).
+ *
+ * A quiet drawing layer over the plane: freehand ink in world space, a few
+ * sizes, a small palette plus a picker, undo, and the quiet × that clears the
+ * drawing. The ink sits UNDER the words (z-index 2, and it renders before the
+ * words, so a name always reads over a stroke) and takes no press of its own;
+ * the pen's capture surface — rendered only while the pen's mode is armed —
+ * is the only thing in the plane that touches the pointer. No counter, no
+ * badge, no history.
+ * ------------------------------------------------------------------------- */
+
+.level-draw.active {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.16);
+}
+
+.sketch-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* The in-flight stroke paints at the same level as the committed ink, so what
+   the release writes is exactly what the person already saw. */
+.sketch-layer.sketch-draft {
+  z-index: 2;
+}
+
+.sketch-draft-path {
+  opacity: 0.75;
+}
+
+/* While the pen is armed this surface owns every press on the plane: the gate
+   mode already stands pan, creation and word presses still, and the surface
+   makes that physical (a stroke can never reach d3-zoom or a word's handler). */
+.draw-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  cursor: crosshair;
+}
+
+.plane.draw-armed {
+  cursor: crosshair;
+}
+
+/* The pen's quiet controls: screen space beside the app's other armed hints,
+   outside .plane, so the armed gate never reaches them. */
+.sketch-bar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  background: rgba(255, 253, 248, 0.9);
+  border: 1px solid #e4dfd4;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(40, 35, 25, 0.08);
+  transform: translateX(-50%);
+  animation: fade-in 160ms ease-out;
+}
+
+.sketch-bar-title {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.sketch-bar-hint {
+  font-size: 11.5px;
+  color: #8d887c;
+}
+
+.sketch-sizes,
+.sketch-colors {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-left: 10px;
+  border-left: 1px solid #e4dfd4;
+}
+
+.sketch-size,
+.sketch-color,
+.sketch-undo,
+.sketch-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 12px;
+  color: #8d887c;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+.sketch-size {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+}
+
+.sketch-size-dot {
+  display: block;
+  border-radius: 50%;
+  background: #8d887c;
+}
+
+.sketch-size:hover,
+.sketch-undo:hover,
+.sketch-clear:hover {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.14);
+}
+
+.sketch-size.active,
+.sketch-color.active {
+  border-color: #8d887c;
+  background: rgba(141, 136, 124, 0.14);
+}
+
+.sketch-color {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.sketch-picker {
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  border: 1px solid #e4dfd4;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.sketch-undo {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.sketch-undo:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: transparent;
+}
+
+.sketch-clear {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 14px;
+}
+
+.sketch-size:focus-visible,
+.sketch-color:focus-visible,
+.sketch-picker:focus-visible,
+.sketch-undo:focus-visible,
+.sketch-clear:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
 }

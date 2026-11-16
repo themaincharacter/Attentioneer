@@ -23,6 +23,15 @@ import {
   shouldCreate,
   type GestureMode,
 } from "./gates";
+import type { SketchPoint } from "../map/sketches";
+import {
+  DEFAULT_PEN_COLOR,
+  DEFAULT_PEN_SIZE,
+  isDrawableStroke,
+  penInk,
+  SKETCH_STEP_PX,
+  strokePath,
+} from "./sketchRules";
 import type { Point } from "./geometry";
 import { boxIsDrawable, capturedBox } from "./veilRules";
 import type { VeilBox } from "../map/veils";
@@ -106,6 +115,11 @@ interface CanvasPlaneProps {
   /**
    * The quiet hint's creation clause (story 4): Level 1 keeps the word/lack
    * wording byte-identically; Level 2 names its third kind.
+   *
+   * DEPRECATED (hidden 2026-11-16 per user review): the ring menu offers only
+   * the word option now, so the default hint names the word alone (the
+   * historical word/lack wording is kept in the record, not on the plane) —
+   * delete the hidden kinds' wording in the deprecated sweep.
    */
   creationHint?: string;
   /** True while the playing-set selector's draw tool is armed (story 1). */
@@ -124,6 +138,23 @@ interface CanvasPlaneProps {
    * without the wire ever intercepting an ordinary press (ADR-0016).
    */
   picking?: boolean;
+  /**
+   * True while the map's PEN is armed (added 2026-11-16 per user review). It is
+   * its own gate mode (`"draw"`): while armed every plane gesture stands still
+   * exactly as the veil's draw box made them — pan, double-click creation and
+   * every word press — and the pen's capture surface (rendered only while
+   * armed) owns the pointer, so a stroke can never move a word or open a
+   * creation menu.
+   */
+  drawArmed?: boolean;
+  /**
+   * The pen's current ink and thickness, so the in-flight stroke previews in
+   * the colour it will be written with. Defaulted to the palette's opening
+   * reading, so the plane is usable without the app passing anything.
+   */
+  drawPen?: { color: string; size: number };
+  /** Called with the stroke's world path when a pen drag is released. */
+  onSketch?: (points: readonly SketchPoint[]) => void;
   /** Called with the lasso's world path when the draw tool is released. */
   onLasso?: (path: readonly Point[]) => void;
   /**
@@ -148,12 +179,18 @@ export function CanvasPlane({
   intents,
   onPlaneDoubleClick,
   gestureMode = "idle",
-  creationHint = "double-click: word or lack",
+  // DEPRECATED (hidden 2026-11-16 per user review): the hint named the ring
+  // menu's word AND lack choices; the menu now offers the word alone — delete
+  // in the deprecated sweep.
+  creationHint = "double-click: word",
   lassoArmed = false,
   boxArmed = false,
+  drawArmed = false,
+  drawPen = { color: DEFAULT_PEN_COLOR, size: DEFAULT_PEN_SIZE },
   picking = false,
   onLasso,
   onDrawBox,
+  onSketch,
   onZoomSettle,
   children,
 }: CanvasPlaneProps) {
@@ -162,6 +199,10 @@ export function CanvasPlane({
   const pressesRef = useRef<PlanePress[]>([]);
   const [lassoPath, setLassoPath] = useState<Point[] | null>(null);
   const [boxDraft, setBoxDraft] = useState<VeilBox | null>(null);
+  // The pen's in-flight stroke, in world space: the person sees the line they
+  // are drawing before the release writes it (the lasso/sketch-draft idiom).
+  const [strokeDraft, setStrokeDraft] = useState<SketchPoint[] | null>(null);
+  const drawSurfaceRef = useRef<HTMLDivElement>(null);
 
   // Latest-value refs for the raw listeners and d3's filter, which are
   // attached once and must always see the current mode, camera and callback.
@@ -177,6 +218,10 @@ export function CanvasPlane({
   onDrawBoxRef.current = onDrawBox;
   const onZoomSettleRef = useRef(onZoomSettle);
   onZoomSettleRef.current = onZoomSettle;
+  const drawArmedRef = useRef(drawArmed);
+  drawArmedRef.current = drawArmed;
+  const onSketchRef = useRef(onSketch);
+  onSketchRef.current = onSketch;
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
 
@@ -376,6 +421,62 @@ export function CanvasPlane({
     };
   }, [intents]);
 
+  // The map's pen (added 2026-11-16 per user review): while the mode is armed
+  // a full-plane capture surface owns the pointer, so a stroke can never reach
+  // d3-zoom (no pan), the plane's press counter (no creation) or a word's own
+  // raw handler (no drag, no click-to-center). The stroke is sampled in SCREEN
+  // space (SKETCH_STEP_PX) and stored in WORLD coordinates, read through the
+  // live camera ref so a wheel zoom mid-stroke still lands the samples under
+  // the pointer. The release reports the stroke only when the drag actually
+  // moved (a press with no movement draws nothing — the veil box's rule).
+  useEffect(() => {
+    if (!drawArmed) return;
+    const surface = drawSurfaceRef.current;
+    const plane = planeRef.current;
+    if (!surface || !plane) return;
+
+    const onDown = (event: MouseEvent) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = plane.getBoundingClientRect();
+      const toWorld = (clientX: number, clientY: number): SketchPoint => {
+        const cam = cameraRef.current;
+        return {
+          x: (clientX - rect.left - cam.x) / cam.zoom,
+          y: (clientY - rect.top - cam.y) / cam.zoom,
+        };
+      };
+      let points: SketchPoint[] = [toWorld(event.clientX, event.clientY)];
+      setStrokeDraft([...points]);
+      let lastX = event.clientX;
+      let lastY = event.clientY;
+
+      const onMove = (ev: MouseEvent) => {
+        if (Math.hypot(ev.clientX - lastX, ev.clientY - lastY) < SKETCH_STEP_PX) {
+          return;
+        }
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+        points = [...points, toWorld(ev.clientX, ev.clientY)];
+        setStrokeDraft([...points]);
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        setStrokeDraft(null);
+        // Esc (or a game switch) ended the arm mid-stroke: nothing is written.
+        if (!drawArmedRef.current) return;
+        if (!isDrawableStroke(points)) return;
+        onSketchRef.current?.(points);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+    surface.addEventListener("mousedown", onDown);
+    return () => surface.removeEventListener("mousedown", onDown);
+  }, [drawArmed]);
+
   // Keep d3's internal transform in sync with programmatic camera moves.
   useEffect(() => {
     const el = planeRef.current;
@@ -405,7 +506,7 @@ export function CanvasPlane({
     <PlaneContext.Provider value={planeApi}>
       <div
         ref={planeRef}
-        className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}${boxArmed ? " veil-armed" : ""}${picking ? " ring-picking" : ""}`}
+        className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}${boxArmed ? " veil-armed" : ""}${drawArmed ? " draw-armed" : ""}${picking ? " ring-picking" : ""}`}
         style={gridStyle}
         onDoubleClick={handleDoubleClick}
       >
@@ -420,6 +521,23 @@ export function CanvasPlane({
             <svg className="lasso" aria-hidden="true">
               <polygon
                 points={lassoPath.map((point) => `${point.x},${point.y}`).join(" ")}
+              />
+            </svg>
+          )}
+          {/* The pen's in-flight stroke (added 2026-11-16 per user review): the
+              line being drawn, in world space and in the pen's own ink and
+              width, so the person sees exactly what the release will write. It
+              is content (gates.ts) and reports nothing. */}
+          {strokeDraft && isDrawableStroke(strokeDraft) && (
+            <svg className="sketch-layer sketch-draft" aria-hidden="true">
+              <path
+                className="sketch-draft-path"
+                d={strokePath(strokeDraft)}
+                stroke={penInk(drawPen.color)}
+                strokeWidth={drawPen.size}
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
             </svg>
           )}
@@ -439,6 +557,14 @@ export function CanvasPlane({
             />
           )}
         </div>
+        {/* The pen's capture surface (added 2026-11-16 per user review): it is
+            rendered ONLY while the pen is armed, and it covers the plane so
+            every press is the stroke's — the gate mode suspends pan, creation
+            and word presses anyway, and this surface makes that physical. The
+            in-flight stroke is previewed above, in world space. */}
+        {drawArmed && (
+          <div ref={drawSurfaceRef} className="draw-surface" aria-hidden="true" />
+        )}
         {/* The chip reads through the band helpers (story 2): never a rounded
             percent that contradicts the level or the labels. */}
         <div className="zoom-chip">{zoomChipPercent(camera.zoom)}%</div>

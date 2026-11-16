@@ -21,6 +21,15 @@ import {
   type MarkTarget,
 } from "../map/marks";
 import {
+  appendSketch,
+  clearSketches as clearSketchesRecord,
+  loadSketches,
+  saveSketches,
+  undoLastSketch,
+  type Sketch,
+  type SketchPoint,
+} from "../map/sketches";
+import {
   dedupeLinks,
   drawLink as drawLinkRecord,
   flipLink as flipLinkRecord,
@@ -270,6 +279,11 @@ export function useMap(
   // never in a branch's folder, so they never read `recordsDir`.
   const [veils, setVeils] = useState<Veil[]>([]);
   const [malformedVeils, setMalformedVeils] = useState<string[]>([]);
+  // Sketches are the map's ink (added 2026-11-16 per user review): one line per
+  // stroke in `map/sketches.jsonl`, COMMITTED-MODEL records like the veils, so
+  // they never read `recordsDir` (a branch has no drawing of its own).
+  const [sketches, setSketches] = useState<Sketch[]>([]);
+  const [malformedSketches, setMalformedSketches] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [connect, setConnect] = useState<ConnectDraft | null>(null);
   const draftCount = useRef(0);
@@ -295,6 +309,9 @@ export function useMap(
   const veilsRef = useRef<Veil[]>([]);
   const malformedVeilsRef = useRef<string[]>([]);
   const veilsWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const sketchesRef = useRef<Sketch[]>([]);
+  const malformedSketchesRef = useRef<string[]>([]);
+  const sketchesWriteRef = useRef<Promise<void>>(Promise.resolve());
 
   /** Re-read every map file (first load and after an atomic patch). */
   const reloadMap = useCallback(async () => {
@@ -309,6 +326,7 @@ export function useMap(
       parsedPointers,
       parsedQuantities,
       parsedVeils,
+      parsedSketches,
     ] = await Promise.all([
       loadReferences(workspacePath),
       loadDistances(workspacePath),
@@ -320,6 +338,7 @@ export function useMap(
       loadPointers(workspacePath),
       loadQuantities(recordsDir),
       loadVeils(workspacePath),
+      loadSketches(workspacePath),
     ]);
     setRefs(referenceList);
     setDistances(parsedDistances.distances);
@@ -355,6 +374,10 @@ export function useMap(
     malformedVeilsRef.current = parsedVeils.malformed;
     setVeils(parsedVeils.veils);
     setMalformedVeils(parsedVeils.malformed);
+    sketchesRef.current = parsedSketches.sketches;
+    malformedSketchesRef.current = parsedSketches.malformed;
+    setSketches(parsedSketches.sketches);
+    setMalformedSketches(parsedSketches.malformed);
     setLoaded(true);
     // The records folder is part of the dependency: a scenario switch changes
     // WHERE the three variant records are and must re-read them.
@@ -493,6 +516,26 @@ export function useMap(
       veilsWriteRef.current = veilsWriteRef.current
         .catch(() => undefined)
         .then(() => saveVeils(workspacePath, deduped, malformedLines));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * Persist the drawing after each stroke (PROVISIONAL, added 2026-11-16 per
+   * user review): one canonical line per stroke, in DRAW ORDER — which is also
+   * the undo order (the last line is the last stroke) and the stacking order
+   * (later ink on top). Same in-order queue as the other record writers: a
+   * burst of strokes can never land out of order, and an undo right after a
+   * stroke removes the line that was just written, not an older one.
+   */
+  const persistSketches = useCallback(
+    (next: readonly Sketch[]) => {
+      sketchesRef.current = [...next];
+      setSketches([...next]);
+      const malformedLines = [...malformedSketchesRef.current];
+      sketchesWriteRef.current = sketchesWriteRef.current
+        .catch(() => undefined)
+        .then(() => saveSketches(workspacePath, next, malformedLines));
     },
     [workspacePath],
   );
@@ -1222,6 +1265,44 @@ export function useMap(
   );
 
   /**
+   * Add one stroke of the map's pen (added 2026-11-16 per user review): the
+   * plane reported a world-space path, and it becomes the drawing's last line.
+   * A press with no movement reports nothing (the plane's own rule), and a
+   * stroke with fewer than two points writes nothing here either. Skinny: the
+   * pen's colour and size are the app's reading, never sniffed from the record.
+   */
+  const addSketch = useCallback(
+    (color: string, size: number, points: readonly SketchPoint[]) => {
+      const current = sketchesRef.current;
+      const next = appendSketch(current, { color, size, points });
+      if (next.length === current.length) return;
+      persistSketches(next);
+    },
+    [persistSketches],
+  );
+
+  /**
+   * Undo the last stroke: its LINE goes (no tombstone, no redo). The drawing's
+   * order is the undo order, so this is always the stroke just drawn — the
+   * malformed lines a hand edit left behind are preserved untouched.
+   */
+  const undoSketch = useCallback(() => {
+    const current = sketchesRef.current;
+    if (current.length === 0) return;
+    persistSketches(undoLastSketch(current));
+  }, [persistSketches]);
+
+  /**
+   * Clear the drawing: every stroke line goes, the quiet ×'s one move (no
+   * confirmation, no history). Malformed lines are still preserved — the app
+   * never silently drops what it cannot read.
+   */
+  const clearSketch = useCallback(() => {
+    if (sketchesRef.current.length === 0) return;
+    persistSketches(clearSketchesRecord(sketchesRef.current));
+  }, [persistSketches]);
+
+  /**
    * Rename a veil: one in-place rewrite — the name and its natural key in one
    * move, the box, the reason and unknown keys preserved (a collision mints the
    * numeric suffix, exactly as at coin). No other record follows: nothing
@@ -1436,6 +1517,8 @@ export function useMap(
     orphanLoops,
     veils,
     malformedVeils,
+    sketches,
+    malformedSketches,
     assumptions,
     malformedAssumptions,
     duplicateAssumptions,
@@ -1488,6 +1571,9 @@ export function useMap(
     createVeil,
     renameVeil,
     removeVeil,
+    addSketch,
+    undoSketch,
+    clearSketch,
     addAssumption,
     reviseAssumption,
     removeAssumption,

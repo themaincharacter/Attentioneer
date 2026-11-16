@@ -26,6 +26,17 @@ interface LevelControlProps {
    * at ground no sheet renders, so no veil is coined there either.
    */
   onDrawVeil: () => void;
+  /**
+   * Toggle the map's PEN (added 2026-11-16 per user review): arm the draw
+   * layer, or put the pen down when it is already armed. It is offered in
+   * EVERY game — the drawing is the map's, not a game's record — and it sits
+   * outside `.plane` like the control's other actions, so the plane's armed
+   * gate never reaches it; arming runs the app's cancel-pending path, then the
+   * gate's `draw` mode owns the pointer.
+   */
+  onDraw: () => void;
+  /** True while the pen is armed (the toggle reads pressed). */
+  drawArmed: boolean;
   /** The branch folders the workspace holds (Epic 8 story 2, ADR-0021). */
   scenarios: readonly Scenario[];
   /** The branch running now, or null for the committed model. */
@@ -98,6 +109,12 @@ interface LevelControlProps {
  * levels — and it opens the transient reading outside `.plane`; the press is
  * the ask, and nothing here reads or writes.
  *
+ * The map's PEN joins as a level-uniform toggle (added 2026-11-16 per user
+ * review): `draw` arms the quiet drawing layer in every game — the strokes are
+ * the map's own records, not a game's — and the same button puts the pen down.
+ * It is the one addition this review made to the control; nothing else about
+ * the control moved.
+ *
  * No badge, no count, no ceremony. Provisional: the wording, order and look
  * (ADR-0003/0016/0018/0021/0023/0030), and the landing zoom each jump arrives
  * at.
@@ -108,6 +125,8 @@ export function LevelControl({
   onEditPlayingSet,
   onCoinLoop,
   onDrawVeil,
+  onDraw,
+  drawArmed,
   scenarios,
   activeScenario,
   onChooseScenario,
@@ -158,6 +177,19 @@ export function LevelControl({
           veil
         </button>
       )}
+      {/* The map's pen (added 2026-11-16 per user review): one quiet toggle,
+          offered in EVERY game because the drawing is the map's own record —
+          the concept layer's simplest tool, like a pen on a paper map. Its
+          pressed state reads the arm; pressing it again puts the pen down. */}
+      <button
+        type="button"
+        className={"level-draw" + (drawArmed ? " active" : "")}
+        aria-pressed={drawArmed}
+        title="draw on the map — drag a stroke; esc ends"
+        onClick={onDraw}
+      >
+        draw
+      </button>
       {level === "dynamics" && (
         <>
           <button

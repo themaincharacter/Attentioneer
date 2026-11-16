@@ -7,9 +7,13 @@ interface PlaneMenuProps {
   x: number;
   y: number;
   /**
-   * The kinds to offer (ADR-0011, ADR-0016): word and lack at Level 1; Level 2
-   * grows the third, `assumption`, at a bare spot. Defaulted to Level 1's pair
-   * so the menu's look and markup are unchanged there.
+   * The kinds to OFFER (ADR-0011, ADR-0016): word and lack at Level 1; Level 2
+   * grows the third, `assumption`, at a bare spot.
+   *
+   * DEPRECATED (hidden 2026-11-16 per user review): the offer is now
+   * `["word"]` (gates.ts's `offeredCreationKinds`), so this default names
+   * only the word and BOTH other choices below stay written but unrendered —
+   * delete the hidden choices in the deprecated sweep.
    */
   kinds?: readonly CreationKind[];
   /** Coin a word at the point — the in-place coin field takes over. */
@@ -30,6 +34,14 @@ interface PlaneMenuProps {
  * quiet choice below them — state an assumption about this bare spot
  * (ADR-0011's open decision, ADR-0016) — and Level 1 renders exactly as before.
  *
+ * DEPRECATED (hidden 2026-11-16 per user review): the person played with the
+ * app and asked for the concept layer simplified — double-clicking a spot
+ * offers ONLY the word option. The `lack` bubble and the Level 2
+ * `assumption` bubble keep their code, their handlers and their CSS, and are
+ * simply not offered (gates.ts's `offeredCreationKinds`); the menu now paints
+ * the one word bubble on the anchor dot. Delete the hidden choices in the
+ * deprecated sweep.
+ *
  * The cluster is two frosted warm-white bubbles hanging off an inked anchor
  * dot (word above, lack below, each on a hairline stem), so it reads as a
  * small menu floating over the paper plane rather than a slab on it. The dot
@@ -45,7 +57,10 @@ interface PlaneMenuProps {
 export function PlaneMenu({
   x,
   y,
-  kinds = ["word", "lack"],
+  // DEPRECATED (hidden 2026-11-16 per user review): the default offer was
+  // Level 1's pair (word and lack); the review hides the lack, so the default
+  // names the word alone — delete in the deprecated sweep.
+  kinds = ["word"],
   onWord,
   onLack,
   onAssumption,
@@ -94,10 +109,18 @@ export function PlaneMenu({
     return () => el.removeEventListener("mousedown", stop);
   }, []);
 
+  // DEPRECATED (hidden 2026-11-16 per user review): with the lack (and the
+  // assumption) hidden, the cluster is ONE bubble above the dot, so the dot is
+  // no longer the cluster's centre. The whole cluster lifts by the bubble's
+  // half-height plus the gap, keeping the DOT on the exact plane point. The
+  // arithmetic is provisional (a 30px bubble and a 9px gap, halved); delete
+  // with the hidden choices in the deprecated sweep.
+  const singleChoiceLift = kinds.length <= 1 ? 19.5 : 0;
+
   return (
     <div
       ref={rootRef}
-      className="plane-menu"
+      className={`plane-menu${kinds.length <= 1 ? " plane-menu-single" : ""}`}
       style={{
         left: x,
         top: y,
@@ -105,7 +128,7 @@ export function PlaneMenu({
         // cluster stays readable screen-size while its anchor dot stays on the
         // plane point (the dot is the root's centre, so scaling about that
         // centre keeps it there).
-        transform: `translate(-50%, -50%) scale(${1 / camera.zoom})`,
+        transform: `translate(-50%, -50%) translateY(${-singleChoiceLift}px) scale(${1 / camera.zoom})`,
       }}
       role="group"
       aria-label="create at this point"
@@ -121,18 +144,29 @@ export function PlaneMenu({
         word
       </button>
       <span className="plane-menu-dot" aria-hidden="true" />
-      <button
-        type="button"
-        className="plane-menu-option"
-        aria-label="cast a lack here"
-        title="cast a lack here"
-        onClick={onLack}
-      >
-        lack
-      </button>
+      {/* DEPRECATED (hidden 2026-11-16 per user review): the ring menu's
+          `lack` choice opened the bare open mark at the point. The review asked
+          for the menu to offer ONLY the word option, so the choice is not
+          rendered; its code, the bare ring's cast and `map/marks.jsonl` all
+          stay — delete in the deprecated sweep. */}
+      {kinds.includes("lack") && (
+        <button
+          type="button"
+          className="plane-menu-option"
+          aria-label="cast a lack here"
+          title="cast a lack here"
+          onClick={onLack}
+        >
+          lack
+        </button>
+      )}
       {/* Level 2's third kind (ADR-0011's open decision, ADR-0016): state an
           assumption about this bare spot. Rendered only when the level offers
-          it, so Level 1's menu is exactly the word/lack pair it always was. */}
+          it, so Level 1's menu is exactly the word/lack pair it always was.
+          DEPRECATED (hidden 2026-11-16 per user review): the dynamics game's
+          third kind is no longer offered — the menu shows only the word
+          option; the record and its overlay stay — delete in the deprecated
+          sweep. */}
       {kinds.includes("assumption") && onAssumption && (
         <button
           type="button"

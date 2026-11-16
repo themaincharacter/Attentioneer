@@ -14,6 +14,7 @@ import {
   POINTER_PICKS,
 } from "./pointerRules";
 import { usePlane } from "./CanvasPlane";
+import { TENTATIVE_MARK_HIDDEN } from "./deprecations";
 import type { Point } from "./geometry";
 
 interface PointerChooserProps {
@@ -381,18 +382,25 @@ export function PointerChooser({
             >
               ↗
             </button>
-            <button
-              type="button"
-              className={"pointer-ring" + (marked ? " open" : "")}
-              aria-label={marked ? "settle this reach" : "mark this reach tentative"}
-              aria-pressed={marked}
-              title={marked ? "settle" : "mark tentative"}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (editing === pointer) cancelEdit();
-                onToggleMark(pointer);
-              }}
-            />
+            {/* DEPRECATED (hidden 2026-11-16 per user review): the pointer
+                row's open ring cast/settled this reach's tentative mark. The
+                review hides the tentative affordances, so the ring is not
+                rendered — the mark record and every reader of it stay — delete
+                in the deprecated sweep. */}
+            {!TENTATIVE_MARK_HIDDEN && (
+              <button
+                type="button"
+                className={"pointer-ring" + (marked ? " open" : "")}
+                aria-label={marked ? "settle this reach" : "mark this reach tentative"}
+                aria-pressed={marked}
+                title={marked ? "settle" : "mark tentative"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (editing === pointer) cancelEdit();
+                  onToggleMark(pointer);
+                }}
+              />
+            )}
             <button
               type="button"
               className="pointer-remove"

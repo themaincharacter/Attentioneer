@@ -38,7 +38,8 @@ export type NoticeFamily =
   | "loops"
   | "assumptions"
   | "pointers"
-  | "veils";
+  | "veils"
+  | "sketches";
 
 /** A family's game, or "all" for the content every game renders. */
 export type NoticeGame = Level | "all";
@@ -54,6 +55,10 @@ export type NoticeGame = Level | "all";
  * unreadable `map/veils.jsonl` line is surfaced wherever the person is, never
  * hidden because the sheet is. They ride the shared "every game" group with the
  * marks, and `veils.jsonl` is the only file they name.
+ *
+ * SKETCHES follow the veils (added 2026-11-16 per user review): the drawing is
+ * the map's own record and renders in every game, so its unreadable lines ride
+ * the shared group too.
  */
 export const NOTICE_FAMILY_GAME: Record<NoticeFamily, NoticeGame> = {
   marks: "all",
@@ -63,6 +68,10 @@ export const NOTICE_FAMILY_GAME: Record<NoticeFamily, NoticeGame> = {
   assumptions: "dynamics",
   pointers: "ground",
   veils: "all",
+  // The map's ink (added 2026-11-16 per user review) is a committed-model
+  // record drawn in every game, so an unreadable `map/sketches.jsonl` line is
+  // record hygiene surfaced wherever the person is — the veils' reading.
+  sketches: "all",
 };
 
 /** The game a family's notices belong to. */

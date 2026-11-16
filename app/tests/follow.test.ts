@@ -7,6 +7,7 @@ import {
   followTargets,
   screenPointOf,
 } from "../src/canvas/followRules";
+import { CROSS_LEVEL_FACES_HIDDEN } from "../src/canvas/deprecations";
 import {
   CONTENT_CLASSES,
   CONTENT_SELECTOR,
@@ -195,9 +196,28 @@ describe("the follow offers the two other games (and nothing else)", () => {
     // catches the next row control's opening tag, hence at least two).
     expect(block.match(/<button/g)?.length).toBeGreaterThanOrEqual(2);
     expect(wordSource).toContain("function handleFollowKeyDown(");
-    // Always rendered: one control, never behind a flag or a conditional class.
+    // One control in the markup, never duplicated.
     expect(wordSource.match(/className="word-follow"/g)?.length).toBe(1);
     expect(wordSource).not.toContain("showFollow");
+  });
+
+  test("the control is WRITTEN but not offered (hidden 2026-11-16 per review)", () => {
+    // DEPRECATED (hidden 2026-11-16 per user review): the review asked for the
+    // dynamics and ground selection ON THE WORD to be hidden, so the control
+    // and its game menu render behind the review's flag — the markup, the refs,
+    // the handlers, the offer (`followTargets`) and the anchored jump all stay
+    // written for the deprecated sweep. This test asserts the HIDDEN state, so
+    // the machinery stays covered while the affordance is absent.
+    expect(CROSS_LEVEL_FACES_HIDDEN).toBe(true);
+    const wordSource = readFileSync(
+      new URL("../src/canvas/ReferenceWord.tsx", import.meta.url),
+      "utf8",
+    );
+    const guard = wordSource.indexOf("{!CROSS_LEVEL_FACES_HIDDEN && (");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(wordSource.indexOf('className="word-follow"'));
+    // The machinery is untouched: the offer still computes.
+    expect(followTargets("concept")).toEqual(["dynamics", "ground"]);
   });
 
   test("App always hands it the game and the anchored jump", () => {

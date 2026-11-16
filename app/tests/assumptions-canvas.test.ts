@@ -13,6 +13,7 @@ import {
   CONTENT_CLASSES,
   CONTENT_SELECTOR,
   creationKinds,
+  offeredCreationKinds,
   isContentElement,
   isWordControl,
   shouldCreate,
@@ -129,6 +130,16 @@ describe("one diamond per target, however many claims sit on it", () => {
 });
 
 describe("the Level 2 ring menu's third kind (ADR-0011's open decision)", () => {
+  // DEPRECATED (hidden 2026-11-16 per user review): the MENU no longer offers
+  // the third kind (or the lack) — it offers the word alone. The grammar
+  // below is the record machinery's (a bare-spot claim still parses, states
+  // and round-trips) and is kept covered for the deprecated sweep.
+  test("the menu OFFERS only the word, so the third kind is not offered", () => {
+    for (const level of ["concept", "dynamics", "ground"] as const) {
+      expect(offeredCreationKinds(level)).toEqual(["word"]);
+    }
+  });
+
   test("Level 1 offers exactly the word/lack pair it always did", () => {
     expect(creationKinds("concept")).toEqual(["word", "lack"]);
     expect(creationKinds("concept")).not.toContain("assumption");

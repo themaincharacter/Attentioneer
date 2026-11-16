@@ -1249,6 +1249,9 @@ describe("the say-it structural test: a word's faces are never aggregated (ADR-0
       // Epic 9 story 1: the veil's unreadable lines are shared-group hygiene —
       // a veil covers Levels 1–2, so no single game owns its notices (ADR-0023).
       veils: "all",
+      // The map's ink renders in every game (added 2026-11-16 per user review),
+      // so its unreadable lines are shared-group hygiene too.
+      sketches: "all",
     });
     for (const family of Object.keys(NOTICE_FAMILY_GAME) as Array<
       keyof typeof NOTICE_FAMILY_GAME

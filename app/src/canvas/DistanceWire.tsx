@@ -6,6 +6,7 @@ import {
 } from "react";
 import type { Distance } from "../map/distances";
 import { usePlane } from "./CanvasPlane";
+import { TENTATIVE_MARK_HIDDEN } from "./deprecations";
 import { useRingMouseDown } from "./ringDrag";
 import { distanceLabelVisible } from "./zoomBands";
 
@@ -160,7 +161,12 @@ export function DistanceWire({
           style={{ left: mx, top: my + labelOffset, transform: "translate(-50%, -50%)" }}
           onDoubleClick={beginEdit}
         >
-          {!editing && (
+          {/* DEPRECATED (hidden 2026-11-16 per user review): the distance
+              label's open ring cast/settled this wire's tentative mark and
+              dragged to bind it. The review hides the tentative affordances, so
+              the ring is not rendered — the mark record, the dashed rendering
+              and the bind machinery stay — delete in the deprecated sweep. */}
+          {!TENTATIVE_MARK_HIDDEN && !editing && (
             <button
               ref={labelMarkRef}
               type="button"
@@ -203,8 +209,11 @@ export function DistanceWire({
         </div>
       )}
       {/* Below the label band the word hides, but an open mark stays content:
-          keep its ring on the wire's midpoint (ADR-0009). */}
-      {!labelVisible && marked && (
+          keep its ring on the wire's midpoint (ADR-0009).
+          DEPRECATED (hidden 2026-11-16 per user review): the settle ring is a
+          tentative-mark affordance, so it is not rendered either — the mark
+          record and the dashed wire stay — delete in the deprecated sweep. */}
+      {!TENTATIVE_MARK_HIDDEN && !labelVisible && marked && (
         <button
           ref={bandRingRef}
           type="button"

@@ -3,6 +3,7 @@ import {
   CONTENT_CLASSES,
   CONTENT_SELECTOR,
   creationKinds,
+  offeredCreationKinds,
   isContentElement,
   isGestureArmed,
   isWordControl,
@@ -316,6 +317,13 @@ describe("the grown gate, as a whole", () => {
   });
 
   test("the creation menu is level-scoped: Level 1 word/lack, Level 2 adds assumption", () => {
+    // DEPRECATED (hidden 2026-11-16 per user review): the MENU now OFFERS only
+    // the word option (offeredCreationKinds); the grammar asserted below is the
+    // record machinery's and stays covered — delete the hidden kinds in the
+    // deprecated sweep.
+    for (const level of ["concept", "dynamics", "ground"] as const) {
+      expect(offeredCreationKinds(level)).toEqual(["word"]);
+    }
     expect(creationKinds("concept")).toEqual(["word", "lack"]);
     expect(creationKinds("dynamics")).toEqual(["word", "lack", "assumption"]);
     // Level 1 is exactly as it was; the L2 menu only grows a third kind.

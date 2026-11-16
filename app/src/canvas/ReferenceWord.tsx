@@ -9,6 +9,10 @@ import {
 import type { Reference } from "../map/refs";
 import { AssumptionDiamond } from "./AssumptionDiamond";
 import { usePlane } from "./CanvasPlane";
+import {
+  CROSS_LEVEL_FACES_HIDDEN,
+  TENTATIVE_MARK_HIDDEN,
+} from "./deprecations";
 import { QuantityGlyph } from "./QuantityGlyph";
 import {
   isGestureArmed,
@@ -184,6 +188,15 @@ interface DragState {
  *
  * Dragging is reported upward every animation frame (`onDragMove`) so the
  * word's wires track the pointer instead of snapping on drop.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review): two of this row's
+ * affordances are hidden, not deleted. The open ring (the tentative mark's
+ * toggle) and the follow control (the dynamics/ground level faces) keep their
+ * markup, refs, handlers and CSS and are simply not rendered — each hiding
+ * point below carries the review's comment. The assumption diamond, the
+ * quantity glyph, the reach handle, the memory dot, the connect handle, the
+ * remove × and the marked word's reject arrow are untouched. Delete the hidden
+ * affordances in the deprecated sweep.
  */
 export function ReferenceWord({
   word,
@@ -586,7 +599,14 @@ export function ReferenceWord({
       onMouseUp={handleDropMouseUp}
     >
       <div className="word-row">
-        {!renaming && (
+        {/* DEPRECATED (hidden 2026-11-16 per user review): the word's open
+            ring was the tentative mark's toggle (cast it, settle it). The
+            review asked for the tentative feature to be hidden, so the ring is
+            not rendered — the mark record, the faded look and every reader
+            of `map/marks.jsonl` stay; the `word-reject` arrow (below) stays
+            too, so a mark that already exists can still be settled — delete in
+            the deprecated sweep. */}
+        {!TENTATIVE_MARK_HIDDEN && !renaming && (
           <button
             type="button"
             className={`word-mark${marked ? " open" : ""}`}
@@ -692,6 +712,13 @@ export function ReferenceWord({
             inside the row, absolutely positioned, so it never grows the word's
             box (every wire's anchor holds). Provisional: the glyph, the menu
             and the two-other-games offer (ADR-0003's seam). */}
+        {/* DEPRECATED (hidden 2026-11-16 per user review): the follow control
+            offered the two OTHER games (the dynamics and ground level faces) as
+            a jump from this word. The review asked for the level selection on a
+            word to be hidden, so the control and its menu are not rendered —
+            `followTargets`, the anchored jump and the level handoff all stay
+            written and tested — delete in the deprecated sweep. */}
+        {!CROSS_LEVEL_FACES_HIDDEN && (
         <div
           ref={followRef}
           className="word-follow"
@@ -734,6 +761,7 @@ export function ReferenceWord({
             </div>
           )}
         </div>
+        )}
         <button
           type="button"
           className="connect-handle"

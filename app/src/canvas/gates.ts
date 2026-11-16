@@ -109,15 +109,29 @@
 import type { PlayingSet } from "../map/model";
 import type { Level } from "../workspace/level";
 import type { HandoffCause } from "../workspace/levelHandoff";
+import {
+  ASSUMPTION_CREATION_HIDDEN,
+  LACK_CREATION_HIDDEN,
+} from "./deprecations";
 
-/** How a gesture is armed right now. Idle is the plain canvas. */
+/**
+ * How a gesture is armed right now. Idle is the plain canvas.
+ *
+ * `draw` is the map's pen (added 2026-11-16 per user review): armed from the
+ * level control, its capture surface owns every press on the plane, so pan,
+ * word-drag, creation and the ring menu all stand still exactly as the veil's
+ * draw box made them — a stroke can never move a word or open a menu. It is
+ * its own arm (not the veil's box, not the selector's lasso): the box takes a
+ * rectangle to COVER, the pen takes a freehand stroke to KEEP.
+ */
 export type GestureMode =
   | "idle"
   | "selector"
   | "path"
   | "sign-choice"
   | "pointer"
-  | "veil";
+  | "veil"
+  | "draw";
 
 /** The one method the gate needs from a class list (a DOMTokenList works). */
 export interface ClassListLike {
@@ -279,6 +293,13 @@ export const CONTENT_CLASSES = [
   "veil-lookunder-rename",
   "veil-lookunder-reason",
   "veil-lookunder-close",
+  // The map's pen (added 2026-11-16 per user review): the strokes' layer lives
+  // in world space inside `.plane-inner`. It takes no press of its own
+  // (`pointer-events: none`; the armed pen's own capture surface handles the
+  // stroke), so it is listed here as content for the same belt-and-braces
+  // reason the ghost diamond is: an element inside the plane that must never
+  // fall through to the plane's pan, creation or a word's press.
+  "sketch-layer",
   // Epic 10 story 3's ghost: the ONLY ghost element inside the plane is the
   // opened preview's faint diamond at the target. It is read-only by
   // construction (pointer-events: none), and it exists only inside the
@@ -444,6 +465,10 @@ export const WORD_CONTROL_CLASSES = [
   // Epic 10 story 3's ghost diamond (see the content list above): read-only,
   // but on both lists so it can never fall through to a word's press behavior.
   "ghost-diamond",
+  // The map's pen's strokes layer (see the content list above): on both lists
+  // for the same reason, so a mark whose press lands on a stroke can never
+  // start a word drag or a click-to-center.
+  "sketch-layer",
 ] as const;
 
 /**
@@ -462,6 +487,36 @@ export function creationKinds(level: Level): readonly CreationKind[] {
   return level === "dynamics"
     ? ["word", "lack", "assumption"]
     : ["word", "lack"];
+}
+
+/**
+ * What the double-click RING MENU actually OFFERS right now — as opposed to
+ * `creationKinds`, which still names what a game's grammar carries for the
+ * record machinery (the ghost packet's card derivation, the grammar's tests).
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review): the menu offered `lack` in
+ * every game and grew `assumption` at dynamics. The review asked for the ring
+ * menu to offer ONLY the word option, so each kind is filtered through its own
+ * hiding flag (deprecations.ts) and the offer narrows to `["word"]` while
+ * `creationKinds` keeps the full grammar written and tested — delete this
+ * seam in the deprecated sweep.
+ */
+export function offeredCreationKinds(level: Level): readonly CreationKind[] {
+  return creationKinds(level).filter((kind) => {
+    if (kind === "lack") {
+      // DEPRECATED (hidden 2026-11-16 per user review): the lack kind was
+      // offered by the ring menu and is now hidden — delete in the deprecated
+      // sweep.
+      return !LACK_CREATION_HIDDEN;
+    }
+    if (kind === "assumption") {
+      // DEPRECATED (hidden 2026-11-16 per user review): the dynamics game's
+      // third kind was offered by the ring menu and is now hidden — delete in
+      // the deprecated sweep.
+      return !ASSUMPTION_CREATION_HIDDEN;
+    }
+    return true;
+  });
 }
 
 /** Is any gesture armed? */
