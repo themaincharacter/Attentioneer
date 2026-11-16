@@ -64,7 +64,27 @@ import {
   rewriteMembership,
   rewritePointerMarkOwners,
   rewritePointerOwners,
+  dropQuantitiesTouching,
+  dropScenarioFolderTouching,
+  rewriteQuantityEndpoints,
+  rewriteScenarioFolderForWord,
+  type ScenarioFolderBytes,
 } from "../src/map/patches";
+import {
+  findQuantity,
+  parseQuantities,
+  quantityKey,
+  quantityTargetOf,
+  quantityWords,
+  serializeQuantities,
+  type Quantity,
+} from "../src/map/quantities";
+import {
+  danglingPins,
+  parsePins,
+  pinsFromAssumptions,
+  serializePins,
+} from "../src/scenarios/pins";
 import { parseReference, serializeReference, type Reference } from "../src/map/refs";
 import { BAND_ZOOM, GROUND_FROM } from "../src/canvas/zoomBands";
 import {
@@ -1376,3 +1396,380 @@ describe("the authoring seam in the batch interplay (Epic 7 story 2)", () => {
     expect(count(model, "export async function saveModel(")).toBe(1);
   });
 });
+
+/* -------------------------------------------------------------------------
+ * Epic 8 story 5: the scenario and quantity steps in the batch interplay.
+ *
+ * The quantities record and the BRANCH step reach the same words in ONE batch,
+ * at the family position the module doc states: quantities AFTER assumptions
+ * and BEFORE pointers, and the branch fan-out AFTER membership and BEFORE the
+ * old file. The real batch crosses the Tauri fs bridge, so this suite applies
+ * the SAME pure steps in the SAME documented order and asserts the bytes — and
+ * pins the two rules the per-record suites cannot show together:
+ *
+ *   - a quantity line follows its word's address and never its number (the
+ *     amount and the absent amount ride along untouched);
+ *   - a pin's TARGET follows a rename (so an app rename is never read as a
+ *     dangle), while the pin's TEXT never does (a rename changes an address,
+ *     never a claim); a removed target's lines and pins die everywhere, and a
+ *     folder the step never names keeps its exact, hand-written bytes.
+ * ---------------------------------------------------------------------- */
+
+describe("the scenario and quantity steps in the batch interplay (Epic 8 story 5)", () => {
+  function stock(on: string, amount: number | null = null): Quantity {
+    return { type: "stock", on, amount, extra: {} };
+  }
+
+  function flow(from: string, to: string, amount: number | null = null): Quantity {
+    return { type: "flow", from, to, amount, extra: {} };
+  }
+
+  /** The committed model's quantities: the epic check's corrected fixture. */
+  function committedQuantities(): Quantity[] {
+    return [
+      stock("soil", 4),
+      flow("soil", "plant", 3),
+      flow("soil", "air", 3),
+      flow("mulch", "soil", 2),
+      flow("rain", "soil"),
+    ];
+  }
+
+  /**
+   * The branch's folder, made the way createScenario makes it: the committed
+   * copies (byte-faithful), the pins as the committed claims stood, and the
+   * what-if's one edit (mulch->soil 2 -> 0).
+   */
+  function branchFolder(): ScenarioFolderBytes {
+    return {
+      model: serializeModel(play(["air", "mulch", "plant", "rain", "soil"])),
+      // No link was ever drawn: the absent record copies as absent.
+      links: null,
+      quantities: serializeQuantities([
+        stock("soil", 4),
+        flow("soil", "plant", 3),
+        flow("soil", "air", 3),
+        flow("mulch", "soil", 0),
+        flow("rain", "soil"),
+      ]),
+      pins: serializePins(pinsFromAssumptions(base().assumptions)),
+    };
+  }
+
+  /** A second folder that names NONE of the renamed words, in hand bytes. */
+  function untouchedFolder(): ScenarioFolderBytes {
+    return {
+      model: '{ "words": [ "plant", "rain", "soil" ] }',
+      links: '{ "from": "rain", "sign": "+", "to": "soil" }',
+      quantities: '{ "amount": 7.0, "on": "plant" }',
+      pins: '{ "on": "plant", "text": "kept" }',
+    };
+  }
+
+  interface VariantBatch {
+    batch: Batch;
+    quantities: Quantity[];
+    folders: Record<string, ScenarioFolderBytes>;
+  }
+
+  function variantBase(): VariantBatch {
+    return {
+      batch: base(),
+      quantities: committedQuantities(),
+      folders: {
+        "evening-walk": branchFolder(),
+        "morning-walk": untouchedFolder(),
+      },
+    };
+  }
+
+  /**
+   * The rename batch, in renameReference's documented order: the committed
+   * records through the batch's steps, the quantities step AFTER assumptions
+   * and BEFORE pointers, and the branch fan-out AFTER membership.
+   */
+  function renameVariant(
+    variant: VariantBatch,
+    oldSlug: string,
+    newSlug: string,
+  ): VariantBatch {
+    const renamed = renameThrough(variant.batch, oldSlug, newSlug);
+    const quantities = rewriteQuantityEndpoints(
+      variant.quantities,
+      oldSlug,
+      newSlug,
+    );
+    const folders: Record<string, ScenarioFolderBytes> = {};
+    for (const [slug, folder] of Object.entries(variant.folders)) {
+      folders[slug] = rewriteScenarioFolderForWord(folder, oldSlug, newSlug);
+    }
+    return { batch: renamed, quantities, folders };
+  }
+
+  /** The remove batch, in removeReference's documented order. */
+  function removeVariant(variant: VariantBatch, slug: string): VariantBatch {
+    const removed = removeThrough(variant.batch, slug);
+    const quantities = dropQuantitiesTouching(variant.quantities, slug);
+    const folders: Record<string, ScenarioFolderBytes> = {};
+    for (const [name, folder] of Object.entries(variant.folders)) {
+      folders[name] = dropScenarioFolderTouching(folder, slug);
+    }
+    return { batch: removed, quantities, folders };
+  }
+
+  function folderQuantities(folder: ScenarioFolderBytes): Quantity[] {
+    return parseQuantities(folder.quantities).quantities;
+  }
+
+  function folderPins(folder: ScenarioFolderBytes) {
+    return parsePins(folder.pins).pins;
+  }
+
+  test("the committed quantities follow the rename; the numbers never do", () => {
+    const after = renameVariant(variantBase(), "mulch", "woodchip");
+    expect(after.quantities.map((quantity) => quantityKey(quantity))).toEqual([
+      quantityKey(stock("soil", 4)),
+      quantityKey(flow("soil", "plant", 3)),
+      quantityKey(flow("soil", "air", 3)),
+      quantityKey(flow("woodchip", "soil", 2)),
+      quantityKey(flow("rain", "soil")),
+    ]);
+    // The authored number and the ABSENT amount both ride along untouched.
+    expect(
+      findQuantity(after.quantities, {
+        type: "flow",
+        from: "woodchip",
+        to: "soil",
+      })?.quantity.amount,
+    ).toBe(2);
+    expect(
+      findQuantity(after.quantities, {
+        type: "flow",
+        from: "rain",
+        to: "soil",
+      })?.quantity.amount,
+    ).toBeNull();
+  });
+
+  test("the branch's whole folder follows the same step in the same pass", () => {
+    const after = renameVariant(variantBase(), "mulch", "woodchip");
+    const folder = after.folders["evening-walk"];
+    expect(parseModel(folder.model).model?.words).toEqual([
+      "air",
+      "plant",
+      "rain",
+      "soil",
+      "woodchip",
+    ]);
+    // Absence stays absent: the fan-out never invents a links file.
+    expect(folder.links).toBeNull();
+    const quantities = folderQuantities(folder);
+    // The what-if's 0 is the branch's own number, and the rename keeps it.
+    expect(
+      findQuantity(quantities, {
+        type: "flow",
+        from: "woodchip",
+        to: "soil",
+      })?.quantity.amount,
+    ).toBe(0);
+    expect(
+      findQuantity(quantities, {
+        type: "flow",
+        from: "rain",
+        to: "soil",
+      })?.quantity.amount,
+    ).toBeNull();
+    // The re-serialized folder reads back byte-for-byte.
+    expect(serializePins(folderPins(folder))).toBe(folder.pins);
+    expect(serializeQuantities(quantities)).toBe(folder.quantities);
+  });
+
+  test("the pins' rename rewrite: the ADDRESS follows, the CLAIM never does", () => {
+    const after = renameVariant(variantBase(), "mulch", "woodchip");
+    const pins = folderPins(after.folders["evening-walk"]);
+    expect(pins.map((pin) => pin.target)).toEqual([
+      { type: "word", slug: "woodchip" },
+      { type: "link", from: "woodchip", to: "rain" },
+      { type: "loop", slug: "rain-loop" },
+      { type: "spot", x: 40, y: 60 },
+    ]);
+    // The prose keeps the old word: the software never rewrites a claim.
+    expect(pins.map((pin) => pin.text)).toEqual([
+      "mulch is a slow sponge",
+      "this link carries the mulch",
+      "the loop keeps the mulch",
+      "something is missing here",
+    ]);
+  });
+
+  test("the branch's pins are the committed claims, re-addressed — no dangle", () => {
+    const after = renameVariant(variantBase(), "mulch", "woodchip");
+    const pins = folderPins(after.folders["evening-walk"]);
+    const committed = after.batch.assumptions;
+    // All-or-none pinning: the branch's pins are exactly the committed claims
+    // (same order, same texts) after the same rewrite.
+    expect(pins).toEqual(pinsFromAssumptions(committed));
+    // An app rename is an ADDRESS change, never a dangle.
+    expect(danglingPins(pins, committed)).toEqual([]);
+  });
+
+  test("a folder the rename never names keeps its exact, hand-written bytes", () => {
+    const before = variantBase();
+    const after = renameVariant(before, "mulch", "woodchip");
+    // The untouched step returns the SAME object: the applier writes nothing,
+    // so no canonicalization repair reaches a branch nothing named.
+    expect(after.folders["morning-walk"]).toBe(before.folders["morning-walk"]);
+    const folder = after.folders["morning-walk"];
+    expect(folder.model).toContain("{ ");
+    expect(folder.quantities).toBe('{ "amount": 7.0, "on": "plant" }');
+  });
+
+  test("the quantities and the branch agree after the batch (the what-if aside)", () => {
+    const after = renameVariant(variantBase(), "mulch", "woodchip");
+    const branch = folderQuantities(after.folders["evening-walk"]);
+    for (const quantity of after.quantities) {
+      const target = quantityTargetOf(quantity);
+      const found = findQuantity(branch, target);
+      expect(found).not.toBeNull();
+      const own =
+        target.type === "flow" &&
+        target.from === "woodchip" &&
+        target.to === "soil"
+          ? 0
+          : quantity.amount;
+      expect(found?.quantity.amount).toBe(own);
+    }
+  });
+
+  test("the remove: the touching quantity lines and pins die everywhere", () => {
+    const before = variantBase();
+    const after = removeVariant(before, "mulch");
+    // The committed quantities: the mulch->soil line goes; the rest stay in
+    // file order with their numbers.
+    expect(after.quantities).toEqual([
+      stock("soil", 4),
+      flow("soil", "plant", 3),
+      flow("soil", "air", 3),
+      flow("rain", "soil"),
+    ]);
+    const folder = after.folders["evening-walk"];
+    expect(parseModel(folder.model).model?.words).not.toContain("mulch");
+    expect(
+      folderQuantities(folder).some((quantity) =>
+        quantityWords(quantity).includes("mulch"),
+      ),
+    ).toBe(false);
+    expect(
+      folderPins(folder).some((pin) => pinTouches(pin, "mulch")),
+    ).toBe(false);
+    // The loop and the bare spot outlive the words around them.
+    expect(folderPins(folder).map((pin) => pin.target.type)).toEqual([
+      "loop",
+      "spot",
+    ]);
+    // A folder nothing named is byte-identical (no repair, no write).
+    expect(after.folders["morning-walk"]).toBe(before.folders["morning-walk"]);
+  });
+
+  test("after the remove, no structured field names the removed word", () => {
+    const after = removeVariant(variantBase(), "mulch");
+    const bytes: Record<string, string> = {
+      ...recordBytes(after.batch),
+      "map/quantities.jsonl": serializeQuantities(after.quantities),
+    };
+    for (const [path, text] of Object.entries(bytes)) {
+      expect(path + ": " + text).not.toContain("mulch");
+    }
+    const folder = after.folders["evening-walk"];
+    expect(folder.model).not.toContain("mulch");
+    expect(folder.quantities).not.toContain("mulch");
+    // A pin's TARGET names no removed word; its PROSE may still say it — the
+    // software never rewrites a claim's text (the surviving loop claim says so).
+    for (const pin of folderPins(folder)) {
+      expect(JSON.stringify(pin.target)).not.toContain("mulch");
+    }
+    expect(folder.pins).toContain("the loop keeps the mulch");
+  });
+
+  test("the batch's write order: quantities before pointers, fan-out after membership", () => {
+    const source = readFileSync(
+      new URL("../src/map/patches.ts", import.meta.url),
+      "utf8",
+    );
+    const rename = functionBody(source, "renameReference");
+    expect(rename.indexOf("saveAssumptions(")).toBeLessThan(
+      rename.indexOf("saveQuantities("),
+    );
+    expect(rename.indexOf("saveQuantities(")).toBeLessThan(
+      rename.indexOf("savePointers("),
+    );
+    expect(rename.indexOf("applyScenarioStep(")).toBeGreaterThan(
+      rename.indexOf("saveModel("),
+    );
+    expect(rename.indexOf("applyScenarioStep(")).toBeLessThan(
+      rename.indexOf("removeFile(referencePath("),
+    );
+    expect(rename).toContain("rewriteScenarioFolderForWord(");
+
+    const remove = functionBody(source, "removeReference");
+    expect(remove.indexOf("saveAssumptions(")).toBeLessThan(
+      remove.indexOf("saveQuantities("),
+    );
+    expect(remove.indexOf("saveQuantities(")).toBeLessThan(
+      remove.indexOf("savePointers("),
+    );
+    expect(remove.indexOf("applyScenarioStep(")).toBeGreaterThan(
+      remove.indexOf("saveModel("),
+    );
+    expect(remove.indexOf("applyScenarioStep(")).toBeLessThan(
+      remove.indexOf("removeFile(referencePath("),
+    );
+    expect(remove).toContain("dropScenarioFolderTouching(");
+
+    // Inside one folder: the set, then the links, then the quantities, then the
+    // pins (the folder's family order).
+    const apply = functionBody(source, "applyScenarioStep");
+    let last = -1;
+    for (const needle of [
+      "writeChangedBytes(modelPath(dir)",
+      "writeChangedBytes(linksPath(dir)",
+      "writeChangedBytes(quantitiesPath(dir)",
+      "writeChangedBytes(pinsPath(dir)",
+    ]) {
+      const at = apply.indexOf(needle);
+      expect(at).toBeGreaterThan(last);
+      last = at;
+    }
+  });
+
+  test("the pins' rewrite is the pins module's own pure step (no second rule)", () => {
+    const source = readFileSync(
+      new URL("../src/map/patches.ts", import.meta.url),
+      "utf8",
+    );
+    const step = source.slice(
+      source.indexOf("export function rewriteScenarioFolderForWord("),
+      source.indexOf("\n}", source.indexOf("export function rewriteScenarioFolderForWord(")),
+    );
+    expect(step).toContain("rewritePinWordTargets(pins");
+    expect(step).toContain("rewriteQuantityEndpoints(quantities");
+    expect(step).toContain("rewriteMembership(model");
+    expect(step).toContain("stepPinBytes(");
+    expect(step).toContain("stepQuantityBytes(");
+    // No hand-written target or amount arithmetic: the record modules own it.
+    expect(step).not.toContain("pin.target =");
+    expect(step).not.toContain("quantity.amount =");
+  });
+});
+
+/** Does a pin name the word (its own word target, or a link endpoint)? */
+function pinTouches(
+  pin: { target: { type: string; slug?: string; from?: string; to?: string } },
+  slug: string,
+): boolean {
+  if (pin.target.type === "word") return pin.target.slug === slug;
+  if (pin.target.type === "link") {
+    return pin.target.from === slug || pin.target.to === slug;
+  }
+  return false;
+}
