@@ -3507,3 +3507,133 @@ body {
 .veil-reason-input::placeholder {
   color: #c4beb1;
 }
+
+
+/* ------------------------------------------------------------------------- *
+ * Epic 9 story 2 — the look-under and the ground gate (ADR-0023 decisions 2–3).
+ *
+ * The look-under is the person's OPENING: a press on a sheet lifts ONE cover
+ * for a read-only reading of its name and reason. Nothing surfaces on its own,
+ * nothing counts, and the reason is prose shown VERBATIM (World B). The lift is
+ * visibility, never a settled state: a covered word stays covered underneath.
+ * ------------------------------------------------------------------------- */
+
+/* The keyboard door: the sheet is focusable, and Enter/Space opens the same
+   look-under the press does. A quiet outline, like every other control. */
+.veil-sheet:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+/* The LIFT: the opened veil's cover goes transparent while its look-under
+   reads. The area's claim stays (the dashed border), but the fill no longer
+   hides what it says; every other sheet stays a cover. Provisional: the look. */
+.veil-sheet[data-lifted="true"] {
+  background: transparent;
+  border-color: rgba(141, 136, 124, 0.55);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Under the lift a covered word READS: visible exactly as it stands (a marked
+   word is still ghosted and dashed, an out-of-set word keeps its ONE wash) and
+   taking NO press. The look-under is read-only — covered content is edited by
+   RETIRING the veil to work there — and this rule changes visibility and
+   pressability only: the `covered` prop underneath is untouched. */
+.word.veil-covered.veil-lifted {
+  visibility: visible;
+  pointer-events: none;
+}
+
+/* The look-under's card: world-anchored at the opened veil's right edge and
+   counter-scaled by the camera (the window idiom). The name is the person's
+   coin (double-click renames in place — the loops' idiom); the reason is prose,
+   shown with its own spaces and breaks (pre-wrap), never trimmed or re-stated.
+   Provisional: the look, the anchor and the counter-scale values. */
+.veil-lookunder {
+  position: absolute;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 150px;
+  max-width: 280px;
+  padding: 7px 22px 8px 10px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 9px;
+  box-shadow:
+    0 1px 2px rgba(40, 35, 25, 0.05),
+    0 5px 18px rgba(40, 35, 25, 0.11);
+  user-select: text;
+  animation: rise-in 150ms ease-out;
+  outline: none;
+}
+
+.veil-lookunder-name {
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: #1e2126;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: text;
+}
+
+.veil-lookunder-name:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+.veil-lookunder-rename {
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: #1e2126;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #eee9df;
+  outline: none;
+  padding: 0 0 2px;
+  min-width: 120px;
+}
+
+.veil-lookunder-reason {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b675e;
+  white-space: pre-wrap;
+  border-top: 1px solid #eee9df;
+  padding-top: 4px;
+}
+
+.veil-lookunder-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+.veil-lookunder-close:hover {
+  color: #1e2126;
+}
+
+.veil-lookunder-close:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}

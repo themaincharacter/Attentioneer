@@ -4,7 +4,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import type { Veil, VeilBox } from "../map/veils";
+import { veilKey, type Veil, type VeilBox } from "../map/veils";
 import { usePlane } from "./CanvasPlane";
 
 /**
@@ -24,14 +24,28 @@ import { usePlane } from "./CanvasPlane";
  * look-under (Epic 9 story 2) or the ground game's switch. The quiet × retires
  * it: ammo, one click, the line deleted (no tombstone).
  *
+ * THE LOOK-UNDER IS THE PERSON'S OPENING (Epic 9 story 2, ADR-0023 decision 3):
+ * a quiet press on the sheet (or Enter/Space while it has focus) opens the
+ * READ-ONLY look-under for this veil. The sheet still says nothing at rest — the
+ * name and the reason live only in the card the press opens — and while that
+ * card is open the sheet's own cover is LIFTED (the `lifted` prop): the fill
+ * goes transparent and the words under THIS veil read normally, each keeping
+ * its own quiet. The lift is the transient's, never the record's.
+ *
  * Provisional: the sheet's look, its stacking and the crossing wires' treatment
- * (ADR-0023's own list).
+ * (ADR-0023's own list), and the press-to-open (the story's PROVISIONAL door).
  */
 export function VeilSheet({
   veil,
+  lifted = false,
+  onOpen,
   onRetire,
 }: {
   veil: Veil;
+  /** Is this sheet's cover lifted for the read-only look-under? (story 2) */
+  lifted?: boolean;
+  /** Open the look-under: a quiet press on the sheet, or Enter/Space. */
+  onOpen?: () => void;
   /** Retire this veil: delete its line (ammo). */
   onRetire: () => void;
 }) {
@@ -50,13 +64,29 @@ export function VeilSheet({
     <div
       ref={rootRef}
       className="veil-sheet"
+      data-veil={veilKey(veil)}
+      data-lifted={lifted ? "true" : undefined}
       role="group"
+      tabIndex={0}
+      title="press to look under"
       aria-label="a veil — this area is set aside"
       style={{
         left: veil.x,
         top: veil.y,
         width: veil.w,
         height: veil.h,
+      }}
+      onClick={() => onOpen?.()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        // Only the sheet's OWN key press opens it: Enter/Space on the retire
+        // button must stay the retire button's (a bubbling keydown here would
+        // otherwise open the look-under and swallow the retire).
+        if (e.target !== e.currentTarget) return;
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        e.stopPropagation();
+        onOpen?.();
       }}
     >
       <button

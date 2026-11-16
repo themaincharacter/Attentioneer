@@ -55,6 +55,7 @@ import {
   removeVeil as removeVeilRecord,
   renameVeil as renameVeilRecord,
   saveVeils,
+  veilKey,
   type Veil,
   type VeilBox,
 } from "../map/veils";
@@ -1224,12 +1225,25 @@ export function useMap(
    * Rename a veil: one in-place rewrite — the name and its natural key in one
    * move, the box, the reason and unknown keys preserved (a collision mints the
    * numeric suffix, exactly as at coin). No other record follows: nothing
-   * addresses a veil, so nothing can dangle. Provisional until the look-under
-   * offers the rename (Epic 9 story 2).
+   * addresses a veil, so nothing can dangle.
+   *
+   * It RETURNS the rewritten line (Epic 9 story 2's look-under needs it: the
+   * open card is addressed by the veil's natural key, and a rename changes that
+   * key in the same move — without the new line the card would fall out from
+   * under the person mid-rename). Null means a quiet no-op: a blank or
+   * unchanged name writes nothing. Provisional: the return is the transient's
+   * need, not a general handle.
    */
   const renameVeil = useCallback(
-    (veil: Veil, newName: string) => {
-      persistVeils(renameVeilRecord(veilsRef.current, veil, newName));
+    (veil: Veil, newName: string): Veil | null => {
+      const current = veilsRef.current;
+      const index = current.findIndex(
+        (candidate) => veilKey(candidate) === veilKey(veil),
+      );
+      const next = renameVeilRecord(current, veil, newName);
+      persistVeils(next);
+      if (index === -1 || next[index] === current[index]) return null;
+      return next[index];
     },
     [persistVeils],
   );

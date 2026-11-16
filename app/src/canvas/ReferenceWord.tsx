@@ -59,6 +59,16 @@ interface ReferenceWordProps {
    * settled: retire the veil and the word reads as before.
    */
   covered?: boolean;
+  /**
+   * True while this word is READ under an opened veil (Epic 9 story 2): its
+   * cover is LIFTED for the look-under, so the word reads normally — exactly
+   * as it stands (a marked word is still pale, italic and dashed; its
+   * out-of-set wash is still the ONE wash). The `covered` prop is unchanged:
+   * the lift is a transient's reading, never a record or a settled state. The lifted
+   * word also takes no press (the lift's CSS: visibility in, pointer-events
+   * out), because covered content is edited by RETIRING the veil to work there.
+   */
+  lifted?: boolean;
   /** How a gesture is armed right now — the interaction-mode gate (ADR-0016). */
   interactionMode?: GestureMode;
   /**
@@ -191,6 +201,7 @@ export function ReferenceWord({
   shelved,
   outOfSet = false,
   covered = false,
+  lifted = false,
   interactionMode = "idle",
   onReject,
   onToggleMark,
@@ -569,7 +580,7 @@ export function ReferenceWord({
     <div
       ref={wordRef}
       data-slug={word.slug ?? undefined}
-      className={`word${marked ? " open" : ""}${shelved ? " shelved" : ""}${outOfSet ? " out-of-set" : ""}${covered ? " veil-covered" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}${followOpen ? " follow-open" : ""}`}
+      className={`word${marked ? " open" : ""}${shelved ? " shelved" : ""}${outOfSet ? " out-of-set" : ""}${covered ? " veil-covered" : ""}${lifted ? " veil-lifted" : ""}${revealing ? " revealing" : ""}${renaming ? " renaming" : ""}${dragging ? " dragging" : ""}${connectTarget ? " connect-target" : ""}${followOpen ? " follow-open" : ""}`}
       style={{ transform }}
       onBlur={handleBlur}
       onMouseUp={handleDropMouseUp}

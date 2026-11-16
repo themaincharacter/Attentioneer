@@ -12,6 +12,15 @@
  * lives inside a dynamics-only surface and takes a polygon, while the veil must
  * work at concept AND dynamics.
  *
+ * Epic 9 story 2's look-under is a TRANSIENT, not a new armed gesture: its card
+ * is content (the name, the reason, the close ×, and the provisional rename
+ * field) and owns its presses, exactly as the window's card does. Opening it
+ * does not arm the gate; the lifted words take no press at all (the lift is
+ * READ-ONLY — visibility in CSS with `pointer-events: none`), so no gesture
+ * can edit covered content through the look-under. It closes on Esc, its ×, a
+ * press away or the game switch, and the switch path closes it with every other
+ * transient.
+ *
  * The gate also owns the content-element list: presses on content are never
  * plane gestures. New canvas elements join `CONTENT_CLASSES` as they land, and
  * a selector's elements join `WORD_CONTROL_CLASSES` too — the same early-return
@@ -225,6 +234,15 @@ export const CONTENT_CLASSES = [
   "veil-coinfield",
   "veil-coinfield-input",
   "veil-reason-input",
+  // Epic 9 story 2's look-under: the READ-ONLY transient's card, its coined
+  // name (double-click renames the veil, the loops' idiom), the rename field,
+  // the reason line and the close ×. A press on any of them is content, never
+  // a plane gesture; the card never carries an editor for the covered words.
+  "veil-lookunder",
+  "veil-lookunder-name",
+  "veil-lookunder-rename",
+  "veil-lookunder-reason",
+  "veil-lookunder-close",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */
@@ -347,6 +365,13 @@ export const WORD_CONTROL_CLASSES = [
   "veil-coinfield",
   "veil-coinfield-input",
   "veil-reason-input",
+  // Epic 9 story 2's look-under is content too, so no element of it can ever
+  // start a word drag or a click-to-center (the same early-return list).
+  "veil-lookunder",
+  "veil-lookunder-name",
+  "veil-lookunder-rename",
+  "veil-lookunder-reason",
+  "veil-lookunder-close",
 ] as const;
 
 /**

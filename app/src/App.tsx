@@ -15,7 +15,14 @@ import {
   VeilDraftBox,
   VeilSheet,
 } from "./canvas/VeilSheet";
-import { veilLive } from "./canvas/veilRules";
+import { VeilLookUnder } from "./canvas/VeilLookUnder";
+import {
+  focusAfterLookUnderClose,
+  lookUnderFocusSelector,
+  lookUnderLive,
+  veilLive,
+  type LookUnderCloseReason,
+} from "./canvas/veilRules";
 import {
   centerOf,
   DEFAULT_BOX,
@@ -116,7 +123,9 @@ import { recordsDirOf } from "./map/records";
 import type { Reference } from "./map/refs";
 import {
   coveredWordSlugs,
+  findVeil,
   veilKey,
+  type Veil,
   type VeilBox,
 } from "./map/veils";
 import { activeModelKey, type StepModel } from "./map/step";
@@ -255,6 +264,22 @@ import type { Workspace } from "./workspace/lifecycle";
  * order, wires cross through, and at ground no sheet renders at all. Retiring a
  * veil deletes its line; a word's rename or removal never touches it.
  *
+ * Epic 9 story 2 adds THE LOOK-UNDER and the ground gate (ADR-0023 decisions
+ * 2–3). A quiet press on a sheet (or Enter/Space while it has focus) opens a
+ * READ-ONLY transient beside the veil's right edge, counter-scaled by the
+ * camera (the window idiom): the veil's coined name and its reason VERBATIM
+ * (World B — prose, never parsed). While it is open that one veil's cover is
+ * LIFTED — the sheet goes transparent and the words IT covers read normally,
+ * each keeping its own quiet (a marked word stays ghosted and dashed; a marked
+ * wire stays dashed) and the covered prop underneath is unchanged — and those
+ * revealed words take NO press, because covered content is edited by retiring
+ * the veil to work there. Esc, the quiet ×, a press away or a level switch close
+ * it (the window's idioms); the switch closes it through the one switch path.
+ * The GROUND GATE is one reading: `veilLive` gates the sheet, the covered set
+ * and the look-under alike, so at ground nothing is covered and no look-under
+ * opens through the veil — there the game switch IS the look-under, the
+ * person's own move.
+ *
  * Epic 7 story 1 makes the playing set structurally required at AUTHORING: the
  * gate's `authoringLive` guards the three dynamics writers (a link, a loop, an
  * assumption) and echoes at the three affordances that would arm them, so with no
@@ -351,6 +376,7 @@ function App() {
     renameLoop,
     removeLoop,
     createVeil,
+    renameVeil,
     removeVeil,
     addAssumption,
     reviseAssumption,
@@ -403,6 +429,12 @@ function App() {
   // reason. The gate's `veil` mode is armed while either is live.
   const [veilArmed, setVeilArmed] = useState(false);
   const [veilBox, setVeilBox] = useState<VeilBox | null>(null);
+  // The look-under (Epic 9 story 2, ADR-0023 decision 3): the veil whose cover
+  // is LIFTED for a read-only reading of its name and reason, addressed by its
+  // natural key (or null). The record itself is derived from `veils` on every
+  // render, so a rename reads at once and a retired line closes the transient
+  // quietly — the card can never outlive the veil it speaks about.
+  const [lookUnderKey, setLookUnderKey] = useState<string | null>(null);
   // Loop authoring (story 3): the path gesture's session (null = not arming),
   // and the loop whose walk is open (null = no walk).
   const [pathSession, setPathSession] = useState<PathSession | null>(null);
@@ -900,6 +932,18 @@ function App() {
   );
 
   /**
+   * The veil whose cover is LIFTED right now (Epic 9 story 2): the look-under's
+   * record, derived by its natural key so a rename shows at once and a retired
+   * line resolves to null. Null is no look-under — and the ground gate reads
+   * `lookUnderLive` at the render, so a stale key can never surface a card in a
+   * game that shows no sheet.
+   */
+  const lookUnderVeil = useMemo(
+    () => (lookUnderKey === null ? null : findVeil(veils, lookUnderKey)),
+    [lookUnderKey, veils],
+  );
+
+  /**
    * The veil's covered set (Epic 9 story 1, ADR-0023): a word is covered iff
    * the CENTRE of its measured box is inside a veil's box — the same "in a
    * region" rule the playing-set selector's lasso uses. It is a RENDER-TIME
@@ -907,10 +951,38 @@ function App() {
    * washes a word. The class it hands the word carries visibility alone, so a
    * covered word's own quiet is exactly what it was, and retire shows it as
    * before. Sheets render in FILE ORDER (later on top).
+   *
+   * THE GROUND GATE (Epic 9 story 2): the reading is LEVEL-GATED by the SAME
+   * `veilLive` as the sheet. At ground no sheet renders, so nothing is covered:
+   * the words read normally, because there the game switch IS the look-under —
+   * the person's own move, never a cover that hides what it cannot show. (The
+   * record is untouched either way: no veil line is rewritten or hidden.)
    */
   const coveredSlugs = useMemo(
-    () => coveredWordSlugs(veils, selectorWords),
-    [veils, selectorWords],
+    () =>
+      veilLive(level)
+        ? coveredWordSlugs(veils, selectorWords)
+        : new Set<string>(),
+    [veils, selectorWords, level],
+  );
+
+  /**
+   * The words the OPENED veil covers — the ones the look-under LIFTS (Epic 9
+   * story 2). A separate reading from `coveredSlugs` on purpose: the covered
+   * prop never changes under the transient (the lift is visibility at the
+   * render, never a settled state) and only the words THIS veil covers are
+   * revealed. PROVISIONAL: where two sheets overlap, the opened one's words show
+   * even though the other sheet still lies over them — sheet stacking versus the
+   * lift is ADR-0023's open geometry question, not a rule this story settles.
+   * The lift hands the word no press (the CSS), so the reading can never become
+   * an edit.
+   */
+  const liftedSlugs = useMemo(
+    () =>
+      lookUnderVeil === null
+        ? new Set<string>()
+        : coveredWordSlugs([lookUnderVeil], selectorWords),
+    [lookUnderVeil, selectorWords],
   );
 
   /**
@@ -976,6 +1048,10 @@ function App() {
     setLassoArmed(false);
     setVeilArmed(false);
     setVeilBox(null);
+    // The look-under is a transient: the switch path closes it with every
+    // other one (a level switch, a branch switch and any deliberate entry that
+    // runs this path). It closes QUIETLY — the wheel never yanks focus.
+    setLookUnderKey(null);
     setPathSession(endPathSession());
     setAssumptionAt(null);
     setQuantityAt(null);
@@ -1642,6 +1718,73 @@ function App() {
     [veilBox, createVeil],
   );
 
+  /**
+   * Open the look-under for one veil (Epic 9 story 2, ADR-0023 decision 3): the
+   * quiet press on the sheet (or Enter/Space). It is the PERSON'S opening —
+   * nothing opens it on its own — and it runs the app's one cancel-pending path
+   * first, so a menu, a grow field or a card left open behind the reading closes
+   * instead of standing still under it. An ARMED gesture returns before that
+   * path: its own surface owns the pointer, so a press on the sheet is inert
+   * (the coin field's half-typed name is never discarded). The ground gate is
+   * the same reading as the sheet's (`veilLive`): where no sheet renders there
+   * is no door and the game switch is the look-under.
+   */
+  const openLookUnder = useCallback(
+    (veil: Veil) => {
+      if (!veilLive(level) || isGestureArmed(gestureMode)) return;
+      cancelPendingGestures();
+      setLookUnderKey(veilKey(veil));
+    },
+    [level, gestureMode, cancelPendingGestures],
+  );
+
+  /**
+   * Close the look-under and return focus where the window's rule returns it
+   * (the same reading): the veil's own sheet on a dismissal, the level control
+   * on a switch. A switch also clears the key through `cancelPendingGestures`;
+   * that quiet path never yanks focus, which is right for a wheel crossing.
+   */
+  const closeLookUnder = useCallback(
+    (reason: LookUnderCloseReason = "dismiss") => {
+      const key = lookUnderKey;
+      setLookUnderKey(null);
+      const selector = lookUnderFocusSelector(
+        focusAfterLookUnderClose(reason),
+        key,
+      );
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(selector)?.focus();
+      });
+    },
+    [lookUnderKey],
+  );
+
+  /**
+   * Rename the opened veil in place (PROVISIONAL, Epic 9 story 2): the loops'
+   * idiom — the name only, one line rewritten, its box and its reason exactly
+   * as they were. The card cannot fall out from under the person mid-rename:
+   * the record module returns the rewritten line, so the look-under's key moves
+   * to the minted name in the same move (a collision's suffix included). A
+   * quiet no-op (a blank or unchanged name) returns null and nothing moves.
+   */
+  const renameLookUnder = useCallback(
+    (name: string) => {
+      const veil = lookUnderVeil;
+      if (veil === null) return;
+      const renamed = renameVeil(veil, name);
+      if (renamed !== null) setLookUnderKey(veilKey(renamed));
+    },
+    [lookUnderVeil, renameVeil],
+  );
+
+  // A veil retired while its look-under is open (the sheet's × rides under the
+  // card) takes the transient with it: a card about a line that is gone would
+  // be a lie. The derived key resolves to null, and the state follows quietly.
+  useEffect(() => {
+    if (lookUnderKey === null || lookUnderVeil !== null) return;
+    setLookUnderKey(null);
+  }, [lookUnderKey, lookUnderVeil]);
+
   // Esc abandons the whole veil gesture — the arm before a box is captured, or
   // the captured box while the coin field asks (nothing is written). The field's
   // own Esc handler settles the same cancel; both are idempotent.
@@ -2066,6 +2209,7 @@ function App() {
             shelved={shelvedOf(word)}
             outOfSet={isOutOfSet(word)}
             covered={word.slug !== null && coveredSlugs.has(word.slug)}
+            lifted={word.slug !== null && liftedSlugs.has(word.slug)}
             interactionMode={gestureMode}
             onReject={() => rejectWord(word)}
             showAssumptions={cueShownIn("assumptions", level)}
@@ -2108,6 +2252,11 @@ function App() {
             <VeilSheet
               key={veilKey(veil)}
               veil={veil}
+              lifted={
+                lookUnderVeil !== null &&
+                veilKey(lookUnderVeil) === veilKey(veil)
+              }
+              onOpen={() => openLookUnder(veil)}
               onRetire={() => removeVeil(veil)}
             />
           ))}
@@ -2424,6 +2573,24 @@ function App() {
             pointer={peekAt.pointer}
             workspacePath={workspace.path}
             onClose={() => closePeek("dismiss")}
+          />
+        )}
+
+        {/* the veil's look-under (Epic 9 story 2, ADR-0023 decision 3): the
+            READ-ONLY transient a quiet press on a sheet opens. ONE at a time,
+            world-anchored beside the opened veil's right edge and
+            counter-scaled (the window idiom): the veil's coined name, its
+            reason VERBATIM (World B), and the quiet ×. Esc / × / click-away / a
+            level switch close it. Its cover is lifted on the plane meanwhile
+            (the sheet's `lifted` prop and the words' `lifted` prop), and the
+            covered prop itself is untouched — covered is not settled. LEVELS
+            1–2 only (`lookUnderLive`): at ground no sheet renders, so the veil
+            offers no look-under; the game switch IS the look-under there. */}
+        {lookUnderLive(level) && lookUnderVeil !== null && (
+          <VeilLookUnder
+            veil={lookUnderVeil}
+            onRename={renameLookUnder}
+            onClose={() => closeLookUnder("dismiss")}
           />
         )}
       </CanvasPlane>
