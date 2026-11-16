@@ -98,6 +98,11 @@ import {
 } from "../src/scenarios/pins";
 import { parseReference, serializeReference, type Reference } from "../src/map/refs";
 import {
+  appendPrismLine,
+  parsePrisms,
+  type Prism,
+} from "../src/map/prisms";
+import {
   coveredWordSlugs,
   nameVeil,
   parseVeils,
@@ -2272,6 +2277,150 @@ describe("a game card lives beside the record families (Epic 11 story 4)", () =>
           "utf8",
         ),
       ).not.toContain("cards");
+    });
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * 15. The PRISM's lifecycle beside the record families (Epic 12 story 4).
+ *
+ * The cross-record question the PRISM's own suites cannot answer alone: does
+ * the append-only contact log live BESIDE the families? No batch writes it - a
+ * rename or a remove moves every record the batch owns and leaves
+ * map/prisms.jsonl byte-identical, even when the word the PRISM cites is the
+ * one removed (the log is the person's; it is never repaired, merged or
+ * dropped). A Finding edit (the Ask's keep writing the response into a word's
+ * memory) is likewise a reference write only: the log stays exact.
+ * ---------------------------------------------------------------------- */
+
+const PRISMS_REL = "map/prisms.jsonl";
+
+function prismLine(id: string, on: string, value: string): Prism {
+  return {
+    id,
+    on,
+    contact: "look",
+    pointer: { form: "path", value },
+    changes: [
+      {
+        kind: "read-head",
+        pointer: pointerKey(on, "path", value),
+        outcome: "read",
+        bounds: { maxLines: 20, maxBytes: 1600 },
+        decode: "clean",
+      },
+    ],
+    explanation: "",
+    extra: {},
+  };
+}
+
+/** Two appended PRISMs on mulch's reach: a look, then a measure. */
+function prismLog(): string {
+  return appendPrismLine(
+    appendPrismLine(null, prismLine("prism-1", "mulch", "notes/mulch.md")),
+    { ...prismLine("prism-2", "mulch", "notes/mulch.md"), contact: "measure" },
+  );
+}
+
+/** Write every record family the batch owns, plus its reference files. */
+function writeBatchRecords(scratch: Workspace, batch: Batch): void {
+  for (const [path, bytes] of Object.entries(recordBytes(batch))) {
+    scratch.write(path, bytes);
+  }
+  for (const ref of batch.refs) {
+    if (ref.slug === null) continue;
+    scratch.write("map/references/" + ref.slug + ".md", serializeReference(ref));
+  }
+}
+
+describe("a PRISM lives beside the record families (Epic 12 story 4)", () => {
+  test("no batch writes the PRISM log (no writer, no record-set entry)", () => {
+    expect(Object.keys(recordBytes(base()))).not.toContain(PRISMS_REL);
+    const patches = readFileSync(
+      new URL("../src/map/patches.ts", import.meta.url),
+      "utf8",
+    );
+    expect(patches.toLowerCase()).not.toContain("prism");
+    for (const name of ["renameReference", "removeReference"]) {
+      expect({
+        name,
+        prism: functionBody(patches, name).toLowerCase().includes("prism"),
+      }).toEqual({ name, prism: false });
+    }
+    // The log's one door is the record module's; the batches import no writer.
+    expect(
+      readFileSync(new URL("../src/map/prisms.ts", import.meta.url), "utf8"),
+    ).toContain("appendPrismLine");
+  });
+
+  test("a rename or a remove moves the record families and leaves the PRISM log byte-identical", () => {
+    return withWorkspace(async (scratch) => {
+      writeBatchRecords(scratch, base());
+      const prismBytes = prismLog();
+      scratch.write(PRISMS_REL, prismBytes);
+      expect(
+        parsePrisms(prismBytes).prisms.map((prism) => prism.id),
+      ).toEqual(["prism-1", "prism-2"]);
+      // The log cites the word the batch is about to move.
+      expect(parsePrisms(prismBytes).prisms[0].changes[0]).toMatchObject({
+        pointer: pointerKey("mulch", "path", "notes/mulch.md"),
+      });
+
+      // A rename: the records follow the word; the PRISM log does not move.
+      const renamed = renameThrough(base(), "mulch", "woodchip");
+      writeBatchRecords(scratch, renamed);
+      expect(scratch.read("map/pointers.jsonl")).toContain("woodchip");
+      expect(scratch.read(PRISMS_REL)).toBe(prismBytes);
+
+      // A remove: the batch takes the word's records; the log stands.
+      const removed = removeThrough(renamed, "soil");
+      writeBatchRecords(scratch, removed);
+      expect(scratch.read("map/links.jsonl")).not.toContain("soil");
+      expect(scratch.read(PRISMS_REL)).toBe(prismBytes);
+
+      // The removed word is THE word the PRISM cites: the append-only log
+      // still stands (a PRISM is never repaired, merged or dropped).
+      const afterCited = removeThrough(removed, "woodchip");
+      writeBatchRecords(scratch, afterCited);
+      expect(scratch.read("map/pointers.jsonl")).not.toContain("woodchip");
+      expect(scratch.read(PRISMS_REL)).toBe(prismBytes);
+      const parsed = parsePrisms(scratch.read(PRISMS_REL) ?? "");
+      expect(parsed.malformed).toEqual([]);
+      expect(parsed.prisms.map((prism) => prism.id)).toEqual([
+        "prism-1",
+        "prism-2",
+      ]);
+      // The citation is frozen at the Move: the old anchor, as it was written.
+      expect(parsed.prisms[0].on).toBe("mulch");
+      expect(parsed.prisms[0].pointer).toEqual({
+        form: "path",
+        value: "notes/mulch.md",
+      });
+    });
+  });
+
+  test("a Finding edit (the Ask's keep) leaves the PRISM log byte-exact", () => {
+    return withWorkspace(async (scratch) => {
+      const referenceRel = "map/references/rain.md";
+      scratch.write(referenceRel, serializeReference(reference("rain", "rain")));
+      const prismBytes = appendPrismLine(
+        null,
+        prismLine("prism-1", "rain", "notes/rain.md"),
+      );
+      scratch.write(PRISMS_REL, prismBytes);
+      const beforeReference = scratch.read(referenceRel);
+
+      // The keep: the response becomes the word's memory (the ordinary write,
+      // the Finding) - no PRISM writer is involved.
+      scratch.write(
+        referenceRel,
+        serializeReference(reference("rain", "rain", "an answer\n")),
+      );
+      expect(scratch.read(referenceRel)).not.toBe(beforeReference);
+      expect(scratch.read(referenceRel)).toContain("an answer");
+      // The record closed at intake: the log is byte-exact.
+      expect(scratch.read(PRISMS_REL)).toBe(prismBytes);
     });
   });
 });
