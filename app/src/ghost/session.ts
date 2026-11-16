@@ -1,4 +1,5 @@
 import { createWriteQueue } from "../lib/writeQueue";
+import { marksPath, parseMarks } from "../map/marks";
 import { applyGhost, GhostPinError } from "./apply";
 import {
   extractAgentOutput,
@@ -26,6 +27,7 @@ import {
 } from "./inbox";
 import { issue, type GhostIssue, type GhostIssueCode } from "./issues";
 import { tauriGhostFs, type GhostFs } from "./port";
+import { refusalFor, type GhostFlow } from "./refusal";
 import { findMove, pinOf } from "./registry";
 import { createRunState, runKeyOf, runPartsOf } from "./runState";
 import { readGhostSnapshot } from "./snapshot";
@@ -73,12 +75,38 @@ import { readGhostSnapshot } from "./snapshot";
  * target (`priorRefusals`) so a packet's bounded run block can carry them, and
  * the attempt count (`runAttempts`) for the harness. Neither is rendered,
  * persisted or spoken: the counter is never a person-facing value (the source
- * scan asserts the surfaces' silence), and story 2 owns the loud stop it drives.
+ * scan asserts the surfaces' silence), and story 2's loud refusal reads it
+ * (ghost/refusal.ts) without ever rendering the count.
+ *
+ * THE REFUSAL (Epic 14 story 2, ADR-0031) fires HERE, at the third same-key
+ * failure (the run's `limitReached`): the intake returns ONE issue in the
+ * app's vocabulary (`"stop"`), the flow's sentence, in place of the grammar's
+ * sentence for that attempt (ghost/refusal.ts). The run kept the grammar's
+ * words, so the packet's bounded run block still carries them. The refusal is
+ * a REFUSAL: it writes nothing, it records no marker and it retires no
+ * proposal; a later valid reply still lands (a run is not a lock).
+ *
+ * THE FLOW (PROVISIONAL) scopes the sentence: a session created for an AGENT
+ * flow may say the assistant stops (an assistant is present in that flow); a
+ * session created for the PASTE (or scripted) flow, the default, never names an
+ * absent actor. No transport exists yet, so the app always opens the paste
+ * flow; the agent flow is the harness seam a transport would use.
+ *
+ * THE MARK-READ (Epic 14 story 2, ADR-0031's final amendments): at the session's
+ * open moment the session reads `map/marks.jsonl` ONCE through the port and
+ * fixes the targets that carry an open mark in the run state. A marked target's
+ * refusal stands down for the whole run (the mark is READ as "the person has
+ * spoken here" — never rendered, never a switch, never a second meaning for the
+ * mark; ADR-0009 stands untouched). The read is fixed at the start: a mark cast
+ * mid-run is not seen, and a withdrawn mark still stands — and never resets the
+ * counter, which lives until the session closes. Loops are exempt (no mark can
+ * sit on a loop). A failed mark read means no marks: the refusal stands (a guess
+ * is never a stand-down). The session only reads marks, never writes one.
  *
  * Provisional: the session's shape (the UI wiring is story 3's), the fact
  * that a level/branch switch is passed per call rather than held, the
- * intake's optional `packetHash` argument, and the run state's home and
- * accessor names.
+ * intake's optional `packetHash` argument, the flow's two names, the
+ * sentence's wording, and the run state's home and accessor names.
  */
 
 /** The app's running context at an intake/accept moment. */
@@ -97,6 +125,15 @@ export interface GhostSessionOptions {
   fs?: GhostFs;
   /** The id minter; defaults to the app's UUID mint (tests inject one). */
   mintId?: () => string;
+  /**
+   * How replies reach this session (PROVISIONAL, Epic 14 story 2): `"agent"`
+   * when an assistant answers through the harness, `"paste"` when the person
+   * pastes a reply. It scopes the refusal's sentence only — an agent flow may
+   * say the assistant stops; a paste (or scripted) flow never names an absent
+   * actor. Defaults to paste: no transport exists yet, so the app's session is
+   * always the paste flow, and the agent flow is the seam a transport will use.
+   */
+  flow?: GhostFlow;
 }
 
 /** What an intake produced. */
@@ -168,9 +205,11 @@ export interface GhostSession {
     code: GhostIssueCode,
   ): number;
   /**
-   * The open moment: discard the inbox (replay refused), forget ids and
-   * discard the run state. The ghost session's open moment IS the task
-   * (ADR-0031), so nothing from the previous open survives.
+   * The open moment: discard the inbox (replay refused), forget ids, discard
+   * the run state and read the map's marks ONCE (the refusal's stand-down —
+   * story 2). The ghost session's open moment IS the task (ADR-0031), so
+   * nothing from the previous open survives; the mark reading is this run's
+   * alone and is never re-read.
    */
   open(): Promise<DiscardReport>;
   /**
@@ -181,6 +220,10 @@ export interface GhostSession {
    * (the body has no such key), and it is attached to the filed envelope as
    * PROVENANCE ONLY — the grammar never reads it and no accept can refuse on
    * its account.
+   *
+   * A refused intake that reaches the run's bound returns the refusal issue
+   * instead of the grammar's sentence (story 2's loud stop); a refusal on a
+   * target marked at run start returns the grammar's sentence and no refusal.
    */
   intake(
     raw: string,
@@ -228,12 +271,49 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
   const workspacePath = options.workspacePath;
   const fs = options.fs ?? tauriGhostFs;
   const mintId = options.mintId ?? mintGhostId;
+  // THE FLOW (Epic 14 story 2, PROVISIONAL): the session's one flow, fixed at
+  // construction. It scopes the refusal's sentence; it changes nothing else.
+  const flow: GhostFlow = options.flow ?? "paste";
   const queue = createWriteQueue();
   const registeredIds = new Set<string>();
   // THE RUN STATE (Epic 14 story 1, ADR-0031): the session's ephemeral trace,
   // discarded at open() with the inbox. In memory only; runState.ts has no
   // writer, no port and no storage import.
   const run = createRunState();
+
+  /**
+   * THE MARK-READ (Epic 14 story 2, ADR-0031): the targets that carry an open
+   * mark NOW, as ghost targets, read once at the run's start through the port.
+   * A word, a link or a bare spot can be a ghost target; a wire or a pointer
+   * mark names a record no ghost move targets, so it is not a stand-down. The
+   * mark line is trusted as it stands (an orphan mark is still the person's own
+   * record; the run never repairs or grades it). A failed read is NO marks: the
+   * refusal stands, because a stand-down is the person's act, never a guess.
+   * This function only reads; the session never writes a mark.
+   */
+  async function markedTargetsNow(): Promise<GhostTarget[]> {
+    let text: string | null = null;
+    try {
+      text = await fs.readText(marksPath(workspacePath));
+    } catch {
+      return [];
+    }
+    if (text === null) return [];
+    const targets: GhostTarget[] = [];
+    for (const mark of parseMarks(text).marks) {
+      const target = mark.target;
+      if (target.type === "word") {
+        targets.push({ kind: "word", slug: target.slug });
+      } else if (target.type === "link") {
+        targets.push({ kind: "link", from: target.from, to: target.to });
+      } else if (target.type === "spot") {
+        targets.push({ kind: "spot", x: target.x, y: target.y });
+      }
+      // A wire mark and a pointer mark name no ghost target: they cannot stand
+      // a refusal down, and a loop has no mark form at all.
+    }
+    return targets;
+  }
 
   async function intakeInner(
     raw: string,
@@ -242,22 +322,37 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
   ): Promise<IntakeResult> {
     /**
      * Record the refusal as a run attempt when the reply named a readable move
-     * and target (ADR-0031's run key), then hand the refusal back. A reply with
-     * no readable parts has no key to count: it is refused exactly as before.
+     * and target (ADR-0031's run key), then speak the story-2 refusal when the
+     * run reached its bound. A reply with no readable parts has no key to count:
+     * it is refused exactly as before. The refusal REPLACES the grammar's
+     * sentence for this attempt (the grammar already said it before; the packet
+     * carries the prior sentences) and stands down when the target carried an
+     * open mark at run start. The run's own record keeps the grammar's words.
      */
     const refused = (
       issues: readonly GhostIssue[],
       body?: unknown,
     ): IntakeResult => {
       const parts = body === undefined ? null : runPartsOf(body);
-      if (parts !== null) {
-        run.recordRefusedAttempt({
-          move: parts.move,
-          target: parts.target,
-          issues,
-        });
+      if (parts === null) {
+        return { ok: false, envelope: null, path: null, issues };
       }
-      return { ok: false, envelope: null, path: null, issues };
+      const record = run.recordRefusedAttempt({
+        move: parts.move,
+        target: parts.target,
+        issues,
+      });
+      const refusal = refusalFor(
+        record,
+        flow,
+        run.markedAtStart(parts.target),
+      );
+      return {
+        ok: false,
+        envelope: null,
+        path: null,
+        issues: refusal === null ? issues : [refusal],
+      };
     };
 
     const extracted = extractAgentOutput(raw);
@@ -513,6 +608,11 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
       // The run is the open moment: closing it discards every attempt and its
       // refusal sentence. Nothing was ever written, so there is nothing to undo.
       run.discard();
+      // THE MARK-READ (Epic 14 story 2): the marks read HERE, once, are the
+      // run's fixed stand-down. A mark cast later is never seen; a mark
+      // withdrawn later still stands — and never resets the counter, which is
+      // this run's alone.
+      run.start(await markedTargetsNow());
       return report;
     },
 

@@ -63,6 +63,13 @@ export const GHOST_ISSUE_CODES = [
   "write",
   /** A reshape is refused before the grammar sees it (no text, or no reason). */
   "reshape",
+  /**
+   * The run's refusal, not a validator's (Epic 14 story 2, ADR-0031): the
+   * harness refuses service at the third same-key failure. It is a refusal
+   * code like the rest — the app switches on it and never renders it, and its
+   * sentence is the person's to read (see ghost/refusal.ts).
+   */
+  "stop",
 ] as const;
 
 /** What a refusal is about (the one union the array above spells). */

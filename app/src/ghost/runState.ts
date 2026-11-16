@@ -40,10 +40,26 @@ import type { GhostIssue, GhostIssueCode } from "./issues";
  * because a packet is asked BEFORE the next reply has an issue code; the code
  * remains the counter's granularity.
  *
+ * THE MARK-READ (Epic 14 story 2, ADR-0031's final amendments): at RUN START
+ * (the session's open moment) the harness reads which targets carry an open
+ * mark and fixes that reading here. The read answers the refusal's stand-down:
+ * a target marked at start does not fire the refusal for the rest of the run —
+ * the mark is READ as "the person has spoken here", never rendered, never a
+ * switch, never a second meaning for the mark (ADR-0009's "not settled" stands
+ * untouched). The reading is FIXED at the start: a mark cast later is never
+ * seen, and a mark withdrawn later does not cancel the read — it also does not
+ * reset the counter, which lives until the session closes, so the refusal can
+ * fire in a LATER task and never within the one that started marked. Loops are
+ * EXEMPT: a mark has no loop target form (ADR-0009), so no mark can sit on a
+ * loop, and a word mark whose slug spells a loop's name stands the WORD down,
+ * never the loop. The run state never writes a mark and never decides what one
+ * means; it only remembers what the session read.
+ *
  * Provisional: the module's home (`ghost/runState.ts`), the key's encoding,
  * the block's shape (sentences only) and the fact that every refused intake is
- * recorded — which refusal codes the story-2 stop fires on is story 2's
- * concern, not the trace's.
+ * recorded. Story 2 fires on every refusal code alike: a reply that names a
+ * readable move and target records one attempt per code, and any key reaching
+ * the bound can fire (the mark reading is the only stand-down).
  */
 
 /**
@@ -73,7 +89,11 @@ export interface RunStrike {
   readonly key: RunKey;
   /** How many attempts this key has now had, this one included (never shown). */
   readonly attempts: number;
-  /** Did this key reach `N_RUN_LIMIT` on this attempt? (story 2's trigger) */
+  /**
+   * Did this key reach `N_RUN_LIMIT` on this attempt? Story 2's trigger. It is
+   * pure counting: the mark's stand-down is a SEPARATE read (`markedAtStart`),
+   * never folded in here, so the count means the same thing marked or not.
+   */
   readonly limitReached: boolean;
 }
 
@@ -106,6 +126,23 @@ export interface RunState {
     move: GhostMove,
     target: GhostTarget,
   ): readonly string[];
+  /**
+   * THE MARK-READ (Epic 14 story 2, ADR-0031): fix the targets that carried an
+   * open mark at RUN START (the session's `open()`), replacing any earlier
+   * reading. Called once per run; a run that never started has read no marks.
+   * The list is plain targets — the caller has already read and mapped the map's
+   * marks, so this module never touches marks.jsonl, never writes one and never
+   * decides what a mark means. It also does not touch the counter: a mark's
+   * presence is the refusal's stand-down, never a reset.
+   */
+  start(marked: readonly GhostTarget[]): void;
+  /**
+   * Did this target carry an open mark at run start? The refusal's stand-down
+   * read. Fixed for the run: a mark cast after the start answers false, a mark
+   * withdrawn after the start still answers true. A loop always answers false
+   * (a mark has no loop target form: marks cannot sit on a loop).
+   */
+  markedAtStart(target: GhostTarget): boolean;
   /** Discard the whole run (the session closed). Idempotent; nothing is written. */
   discard(): void;
 }
@@ -249,6 +286,10 @@ interface RunEntry {
 export function createRunState(): RunState {
   const entries: RunEntry[] = [];
   const attemptsByKey = new Map<RunKey, number>();
+  // THE MARK-READ: the targets that carried an open mark at run start, keyed
+  // like a run target. Fixed for the run (nothing re-reads it) and NEVER a
+  // counter: marking or unmarking a target changes no attempt here.
+  let markedTargetKeys = new Set<string>();
 
   function recordRefusedAttempt(attempt: RunRefusedAttempt): RunRecord {
     const moveKey = moveKeyOf(attempt.move);
@@ -313,9 +354,16 @@ export function createRunState(): RunState {
       return attemptsByKey.get(key) ?? 0;
     },
     sentencesForTarget,
+    start(marked) {
+      markedTargetKeys = new Set(marked.map(targetKeyOf));
+    },
+    markedAtStart(target) {
+      return markedTargetKeys.has(targetKeyOf(target));
+    },
     discard() {
       entries.length = 0;
       attemptsByKey.clear();
+      markedTargetKeys = new Set();
     },
   };
 }
