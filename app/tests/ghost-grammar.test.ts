@@ -37,6 +37,7 @@ function snapshot(overrides: Partial<GhostSnapshot> = {}): GhostSnapshot {
     level: "dynamics",
     scenario: null,
     dir: "map",
+    playing: ["rain", "soil"],
     words: new Set(["rain", "soil"]),
     loops: new Set([LOOP_SLUG]),
     files: { [ASSUMPTIONS_FILE]: BEFORE },
@@ -341,6 +342,38 @@ describe("the grammar: the base pin (game, level, branch, bytes)", () => {
       snapshot(),
       "pin",
     );
+  });
+});
+
+describe("the grammar: the set gate (ADR-0025 decision 3)", () => {
+  test("a dynamics move is refused when no playing set is accepted", () => {
+    const validation = expectRefused(
+      envelope(),
+      snapshot({ playing: null }),
+      "no-playing-set",
+    );
+    // The refusal is the app's data vocabulary plus one human sentence; nothing
+    // was derived, normalized or written.
+    expect(validation.envelope).toBeNull();
+    expect(validation.run).toBeNull();
+    expect(validation.issues).toHaveLength(1);
+    expect(validation.issues[0].message).toContain("no playing set is accepted");
+  });
+
+  test("an accepted set is the door, and an EMPTY accepted set is still a set", () => {
+    expect(validateGhost(envelope(), snapshot({ playing: ["rain", "soil"] })).ok).toBe(
+      true,
+    );
+    // The selector's own rule: absence is no set; an empty set is accepted.
+    expect(validateGhost(envelope(), snapshot({ playing: [] })).ok).toBe(true);
+  });
+
+  test("the set gate is not the band's gate: the game pin still speaks first", () => {
+    // A concept-level app with no set reports the game, not the set: the set
+    // requirement belongs to the dynamics game the move lives in.
+    const concept = snapshot({ level: "concept", playing: null });
+    const validation = validateGhost(envelope(), concept);
+    expect(validation.issues.map((entry) => entry.code)).toContain("game");
   });
 });
 

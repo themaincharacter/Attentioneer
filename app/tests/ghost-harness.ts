@@ -14,6 +14,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import type { GhostEnvelope } from "../src/ghost/envelope";
 import type { GhostFs } from "../src/ghost/port";
 import { readEnvelope } from "../src/ghost/envelope";
+import { serializeModel } from "../src/map/model";
 
 /**
  * The ghost tests' REAL-FILESYSTEM harness (Epic 10 story 1).
@@ -25,9 +26,13 @@ import { readEnvelope } from "../src/ghost/envelope";
  * workspace. The production port is still the Tauri bridge; the harness is the
  * same interface, so the tested code is the shipped code.
  *
- * The seed is a tiny committed map: two words (rain, soil), one named loop and
- * one standing assumption — enough for a word target, a loop target and a base
- * file with bytes.
+ * The seed is a tiny committed map: two words (rain, soil), one named loop, one
+ * standing assumption and the ACCEPTED PLAYING SET — enough for a word target, a
+ * loop target and a base file with bytes. The set is not decoration: the v1
+ * move is a dynamics authoring move, and the grammar refuses one with
+ * `no-playing-set` unless the workspace accepts a set (ADR-0025 decision 3).
+ * A test that needs NO set removes `map/model.json` (absence is the record's
+ * absence, ADR-0013).
  */
 export interface Workspace {
   /** The temp workspace root. */
@@ -38,6 +43,8 @@ export interface Workspace {
   read(relative: string): string | null;
   /** Write a workspace file, relative to the root (parents created). */
   write(relative: string, content: string): void;
+  /** Delete a workspace file (a missing file is a quiet no-op). */
+  remove(relative: string): void;
   /** A workspace file's absolute path. */
   file(relative: string): string;
   /** Does the workspace file exist? */
@@ -130,6 +137,11 @@ function seed(path: string): void {
     '{"on":"soil","text":"the soil holds water"}\n',
     "utf8",
   );
+  writeFileSync(
+    join(path, "map/model.json"),
+    serializeModel({ words: ["rain", "soil"], extra: {} }),
+    "utf8",
+  );
 }
 
 /** A fresh temp workspace with the seed (the caller disposes it). */
@@ -152,6 +164,9 @@ export function workspace(): Workspace {
       const file = join(path, relative);
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, content, "utf8");
+    },
+    remove(relative) {
+      rmSync(join(path, relative), { force: true });
     },
     file(relative) {
       return join(path, relative);

@@ -141,12 +141,14 @@ import {
  *   1. The real-window human pass, the ghost UI's feel, the judge's legs and
  *      the cheap-model protocol are QUEUED (the eighth pass); this file is the
  *      record half only.
- *   2. The ghost's grammar is not wired to authoringLive: it checks the
- *      dynamics band but NOT that a playing set was accepted, while ADR-0025
- *      calls add-assumption the MOST gated move (Level 2, behind the set).
- *      Every ghost fixture since story 1 intakes without a set, so threading
- *      the set into the snapshot is a source change larger than this story;
- *      named here, never frozen as correct.
+ *   2. FIXED (was the named follow-up): the grammar now reads the accepted
+ *      playing set from the snapshot and refuses a dynamics move with
+ *      `no-playing-set` at the INTAKE and at the ACCEPT — each reads fresh
+ *      bytes, so a set withdrawn between them refuses the accept — while an
+ *      accepted EMPTY set is still a set. ADR-0025 calls add-assumption the
+ *      MOST gated move (Level 2, behind the set); "the set gate" below is its
+ *      record half, and the ghost harness's seed now accepts the set every
+ *      fixture always needed.
  *   3. The ask surface still leaves the person's region unwired (story 3's
  *      provisional list): the ADR's fallback applies in the window, while the
  *      region rule itself is exercised here.
@@ -758,6 +760,63 @@ describe("the intake: a reply wraps and lands; a refusal files nothing", () => {
       expect(scratch.read(ASSUMPTIONS_FILE)).toBe(fixture.base);
       expect(envelope.steps[0].file).toBe(ASSUMPTIONS_FILE);
       expect(envelope.steps[0].op).toBe("append");
+    });
+  });
+
+  test("the set gate: no accepted set refuses the ghost at intake and at accept", async () => {
+    await withJourney(async (scratch, fixture) => {
+      const session = sessionOver(scratch);
+      const deps = depsOf(session);
+      // The check's map accepts a set, so the reply lands: add-assumption is a
+      // dynamics authoring move and authoring is live behind the set.
+      let state = await file(deps, NO_GHOSTS);
+      expect(state.ghosts).toHaveLength(1);
+      const id = state.ghosts[0].id;
+
+      // The set goes away (a missing map/model.json is no accepted set,
+      // ADR-0013). The next reply is refused at INTAKE and files nothing.
+      scratch.remove("map/model.json");
+      const refused = await intakeReply(
+        deps,
+        NO_GHOSTS,
+        agentReply({ params: { text: "another claim" } }),
+      );
+      expect(refused.result.ok).toBe(false);
+      expect(refused.result.issues.map((entry) => entry.code)).toEqual([
+        "no-playing-set",
+      ]);
+      expect(refused.state).toEqual(NO_GHOSTS);
+      // Only the ghost filed while the set stood is registered and in the inbox.
+      expect(session.registered()).toEqual([id]);
+      expect(scratch.exists(inboxEnvelopePath(scratch.path, id))).toBe(true);
+
+      // The ghost filed while the set stood is refused at ACCEPT: the accept
+      // reads the set afresh at the write moment, and the ghost stays held.
+      state = openGhost(state, id);
+      const report = await acceptOpened(deps, state);
+      expect(report.outcome?.outcome).toBe("refused");
+      expect(report.issues.map((entry) => entry.code)).toContain("no-playing-set");
+      expect(report.state.ghosts).toEqual(state.ghosts);
+      expect(report.state.openId).toBe(id);
+      expect(scratch.read(ASSUMPTIONS_FILE)).toBe(fixture.base);
+      expect(scratch.exists(inboxMarkerPath(scratch.path, id))).toBe(false);
+
+      // Accepting the set again re-opens the door: the same held ghost applies.
+      scratch.write(
+        "map/model.json",
+        serializeModel({ words: ["rain", "soil"], extra: {} }),
+      );
+      const again = await acceptOpened(deps, report.state);
+      expect(again.outcome?.outcome).toBe("applied");
+      expect(scratch.read(ASSUMPTIONS_FILE)).toBe(
+        fixture.base +
+          serializeAssumptionLine({
+            text: CLAIM_TEXT,
+            target: { type: "word", slug: "rain" },
+            extra: {},
+          }) +
+          NL,
+      );
     });
   });
 

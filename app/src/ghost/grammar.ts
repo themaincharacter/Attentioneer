@@ -32,8 +32,11 @@ import type { GhostSnapshot } from "./snapshot";
  * It checks: the envelope's shape and keys (its own keys exactly; no name slot
  * anywhere; no unknown key in the agent's body, move, params or target); that
  * the move is registered; the move's params schema and target rules; the game,
- * level and folder pins; the base pin against the file ACTUALLY on disk; and
- * append-only closure by APPLYING the derived steps to the snapshot and parsing
+ * level and folder pins; THE SET GATE (a dynamics move is refused when no
+ * playing set is accepted — ADR-0025 decision 3, the authoring rule the plane's
+ * writers obey through `authoringLive`); the base pin against the file ACTUALLY
+ * on disk; and append-only closure by APPLYING the derived steps to the
+ * snapshot and parsing
  * the result back — a derived list alone proves nothing. It re-derives the
  * steps every time, so a tampered stored list is IGNORED: the deriver owns the
  * steps. It also recognises an APPLIED ghost (the files already hold the
@@ -437,6 +440,24 @@ export function validateGhost(
     );
   }
   if (contextIssues.length > 0) return refused(contextIssues);
+
+  // THE SET GATE (ADR-0025 decision 3; ADR-0013 decision 1): a ghost is an
+  // authoring move, and the dynamics game authors nothing until a playing set
+  // is accepted. This is the same rule the plane's writers obey through
+  // `authoringLive`, enforced at BOTH ghost doors — the intake and the accept
+  // each read a fresh snapshot, so a set withdrawn between them refuses the
+  // accept. Absence, not emptiness, is what "no set" means: an accepted EMPTY
+  // set is still an accepted set (the selector's own rule).
+  // Provisional: keyed on the move's GAME rather than registry data, because the
+  // requirement is the game's (ADR-0013), not one move's.
+  if (entry.game === "dynamics" && snapshot.playing === null) {
+    return refused([
+      issue(
+        "no-playing-set",
+        `no playing set is accepted: the ${entry.game} game authors nothing until one is, so the ghost is refused`,
+      ),
+    ]);
+  }
 
   if (!targetExists(target.target, snapshot)) {
     const label =

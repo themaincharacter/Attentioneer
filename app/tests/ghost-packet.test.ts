@@ -126,6 +126,7 @@ function snapshot(overrides: Partial<GhostSnapshot> = {}): GhostSnapshot {
     level: "dynamics",
     scenario: null,
     dir: "map",
+    playing: ["rain", "soil"],
     words: new Set(["rain", "soil", "storm", "tide"]),
     loops: new Set(["the-water-cycle"]),
     files: { [ASSUMPTIONS_FILE]: BASE },

@@ -1,5 +1,6 @@
 import { loopSlug, loopsPath, parseLoops } from "../map/loops";
-import { recordsRelDirOf } from "../map/records";
+import { modelPath, parseModel } from "../map/model";
+import { recordsDirOf, recordsRelDirOf } from "../map/records";
 import { referencesDir } from "../map/refs";
 import type { GhostGame } from "./envelope";
 import type { GhostFs } from "./port";
@@ -16,9 +17,10 @@ import type { GhostFs } from "./port";
  *
  * What a move needs: the map's word slugs (the targets a claim may name), the
  * loop slugs (a loop target), the records folder at the time
- * (`recordsRelDirOf`) and the bytes of every file the registry move writes.
- * `files` is keyed by the same workspace-relative paths the envelope's pin
- * uses.
+ * (`recordsRelDirOf`), the ACCEPTED PLAYING SET that folder holds (a dynamics
+ * move is refused without one — ADR-0025 decision 3) and the bytes of every
+ * file the registry move writes. `files` is keyed by the same workspace-
+ * relative paths the envelope's pin uses.
  */
 export interface GhostSnapshot {
   /** The game/band running now. */
@@ -27,6 +29,14 @@ export interface GhostSnapshot {
   scenario: string | null;
   /** The records folder, workspace-relative (`map` or `scenarios/<slug>`). */
   dir: string;
+  /**
+   * The accepted playing set's member slugs (ADR-0013), or null when no set is
+   * accepted. Absence is the record's absence: a missing or unreadable
+   * `model.json` means no set. The dynamics game authors only behind one
+   * (ADR-0025 decision 3), so the grammar refuses a dynamics move whenever this
+   * is null; an accepted EMPTY set is still an accepted set.
+   */
+  playing: readonly string[] | null;
   /** Every reference slug on the map. */
   words: ReadonlySet<string>;
   /** Every loop slug (name-derived) on the map. */
@@ -59,6 +69,13 @@ export async function readGhostSnapshot(
 ): Promise<GhostSnapshot> {
   const names = await fs.list(referencesDir(workspacePath));
   const loopsText = await fs.readText(loopsPath(workspacePath));
+  // The accepted playing set is the records folder's own `model.json` (ADR-0013):
+  // read through the same port as the rest, so the accept sees the set on disk
+  // at the write moment, not a memory that may have moved.
+  const playingText = await fs.readText(
+    modelPath(recordsDirOf(workspacePath, request.scenario)),
+  );
+  const playing = parseModel(playingText).model?.words ?? null;
   const fileTexts: Array<string | null> = [];
   for (const file of request.files) {
     fileTexts.push(await fs.readText(`${workspacePath}/${file}`));
@@ -79,6 +96,7 @@ export async function readGhostSnapshot(
     level: request.level,
     scenario: request.scenario,
     dir: recordsRelDirOf(request.scenario),
+    playing,
     words,
     loops,
     files,
