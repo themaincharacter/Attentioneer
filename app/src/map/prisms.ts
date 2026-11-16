@@ -1,0 +1,643 @@
+import { readTextFile, writeTextFile, type DecodeStatus } from "../lib/fs";
+import { canonicalJsonlLine, canonicalJsonlLines } from "../lib/serialize";
+import { POINTER_FORMS, pointerKey, type PointerForm } from "./pointers";
+
+/**
+ * THE PRISM (Epic 12 story 1, ADR-0028 as amended; ADR-0029) — one
+ * `map/prisms.jsonl` line per CONTACT MOVE: the person's contact with the
+ * world (Look / Make / Measure / Ask), kept as a structured explanation and a
+ * closed Change log. This module owns the record only: the contact layer that
+ * performs the Move lives beside it, and `head.rs` answers the read only.
+ *
+ * MARK-SHAPED, and the marks' posture. A line's target fields sit at the top
+ * level, exactly as a pointer-key mark's do: the anchor reference (`on`) plus
+ * the pointer line the Move rode — EXACTLY ONE of the three authored forms
+ * (`path` / `at` / `url`) with its verbatim value. The key is the anchor +
+ * the contact kind + the POINTER'S NATURAL KEY (on + form + value, ADR-0017
+ * rule 3): a contact rides ONE pointer of several, and the citation is a
+ * reference to the pointer record — never a byte dump, never a second copy of
+ * the target's content. Because the natural key carries the authored value,
+ * the PRISM inherits the pointer's own sensitivity; that is the design, not a
+ * leak (ADR-0028's natural-key amendment).
+ *
+ * THE KEY NEVER DEDUPES. Unlike the marks and pointers, this record family is
+ * APPEND-ONLY PER MOVE: every completed contact appends one line with an
+ * app-minted id (the ghost envelope's precedent), even when the key repeats.
+ * Repeating a contact appends again; nothing is ever merged, rewritten or
+ * reordered (a merged log is a usage tally — ADR-0029 rule 2). The key says
+ * WHAT a line is about; the id says WHICH Move it is. A pointer-less Ask is
+ * the one Move with no pointer: its key names the anchor and the contact. (The
+ * record parser stays permissive — a hand line naming another contact without
+ * a pointer is preserved as it reads, and the CONTACT TABLE's target rules are
+ * what refuse that Move.)
+ *
+ * THE CLOSED CHANGE-UNION, every kind carrying an OUTCOME (ADR-0028's
+ * Bounded-movements amendment):
+ *   - `read-head`    {pointer, outcome (read / not-text / cannot-reach /
+ *                      escaped), bounds (the exact line/byte values asked),
+ *                      decode (clean / with-replacement, or null when nothing
+ *                      was decoded)}
+ *   - `mint-pointer` {target (the minted pointer's natural key), outcome
+ *                      (minted / failed)} — Make's first Change: the artifact
+ *                      needs a pointer and verbatim paths are never written
+ *                      into the map, so the Move mints it.
+ *   - `write-text`   {pointer, outcome (written / failed), size (the authored
+ *                      text's byte size — a DECLARED fact, not a computed one)}
+ *   - `open-os`      {pointer, outcome (handed / handoff-failed / refused)} —
+ *                      EGRESS; the log says HANDED, never "opened" (the app
+ *                      only knows the handoff).
+ *   - `ask`          {pointer (or null for none), outcome (answered /
+ *                      no-response), included (the pointer natural keys that
+ *                      rode, or null for none), responseSize, decode}
+ * The union is CLOSED: a Change carrying an unknown key or an outcome outside
+ * its kind's list makes the LINE malformed — preserved verbatim and surfaced,
+ * never guessed at.
+ *
+ * NO CONTENT FIELD, STRUCTURALLY. The key set has no slot for the head's
+ * bytes, the question's prose, the response's text or any other content: the
+ * kept response's only home is the Memory backstop (a Finding -> memory prose,
+ * ADR-0017 decision 4), and the inclusion set is logged as pointer keys, never
+ * bytes. `PRISM_KEYS` and `CHANGE_KEYS` below are the whole declared key set;
+ * a source scan can read them, and the parser refuses a Change with any key
+ * outside its kind's set.
+ *
+ * THE PERSON'S EXPLANATION is prose, stored VERBATIM and never interpreted,
+ * trimmed, searched or compared. It is the field's only author; the app writes
+ * the empty string when the person wrote none, so the field is always present
+ * and "empty when absent" holds on a hand line too.
+ *
+ * THE FAMILY POSTURE holds: unknown keys on a known line are preserved across
+ * a rewrite; malformed lines are preserved verbatim AND surfaced by the read's
+ * own `malformed` list; CRLF and a BOM are tolerated; a missing file means no
+ * PRISMs. Canonical serialization is serialize.ts's job (ADR-0004); this
+ * module only turns the file's bytes into records and back.
+ *
+ * Provisional: the `prisms.jsonl` name, the app-minted id prefix, the field
+ * spellings (`bounds`/`responseSize`) and the `mint-pointer` outcome
+ * vocabulary. The contact layer's own flows (stories 2-3) own what a Move
+ * actually does; this story owns the record and the boundary.
+ */
+
+/** The four contact kinds (the person's verbs on a reach). */
+export const CONTACT_KINDS = ["look", "make", "measure", "ask"] as const;
+
+/** A contact kind: what a PRISM's Move did. */
+export type ContactKind = (typeof CONTACT_KINDS)[number];
+
+/** Is a value one of the four contact kinds? */
+export function isContactKind(value: unknown): value is ContactKind {
+  return (
+    typeof value === "string" &&
+    (CONTACT_KINDS as readonly string[]).includes(value)
+  );
+}
+
+/** The closed Change-union's five kinds, in table order. */
+export const CHANGE_KINDS = [
+  "read-head",
+  "mint-pointer",
+  "write-text",
+  "open-os",
+  "ask",
+] as const;
+
+/** A Change kind. */
+export type ChangeKind = (typeof CHANGE_KINDS)[number];
+
+/** Is a value one of the five Change kinds? */
+export function isChangeKind(value: unknown): value is ChangeKind {
+  return (
+    typeof value === "string" &&
+    (CHANGE_KINDS as readonly string[]).includes(value)
+  );
+}
+
+/** read-head's outcomes (typed; escaped is the boundary layer's refusal). */
+export const READ_HEAD_OUTCOMES = [
+  "read",
+  "not-text",
+  "cannot-reach",
+  "escaped",
+] as const;
+export type ReadHeadOutcome = (typeof READ_HEAD_OUTCOMES)[number];
+
+/** The head's decode status, said rather than hidden (ADR-0029 rule 5). */
+export const DECODE_STATUSES = ["clean", "with-replacement"] as const;
+export type { DecodeStatus };
+
+/** mint-pointer's outcomes. */
+export const MINT_POINTER_OUTCOMES = ["minted", "failed"] as const;
+export type MintPointerOutcome = (typeof MINT_POINTER_OUTCOMES)[number];
+
+/** write-text's outcomes. */
+export const WRITE_TEXT_OUTCOMES = ["written", "failed"] as const;
+export type WriteTextOutcome = (typeof WRITE_TEXT_OUTCOMES)[number];
+
+/** open-os's outcomes (the handoff, never a claim to have opened anything). */
+export const OPEN_OS_OUTCOMES = [
+  "handed",
+  "handoff-failed",
+  "refused",
+] as const;
+export type OpenOsOutcome = (typeof OPEN_OS_OUTCOMES)[number];
+
+/** ask's outcomes. */
+export const ASK_OUTCOMES = ["answered", "no-response"] as const;
+export type AskOutcome = (typeof ASK_OUTCOMES)[number];
+
+/**
+ * Every Change kind's outcomes, as DATA — the parser's closed-list check and
+ * the contact table's shape read this one table.
+ */
+export const CHANGE_OUTCOMES: Readonly<Record<ChangeKind, readonly string[]>> =
+  {
+    "read-head": READ_HEAD_OUTCOMES,
+    "mint-pointer": MINT_POINTER_OUTCOMES,
+    "write-text": WRITE_TEXT_OUTCOMES,
+    "open-os": OPEN_OS_OUTCOMES,
+    ask: ASK_OUTCOMES,
+  };
+
+/** The bounds a head read asked for, as exact declared values. */
+export interface HeadBounds {
+  /** The line cap asked for (HEAD_MAX_LINES in the app). */
+  maxLines: number;
+  /** The byte cap asked for (HEAD_MAX_BYTES in the app). */
+  maxBytes: number;
+}
+
+/** Look / Measure's Change: one bounded head read, bounds and decode said. */
+export interface ReadHeadChange {
+  kind: "read-head";
+  /** The pointer's natural key (on + form + value) — POINTER IDENTITY. */
+  pointer: string;
+  outcome: ReadHeadOutcome;
+  /** The exact bounds the app asked for, whatever the outcome. */
+  bounds: HeadBounds;
+  /** What the decoder did; null when no text was decoded (a refusal). */
+  decode: DecodeStatus | null;
+}
+
+/** Make's first Change: the artifact's pointer is minted in the same Move. */
+export interface MintPointerChange {
+  kind: "mint-pointer";
+  /** The minted pointer's natural key — the artifact's new reach. */
+  target: string;
+  outcome: MintPointerOutcome;
+}
+
+/** Make's second Change: the authored text goes through the raw writer. */
+export interface WriteTextChange {
+  kind: "write-text";
+  /** The pointer's natural key the text was written to. */
+  pointer: string;
+  outcome: WriteTextOutcome;
+  /** The authored text's byte size (a declared fact, never derived). */
+  size: number;
+}
+
+/** Look's URL Change (and any egress): the OS was handed an address. */
+export interface OpenOsChange {
+  kind: "open-os";
+  /** The pointer's natural key whose value left the machine. */
+  pointer: string;
+  outcome: OpenOsOutcome;
+}
+
+/** Ask's Change: one question out, one response in as content (never here). */
+export interface AskChange {
+  kind: "ask";
+  /** The pointer the question rides (its natural key), or null for none. */
+  pointer: string | null;
+  outcome: AskOutcome;
+  /** The inclusion set: pointer natural keys that rode, or null for none. */
+  included: string[] | null;
+  /** The response's byte size when one came back, else null. */
+  responseSize: number | null;
+  /** The response's decode status when one came back, else null. */
+  decode: DecodeStatus | null;
+}
+
+/** One entry in a Move's Change log (the closed union). */
+export type Change =
+  | ReadHeadChange
+  | MintPointerChange
+  | WriteTextChange
+  | OpenOsChange
+  | AskChange;
+
+/** The pointer a PRISM rode, as its authored form and verbatim value. */
+export interface PrismPointer {
+  form: PointerForm;
+  value: string;
+}
+
+/** One PRISM line: one contact Move, appended and never merged. */
+export interface Prism {
+  /** The app-minted id (the ghost envelope's precedent; PROVISIONAL prefix). */
+  id: string;
+  /** The anchor: the reference slug the Move is anchored on. */
+  on: string;
+  /** The contact kind (the Move's verb). */
+  contact: ContactKind;
+  /** The pointer line the Move rode; null for a pointer-less Ask. */
+  pointer: PrismPointer | null;
+  /** The Move's Change log, in the order the Move made it (never empty). */
+  changes: Change[];
+  /** The person's explanation, verbatim; empty when they wrote none. */
+  explanation: string;
+  /** Unknown JSON keys preserved across reads and writes (the family posture). */
+  extra: Record<string, unknown>;
+}
+
+/** The parsed file: every readable line in FILE ORDER, plus the raw unknowns. */
+export interface ParsedPrisms {
+  prisms: Prism[];
+  /** Raw non-empty lines that did not parse — visible unknowns, never dropped. */
+  malformed: string[];
+}
+
+/**
+ * The PRISM's own declared keys (the pointer's form key joins them on a line).
+ * There is no content slot here, by design.
+ */
+export const PRISM_KEYS: readonly string[] = [
+  "changes",
+  "contact",
+  "explanation",
+  "id",
+  "on",
+];
+
+/** The bounds object's declared keys. */
+export const BOUNDS_KEYS: readonly string[] = ["maxBytes", "maxLines"];
+
+/** The declared key set of each Change kind (the union is closed). */
+export const CHANGE_KEYS: Readonly<Record<ChangeKind, readonly string[]>> = {
+  "read-head": ["bounds", "decode", "kind", "outcome", "pointer"],
+  "mint-pointer": ["kind", "outcome", "target"],
+  "write-text": ["kind", "outcome", "pointer", "size"],
+  "open-os": ["kind", "outcome", "pointer"],
+  ask: [
+    "decode",
+    "included",
+    "kind",
+    "outcome",
+    "pointer",
+    "responseSize",
+  ],
+};
+
+/** The key's pointer-less suffix (an Ask may ride no pointer at all). */
+const NO_POINTER = "none";
+
+/** The PRISM file's path. */
+export function prismsPath(workspacePath: string): string {
+  return workspacePath + "/map/prisms.jsonl";
+}
+
+/** Mint an app-side id: the prefix plus a random UUID (PROVISIONAL). */
+export function mintPrismId(): string {
+  return `prism-${crypto.randomUUID()}`;
+}
+
+/**
+ * The record's natural key: anchor + contact + the POINTER'S NATURAL KEY
+ * (on + form + value). A pointer-less Ask names the anchor and the contact.
+ * The key identifies WHAT the line is about; it never dedupes (append-only).
+ * It is computed, never stored as a field (the line's fields are the citation).
+ */
+export function prismKeyOf(
+  on: string,
+  contact: ContactKind,
+  pointer: PrismPointer | null,
+): string {
+  return pointer === null
+    ? `${contact}\u0000${on}\u0000${NO_POINTER}`
+    : `${contact}\u0000${pointerKey(on, pointer.form, pointer.value)}`;
+}
+
+/** The record's natural key. */
+export function prismKey(prism: Prism): string {
+  return prismKeyOf(prism.on, prism.contact, prism.pointer);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value !== "";
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function hasExactKeys(
+  object: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const present = Object.keys(object);
+  return (
+    present.length === keys.length && keys.every((key) => key in object)
+  );
+}
+
+function isIn<const T extends string>(
+  values: readonly T[],
+  value: unknown,
+): value is T {
+  return (
+    typeof value === "string" && (values as readonly string[]).includes(value)
+  );
+}
+
+/** Parse one Change; an out-of-shape or unknown-key Change is malformed. */
+export function parsePrismChange(value: unknown): Change | null {
+  if (!isPlainObject(value)) return null;
+  const kind = value.kind;
+  if (!isChangeKind(kind)) return null;
+  if (!hasExactKeys(value, CHANGE_KEYS[kind])) return null;
+  switch (kind) {
+    case "read-head": {
+      if (!isNonEmptyString(value.pointer)) return null;
+      if (!isIn(READ_HEAD_OUTCOMES, value.outcome)) return null;
+      const bounds = value.bounds;
+      if (!isPlainObject(bounds) || !hasExactKeys(bounds, BOUNDS_KEYS)) {
+        return null;
+      }
+      if (!isCount(bounds.maxLines) || !isCount(bounds.maxBytes)) return null;
+      const decode = value.decode;
+      if (decode !== null && !isIn(DECODE_STATUSES, decode)) return null;
+      // The log's honesty: a READ decoded text (clean or replaced); every
+      // refusal decoded nothing — so a decode on a refusal would be a lie.
+      if (value.outcome === "read" ? decode === null : decode !== null) {
+        return null;
+      }
+      return {
+        kind,
+        pointer: value.pointer,
+        outcome: value.outcome,
+        bounds: { maxLines: bounds.maxLines, maxBytes: bounds.maxBytes },
+        decode: decode as DecodeStatus | null,
+      };
+    }
+    case "mint-pointer": {
+      if (!isNonEmptyString(value.target)) return null;
+      if (!isIn(MINT_POINTER_OUTCOMES, value.outcome)) return null;
+      return { kind, target: value.target, outcome: value.outcome };
+    }
+    case "write-text": {
+      if (!isNonEmptyString(value.pointer)) return null;
+      if (!isIn(WRITE_TEXT_OUTCOMES, value.outcome)) return null;
+      if (!isCount(value.size)) return null;
+      return {
+        kind,
+        pointer: value.pointer,
+        outcome: value.outcome,
+        size: value.size,
+      };
+    }
+    case "open-os": {
+      if (!isNonEmptyString(value.pointer)) return null;
+      if (!isIn(OPEN_OS_OUTCOMES, value.outcome)) return null;
+      return { kind, pointer: value.pointer, outcome: value.outcome };
+    }
+    case "ask": {
+      const pointer = value.pointer;
+      if (pointer !== null && !isNonEmptyString(pointer)) return null;
+      if (!isIn(ASK_OUTCOMES, value.outcome)) return null;
+      let included: string[] | null = null;
+      if (value.included !== null) {
+        if (!Array.isArray(value.included)) return null;
+        const keys: string[] = [];
+        for (const entry of value.included) {
+          if (!isNonEmptyString(entry)) return null;
+          keys.push(entry);
+        }
+        included = keys;
+      }
+      const responseSize = value.responseSize;
+      if (responseSize !== null && !isCount(responseSize)) return null;
+      const decode = value.decode;
+      if (decode !== null && !isIn(DECODE_STATUSES, decode)) return null;
+      // An answered Ask carries its response's declared size and decode; an
+      // unanswered one carries neither (never a zero that looks like content).
+      const answered = value.outcome === "answered";
+      if (
+        answered
+          ? responseSize === null || decode === null
+          : responseSize !== null || decode !== null
+      ) {
+        return null;
+      }
+      return {
+        kind,
+        pointer,
+        outcome: value.outcome,
+        included,
+        responseSize,
+        decode,
+      };
+    }
+  }
+}
+
+/**
+ * Parse one JSONL line into a PRISM; malformed or out-of-shape lines become
+ * `null`. A line must carry a non-empty `id`, a non-empty anchor `on`, one
+ * of the four contact kinds, at most one pointer form (with a non-empty
+ * value), a non-empty Change log of valid Changes and an `explanation` string
+ * when the key is present. A line with TWO form keys is malformed — the form
+ * is the authored key, never guessed at.
+ */
+export function parsePrismLine(line: string): Prism | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(value)) return null;
+
+  if (!isNonEmptyString(value.id)) return null;
+  if (!isNonEmptyString(value.on)) return null;
+  if (!isContactKind(value.contact)) return null;
+
+  const forms = POINTER_FORMS.filter((form) => form in value);
+  if (forms.length > 1) return null;
+  let pointer: PrismPointer | null = null;
+  if (forms.length === 1) {
+    const form = forms[0];
+    const target = value[form];
+    if (!isNonEmptyString(target)) return null;
+    pointer = { form, value: target };
+  }
+
+  const changes = value.changes;
+  if (!Array.isArray(changes) || changes.length === 0) return null;
+  const parsedChanges: Change[] = [];
+  for (const entry of changes) {
+    const change = parsePrismChange(entry);
+    if (change === null) return null;
+    parsedChanges.push(change);
+  }
+
+  let explanation = "";
+  if ("explanation" in value) {
+    if (typeof value.explanation !== "string") return null;
+    explanation = value.explanation;
+  }
+
+  const extra: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    if (PRISM_KEYS.includes(key)) continue;
+    if (POINTER_FORMS.some((form) => form === key)) continue;
+    extra[key] = value[key];
+  }
+
+  return {
+    id: value.id,
+    on: value.on,
+    contact: value.contact,
+    pointer,
+    changes: parsedChanges,
+    explanation,
+    extra,
+  };
+}
+
+/** Serialize one Change to its plain JSON fields (canonicalization is the line's). */
+function changeFields(change: Change): Record<string, unknown> {
+  switch (change.kind) {
+    case "read-head":
+      return {
+        kind: change.kind,
+        pointer: change.pointer,
+        outcome: change.outcome,
+        bounds: {
+          maxLines: change.bounds.maxLines,
+          maxBytes: change.bounds.maxBytes,
+        },
+        decode: change.decode,
+      };
+    case "mint-pointer":
+      return {
+        kind: change.kind,
+        target: change.target,
+        outcome: change.outcome,
+      };
+    case "write-text":
+      return {
+        kind: change.kind,
+        pointer: change.pointer,
+        outcome: change.outcome,
+        size: change.size,
+      };
+    case "open-os":
+      return {
+        kind: change.kind,
+        pointer: change.pointer,
+        outcome: change.outcome,
+      };
+    case "ask":
+      return {
+        kind: change.kind,
+        pointer: change.pointer,
+        outcome: change.outcome,
+        included: change.included === null ? null : [...change.included],
+        responseSize: change.responseSize,
+        decode: change.decode,
+      };
+  }
+}
+
+/** Serialize one PRISM to its canonical JSONL line (compact, sorted keys). */
+export function serializePrismLine(prism: Prism): string {
+  const fields: Record<string, unknown> = {
+    ...prism.extra,
+    changes: prism.changes.map(changeFields),
+    contact: prism.contact,
+    explanation: prism.explanation,
+    id: prism.id,
+    on: prism.on,
+  };
+  if (prism.pointer !== null) {
+    fields[prism.pointer.form] = prism.pointer.value;
+  }
+  return canonicalJsonlLine(fields);
+}
+
+/**
+ * Read `map/prisms.jsonl`. Terminating newlines are ignored; malformed or
+ * out-of-shape lines are preserved as unknowns (ADR-0005's posture) so the app
+ * never silently drops what it cannot read. Tolerates a BOM and CRLF. Lines
+ * are kept in file order and multiplicity: repeated keys are the family's
+ * truth (append-only), never deduped.
+ */
+export function parsePrisms(text: string): ParsedPrisms {
+  const prisms: Prism[] = [];
+  const malformed: string[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/^\uFEFF/, "");
+    if (line === "") continue;
+    const parsed = parsePrismLine(line);
+    if (parsed) {
+      prisms.push(parsed);
+    } else {
+      malformed.push(line);
+    }
+  }
+  return { prisms, malformed };
+}
+
+export async function loadPrisms(workspacePath: string): Promise<ParsedPrisms> {
+  const text = await readTextFile(prismsPath(workspacePath));
+  return text === null ? { prisms: [], malformed: [] } : parsePrisms(text);
+}
+
+/**
+ * The prisms file's exact bytes. Every record serializes canonically (sorted
+ * keys), in FILE ORDER and preserving multiplicity — never merged, never
+ * reordered, never deduped — and malformed lines are re-emitted verbatim. An
+ * empty document is the canonical empty JSONL (one newline).
+ */
+export function serializePrisms(
+  prisms: readonly Prism[],
+  malformed: readonly string[] = [],
+): string {
+  return canonicalJsonlLines([
+    ...prisms.map(serializePrismLine),
+    ...malformed,
+  ]);
+}
+
+/**
+ * The whole-file writer, for the family's posture (a hand file's malformed
+ * lines) and for tests. A MOVE never rewrites the log: it goes through
+ * `appendPrismLine`, so no earlier line's bytes can change.
+ */
+export async function savePrisms(
+  workspacePath: string,
+  prisms: readonly Prism[],
+  malformed: readonly string[] = [],
+): Promise<void> {
+  await writeTextFile(
+    prismsPath(workspacePath),
+    serializePrisms(prisms, malformed),
+  );
+}
+
+/**
+ * The append-only door: the file's existing bytes are kept EXACTLY (a hand
+ * edit, a CRLF, a BOM and every earlier line survive), and one canonical line
+ * is added. Nothing is rewritten, so the log can never become a merged tally.
+ */
+export function appendPrismLine(before: string | null, prism: Prism): string {
+  const line = serializePrismLine(prism);
+  const base = before ?? "";
+  if (base === "") return line + "\n";
+  if (base.endsWith("\n")) return base + line + "\n";
+  return base + "\n" + line + "\n";
+}

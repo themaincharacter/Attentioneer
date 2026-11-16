@@ -3,6 +3,7 @@ use std::path::Path;
 
 mod head;
 mod marker;
+mod paths;
 
 /// Thin byte-level fs bridge. What machine files say and how they serialize
 /// is owned by the frontend's `serialize.ts` (ADR-0004); this side only
@@ -89,8 +90,24 @@ fn remove_dir_all(path: String) -> Result<(), String> {
 /// not enforcement (app commands are not capability-gated). Read-only by
 /// construction: there is no writer on this path.
 #[tauri::command]
-fn read_text_head(path: String, max_lines: usize, max_bytes: usize) -> Result<head::TextHead, String> {
+fn read_text_head(
+    path: String,
+    max_lines: usize,
+    max_bytes: usize,
+) -> Result<head::TextHead, head::HeadRefusal> {
     head::read(&path, max_lines, max_bytes)
+}
+
+/// The boundary layer's one realpath primitive (Epic 12 story 1, ADR-0029):
+/// canonicalize a path AS FAR AS IT EXISTS — symlinks and `..` followed, a
+/// missing tail kept from its deepest existing ancestor. The command refuses
+/// nothing on scope grounds and knows no root: the pure resolver
+/// (`contacts/boundary.ts`) compares the answer with the workspace root and
+/// refuses the escape. The one-layer honesty is ADR-0029's; the
+/// implementation and its tests live in `paths.rs`.
+#[tauri::command]
+fn canonicalize_path(path: String) -> Result<String, paths::PathRefusal> {
+    paths::canonicalize(&path)
 }
 
 /// Create the ghost inbox's in-flight marker EXCLUSIVELY (Epic 10 story 1,
@@ -125,6 +142,7 @@ pub fn run() {
             remove_file,
             remove_dir_all,
             read_text_head,
+            canonicalize_path,
             create_marker_exclusive,
             config_path
         ])

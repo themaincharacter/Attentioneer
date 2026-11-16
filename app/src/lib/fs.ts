@@ -5,6 +5,29 @@ import { invoke } from "@tauri-apps/api/core";
  * `serialize.ts`; this module only moves bytes and asks about paths.
  */
 
+/**
+ * The head read's decode status (Epic 12 story 1): the bridge now SAYS when the
+ * lossy decoder replaced bytes rather than hiding it (ADR-0029 rule 5). The
+ * PRISM logs this value; the peek's transient shows it to the person.
+ */
+export type DecodeStatus = "clean" | "with-replacement";
+
+/**
+ * The typed refusal codes a head read answers with (Epic 12 story 1,
+ * ADR-0029): `not-text` (a NUL byte — binary refuses), `cannot-reach` (not a
+ * regular file, or a path that does not resolve), `io` (the filesystem's own
+ * error) and `escaped` (the boundary layer's refusal, in the same vocabulary —
+ * the read below is unscoped; the contact layer's resolver refuses first).
+ */
+export type HeadRefusalCode = "not-text" | "cannot-reach" | "escaped" | "io";
+
+/** One typed head refusal. It never carries the path (the caller cites). */
+export interface HeadRefusal {
+  code: HeadRefusalCode;
+  /** The OS's own words when there are any; never the path. */
+  detail: string | null;
+}
+
 /** One bounded glimpse from `read_text_head` (Epic 5 story 2). */
 export interface TextHead {
   /** The readable prefix: bounded by lines AND bytes, cut on a char boundary. */
@@ -17,6 +40,8 @@ export interface TextHead {
   size: number | null;
   /** Last modification, milliseconds since the Unix epoch, when known. */
   mtime: number | null;
+  /** Whether the decoder was clean, or had to replace invalid bytes. */
+  decode: DecodeStatus;
 }
 
 export async function readTextFile(path: string): Promise<string | null> {
@@ -26,8 +51,9 @@ export async function readTextFile(path: string): Promise<string | null> {
 /**
  * Read a bounded head of a regular text file (Epic 5 story 2). Read-only by
  * construction: the Rust command has no writer. A missing path comes back with
- * `exists: false`; every refusal (directory, FIFO, special, binary) rejects
- * with a clean message the window answers "cannot read".
+ * `exists: false`; every refusal rejects with a TYPED code the window answers
+ * "cannot read" (Epic 12 story 1 replaced the free strings: a refusal is data,
+ * and it never embeds the path — the caller holds the citation).
  */
 export async function readTextHead(
   path: string,
@@ -73,6 +99,19 @@ export async function removeFile(path: string): Promise<void> {
  */
 export async function removeDirAll(path: string): Promise<void> {
   await invoke("remove_dir_all", { path });
+}
+
+/**
+ * Canonicalize a path AS FAR AS IT EXISTS (Epic 12 story 1, ADR-0029): the
+ * boundary layer's one realpath primitive. The Rust command follows symlinks
+ * and `..`; a missing target keeps its missing tail, canonicalized from the
+ * deepest existing ancestor — so a not-yet-created artifact still resolves.
+ * This bridge does NOT scope: the pure resolver
+ * (`contacts/boundary.ts`) compares the answer with the workspace root and
+ * refuses the escape. The one-layer honesty is ADR-0029's.
+ */
+export async function canonicalizePath(path: string): Promise<string> {
+  return await invoke<string>("canonicalize_path", { path });
 }
 
 /**
