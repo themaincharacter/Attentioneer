@@ -77,6 +77,11 @@ import {
 } from "./canvas/outwardRules";
 import { OutwardWindow } from "./canvas/OutwardWindow";
 import { PlaneMenu } from "./canvas/PlaneMenu";
+import { PrismWindow } from "./canvas/PrismWindow";
+import { CANNOT_READ_LOG, NOT_LOGGED } from "./canvas/prismRules";
+import { readLatestPrism, runReadMove, savePrismExplanation } from "./contacts/prismLog";
+import type { ReadContactKind } from "./contacts/read";
+import type { Prism } from "./map/prisms";
 import {
   chooserFocusSelector,
   focusAfterChooserClose,
@@ -515,6 +520,19 @@ function App() {
   } | null>(null);
   // The word the window belongs to, kept for the focus return after it closes.
   const peekSlugRef = useRef<string | null>(null);
+  // The open PRISM window (Epic 12 story 2, ADR-0029 rule 6): the ONE Move it
+  // shows (or null for a reach with no Move yet), the word it hangs beside and
+  // the world point. ONE at a time; a completed read Move opens it, and the
+  // pointer's quiet log button reopens the reach's latest PRISM. It is
+  // rendered here so it never grows a word's box or shifts a wire's anchor.
+  const [prismAt, setPrismAt] = useState<{
+    on: string;
+    anchor: Point;
+    prism: Prism | null;
+    note: string | null;
+  } | null>(null);
+  // The word the PRISM window belongs to, kept for the focus return.
+  const prismSlugRef = useRef<string | null>(null);
   // The ghost's ask surface (Epic 10 story 3): the one panel where the person
   // asks for a packet or hands a model's reply back. It sits outside `.plane`
   // like the control's other actions; closed by Esc, its ×, or a level switch
@@ -573,6 +591,16 @@ function App() {
   }, []);
 
   /**
+   * Close the PRISM window WITHOUT moving focus — used by the game switch and
+   * by a word rename/removal, where the window's anchor may be moving or gone
+   * and focusing a dead handle would be a lie (the peek's quiet rule).
+   */
+  const closePrismQuietly = useCallback(() => {
+    prismSlugRef.current = null;
+    setPrismAt(null);
+  }, []);
+
+  /**
    * Open the quiet pointer chooser for one word (ground, story 1). Opening it
    * arms the interaction-mode gate (the `pointer` mode), so word presses, pan
    * and creation stand still while it is the only live surface.
@@ -586,10 +614,11 @@ function App() {
       setMenuAt(null);
       setGrowAt(null);
       closePeekQuietly();
+      closePrismQuietly();
       pointerSlugRef.current = on;
       setPointerAt({ on, anchor });
     },
-    [closePeekQuietly],
+    [closePeekQuietly, closePrismQuietly],
   );
 
   /**
@@ -775,11 +804,12 @@ function App() {
       setMenuAt(null);
       setGrowAt(null);
       setAssumptionAt(null);
+      closePrismQuietly();
       peekSlugRef.current = pointer.on;
       setPeekAt({ on: pointer.on, pointer, anchor });
       closePointersQuietly();
     },
-    [pointerAt, closePointersQuietly],
+    [pointerAt, closePointersQuietly, closePrismQuietly],
   );
 
   /**
@@ -807,6 +837,125 @@ function App() {
     peekSlugRef.current = null;
     setPeekAt(null);
   }, []);
+
+  /**
+   * Close the PRISM window and return focus to its word's reach handle (the
+   * window is its word's), reusing the peek's focus contract: a level SWITCH
+   * never focuses a word — the switch puts focus on the level control.
+   */
+  const closePrism = useCallback((reason: PeekCloseReason = "dismiss") => {
+    const slug = prismSlugRef.current;
+    prismSlugRef.current = null;
+    setPrismAt(null);
+    const selector = peekFocusSelector(focusAfterPeekClose(reason), slug);
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(selector)?.focus();
+    });
+  }, []);
+
+  /** Close the PRISM window if it speaks about this word (the peek's mirror). */
+  const closePrismFor = useCallback((on: string) => {
+    if (prismSlugRef.current !== on) return;
+    prismSlugRef.current = null;
+    setPrismAt(null);
+  }, []);
+
+  /**
+   * Perform one Look/Measure Move from a pointer row (Epic 12 story 2): the
+   * read path appends exactly ONE PRISM through the boundary layer, and the
+   * Move's window opens AT ITS COMPLETION. The chooser and the glimpse close
+   * (one live surface). A contact-table refusal is not a Move (nothing was
+   * read or written) and shows its own quiet sentence; a failed append says so
+   * rather than claiming a log that is not there.
+   */
+  const readFromPointer = useCallback(
+    async (contact: ReadContactKind, pointer: Pointer) => {
+      const at = pointerAt;
+      if (at === null || workspace === null) return;
+      closePointersQuietly();
+      closePeekQuietly();
+      setPrismAt(null);
+      prismSlugRef.current = at.on;
+      try {
+        const result = await runReadMove({
+          on: at.on,
+          contact,
+          form: pointer.form,
+          value: pointer.value,
+          workspacePath: workspace.path,
+        });
+        setPrismAt(
+          result.kind === "moved"
+            ? {
+                on: at.on,
+                anchor: at.anchor,
+                prism: result.prism,
+                note: null,
+              }
+            : {
+                on: at.on,
+                anchor: at.anchor,
+                prism: null,
+                note: result.reason,
+              },
+        );
+      } catch {
+        setPrismAt({
+          on: at.on,
+          anchor: at.anchor,
+          prism: null,
+          note: NOT_LOGGED,
+        });
+      }
+    },
+    [pointerAt, workspace, closePointersQuietly, closePeekQuietly],
+  );
+
+  /**
+   * The reopen affordance (PROVISIONAL): the pointer row's quiet log button
+   * reads the reach's LATEST PRISM fresh from disk and opens the ONE Move's
+   * window on it. No gallery, no list, no counter: the record layer answers one
+   * Prism or null (the window says "no move on this reach yet" for null).
+   */
+  const reopenPrism = useCallback(
+    async (pointer: Pointer) => {
+      const at = pointerAt;
+      if (at === null || workspace === null) return;
+      closePointersQuietly();
+      closePeekQuietly();
+      setPrismAt(null);
+      prismSlugRef.current = at.on;
+      try {
+        const prism = await readLatestPrism(workspace.path, at.on, {
+          form: pointer.form,
+          value: pointer.value,
+        });
+        setPrismAt({
+          on: at.on,
+          anchor: at.anchor,
+          prism,
+          note: null,
+        });
+      } catch {
+        setPrismAt({
+          on: at.on,
+          anchor: at.anchor,
+          prism: null,
+          note: CANNOT_READ_LOG,
+        });
+      }
+    },
+    [pointerAt, workspace, closePointersQuietly, closePeekQuietly],
+  );
+
+  /** Save one Move's explanation (the window's one editable field). */
+  const saveMoveExplanation = useCallback(
+    (id: string, explanation: string) => {
+      if (workspace === null) return Promise.resolve(false);
+      return savePrismExplanation(workspace.path, id, explanation);
+    },
+    [workspace],
+  );
 
   // A window is a snapshot of ONE authored line: if that line is removed (or
   // rewritten by an atomic patch's reload), there is nothing left to speak
@@ -1204,13 +1353,22 @@ function App() {
     setQuantityAt(null);
     closePointersQuietly();
     closePeekQuietly();
+    // The PRISM window is the ground game's transient (Epic 12 story 2): the
+    // switch closes it quietly with every other one, never yanking focus.
+    closePrismQuietly();
     // The ghosts are transients too (Epic 10 story 3): the opened preview and
     // the ask surface close with the switch, quietly — a held proposal is app
     // state and stays in its rows (it is the dynamics game's own move).
     closeGhosts();
     setGhostPanelOpen(false);
     cancelConnect();
-  }, [cancelConnect, closePointersQuietly, closePeekQuietly, closeGhosts]);
+  }, [
+    cancelConnect,
+    closePointersQuietly,
+    closePeekQuietly,
+    closePrismQuietly,
+    closeGhosts,
+  ]);
 
   /**
    * Open one held ghost — the person's opening, and the ONLY door to the
@@ -2406,6 +2564,7 @@ function App() {
               closeQuantity();
               closePointersQuietly();
               if (candidate.slug !== null) closePeekFor(candidate.slug);
+              if (candidate.slug !== null) closePrismFor(candidate.slug);
               rename(candidate, newName);
             }}
             onRemove={(candidate) => {
@@ -2417,6 +2576,7 @@ function App() {
               closeQuantity();
               closePointersQuietly();
               if (candidate.slug !== null) closePeekFor(candidate.slug);
+              if (candidate.slug !== null) closePrismFor(candidate.slug);
               remove(candidate);
             }}
             onConnectFrom={beginConnectLive}
@@ -2784,6 +2944,9 @@ function App() {
             onRemove={(pointer) => removePointer(pointer)}
             onToggleMark={(pointer) => togglePointerMark(pointer)}
             onOpen={(pointer) => openPeek(pointer)}
+            onLook={(pointer) => void readFromPointer("look", pointer)}
+            onMeasure={(pointer) => void readFromPointer("measure", pointer)}
+            onLog={(pointer) => void reopenPrism(pointer)}
             onClose={() => closePointers("dismiss")}
           />
         )}
@@ -2802,6 +2965,29 @@ function App() {
             pointer={peekAt.pointer}
             workspacePath={workspace.path}
             onClose={() => closePeek("dismiss")}
+          />
+        )}
+
+        {/* the ground game's PRISM window (Epic 12 story 2, ADR-0029 rule
+            6: record != visible): ONE completed Move's window, opened when the
+            Move completes and reopened from the pointer row's quiet log
+            button. It shows the log (the contact kind, the pointer identity,
+            the read-only Change rows with their exact bounds/decode/declared
+            facts) and the person's explanation in the one quiet field; NO
+            world bytes ever ride here (the glimpse is their own window). One
+            Move only — the prop is one Prism or null, never a list. It is the
+            outward window's sibling: world-anchored, counter-scaled,
+            viewport-clamped; Esc / × / click-away / a level switch close it. */}
+        {level === "ground" && prismAt && (
+          <PrismWindow
+            anchor={prismAt.anchor}
+            name={nameOf(prismAt.on)}
+            prism={prismAt.prism}
+            note={prismAt.note}
+            onSaveExplanation={(id, explanation) =>
+              saveMoveExplanation(id, explanation)
+            }
+            onClose={() => closePrism("dismiss")}
           />
         )}
 

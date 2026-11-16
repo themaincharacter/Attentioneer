@@ -2842,6 +2842,221 @@ body {
 }
 
 
+
+/* Epic 12 story 2 — the PRISM window (the ONE Move's window) and the pointer
+   row's read contacts. Provisional: the card's look (ADR-0003's seam); the
+   explanation saves on blur and on close. The log is read-only; the one field
+   is the person's own words. */
+.pointer-contact,
+.pointer-look,
+.pointer-measure,
+.pointer-log {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 9.5px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  color: #8d887c;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 1px 4px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition:
+    opacity 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.pointer-row:hover .pointer-contact,
+.pointer-contact:focus-visible {
+  opacity: 0.9;
+}
+
+.pointer-contact:hover,
+.pointer-contact:focus,
+.pointer-contact:focus-visible {
+  opacity: 1;
+  color: #1e2126;
+  border-color: #ddd7cc;
+  outline: none;
+}
+
+.prism-window {
+  position: absolute;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 210px;
+  max-width: 360px;
+  max-height: 420px;
+  padding: 8px 22px 8px 10px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 9px;
+  box-shadow:
+    0 1px 2px rgba(40, 35, 25, 0.05),
+    0 6px 20px rgba(40, 35, 25, 0.12);
+  overflow: hidden;
+  user-select: none;
+}
+
+.prism-window:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 2px;
+}
+
+@supports ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .prism-window {
+    background: rgba(255, 253, 248, 0.84);
+    -webkit-backdrop-filter: blur(8px) saturate(1.05);
+    backdrop-filter: blur(8px) saturate(1.05);
+  }
+}
+
+.prism-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.prism-contact {
+  font-size: 9.5px;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.prism-name {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #1e2126;
+}
+
+/* The pointer identity as authored and selectable (copy-able, never parsed). */
+.prism-pointer {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #4c4a44;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* The Move's Change log: read-only lines in the order they were made. It can
+   scroll when a hand log is long (the log may never be silently clipped). */
+.prism-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(141, 136, 124, 0.16);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.prism-change {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.prism-change-kind {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #4c4a44;
+}
+
+.prism-change-outcome {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #8d887c;
+  font-style: italic;
+}
+
+.prism-detail {
+  flex-basis: 100%;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #8d887c;
+}
+
+/* The person's own words: the window's ONLY editable surface. */
+.prism-explanation {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 2px;
+  padding: 4px 5px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.05);
+  border: 1px solid rgba(141, 136, 124, 0.2);
+  border-radius: 6px;
+  outline: none;
+  resize: none;
+  user-select: text;
+}
+
+.prism-explanation:focus {
+  border-color: #b5ad9e;
+  background: rgba(141, 136, 124, 0.08);
+}
+
+.prism-explanation::placeholder {
+  color: #c4beb1;
+}
+
+.prism-note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #8d887c;
+  font-style: italic;
+}
+
+/* The window's own quiet close (Esc and a press outside do the same). */
+.prism-close {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.prism-window:hover .prism-close,
+.prism-close:focus-visible {
+  opacity: 0.8;
+}
+
+.prism-close:hover {
+  opacity: 1;
+  color: #6b675e;
+}
+
+/* While a gesture is armed the armed gesture owns the pointer (ADR-0016): the
+   Move's window stands still exactly as the glimpse does. */
+.plane.gesture-armed .prism-window {
+  pointer-events: none;
+}
+
 /* Epic 6 story 3 — the follow (ADR-0019 decision 2).
    Provisional: the glyph, the row slot and the tiny menu's look (ADR-0003's
    seam). The cross-band vocabulary is movement: one quiet control on every

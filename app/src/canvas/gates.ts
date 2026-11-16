@@ -49,6 +49,15 @@
  * the glimpse can never pan the plane, create anything or start a word gesture;
  * a press outside it is the click-away that closes it.
  *
+ * Epic 12 story 2 adds the pointer row's read contacts (look, measure) and its
+ * log button, and the PRISM window they open: the ONE Move's window (its
+ * header, pointer identity, read-only Change rows, the person's explanation
+ * field and its close x). Every one of them is content and joins both lists,
+ * exactly like the glimpse: a press on the log or on the Move's window can
+ * never pan the plane, create anything or start a word gesture. The window is
+ * the outward window's sibling — a transient of the ground game, closed by the
+ * same level-switch path.
+ *
  * Epic 6 story 3 adds the per-word follow (ADR-0019): ONE quiet control on
  * every word's row that jumps the band keeping the word under the eye. It is
  * a word-row affordance like the memory dot or the reach handle, so it and its
@@ -199,6 +208,27 @@ export const CONTENT_CLASSES = [
   "outward-open",
   "outward-reveal",
   "outward-close",
+  // Epic 12 story 2: the pointer row's read contacts (look, measure) and its
+  // log button, plus the PRISM window they open: the ONE Move's header, its
+  // read-only Change rows, the person's explanation field and its close x.
+  // Every one of them is content, never a plane gesture; the window never
+  // grows a word's box.
+  "pointer-look",
+  "pointer-measure",
+  "pointer-log",
+  "prism-window",
+  "prism-header",
+  "prism-contact",
+  "prism-name",
+  "prism-pointer",
+  "prism-changes",
+  "prism-change",
+  "prism-change-kind",
+  "prism-change-outcome",
+  "prism-detail",
+  "prism-explanation",
+  "prism-note",
+  "prism-close",
   // Epic 6 story 3: the per-word follow control and the tiny menu of the two
   // other games it opens. A press on any of them is content, never a plane
   // gesture.
@@ -342,6 +372,25 @@ export const WORD_CONTROL_CLASSES = [
   "outward-open",
   "outward-reveal",
   "outward-close",
+  // Epic 12 story 2: the row's read contacts and log, and the PRISM window's
+  // header rows, read-only Change lines, explanation field and close x own
+  // their presses (plain buttons and text, never a word gesture).
+  "pointer-look",
+  "pointer-measure",
+  "pointer-log",
+  "prism-window",
+  "prism-header",
+  "prism-contact",
+  "prism-name",
+  "prism-pointer",
+  "prism-changes",
+  "prism-change",
+  "prism-change-kind",
+  "prism-change-outcome",
+  "prism-detail",
+  "prism-explanation",
+  "prism-note",
+  "prism-close",
   // Epic 6 story 3: the follow control is a word-row affordance (beside the
   // memory dot, the diamond, the reach handle and the connect handle), so it
   // must never start a word drag or a click-to-center; its menu's game choices

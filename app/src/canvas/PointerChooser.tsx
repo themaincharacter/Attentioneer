@@ -35,6 +35,12 @@ interface PointerChooserProps {
   onToggleMark: (pointer: Pointer) => void;
   /** Open this line's window (one at a time; story 2's outward look). */
   onOpen: (pointer: Pointer) => void;
+  /** Look at this reach: one read contact Move (Epic 12 story 2). */
+  onLook: (pointer: Pointer) => void;
+  /** Measure this reach: the head's declared facts (Epic 12 story 2). */
+  onMeasure: (pointer: Pointer) => void;
+  /** Reopen this reach's latest PRISM (Epic 12 story 2, PROVISIONAL). */
+  onLog: (pointer: Pointer) => void;
   /** Esc, a press outside, or the card's own ×: nothing more is written. */
   onClose: () => void;
 }
@@ -48,6 +54,13 @@ interface PointerChooserProps {
  * 2: the pointer's window — a read-only glimpse of the open moment) and a
  * remove × (ammo). The open action goes through the app's IPC/JS opener, never
  * a webview link and never a Rust-side bypass.
+ *
+ * Epic 12 story 2 grows the row with the read contacts: LOOK and MEASURE each
+ * perform one contact Move through the boundary layer and open the Move's
+ * PRISM window when it completes, and a quiet LOG button reopens the reach's
+ * latest PRISM (the tail of an append-only log, never a list). A url row offers
+ * no head read — its Look is the egress story's open-os — so it carries no
+ * look/measure buttons; the glimpse and the log stay.
  *
  * Under the rows sits the "add a pointer" entry. Its FORM PICK STARTS
  * UNPICKED — no pick, no write (World B: the person picks the form, the app
@@ -64,7 +77,8 @@ interface PointerChooserProps {
  * act on the wrong line.
  *
  * Provisional: the card's size, layout, anchoring and wording (ADR-0003's
- * seam); the glyphs (the reach handle's ring cue, the form picks).
+ * seam); the glyphs (the reach handle's ring cue, the form picks); the
+ * look/measure/log buttons' words and their placement in the row.
  */
 export function PointerChooser({
   anchor,
@@ -76,6 +90,9 @@ export function PointerChooser({
   onRemove,
   onToggleMark,
   onOpen,
+  onLook,
+  onMeasure,
+  onLog,
   onClose,
 }: PointerChooserProps) {
   const { camera } = usePlane();
@@ -259,6 +276,49 @@ export function PointerChooser({
                 {pointer.value}
               </button>
             )}
+            {pointer.form !== "url" && (
+              <>
+                <button
+                  type="button"
+                  className="pointer-contact pointer-look"
+                  aria-label="look at this reach"
+                  title="look — read a head and log the move"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (editing === pointer) cancelEdit();
+                    onLook(pointer);
+                  }}
+                >
+                  look
+                </button>
+                <button
+                  type="button"
+                  className="pointer-contact pointer-measure"
+                  aria-label="measure this reach"
+                  title="measure — the head's declared facts"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (editing === pointer) cancelEdit();
+                    onMeasure(pointer);
+                  }}
+                >
+                  measure
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              className="pointer-contact pointer-log"
+              aria-label="show this reach's log"
+              title="log — this reach's latest PRISM"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (editing === pointer) cancelEdit();
+                onLog(pointer);
+              }}
+            >
+              log
+            </button>
             <button
               type="button"
               className="pointer-open"

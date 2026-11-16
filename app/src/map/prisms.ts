@@ -34,7 +34,9 @@ import { POINTER_FORMS, pointerKey, type PointerForm } from "./pointers";
  * THE CLOSED CHANGE-UNION, every kind carrying an OUTCOME (ADR-0028's
  * Bounded-movements amendment):
  *   - `read-head`    {pointer, outcome (read / not-text / cannot-reach /
- *                      escaped), bounds (the exact line/byte values asked),
+ *                      escaped), bounds (the exact line/byte values asked;
+ *                      on a MEASURE also the head's declared size/mtime —
+ *                      story 2's PROVISIONAL placement, never computed),
  *                      decode (clean / with-replacement, or null when nothing
  *                      was decoded)}
  *   - `mint-pointer` {target (the minted pointer's natural key), outcome
@@ -64,7 +66,15 @@ import { POINTER_FORMS, pointerKey, type PointerForm } from "./pointers";
  * THE PERSON'S EXPLANATION is prose, stored VERBATIM and never interpreted,
  * trimmed, searched or compared. It is the field's only author; the app writes
  * the empty string when the person wrote none, so the field is always present
- * and "empty when absent" holds on a hand line too.
+ * and "empty when absent" holds on a hand line too. It is authored at the
+ * Move's window (story 2) and saved by `rewritePrismExplanation`, the one
+ * ID-addressed targeted edit: the CHANGES stay read-only, and every byte but
+ * that one line's explanation is preserved. A Move still appends exactly one
+ * line (`appendPrismLine`); the explanation edit never appends.
+ *
+ * RECORD != VISIBLE (ADR-0029 rule 6): one PRISM is readable at one window;
+ * `latestPrismIn` answers ONE reach's latest PRISM for the reopen affordance
+ * and nothing lists, counts or sums the series.
  *
  * THE FAMILY POSTURE holds: unknown keys on a known line are preserved across
  * a rewrite; malformed lines are preserved verbatim AND surfaced by the read's
@@ -158,12 +168,28 @@ export const CHANGE_OUTCOMES: Readonly<Record<ChangeKind, readonly string[]>> =
     ask: ASK_OUTCOMES,
   };
 
-/** The bounds a head read asked for, as exact declared values. */
+/**
+ * The bounds a head read asked for, as exact declared values — plus, on a
+ * MEASURE, the head's DECLARED facts (Epic 12 story 2, PROVISIONAL placement).
+ *
+ * A Look logs the caps only: the truncation bound is part of the log (a silent
+ * truncation would be a silent transformation). A Measure is the SAME
+ * read-head Change (the contact kind lives on the PRISM header): it asks the
+ * same bounds and the head's declared facts — the file's size and last
+ * modification as the filesystem declared them — ride the bounds object. They
+ * are pasted from the head read, never computed, counted, summed or rounded
+ * (ADR-0028's Real-number line; ADR-0029 rule 5), and they are absent on a
+ * Look and on every refusal.
+ */
 export interface HeadBounds {
   /** The line cap asked for (HEAD_MAX_LINES in the app). */
   maxLines: number;
   /** The byte cap asked for (HEAD_MAX_BYTES in the app). */
   maxBytes: number;
+  /** Measure only: the head's declared byte size, verbatim (null when none). */
+  size?: number | null;
+  /** Measure only: the head's declared mtime in ms since the epoch, or null. */
+  mtime?: number | null;
 }
 
 /** Look / Measure's Change: one bounded head read, bounds and decode said. */
@@ -269,8 +295,16 @@ export const PRISM_KEYS: readonly string[] = [
   "on",
 ];
 
-/** The bounds object's declared keys. */
+/** The bounds object's required keys (the exact caps asked for). */
 export const BOUNDS_KEYS: readonly string[] = ["maxBytes", "maxLines"];
+
+/**
+ * The bounds object's DECLARED-FACT keys (Measure only, PROVISIONAL): the
+ * head's size and mtime, pasted verbatim from the head read. A bounds object
+ * carries either both facts or neither — a lone size is malformed, never
+ * guessed at.
+ */
+export const BOUNDS_FACT_KEYS: readonly string[] = ["mtime", "size"];
 
 /** The declared key set of each Change kind (the union is closed). */
 export const CHANGE_KEYS: Readonly<Record<ChangeKind, readonly string[]>> = {
@@ -334,6 +368,50 @@ function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
+/** An integer of either sign (an mtime may precede the epoch). */
+function isInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value);
+}
+
+/** Parse the bounds object: two exact caps, plus Measure's facts as a pair. */
+function parseHeadBounds(value: unknown): HeadBounds | null {
+  if (!isPlainObject(value)) return null;
+  if (!BOUNDS_KEYS.every((key) => key in value)) return null;
+  const keys = Object.keys(value);
+  const facts = keys.filter((key) => BOUNDS_FACT_KEYS.includes(key));
+  if (keys.length !== BOUNDS_KEYS.length + facts.length) return null;
+  if (facts.length !== 0 && facts.length !== BOUNDS_FACT_KEYS.length) {
+    return null;
+  }
+  if (!isCount(value.maxLines) || !isCount(value.maxBytes)) return null;
+  if (facts.length === 0) {
+    return { maxLines: value.maxLines, maxBytes: value.maxBytes };
+  }
+  const size = value.size;
+  if (size !== null && !isCount(size)) return null;
+  const mtime = value.mtime;
+  if (mtime !== null && !isInteger(mtime)) return null;
+  return {
+    maxLines: value.maxLines,
+    maxBytes: value.maxBytes,
+    size: size as number | null,
+    mtime: mtime as number | null,
+  };
+}
+
+/** Serialize a bounds object, keeping Measure's declared facts when present. */
+function headBoundsFields(bounds: HeadBounds): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    maxLines: bounds.maxLines,
+    maxBytes: bounds.maxBytes,
+  };
+  if (bounds.size !== undefined || bounds.mtime !== undefined) {
+    fields.size = bounds.size ?? null;
+    fields.mtime = bounds.mtime ?? null;
+  }
+  return fields;
+}
+
 function hasExactKeys(
   object: Record<string, unknown>,
   keys: readonly string[],
@@ -363,11 +441,8 @@ export function parsePrismChange(value: unknown): Change | null {
     case "read-head": {
       if (!isNonEmptyString(value.pointer)) return null;
       if (!isIn(READ_HEAD_OUTCOMES, value.outcome)) return null;
-      const bounds = value.bounds;
-      if (!isPlainObject(bounds) || !hasExactKeys(bounds, BOUNDS_KEYS)) {
-        return null;
-      }
-      if (!isCount(bounds.maxLines) || !isCount(bounds.maxBytes)) return null;
+      const bounds = parseHeadBounds(value.bounds);
+      if (bounds === null) return null;
       const decode = value.decode;
       if (decode !== null && !isIn(DECODE_STATUSES, decode)) return null;
       // The log's honesty: a READ decoded text (clean or replaced); every
@@ -379,7 +454,7 @@ export function parsePrismChange(value: unknown): Change | null {
         kind,
         pointer: value.pointer,
         outcome: value.outcome,
-        bounds: { maxLines: bounds.maxLines, maxBytes: bounds.maxBytes },
+        bounds,
         decode: decode as DecodeStatus | null,
       };
     }
@@ -516,10 +591,7 @@ function changeFields(change: Change): Record<string, unknown> {
         kind: change.kind,
         pointer: change.pointer,
         outcome: change.outcome,
-        bounds: {
-          maxLines: change.bounds.maxLines,
-          maxBytes: change.bounds.maxBytes,
-        },
+        bounds: headBoundsFields(change.bounds),
         decode: change.decode,
       };
     case "mint-pointer":
@@ -595,6 +667,95 @@ export function parsePrisms(text: string): ParsedPrisms {
 export async function loadPrisms(workspacePath: string): Promise<ParsedPrisms> {
   const text = await readTextFile(prismsPath(workspacePath));
   return text === null ? { prisms: [], malformed: [] } : parsePrisms(text);
+}
+
+/** Do two citations name the same pointer (form + verbatim value)? */
+function samePointer(
+  left: PrismPointer | null,
+  right: PrismPointer | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return left.form === right.form && left.value === right.value;
+}
+
+/**
+ * One reach's LATEST PRISM, in FILE order (Epic 12 story 2, PROVISIONAL). The
+ * log is append-only, so the last readable line that matches the citation is
+ * the latest Move on that reach. The scan is BY CITATION, never a listing: it
+ * returns ONE Prism (or null), so a caller cannot turn the series into a
+ * gallery, a count or a summary. Passing `contact` narrows to one contact;
+ * omitted, the latest Move on the reach wins whatever its verb.
+ */
+export function latestPrismIn(
+  text: string,
+  on: string,
+  pointer: PrismPointer | null,
+  contact?: ContactKind,
+): Prism | null {
+  let latest: Prism | null = null;
+  for (const prism of parsePrisms(text).prisms) {
+    if (prism.on !== on) continue;
+    if (contact !== undefined && prism.contact !== contact) continue;
+    if (!samePointer(prism.pointer, pointer)) continue;
+    latest = prism;
+  }
+  return latest;
+}
+
+/** The on-disk reach's latest PRISM, read fresh (no cache, no gallery). */
+export async function loadLatestPrism(
+  workspacePath: string,
+  on: string,
+  pointer: PrismPointer | null,
+  contact?: ContactKind,
+): Promise<Prism | null> {
+  const text = await readTextFile(prismsPath(workspacePath));
+  return text === null ? null : latestPrismIn(text, on, pointer, contact);
+}
+
+/**
+ * Rewrite ONE line's person-authored explanation, addressed by app-minted id
+ * (Epic 12 story 2, PROVISIONAL).
+ *
+ * The PRISM's CHANGES are read-only forever; the explanation is the person's
+ * own words on their own Move, authored at the Move's window. This is the one
+ * targeted edit the family allows: it changes the `explanation` field of the
+ * line whose id matches and NO other byte — every earlier and later line keeps
+ * its bytes exactly, file order and multiplicity are untouched, malformed
+ * lines are re-emitted verbatim, and a line's own terminator style (LF/CRLF) is
+ * kept. It is never a merge, never a dedupe and never an append (an appended
+ * line would be a second Move — a lie). Returns null when no readable line
+ * carries the id; the caller reports "not saved" and leaves the file alone.
+ *
+ * The edited line is re-serialized canonically (the family's posture): a hand
+ * line's unknown keys survive, but its key order becomes canonical.
+ */
+export function rewritePrismExplanation(
+  text: string,
+  id: string,
+  explanation: string,
+): string | null {
+  const pieces = text.match(/[^\n]*\n|[^\n]+$/g);
+  if (pieces === null) return null;
+  for (let index = 0; index < pieces.length; index += 1) {
+    const piece = pieces[index];
+    const ending = piece.endsWith("\r\n")
+      ? "\r\n"
+      : piece.endsWith("\n")
+        ? "\n"
+        : "";
+    const line = ending === "" ? piece : piece.slice(0, -ending.length);
+    const bom = line.startsWith("\uFEFF") ? "\uFEFF" : "";
+    const prism = parsePrismLine(bom === "" ? line : line.slice(1));
+    if (prism === null || prism.id !== id) continue;
+    // Nothing changed: keep the line's exact bytes (an edit-free blur writes
+    // nothing, so a hand line's formatting can never be rewritten for free).
+    if (prism.explanation === explanation) return text;
+    const next = pieces.slice();
+    next[index] = bom + serializePrismLine({ ...prism, explanation }) + ending;
+    return next.join("");
+  }
+  return null;
 }
 
 /**
