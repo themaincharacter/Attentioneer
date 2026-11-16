@@ -124,6 +124,16 @@ import { wordCreationOffered } from "./mapContentRules";
  * draw box made them — a stroke can never move a word or open a menu. It is
  * its own arm (not the veil's box, not the selector's lasso): the box takes a
  * rectangle to COVER, the pen takes a freehand stroke to KEEP.
+ *
+ * `select` is THE SELECTION TOOL (PROVISIONAL, added 2026-11-16 per the lead's
+ * brief): armed from the concept map's level control, its capture surface owns
+ * every press on the plane, so pan, double-click creation and every word press
+ * stand still exactly as the pen's did — a selection drag can never move a
+ * word or open a menu. The wheel still zooms. Its popup keeps the mode armed
+ * while the person types the game's name (the veil's coin-field rule), so the
+ * plane stays still behind the card. Concept only: the tool's door and the
+ * fills read `canvas/languageGameRules.ts`'s `languageGamesLive`, which asks
+ * the separate-maps rule.
  */
 export type GestureMode =
   | "idle"
@@ -132,7 +142,8 @@ export type GestureMode =
   | "sign-choice"
   | "pointer"
   | "veil"
-  | "draw";
+  | "draw"
+  | "select";
 
 /** The one method the gate needs from a class list (a DOMTokenList works). */
 export interface ClassListLike {
@@ -301,6 +312,20 @@ export const CONTENT_CLASSES = [
   // reason the ghost diamond is: an element inside the plane that must never
   // fall through to the plane's pan, creation or a word's press.
   "sketch-layer",
+  // THE SELECTION TOOL (PROVISIONAL, added 2026-11-16 per the lead's brief):
+  // every language game's world-space fill, the in-flight draft's layer and the
+  // naming popup (its title, its one field, its refusal sentence and its two
+  // verbs). The fills take no press of their own, and the popup is the one live
+  // surface while it asks — all of them are content, never a plane gesture.
+  "language-game-fill",
+  "language-game-draft",
+  "language-game-popup",
+  "language-game-popup-title",
+  "language-game-name",
+  "language-game-problem",
+  "language-game-actions",
+  "language-game-submit",
+  "language-game-cancel",
   // Epic 10 story 3's ghost: the ONLY ghost element inside the plane is the
   // opened preview's faint diamond at the target. It is read-only by
   // construction (pointer-events: none), and it exists only inside the
@@ -470,6 +495,18 @@ export const WORD_CONTROL_CLASSES = [
   // for the same reason, so a mark whose press lands on a stroke can never
   // start a word drag or a click-to-center.
   "sketch-layer",
+  // The selection tool's fill, draft and popup (see the content list above): on
+  // both lists for the same reason, so a press on a tint or in the popup can
+  // never start a word drag or a click-to-center.
+  "language-game-fill",
+  "language-game-draft",
+  "language-game-popup",
+  "language-game-popup-title",
+  "language-game-name",
+  "language-game-problem",
+  "language-game-actions",
+  "language-game-submit",
+  "language-game-cancel",
 ] as const;
 
 /**

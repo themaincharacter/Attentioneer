@@ -31,6 +31,14 @@ import {
 } from "../map/sketches";
 import { eraseStrokes, eraserRadius } from "./sketchRules";
 import {
+  addLanguageGame,
+  loadLanguageGames,
+  removeLanguageGame as removeLanguageGameRecord,
+  saveLanguageGames,
+  type GameShape,
+  type LanguageGame,
+} from "../map/languageGames";
+import {
   recordDraw,
   recordErase,
   undoStep,
@@ -294,6 +302,15 @@ export function useMap(
   // they never read `recordsDir` (a branch has no drawing of its own).
   const [sketches, setSketches] = useState<Sketch[]>([]);
   const [malformedSketches, setMalformedSketches] = useState<string[]>([]);
+  // LANGUAGE GAMES (PROVISIONAL, added 2026-11-16 per the lead's brief): named,
+  // coloured regions of the concept map, one line per game in
+  // `map/language-games.jsonl`. COMMITTED-MODEL records like the veils and the
+  // ink, so they never read `recordsDir` (a branch has no language game of its
+  // own).
+  const [languageGames, setLanguageGames] = useState<LanguageGame[]>([]);
+  const [malformedLanguageGames, setMalformedLanguageGames] = useState<
+    string[]
+  >([]);
   // Whether the session remembers a change undo can take back (added
   // 2026-11-16 per user review). The stack itself is a ref (the writers read it
   // synchronously), so its emptiness is mirrored for the strip's one quiet
@@ -327,6 +344,9 @@ export function useMap(
   const sketchesRef = useRef<Sketch[]>([]);
   const malformedSketchesRef = useRef<string[]>([]);
   const sketchesWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const languageGamesRef = useRef<LanguageGame[]>([]);
+  const malformedLanguageGamesRef = useRef<string[]>([]);
+  const languageGamesWriteRef = useRef<Promise<void>>(Promise.resolve());
   // The drawing's UNDO MEMORY (added 2026-11-16 per user review): the
   // session's changes in the order they were made, so undo takes back the last
   // one — a drawn stroke or one erase gesture. PROVISIONAL and session-only:
@@ -348,6 +368,7 @@ export function useMap(
       parsedQuantities,
       parsedVeils,
       parsedSketches,
+      parsedLanguageGames,
     ] = await Promise.all([
       loadReferences(workspacePath),
       loadDistances(workspacePath),
@@ -360,6 +381,7 @@ export function useMap(
       loadQuantities(recordsDir),
       loadVeils(workspacePath),
       loadSketches(workspacePath),
+      loadLanguageGames(workspacePath),
     ]);
     setRefs(referenceList);
     setDistances(parsedDistances.distances);
@@ -399,6 +421,10 @@ export function useMap(
     malformedSketchesRef.current = parsedSketches.malformed;
     setSketches(parsedSketches.sketches);
     setMalformedSketches(parsedSketches.malformed);
+    languageGamesRef.current = parsedLanguageGames.games;
+    malformedLanguageGamesRef.current = parsedLanguageGames.malformed;
+    setLanguageGames(parsedLanguageGames.games);
+    setMalformedLanguageGames(parsedLanguageGames.malformed);
     setLoaded(true);
     // The records folder is part of the dependency: a scenario switch changes
     // WHERE the three variant records are and must re-read them.
@@ -565,6 +591,26 @@ export function useMap(
       sketchesWriteRef.current = sketchesWriteRef.current
         .catch(() => undefined)
         .then(() => saveSketches(workspacePath, next, malformedLines));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * Persist the language games after each move (PROVISIONAL, added 2026-11-16
+   * per the lead's brief): one canonical line per game, in FILE ORDER — the
+   * order the games were made, which is also the render order (later washes
+   * over earlier ones) and the list's order. Same in-order queue as the other
+   * record writers; malformed lines ride along from a ref, so an in-flight
+   * write can never drop a preserved line.
+   */
+  const persistLanguageGames = useCallback(
+    (next: readonly LanguageGame[]) => {
+      languageGamesRef.current = [...next];
+      setLanguageGames([...next]);
+      const malformedLines = [...malformedLanguageGamesRef.current];
+      languageGamesWriteRef.current = languageGamesWriteRef.current
+        .catch(() => undefined)
+        .then(() => saveLanguageGames(workspacePath, next, malformedLines));
     },
     [workspacePath],
   );
@@ -1390,6 +1436,45 @@ export function useMap(
   }, [persistSketches]);
 
   /**
+   * Save a LANGUAGE GAME (PROVISIONAL, added 2026-11-16 per the lead's brief):
+   * the drawn shape, its colour and the person's name, one line appended in
+   * file order. The RECORD's own rules are enforced here — a blank name writes
+   * nothing and a name already taken writes nothing (the person's duplicate is
+   * refused, never silently renamed). The at-least-one-word rule is the app's:
+   * it is checked against the MEASURED words at submit, and it is never written
+   * down, because a game stores only its shape and its membership is derived
+   * geometrically at read time (canvas/languageGameRules.ts).
+   */
+  const createLanguageGame = useCallback(
+    (name: string, color: string, shape: GameShape) => {
+      const next = addLanguageGame(languageGamesRef.current, {
+        name,
+        color,
+        shape,
+      });
+      if (next === null) return;
+      persistLanguageGames(next);
+    },
+    [persistLanguageGames],
+  );
+
+  /**
+   * Delete a LANGUAGE GAME by its name — the designed exit (the veil's "retired
+   * by deletion"): the line goes through the family's ordinary save path, with
+   * no tombstone and no dependent record. A name that is not there is a quiet
+   * no-op (the panel's row cannot outlive its line for long, and the write is
+   * idempotent).
+   */
+  const removeLanguageGame = useCallback(
+    (name: string) => {
+      const current = languageGamesRef.current;
+      if (!current.some((game) => game.name === name)) return;
+      persistLanguageGames(removeLanguageGameRecord(current, name));
+    },
+    [persistLanguageGames],
+  );
+
+  /**
    * Rename a veil: one in-place rewrite — the name and its natural key in one
    * move, the box, the reason and unknown keys preserved (a collision mints the
    * numeric suffix, exactly as at coin). No other record follows: nothing
@@ -1606,6 +1691,8 @@ export function useMap(
     malformedVeils,
     sketches,
     malformedSketches,
+    languageGames,
+    malformedLanguageGames,
     /**
      * Whether undo has something to take back right now: the record still holds
      * a stroke, or the session remembers a change (an erase that took the last
@@ -1669,6 +1756,8 @@ export function useMap(
     eraseSketch,
     undoSketch,
     clearSketch,
+    createLanguageGame,
+    removeLanguageGame,
     addAssumption,
     reviseAssumption,
     removeAssumption,

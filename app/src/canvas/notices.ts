@@ -45,7 +45,8 @@ export type NoticeFamily =
   | "assumptions"
   | "pointers"
   | "veils"
-  | "sketches";
+  | "sketches"
+  | "games";
 
 /** A family's game, or "all" for the notices that ride the shared group. */
 export type NoticeGame = Level | "all";
@@ -80,6 +81,13 @@ export const NOTICE_FAMILY_GAME: Record<NoticeFamily, NoticeGame> = {
   // record drawn in every game, so an unreadable `map/sketches.jsonl` line is
   // record hygiene surfaced wherever the person is — the veils' reading.
   sketches: "all",
+  // THE LANGUAGE GAMES (PROVISIONAL, added 2026-11-16 per the lead's brief) are
+  // concept-map records, so their content renders at concept only — but an
+  // unreadable `map/language-games.jsonl` line is RECORD HYGIENE, and this
+  // strip is deliberately not gated (ADR-0009): it rides the shared group
+  // wherever the person is, the veils' and the ink's reading. The reported
+  // tension stands: a notice can name a record whose content this game hides.
+  games: "all",
 };
 
 /** The game a family's notices belong to. */

@@ -3,6 +3,7 @@ import type { Scenario } from "../scenarios/branch";
 import { PullDoor } from "./PullDoor";
 import { ScenarioChooser } from "./ScenarioChooser";
 import { veilLive } from "./veilRules";
+import { showsMapContent } from "./mapContentRules";
 import {
   ASK_DOOR_HIDDEN,
   COIN_LOOP_DOOR_HIDDEN,
@@ -48,6 +49,26 @@ interface LevelControlProps {
   onDraw: () => void;
   /** True while the pen is armed (the toggle reads pressed). */
   drawArmed: boolean;
+  /**
+   * Toggle the SELECTION TOOL (PROVISIONAL, added 2026-11-16 per the lead's
+   * brief): arm the concept map's selection, or put it down when it is already
+   * armed. It is offered on the CONCEPT map only — a language game is
+   * concept-map content, so the separate-maps rule keeps it off the blank
+   * maps — and it sits outside `.plane` like the control's other actions, so
+   * the plane's armed gate never reaches it; arming runs the app's
+   * cancel-pending path, then the gate's `select` mode owns the pointer.
+   */
+  onSelect: () => void;
+  /** True while the selection tool is armed (the toggle reads pressed). */
+  selectArmed: boolean;
+  /**
+   * Open ALL LANGUAGE GAMES (PROVISIONAL, added 2026-11-16 per the lead's
+   * brief): the quiet door to the right-side list of the concept map's named
+   * regions. Offered on the concept map only, exactly as the tool is.
+   */
+  onOpenGames: () => void;
+  /** True while the list is open (the door reads pressed). */
+  gamesOpen: boolean;
   /** The branch folders the workspace holds (Epic 8 story 2, ADR-0021). */
   scenarios: readonly Scenario[];
   /** The branch running now, or null for the committed model. */
@@ -163,6 +184,10 @@ export function LevelControl({
   onDrawVeil,
   onDraw,
   drawArmed,
+  onSelect,
+  selectArmed,
+  onOpenGames,
+  gamesOpen,
   scenarios,
   activeScenario,
   onChooseScenario,
@@ -243,6 +268,39 @@ export function LevelControl({
       >
         draw
       </button>
+      {/* THE SELECTION TOOL and its list's door (PROVISIONAL, added 2026-11-16
+          per the lead's brief): a quiet `select` toggle beside the pen, and the
+          quiet `language games` door to the right-side list of the named
+          regions the tool makes. BOTH are offered on the CONCEPT map only: a
+          language game is concept-map content, so the separate-maps rule
+          (`showsMapContent`) keeps them off the blank maps — the tool cannot
+          arm and the list cannot open where no fill renders. They sit outside
+          `.plane` like the control's other actions, so the plane's armed gate
+          never reaches them; arming runs the app's cancel-pending path, then
+          the gate's `select` mode owns the pointer. Provisional: the wording,
+          this placement (beside the pen, as asked) and the list's look. */}
+      {showsMapContent(level) && (
+        <>
+          <button
+            type="button"
+            className={"level-select" + (selectArmed ? " active" : "")}
+            aria-pressed={selectArmed}
+            title="select an area of the map — drag a shape"
+            onClick={onSelect}
+          >
+            select
+          </button>
+          <button
+            type="button"
+            className={"level-games" + (gamesOpen ? " active" : "")}
+            aria-pressed={gamesOpen}
+            title="the language games — bring one forward, or delete one"
+            onClick={onOpenGames}
+          >
+            language games
+          </button>
+        </>
+      )}
       {/* The dynamics section, cleared by the review (see below): every door
           here keeps its markup, its prop and its handler and is offered through
           its own hiding flag. With the flags on the section renders nothing —

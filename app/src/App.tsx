@@ -60,6 +60,27 @@ import { GhostPreview } from "./canvas/GhostPreview";
 import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
 import { SketchToolbar } from "./canvas/SketchToolbar";
+import { LanguageGameBar } from "./canvas/LanguageGameBar";
+import { LanguageGameFill } from "./canvas/LanguageGameFill";
+import { LanguageGamePopup } from "./canvas/LanguageGamePopup";
+import { LanguageGamesPanel } from "./canvas/LanguageGamesPanel";
+import {
+  DEFAULT_SHAPE_MODE,
+  GAME_DRAFT_OPACITY,
+  GAME_FILL_OPACITY,
+  GAME_FOCUS_OPACITY,
+  gameInk,
+  gameMembership,
+  languageGamesLive,
+  pickPastel,
+  shapeAnchor,
+  shapeCenter,
+  submitProblem,
+  type LanguageGameDraft,
+  type ShapeMode,
+  type SubmitProblem,
+} from "./canvas/languageGameRules";
+import type { GameShape, LanguageGame } from "./map/languageGames";
 import {
   DEFAULT_DRAW_TOOL,
   DEFAULT_PEN_COLOR,
@@ -440,6 +461,10 @@ function App() {
     sketches,
     malformedSketches,
     canUndoSketch,
+    // The concept map's language games (PROVISIONAL, added 2026-11-16 per the
+    // lead's brief).
+    languageGames,
+    malformedLanguageGames,
     assumptions,
     malformedAssumptions,
     duplicateAssumptions,
@@ -484,6 +509,8 @@ function App() {
     eraseSketch,
     undoSketch,
     clearSketch,
+    createLanguageGame,
+    removeLanguageGame,
     createLoop,
     renameLoop,
     removeLoop,
@@ -555,6 +582,20 @@ function App() {
   // gesture's meaning, so the arming discipline is identical. The choice
   // outlives one arm: putting the pen down and picking it up keeps the tool.
   const [penTool, setPenTool] = useState<DrawTool>(DEFAULT_DRAW_TOOL);
+  // THE SELECTION TOOL (PROVISIONAL, added 2026-11-16 per the lead's brief): a
+  // concept-map arm that draws a shape and makes a LANGUAGE GAME of the words
+  // inside it. Its own gate mode (`select`), its own shape mode (freeform is
+  // the opening reading), and the draft a completed selection holds while the
+  // naming popup asks: the shape, the pastel picked for it, and whether the
+  // region holds a word (the one membership fact submit needs). The list and
+  // the game brought forward from it are the panel's state.
+  const [selectArmed, setSelectArmed] = useState(false);
+  const [selectShape, setSelectShape] = useState<ShapeMode>(
+    DEFAULT_SHAPE_MODE,
+  );
+  const [gameDraft, setGameDraft] = useState<LanguageGameDraft | null>(null);
+  const [gamesOpen, setGamesOpen] = useState(false);
+  const [focusedGame, setFocusedGame] = useState<string | null>(null);
   // The look-under (Epic 9 story 2, ADR-0023 decision 3): the veil whose cover
   // is LIFTED for a read-only reading of its name and reason, addressed by its
   // natural key (or null). The record itself is derived from `veils` on every
@@ -1264,7 +1305,14 @@ function App() {
                 // and the pen's capture surface owns the pointer.
                 drawArmed
                 ? "draw"
-                : "idle";
+                : // THE SELECTION TOOL (PROVISIONAL, added 2026-11-16 per the
+                  // lead's brief) is its own arm, concept only: while the tool
+                  // is armed OR the naming popup is asking (the draft is not
+                  // null — the veil's coin-field rule) the mode stands, so the
+                  // plane cannot pan, create or press a word behind the card.
+                  selectArmed || gameDraft !== null
+                  ? "select"
+                  : "idle";
   // The gate's mode, readable from the focus and release paths, which run
   // outside render (a focusout microtask, a post-render focus refresh).
   const gestureModeRef = useRef<GestureMode>(gestureMode);
@@ -1529,6 +1577,15 @@ function App() {
     // review): a level switch, a branch switch or a deliberate arm elsewhere
     // ends the drawing mode; the strokes are records and stay.
     setDrawArmed(false);
+    // The selection tool's arm and the naming draft close with every other one
+    // (PROVISIONAL, added 2026-11-16 per the lead's brief): a level switch, a
+    // branch switch or a deliberate arm elsewhere ends the tool. An UNSAVED
+    // draft is dropped with it — nothing was written, so there is nothing to
+    // lose but the selection being drawn. The list closes too: its door lives
+    // on the concept map, and a game's fill cannot render off it.
+    setSelectArmed(false);
+    setGameDraft(null);
+    setGamesOpen(false);
     // The look-under is a transient: the switch path closes it with every
     // other one (a level switch, a branch switch and any deliberate entry that
     // runs this path). It closes QUIETLY — the wheel never yanks focus.
@@ -2763,6 +2820,158 @@ function App() {
   );
 
   /**
+   * THE SELECTION TOOL's toggle (PROVISIONAL, added 2026-11-16 per the lead's
+   * brief): the concept map's `select`, beside the pen in the level control.
+   * Pressing it while the tool is armed puts it down — the games are already
+   * written, so putting it down writes nothing. Arming runs the app's one
+   * cancel-pending path first (one armed gesture at a time) and the gate's
+   * `select` mode takes the pointer, exactly as the pen's `draw` does.
+   */
+  const toggleSelect = useCallback(() => {
+    if (selectArmed) {
+      setSelectArmed(false);
+      return;
+    }
+    cancelPendingGestures();
+    setSelectArmed(true);
+  }, [selectArmed, cancelPendingGestures]);
+
+  // Esc ends the selection tool (the pen's arm idiom): the saved games stay,
+  // the capture surface goes and the plane's own gestures come back. While the
+  // naming popup is open the CARD owns its escape (cancel the draft and keep
+  // the tool armed), so this listener steps aside.
+  useEffect(() => {
+    if (!selectArmed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (gameDraft !== null) return;
+      e.preventDefault();
+      setSelectArmed(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectArmed, gameDraft]);
+
+  /**
+   * One COMPLETED selection from the plane (PROVISIONAL, added 2026-11-16 per
+   * the lead's brief): the shape the release drew. The membership is derived
+   * right here — the words whose anchor (their measured box's centre) falls
+   * inside the shape, and the distance wires whose BOTH ends do — because the
+   * one fact the popup's rule needs is whether the region holds a word at all.
+   * The pastel is picked in the same move (the rng is injected so the range is
+   * testable), and the draft appears: the fill plus the card. NOTHING is
+   * written yet.
+   */
+  const captureLanguageGame = useCallback(
+    (shape: GameShape) => {
+      const members = gameMembership(shape, selectorWords, distances);
+      setGameDraft({
+        shape,
+        color: pickPastel(Math.random),
+        hasWords: members.words.length > 0,
+      });
+    },
+    [selectorWords, distances],
+  );
+
+  /**
+   * The naming popup's submit: ONE line in `map/language-games.jsonl`, through
+   * the same in-order record path as every other write. The card's rules are
+   * asked again here (the write is where the rule is enforced): a blank name, a
+   * name already taken, or a region holding no word writes nothing — the card
+   * shows the quiet sentence and stays open. On success the draft becomes the
+   * game's fill and the tool stays armed for the next selection.
+   */
+  const submitLanguageGame = useCallback(
+    (name: string) => {
+      const draft = gameDraft;
+      if (draft === null) return;
+      const problem: SubmitProblem = submitProblem(
+        name,
+        languageGames.map((game) => game.name),
+        draft.hasWords,
+      );
+      if (problem !== null) return;
+      createLanguageGame(name.trim(), draft.color, draft.shape);
+      setGameDraft(null);
+    },
+    [gameDraft, languageGames, createLanguageGame],
+  );
+
+  /**
+   * The popup's cancel — and the selection tool's whole undo: the draft fill
+   * disappears and NOTHING is written (no line, no partial record). The tool
+   * stays armed, so the person can draw the selection again.
+   */
+  const cancelLanguageGame = useCallback(() => {
+    setGameDraft(null);
+  }, []);
+
+  /** The strip's shape choice: what the next drag draws (freeform opens). */
+  const chooseGameShape = useCallback((shape: ShapeMode) => {
+    setSelectShape(shape);
+  }, []);
+
+  /**
+   * ALL LANGUAGE GAMES's door (PROVISIONAL, added 2026-11-16 per the lead's
+   * brief): the concept map's quiet list of every saved game. Pressing it while
+   * the list is open closes it; opening runs the app's one cancel-pending path
+   * first, so one surface is live at a time. The list itself lives outside
+   * `.plane`, so the plane's armed gate never reaches it.
+   */
+  const toggleGames = useCallback(() => {
+    if (gamesOpen) {
+      setGamesOpen(false);
+      return;
+    }
+    cancelPendingGestures();
+    setGamesOpen(true);
+  }, [gamesOpen, cancelPendingGestures]);
+
+  const closeGames = useCallback(() => {
+    setGamesOpen(false);
+  }, []);
+
+  /**
+   * Bring one game FORWARD from the list (PROVISIONAL, added 2026-11-16 per the
+   * lead's brief): its fill paints more opaquely than the others (the render's
+   * reading of `focusedGame`) and the map CENTRES on the game's shape, keeping
+   * the zoom the map is already at (ordinary navigation — a list pick never
+   * changes the zoom). The camera is the app's, so the intent is asked here;
+   * the plane's viewport is read from the DOM, the connect draw's idiom.
+   */
+  const pickLanguageGame = useCallback(
+    (game: LanguageGame) => {
+      setFocusedGame(game.name);
+      const centre = shapeCenter(game.shape);
+      const el = document.querySelector<HTMLDivElement>(".plane");
+      if (!el) return;
+      intents.centerOn(
+        centre.x,
+        centre.y,
+        el.clientWidth / 2,
+        el.clientHeight / 2,
+        camera.zoom,
+      );
+    },
+    [intents, camera.zoom],
+  );
+
+  /**
+   * Delete one game — its designed exit (PROVISIONAL, added 2026-11-16 per the
+   * lead's brief): the trash-bin row goes straight to the record's own delete
+   * (the line leaves, no tombstone, no confirmation dialog, no history). A game
+   * that was brought forward stops being so; nothing else follows a game.
+   */
+  const deleteLanguageGame = useCallback(
+    (name: string) => {
+      removeLanguageGame(name);
+      setFocusedGame((current) => (current === name ? null : current));
+    },
+    [removeLanguageGame],
+  );
+
+  /**
    * The plane reported the captured BOX: hold it while the coin field asks. The
    * gate stays in the `veil` mode (the box is not null), so the plane's own
    * gestures stay suspended while the person types — exactly as the loop's coin
@@ -3224,6 +3433,9 @@ function App() {
         drawTool={penTool}
         onSketch={handleSketch}
         onErase={handleErase}
+        selectArmed={selectArmed && gameDraft === null}
+        selectShape={selectShape}
+        onSelectShape={captureLanguageGame}
         picking={markDrag.ghost !== null}
         onLasso={handleLasso}
         onDrawBox={captureVeilBox}
@@ -3339,6 +3551,37 @@ function App() {
             the ones set aside, which are not shown while the shelf is hidden
             (`setAsideSlugs` above). Delete that filter with the shelf in the
             deprecated sweep. */}
+        {/* THE LANGUAGE GAMES' fills (PROVISIONAL, added 2026-11-16 per the
+            lead's brief): one world-space wash per saved game, in FILE ORDER
+            (later games paint over earlier ones), above the paper and BELOW the
+            words and the pen's ink (canvas.css's layer rule), so a name always
+            reads over a tint. Overlapping games are allowed by design. The game
+            brought forward from the list paints more opaquely than the rest.
+            CONCEPT ONLY (`languageGamesLive`, the separate-maps rule): the
+            dynamics and ground maps stay blank paper. The DRAFT is the unsaved
+            selection the naming popup asks about — cancel drops it, submit
+            turns it into one line. */}
+        {languageGamesLive(level) &&
+          languageGames.map((game, index) => (
+            <LanguageGameFill
+              key={`language-game-${index}-${game.name}`}
+              shape={game.shape}
+              ink={gameInk(game.color)}
+              opacity={
+                focusedGame === game.name
+                  ? GAME_FOCUS_OPACITY
+                  : GAME_FILL_OPACITY
+              }
+            />
+          ))}
+        {languageGamesLive(level) && gameDraft !== null && (
+          <LanguageGameFill
+            shape={gameDraft.shape}
+            ink={gameInk(gameDraft.color)}
+            opacity={GAME_DRAFT_OPACITY}
+          />
+        )}
+
         {mapContent && shownRefs.map((word) => (
           <ReferenceWord
             key={word.id}
@@ -3657,6 +3900,25 @@ function App() {
           />
         )}
 
+        {/* THE LANGUAGE GAME's naming popup (PROVISIONAL, added 2026-11-16 per
+            the lead's brief): the small card the completed selection opens,
+            hanging at the drawn shape's top-left corner and counter-scaled like
+            the veil's coin field. The pastel fill is already behind it — that
+            tint IS the selection being named. While it asks, the gate is still
+            in its `select` mode (the draft is not null), so the plane cannot
+            pan, create or press a word behind the card; the card owns the rest
+            of the screen's quiet. Esc / cancel drops the draft (nothing is
+            written); submit asks the card's rules and writes ONE line. */}
+        {languageGamesLive(level) && gameDraft !== null && (
+          <LanguageGamePopup
+            anchor={shapeAnchor(gameDraft.shape)}
+            existingNames={languageGames.map((game) => game.name)}
+            hasWords={gameDraft.hasWords}
+            onSubmit={submitLanguageGame}
+            onCancel={cancelLanguageGame}
+          />
+        )}
+
         {/* the in-place grow field: name the lack, or cancel and leave it bare */}
         {growAt && (
           <GrowField
@@ -3939,6 +4201,10 @@ function App() {
         onDrawVeil={beginVeil}
         onDraw={toggleDraw}
         drawArmed={drawArmed}
+        onSelect={toggleSelect}
+        selectArmed={selectArmed}
+        onOpenGames={toggleGames}
+        gamesOpen={gamesOpen}
         scenarios={scenarios}
         activeScenario={scenario}
         onChooseScenario={chooseScenario}
@@ -3948,6 +4214,26 @@ function App() {
         onAsk={openGhostPanel}
         onAskPull={openPullAsk}
       />
+
+      {/* ALL LANGUAGE GAMES (PROVISIONAL, added 2026-11-16 per the lead's
+          brief): the concept map's right-side list of every saved game — the
+          person's layers-panel comparison, at its plainest. A row's press
+          brings that game forward (its fill paints more opaquely) and centres
+          the map on its shape; its trash-bin icon deletes the game (the line
+          leaves, no confirmation, no tombstone); its quiet × closes the list.
+          The panel sits outside `.plane` like the app's other quiet surfaces,
+          so the plane's armed gate never reaches it. It renders on the concept
+          map only — its door and its fills' rule are the same reading
+          (`languageGamesLive`). */}
+      {gamesOpen && languageGamesLive(level) && (
+        <LanguageGamesPanel
+          games={languageGames}
+          focused={focusedGame}
+          onPick={pickLanguageGame}
+          onRemove={deleteLanguageGame}
+          onClose={closeGames}
+        />
+      )}
 
       {/* the ghosts (Epic 10 story 3): the held proposals as TEXT, in arrival
           order, and — only when the person opens one — the preview with the
@@ -4085,6 +4371,17 @@ function App() {
         />
       )}
 
+      {/* THE SELECTION TOOL's quiet strip (PROVISIONAL, added 2026-11-16 per
+          the lead's brief): the three shapes an armed drag can draw — freeform,
+          circle, rectangle — in screen space, outside `.plane`, so a press on
+          the strip can never pan the map, create anything or start a word
+          gesture. Shown while the tool is armed (including while its popup
+          asks, so the shape can be changed for the next selection). Esc or the
+          level control's toggle puts the tool down. */}
+      {selectArmed && (
+        <LanguageGameBar shape={selectShape} onShape={chooseGameShape} />
+      )}
+
       {/* the selector's controls, in screen space while it is open (story 1) */}
       {selectorOpen && (
         <PlayingSetBar
@@ -4112,6 +4409,7 @@ function App() {
         orphanLoops={orphanLoops}
         malformedVeils={malformedVeils}
         malformedSketches={malformedSketches}
+        malformedGames={malformedLanguageGames}
         malformedAssumptions={malformedAssumptions}
         duplicateAssumptions={duplicateAssumptions}
         orphanAssumptions={orphanAssumptions}
@@ -4182,6 +4480,7 @@ function MarkNotices({
   orphanLoops,
   malformedVeils,
   malformedSketches,
+  malformedGames,
   malformedAssumptions,
   duplicateAssumptions,
   orphanAssumptions,
@@ -4226,6 +4525,15 @@ function MarkNotices({
    * game's record, the veils' reading).
    */
   malformedSketches: readonly string[];
+  /**
+   * Unreadable `map/language-games.jsonl` lines (PROVISIONAL, added 2026-11-16
+   * per the lead's brief): a language game has no dependents, so it has no
+   * orphans — only lines the app keeps and cannot read. Surfaced wherever the
+   * person is: the record's hygiene is not the fill, and this strip is
+   * deliberately not gated by the separate-maps rule (ADR-0009's rule, the
+   * veils' and the ink's reading).
+   */
+  malformedGames: readonly string[];
   malformedAssumptions: readonly string[];
   /** Hand-edited duplicate keys: preserved, never deduped (story 4). */
   duplicateAssumptions: readonly Assumption[];
@@ -4260,6 +4568,7 @@ function MarkNotices({
     loops: malformedLoops.length > 0 || orphanLoops.length > 0,
     veils: malformedVeils.length > 0,
     sketches: malformedSketches.length > 0,
+    games: malformedGames.length > 0,
     assumptions:
       malformedAssumptions.length > 0 ||
       duplicateAssumptions.length > 0 ||
@@ -4387,6 +4696,16 @@ function MarkNotices({
             {malformedSketches.map((line, index) => (
               <div className="mark-notice" key={`malformed-sketch-${index}`}>
                 unreadable line in map/sketches.jsonl: {line}
+              </div>
+            ))}
+          </>
+        );
+      case "games":
+        return (
+          <>
+            {malformedGames.map((line, index) => (
+              <div className="mark-notice" key={`malformed-game-${index}`}>
+                unreadable line in map/language-games.jsonl: {line}
               </div>
             ))}
           </>

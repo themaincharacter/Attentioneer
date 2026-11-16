@@ -151,8 +151,14 @@ describe("the review's clutter: seven doors hidden, nothing deleted", () => {
       // The pen: one toggle, level-uniform, with its pressed state.
       expect(html.match(/class="level-draw"/g) ?? []).toHaveLength(1);
       expect(html).toContain('aria-pressed="false"');
-      // The group is still the control's whole chrome.
-      expect(html.match(/<button/g) ?? []).toHaveLength(LEVELS.length + 1);
+      // The group is still the control's whole chrome, plus the selection
+      // tool's two CONCEPT-ONLY doors (PROVISIONAL, added 2026-11-16 per the
+      // lead's brief: `select` beside the pen and the `language games` list's
+      // door). They are offered at concept only — a language game is the
+      // concept map's content — so the dynamics and ground rows are unchanged.
+      expect(html.match(/<button/g) ?? []).toHaveLength(
+        LEVELS.length + 1 + (level === "concept" ? 2 : 0),
+      );
     }
   });
 

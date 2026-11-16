@@ -34,6 +34,16 @@ import {
   strokePath,
   type DrawTool,
 } from "./sketchRules";
+import { LanguageGameFill } from "./LanguageGameFill";
+import {
+  DEFAULT_GAME_COLOR,
+  DEFAULT_SHAPE_MODE,
+  GAME_DRAFT_OPACITY,
+  SELECT_STEP_PX,
+  shapeFromDrag,
+  type ShapeMode,
+} from "./languageGameRules";
+import type { GamePoint, GameShape } from "../map/languageGames";
 import type { Point } from "./geometry";
 import { boxIsDrawable, capturedBox } from "./veilRules";
 import type { VeilBox } from "../map/veils";
@@ -173,6 +183,20 @@ interface CanvasPlaneProps {
    * the pointer) is exactly the pen's. Defaulted to the pen.
    */
   drawTool?: DrawTool;
+  /**
+   * True while the SELECTION TOOL is armed (PROVISIONAL, added 2026-11-16 per
+   * the lead's brief). It is its own gate mode (`"select"`): while armed every
+   * plane gesture stands still exactly as the pen's made them — pan,
+   * double-click creation and every word press — and the capture surface below
+   * (rendered only while armed) owns the pointer, so a selection drag can never
+   * move a word or open a creation menu. The app passes false while the naming
+   * popup is open: the gate mode stays armed, but the card needs the pointer.
+   */
+  selectArmed?: boolean;
+  /** Which shape an armed drag draws right now (the strip's choice). */
+  selectShape?: ShapeMode;
+  /** Called with the shape a selection drag drew when it is released. */
+  onSelectShape?: (shape: GameShape) => void;
   /** Called with the stroke's world path when a pen drag is released. */
   onSketch?: (points: readonly SketchPoint[]) => void;
   /**
@@ -219,6 +243,9 @@ export function CanvasPlane({
   drawArmed = false,
   drawPen = { color: DEFAULT_PEN_COLOR, size: DEFAULT_PEN_SIZE },
   drawTool = DEFAULT_DRAW_TOOL,
+  selectArmed = false,
+  selectShape = DEFAULT_SHAPE_MODE,
+  onSelectShape,
   picking = false,
   onLasso,
   onDrawBox,
@@ -236,6 +263,11 @@ export function CanvasPlane({
   // are drawing before the release writes it (the lasso/sketch-draft idiom).
   const [strokeDraft, setStrokeDraft] = useState<SketchPoint[] | null>(null);
   const drawSurfaceRef = useRef<HTMLDivElement>(null);
+  // The selection tool's in-flight shape, in world space: the region the person
+  // is drawing, before the release hands it to the naming popup (the pen's
+  // draft idiom). It is content and reports nothing.
+  const [selectDraft, setSelectDraft] = useState<GameShape | null>(null);
+  const selectSurfaceRef = useRef<HTMLDivElement>(null);
 
   // Latest-value refs for the raw listeners and d3's filter, which are
   // attached once and must always see the current mode, camera and callback.
@@ -259,6 +291,12 @@ export function CanvasPlane({
   onEraseRef.current = onErase;
   const drawToolRef = useRef(drawTool);
   drawToolRef.current = drawTool;
+  const selectArmedRef = useRef(selectArmed);
+  selectArmedRef.current = selectArmed;
+  const selectShapeRef = useRef(selectShape);
+  selectShapeRef.current = selectShape;
+  const onSelectShapeRef = useRef(onSelectShape);
+  onSelectShapeRef.current = onSelectShape;
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
 
@@ -531,6 +569,67 @@ export function CanvasPlane({
     return () => surface.removeEventListener("mousedown", onDown);
   }, [drawArmed]);
 
+  // THE SELECTION TOOL (PROVISIONAL, added 2026-11-16 per the lead's brief):
+  // while its mode is armed this surface owns every press, and the drag draws
+  // one of the three shapes. The samples are taken in SCREEN space
+  // (SELECT_STEP_PX) and the geometry is WORLD space, read through the live
+  // camera ref so a wheel zoom mid-drag still lands the shape under the
+  // pointer. The shape's MEANING is fixed at the press (the pen's rule), and a
+  // release that drew no area reports nothing — not even a draft.
+  useEffect(() => {
+    if (!selectArmed) return;
+    const surface = selectSurfaceRef.current;
+    const plane = planeRef.current;
+    if (!surface || !plane) return;
+
+    const onDown = (event: MouseEvent) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const mode = selectShapeRef.current;
+      const rect = plane.getBoundingClientRect();
+      const toWorld = (clientX: number, clientY: number): GamePoint => {
+        const cam = cameraRef.current;
+        return {
+          x: (clientX - rect.left - cam.x) / cam.zoom,
+          y: (clientY - rect.top - cam.y) / cam.zoom,
+        };
+      };
+      const start = toWorld(event.clientX, event.clientY);
+      let path: GamePoint[] = [start];
+      let lastX = event.clientX;
+      let lastY = event.clientY;
+      setSelectDraft(null);
+
+      const onMove = (ev: MouseEvent) => {
+        if (Math.hypot(ev.clientX - lastX, ev.clientY - lastY) < SELECT_STEP_PX) {
+          return;
+        }
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+        path = [...path, toWorld(ev.clientX, ev.clientY)];
+        setSelectDraft(
+          shapeFromDrag(mode, start, path[path.length - 1], path),
+        );
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        setSelectDraft(null);
+        // Esc (or a game switch) ended the arm mid-drag: nothing is drawn.
+        if (!selectArmedRef.current) return;
+        const end = path[path.length - 1];
+        const shape = shapeFromDrag(mode, start, end, path);
+        if (shape === null) return;
+        onSelectShapeRef.current?.(shape);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+    surface.addEventListener("mousedown", onDown);
+    return () => surface.removeEventListener("mousedown", onDown);
+  }, [selectArmed]);
+
   // Keep d3's internal transform in sync with programmatic camera moves.
   useEffect(() => {
     const el = planeRef.current;
@@ -560,7 +659,7 @@ export function CanvasPlane({
     <PlaneContext.Provider value={planeApi}>
       <div
         ref={planeRef}
-        className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}${boxArmed ? " veil-armed" : ""}${drawArmed ? " draw-armed" : ""}${picking ? " ring-picking" : ""}`}
+        className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}${boxArmed ? " veil-armed" : ""}${drawArmed ? " draw-armed" : ""}${selectArmed ? " select-armed" : ""}${picking ? " ring-picking" : ""}`}
         style={gridStyle}
         onDoubleClick={handleDoubleClick}
       >
@@ -595,6 +694,18 @@ export function CanvasPlane({
               />
             </svg>
           )}
+          {/* The selection tool's in-flight shape (PROVISIONAL, added
+              2026-11-16 per the lead's brief): the region being drawn, in world
+              space, so the person sees what the release will hand to the naming
+              popup. It is content (gates.ts) and reports nothing. */}
+          {selectDraft && (
+            <LanguageGameFill
+              shape={selectDraft}
+              ink={DEFAULT_GAME_COLOR}
+              opacity={GAME_DRAFT_OPACITY}
+              draft
+            />
+          )}
           {/* The veil's in-flight box (Epic 9 story 1): the rectangle being
               dragged, in world space, so the person sees what the arc will
               capture. It is content (gates.ts) and reports nothing. */}
@@ -618,6 +729,20 @@ export function CanvasPlane({
             in-flight stroke is previewed above, in world space. */}
         {drawArmed && (
           <div ref={drawSurfaceRef} className="draw-surface" aria-hidden="true" />
+        )}
+        {/* The selection tool's capture surface (PROVISIONAL, added 2026-11-16
+            per the lead's brief): rendered ONLY while the tool is armed, it
+            covers the plane so every press is the drag's — the gate mode
+            suspends pan, creation and word presses anyway, and this surface
+            makes that physical. While the naming popup is open the app passes
+            `selectArmed={false}` (the gate mode stays armed through the draft),
+            so the card underneath this level receives its presses. */}
+        {selectArmed && (
+          <div
+            ref={selectSurfaceRef}
+            className="select-surface"
+            aria-hidden="true"
+          />
         )}
         {/* The chip reads through the band helpers (story 2): never a rounded
             percent that contradicts the level or the labels. */}

@@ -1302,12 +1302,13 @@ body {
 /* The lasso in flight (story 1): a faint dashed world-space polygon, never a
    press target. */
 /* The armed plane does not pan, so it must not promise a grab. */
-.plane.gesture-armed:not(.lasso-armed):not(.veil-armed) {
+.plane.gesture-armed:not(.lasso-armed):not(.veil-armed):not(.select-armed) {
   cursor: default;
 }
 
 .plane.lasso-armed,
-.plane.veil-armed {
+.plane.veil-armed,
+.plane.select-armed {
   cursor: crosshair;
 }
 
@@ -4815,4 +4816,351 @@ body {
 .sketch-clear:focus-visible {
   outline: 1.5px solid #6b675e;
   outline-offset: 1px;
+}
+
+
+/* ------------------------------------------------------------------------- *
+ * THE SELECTION TOOL (PROVISIONAL, added 2026-11-16 per the lead's brief):
+ * a drawn shape on the concept map becomes a LANGUAGE GAME — a named, coloured
+ * region. The fills are world space, above the paper and BELOW the words and
+ * the ink (z-index 1); the strip and the list are screen space, outside
+ * .plane, so the plane's armed gate never reaches their presses.
+ * ------------------------------------------------------------------------- */
+
+/* The tool's toggle and the list's door: the control's quiet action
+   vocabulary. They are their own rule (not part of the older group) because
+   they are CONCEPT-ONLY doors, offered by the separate-maps rule. */
+.level-select,
+.level-games {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #8d887c;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid #e4dfd4;
+  border-radius: 0 999px 999px 0;
+  padding: 5px 10px;
+  margin-left: 2px;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+.level-select:hover,
+.level-games:hover {
+  color: #1e2126;
+}
+
+.level-select.active,
+.level-games.active {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.16);
+}
+
+.level-select:focus-visible,
+.level-games:focus-visible,
+.language-game-bar button:focus-visible,
+.language-games-panel button:focus-visible,
+.language-game-popup button:focus-visible,
+.language-game-name:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+/* The selection tool's capture surface: rendered only while the tool is armed,
+   it owns every press on the plane (the gate mode already stands pan, creation
+   and word presses still). Its level is the plane's capture layer, exactly the
+   pen's: above the content and the plane's labels, BELOW every screen-space
+   bar, so the strip and the list keep their presses. */
+.select-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  cursor: crosshair;
+}
+
+/* One language game's fill: WORLD space, so the camera carries it with the
+   paper. z-index 1 puts it above the grid and below the words (2), the wires
+   and the pen's ink, so a name always reads over a tint. It takes no press. */
+.language-game-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* The naming popup: the small card a completed selection opens. It hangs in
+   world space and counter-scales (set inline by the component), above the
+   content like the app's other cards. Provisional: the size and the look. */
+.language-game-popup {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 150px;
+  max-width: 220px;
+  padding: 7px 9px 8px;
+  background: rgba(255, 253, 248, 0.95);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 7px;
+  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.1);
+  animation: fade-in 140ms ease-out;
+}
+
+.language-game-popup-title {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.language-game-name {
+  font: inherit;
+  font-size: 12px;
+  color: #2c2a26;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.language-game-problem {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #a9522f;
+}
+
+.language-game-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.language-game-submit,
+.language-game-cancel {
+  font: inherit;
+  font-size: 11px;
+  color: #6b675e;
+  background: transparent;
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.language-game-submit:hover,
+.language-game-cancel:hover {
+  color: #1e2126;
+  border-color: #cfc8ba;
+}
+
+/* The armed strip: the three shapes, screen space beside the app's other
+   armed hints (outside .plane, so its presses never reach the plane). */
+.language-game-bar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  background: rgba(255, 253, 248, 0.9);
+  border: 1px solid #e4dfd4;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(40, 35, 25, 0.08);
+  transform: translateX(-50%);
+  animation: fade-in 160ms ease-out;
+}
+
+.language-game-bar-title {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.language-game-bar-hint {
+  font-size: 11.5px;
+  color: #8d887c;
+}
+
+.language-game-shapes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.language-game-shape {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #8d887c;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.language-game-shape:hover {
+  color: #1e2126;
+}
+
+.language-game-shape.active {
+  color: #1e2126;
+  background: rgba(141, 136, 124, 0.16);
+}
+
+/* ALL LANGUAGE GAMES: the right-side list, outside .plane beside the app's
+   other quiet panels. One row per game: its swatch and name, and the quiet
+   trash-bin icon that deletes it. Nothing ranks, totals or nudges. */
+.language-games-panel {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: min(280px, 42vw);
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+  padding: 7px 10px 9px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid #e4dfd4;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.08);
+  animation: fade-in 160ms ease-out;
+}
+
+.language-games-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.language-games-title {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.language-games-close {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #b3ac9e;
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.language-games-close:hover {
+  color: #6b675e;
+}
+
+.language-games-empty {
+  font-size: 11.5px;
+  color: #8d887c;
+  padding: 4px 2px;
+}
+
+.language-games-list {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.language-game-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 5px;
+}
+
+.language-game-row.focused {
+  background: rgba(141, 136, 124, 0.1);
+}
+
+.language-game-pick {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  color: #4c4a44;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.language-game-pick:hover {
+  color: #1e2126;
+}
+
+.language-game-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  border: 1px solid rgba(40, 35, 25, 0.12);
+  flex: none;
+}
+
+.language-game-game-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.language-game-remove {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: #b3ac9e;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.language-game-remove:hover {
+  color: #6b675e;
+  background: rgba(141, 136, 124, 0.1);
+}
+
+.language-game-trash {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }

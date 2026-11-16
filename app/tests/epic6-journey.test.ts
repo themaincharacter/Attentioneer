@@ -1333,6 +1333,11 @@ describe("the say-it structural test: a word's faces are never aggregated (ADR-0
       // The map's ink renders in every game (added 2026-11-16 per user review),
       // so its unreadable lines are shared-group hygiene too.
       sketches: "all",
+      // The language games (PROVISIONAL, added 2026-11-16 per the lead's
+      // brief) are concept-map content, but their unreadable lines are record
+      // hygiene: surfaced wherever the person is, the veils' and the ink's
+      // reading.
+      games: "all",
     });
     for (const family of Object.keys(NOTICE_FAMILY_GAME) as Array<
       keyof typeof NOTICE_FAMILY_GAME

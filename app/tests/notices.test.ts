@@ -42,6 +42,11 @@ const FAMILIES: NoticeFamily[] = [
   // The map's ink (added 2026-11-16 per user review): the drawing renders in
   // every game, so its unreadable lines ride the shared group too.
   "sketches",
+  // The language games (PROVISIONAL, added 2026-11-16 per the lead's brief):
+  // their content renders at concept only, but an unreadable
+  // map/language-games.jsonl line is record hygiene surfaced wherever the
+  // person is — the veils' and the ink's reading.
+  "games",
 ];
 
 const names = new Map([
@@ -75,6 +80,7 @@ describe("the notices strip is band-scoped", () => {
       pointers: "ground",
       veils: "all",
       sketches: "all",
+      games: "all",
     });
     // Every family is classified, so none can slip back into an aggregator.
     expect(Object.keys(NOTICE_FAMILY_GAME).sort()).toEqual([...FAMILIES].sort());
@@ -105,7 +111,7 @@ describe("the notices strip is band-scoped", () => {
       {
         game: "all",
         label: "every game",
-        families: ["marks", "veils", "sketches"],
+        families: ["marks", "veils", "sketches", "games"],
       },
     ]);
     const families = groups.flatMap((group) => group.families);
@@ -120,7 +126,12 @@ describe("the notices strip is band-scoped", () => {
       "every game",
       "dynamics",
     ]);
-    expect(groups[0].families).toEqual(["marks", "veils", "sketches"]);
+    expect(groups[0].families).toEqual([
+      "marks",
+      "veils",
+      "sketches",
+      "games",
+    ]);
     expect(groups[1].game).toBe("dynamics");
     expect(groups[1].families).toEqual([
       "links",
