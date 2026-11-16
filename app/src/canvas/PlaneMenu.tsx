@@ -12,9 +12,10 @@ interface PlaneMenuProps {
    * grows the third, `assumption`, at a bare spot.
    *
    * DEPRECATED (hidden 2026-11-16 per user review): the offer is now
-   * `["word"]` (gates.ts's `offeredCreationKinds`), so this default names
-   * only the word and BOTH other choices below stay written but unrendered —
-   * delete the hidden choices in the deprecated sweep.
+   * `["word"]` at concept and EMPTY at dynamics and ground (the separate-maps
+   * rule, mapContentRules.ts), so this default names only the word and both
+   * other creation choices below stay written but unrendered — delete the
+   * hidden choices in the deprecated sweep.
    */
   kinds?: readonly CreationKind[];
   /** Coin a word at the point — the in-place coin field takes over. */
@@ -67,6 +68,16 @@ interface PlaneMenuProps {
  * the pen's capture surface owns the pointer), so the menu cannot re-open under
  * the pen and nothing can double-arm it.
  *
+ * THE SEPARATE-MAPS REVISION (DEPRECATED, hidden 2026-11-16 per user review):
+ * the word is CONCEPT-MAP CONTENT, so at dynamics and ground the cluster paints
+ * the anchor dot and the pen's draw bubble ALONE (gates.ts's
+ * `offeredCreationKinds` reads mapContentRules.ts). Coining a word on a map
+ * that cannot render it would be a lie; drawing is level-uniform (PROVISIONAL:
+ * per-map ink is the later "context" work). The word's button stays written
+ * behind `kinds.includes("word")` and the pure cluster geometry already handles
+ * every membership, so a flip-back needs no component edit — delete the gated
+ * word bubble in the deprecated sweep.
+ *
  * The cluster is two frosted warm-white bubbles hanging off an inked anchor dot
  * (the word above, the pen's draw below, each on a hairline stem), so it reads
  * as a small menu floating over the paper plane rather than a slab on it. The
@@ -97,11 +108,17 @@ export function PlaneMenu({
   const { camera } = usePlane();
   const rootRef = useRef<HTMLDivElement>(null);
   const wordRef = useRef<HTMLButtonElement>(null);
+  const drawRef = useRef<HTMLButtonElement>(null);
 
   // Focus the first choice on open: keyboard users can act immediately. The
   // focus ring is drawn only for keyboard focus (:focus-visible).
+  //
+  // DEPRECATED (hidden 2026-11-16 per user review — separate maps): the word
+  // bubble is concept-map content and is not offered at dynamics or ground, so
+  // the FIRST PAINTED choice takes focus there — the pen's draw bubble. The
+  // fallback keeps the cluster usable wherever the offer narrows to.
   useEffect(() => {
-    wordRef.current?.focus();
+    (wordRef.current ?? drawRef.current)?.focus();
   }, []);
 
   // Click-away in the capture phase: d3-zoom stops propagation on the plane's
@@ -144,8 +161,13 @@ export function PlaneMenu({
   // draw cluster is SYMMETRIC about the dot, so its lift is zero; the
   // single-word cluster this menu painted after the first review needed half a
   // bubble plus the gap, and the same rule still returns that for it.
+  // DEPRECATED (hidden 2026-11-16 per user review — separate maps): the word
+  // bubble is concept-map content, so the cluster's top seat is read from the
+  // OFFER (the word at concept; nothing above the dot at dynamics and ground,
+  // where the pen's draw bubble is the only choice). The pure geometry is
+  // unchanged — it already computes the lift for any membership.
   const cluster = menuCluster({
-    word: true,
+    word: kinds.includes("word"),
     lack: kinds.includes("lack"),
     assumption: kinds.includes("assumption") && onAssumption !== undefined,
     draw: true,
@@ -168,16 +190,24 @@ export function PlaneMenu({
       role="group"
       aria-label="create at this point"
     >
-      <button
-        ref={wordRef}
-        type="button"
-        className="plane-menu-option"
-        aria-label="coin a word here"
-        title="coin a word here"
-        onClick={onWord}
-      >
-        word
-      </button>
+      {/* DEPRECATED (hidden 2026-11-16 per user review — separate maps): the
+          word bubble is CONCEPT-MAP CONTENT, so it is offered at concept only
+          (gates.ts's `offeredCreationKinds` reads mapContentRules.ts's
+          `wordCreationOffered`). At dynamics and ground the cluster is the
+          anchor dot with the pen's draw bubble below it. The markup, the
+          handler and the slot stay written — delete in the deprecated sweep. */}
+      {kinds.includes("word") && (
+        <button
+          ref={wordRef}
+          type="button"
+          className="plane-menu-option"
+          aria-label="coin a word here"
+          title="coin a word here"
+          onClick={onWord}
+        >
+          word
+        </button>
+      )}
       <span className="plane-menu-dot" aria-hidden="true" />
       {/* THE PEN (PROVISIONAL, added 2026-11-16 per user review): the review
           asked for a DRAW choice on this menu, so the map's drawing tool is
@@ -190,6 +220,7 @@ export function PlaneMenu({
           one press away once armed. Provisional: the wording ("draw here") and
           this being the second bubble. */}
       <button
+        ref={drawRef}
         type="button"
         className="plane-menu-option plane-menu-draw"
         aria-label="draw here"

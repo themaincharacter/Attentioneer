@@ -398,7 +398,10 @@ describe("no cross-band surface: each game's own records stay in their game", ()
   const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 
   test("dynamics' surfaces render only at dynamics", () => {
-    expect(app).toContain('{loopRoutes.map(');
+    // DEPRECATED (hidden 2026-11-16 per separate-maps review): the map-content
+    // rule now fronts the render, so these surfaces paint at CONCEPT only — the
+    // dynamics gates below stay written for the flip-back.
+    expect(app).toContain('{mapContent && loopRoutes.map(');
     expect(app).toContain("if (level !== \"dynamics\") return [];");
     expect(app).toContain('{level === "dynamics" && assumptionPanel &&');
     expect(app).toContain('{level === "dynamics" &&');
@@ -409,10 +412,15 @@ describe("no cross-band surface: each game's own records stay in their game", ()
     expect(app).toContain('{level === "ground" && peekAt &&');
   });
 
-  test("the neutral surfaces render in every game", () => {
-    // Words, distances, marks, the shelf and the follow have no game gate.
-    expect(app).toContain("{refs.map((word) => (");
-    expect(app).toContain("<ShelfFold shelfX={shelfX} extent={fold} />");
+  // DEPRECATED (hidden 2026-11-16 per separate-maps review): the surfaces the
+  // three games once shared no longer render in every game. Converted from "the
+  // neutral surfaces render in every game" to the NEW state: ONE central rule
+  // fronts each render, so the content is concept-only while the flag stands.
+  test("the concept map's surfaces render behind the ONE rule", () => {
+    expect(app).toContain("const mapContent = showsMapContent(level);");
+    expect(app).toContain("{mapContent && refs.map((word) => (");
+    expect(app).toContain("{mapContent && <ShelfFold shelfX={shelfX} extent={fold} />}");
+    // The follow stays written inside the word row (machinery alive).
     expect(app.match(/game=\{level\}/g)?.length).toBe(1);
   });
 });

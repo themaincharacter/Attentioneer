@@ -115,15 +115,20 @@ interface CanvasPlaneProps {
    */
   gestureMode?: GestureMode;
   /**
-   * The quiet hint's creation clause (story 4): Level 1 keeps the word/lack
-   * wording byte-identically; Level 2 names its third kind.
+   * The plane's quiet hint, in the running game's own words (story 4, and the
+   * separate-maps review). The ONE rule that words it is
+   * `canvas/mapContentRules.ts`'s `planeHint`: at concept the sentence is
+   * byte-identically the one the plane always showed (it names the word and
+   * the shelf's fold), while at dynamics and ground the map is blank paper —
+   * the creation clause names the pen and the shelf clause GOES, because a
+   * fold that is not there cannot be dragged past.
    *
-   * DEPRECATED (hidden 2026-11-16 per user review): the ring menu offers only
-   * the word option now, so the default hint names the word alone (the
-   * historical word/lack wording is kept in the record, not on the plane) —
-   * delete the hidden kinds' wording in the deprecated sweep.
+   * DEPRECATED (hidden 2026-11-16 per user review): the hint used to take a
+   * creation clause naming the ring menu's hidden kinds; those are hidden and
+   * the rule owns the whole sentence now — delete the old clauses in the
+   * deprecated sweep.
    */
-  creationHint?: string;
+  hint?: string;
   /** True while the playing-set selector's draw tool is armed (story 1). */
   lassoArmed?: boolean;
   /**
@@ -198,9 +203,10 @@ export function CanvasPlane({
   onPlaneDoubleClick,
   gestureMode = "idle",
   // DEPRECATED (hidden 2026-11-16 per user review): the hint named the ring
-  // menu's word AND lack choices; the menu now offers the word alone — delete
-  // in the deprecated sweep.
-  creationHint = "double-click: word",
+  // menu's word AND lack choices; the rule (mapContentRules.ts's `planeHint`)
+  // owns the whole sentence now — delete the old clause in the deprecated
+  // sweep.
+  hint = "drag to pan · scroll to zoom · double-click: word · drag past the fold to set aside",
   lassoArmed = false,
   boxArmed = false,
   drawArmed = false,
@@ -608,10 +614,9 @@ export function CanvasPlane({
         {/* The chip reads through the band helpers (story 2): never a rounded
             percent that contradicts the level or the labels. */}
         <div className="zoom-chip">{zoomChipPercent(camera.zoom)}%</div>
-        <div className="plane-hint">
-          drag to pan · scroll to zoom · {creationHint} · drag past the fold to
-          set aside
-        </div>
+        {/* The hint is ONE rule's sentence (mapContentRules.ts's `planeHint`):
+            the shelf's fold is named only where a shelf renders. */}
+        <div className="plane-hint">{hint}</div>
       </div>
     </PlaneContext.Provider>
   );

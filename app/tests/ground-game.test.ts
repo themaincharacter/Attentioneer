@@ -16,6 +16,11 @@ import {
   withLevel,
   type Level,
 } from "../src/workspace/level";
+import {
+  MAP_CONTENT_FAMILIES,
+  renderedMapContent,
+  showsMapContent,
+} from "../src/canvas/mapContentRules";
 
 /**
  * The ground game, automated (ADR-0016's amendment; Epic 5 story 1):
@@ -109,15 +114,25 @@ describe("the level control names three games (one source)", () => {
 });
 
 describe("the render map keeps the honest partition", () => {
-  test("every game renders words, distances, marks and the shelf", () => {
+  // DEPRECATED (hidden 2026-11-16 per separate-maps review): converted from
+  // "every game renders words, distances, marks and the shelf" — the table is
+  // now the PRE-HIDE record of the copy-over (kept for the sweep), and what
+  // actually renders is ONE rule: content at concept only, blank paper off it.
+  test("the render map is the pre-hide table; the rule renders concept only", () => {
     expect(RENDER_MAP.all).toEqual(["words", "distances", "marks", "shelf"]);
-    for (const game of ["concept", "dynamics", "ground"] as const) {
-      const rendered =
-        game === "concept"
-          ? [...RENDER_MAP.all]
-          : [...RENDER_MAP.all, ...RENDER_MAP[game]];
+    expect(renderedMapContent("concept")).toEqual(MAP_CONTENT_FAMILIES);
+    for (const game of ["dynamics", "ground"] as const) {
+      expect(showsMapContent(game)).toBe(false);
+      expect(renderedMapContent(game)).toEqual([]);
+      // Every record the old partition promised in this game renders NOWHERE
+      // off concept — the blank map carries none of them.
       for (const record of RENDER_MAP.all) {
-        expect(rendered).toContain(record);
+        const shown = renderedMapContent(game) as readonly string[];
+        expect({ game, record, shown: shown.includes(record) }).toEqual({
+          game,
+          record,
+          shown: false,
+        });
       }
     }
   });
@@ -156,11 +171,18 @@ describe("creation kinds are per game (an ADD, never a take-away)", () => {
   // the word option now. The grammar above is the record machinery's (the
   // ghost packet's card, the empty-space records' own tests) and stays; the
   // OFFER is what the person sees, and it is the word alone in every game.
-  test("the ring menu offers only the word (hidden 2026-11-16)", () => {
-    for (const level of LEVELS) {
-      expect(offeredCreationKinds(level)).toEqual(["word"]);
+  // DEPRECATED (hidden 2026-11-16 per separate-maps review): the ring menu's
+  // OFFER is now concept-only — the word IS the concept map's content, so the
+  // dynamics and ground bubbles offer the pen's draw alone. Converted from "the
+  // word in every game"; the machinery's grammar is untouched.
+  test("the ring menu offers the word at concept only (hidden 2026-11-16)", () => {
+    expect(offeredCreationKinds("concept")).toEqual(["word"]);
+    for (const level of ["dynamics", "ground"] as const) {
+      expect(offeredCreationKinds(level)).toEqual([]);
       expect(offeredCreationKinds(level)).not.toContain("lack");
       expect(offeredCreationKinds(level)).not.toContain("assumption");
+    }
+    for (const level of LEVELS) {
       // The machinery's full list is untouched, so a sweep can restore it.
       expect(creationKinds(level).length).toBeGreaterThanOrEqual(2);
     }

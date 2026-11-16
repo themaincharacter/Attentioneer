@@ -40,8 +40,14 @@ const stepSource = read("../src/map/step.ts");
 const cssSource = read("../src/canvas/canvas.css");
 
 describe("the crank control", () => {
-  test("it renders at Level 2 only", () => {
-    expect(appSource).toMatch(/level === "dynamics" && \(\s*<StepCrank/);
+  // DEPRECATED (hidden 2026-11-16 per separate-maps review): the crank stood
+  // at dynamics and the dynamics map is blank paper now, so it is not offered.
+  // Converted from "it renders at Level 2 only"; the component, the hook and
+  // the notes stay written behind the flag.
+  test("it is hidden at dynamics with the blank map (flag + machinery alive)", () => {
+    expect(appSource).toMatch(
+      /level === "dynamics" && offered\(STEP_CRANK_HIDDEN\) && \(\s*<StepCrank/,
+    );
     // The hook itself is unconditional: the run survives a level switch, and
     // only the render is band-scoped.
     expect(appSource).toContain("const step = useStepRun(stepModel, stepKey);");

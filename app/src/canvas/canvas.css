@@ -932,6 +932,23 @@ body {
   animation-delay: 0ms;
 }
 
+/* THE SEPARATE-MAPS CLUSTER (hidden 2026-11-16 per user review): at dynamics
+   and ground the word bubble is not offered (it is concept-map content), so the
+   cluster is the anchor dot with the pen's DRAW bubble BELOW it — the dot comes
+   first in the markup. The single-word cluster above pointed its stem DOWN to
+   the dot and the rule above still says so for that membership; this one points
+   the hairline UP, so the bubble still reads as tied to its anchor. Delete with
+   the hidden word bubble in the deprecated sweep. */
+.plane-menu-single .plane-menu-draw:only-of-type::after {
+  top: -9px;
+  bottom: auto;
+  background: linear-gradient(
+    to top,
+    rgba(141, 136, 124, 0.34),
+    rgba(141, 136, 124, 0.1)
+  );
+}
+
 .plane-menu-option:hover {
   color: #1e2126;
   background: rgba(255, 253, 248, 0.92);

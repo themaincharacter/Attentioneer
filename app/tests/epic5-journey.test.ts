@@ -84,6 +84,10 @@ import {
   withLevel,
   type Level,
 } from "../src/workspace/level";
+import {
+  renderedMapContent,
+  showsMapContent,
+} from "../src/canvas/mapContentRules";
 
 /**
  * Epic 5's plain-language check, automated at the record layer (story 3).
@@ -584,9 +588,18 @@ describe("the epic's record-level journey (Epic 5)", () => {
     ]) {
       expect(file(files, path)).toBe(file(before, path));
     }
-    // The render map: pointers are ground-only, dynamics records are the
-    // dynamics game's, and words/distances/marks/shelf are every game's.
+    // DEPRECATED (hidden 2026-11-16 per separate-maps review): converted — the
+    // table below is the PRE-HIDE record of what each game once drew (machinery
+    // the sweep keeps); the render now reads ONE rule, so the concept map's
+    // words/distances/marks/shelf show at concept only.
     expect([...RENDER_MAP.all]).toEqual(["words", "distances", "marks", "shelf"]);
+    expect(showsMapContent("concept")).toBe(true);
+    for (const level of ["dynamics", "ground"] as const) {
+      expect(showsMapContent(level)).toBe(false);
+      for (const record of RENDER_MAP.all) {
+        expect([...renderedMapContent(level)]).not.toContain(record as never);
+      }
+    }
     expect([...RENDER_MAP.ground]).toEqual(["pointers"]);
     expect([...RENDER_MAP.dynamics]).toEqual([
       "links",

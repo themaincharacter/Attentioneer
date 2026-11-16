@@ -344,9 +344,14 @@ describe("the hidden affordances (hidden 2026-11-16, not deleted)", () => {
     expect(CROSS_LEVEL_FACES_HIDDEN).toBe(true);
   });
 
-  test("the ring menu OFFERS only the word, in every game", () => {
-    for (const level of LEVELS) {
-      expect(offeredCreationKinds(level)).toEqual(["word"]);
+  // DEPRECATED (hidden 2026-11-16 per separate-maps review): converted from
+  // "the ring menu OFFERS only the word, in every game" — the word is the
+  // concept map's content, so the offer is concept-only and the bubble at
+  // dynamics/ground is the pen's draw alone.
+  test("the ring menu OFFERS only the word, at concept", () => {
+    expect(offeredCreationKinds("concept")).toEqual(["word"]);
+    for (const level of ["dynamics", "ground"] as const) {
+      expect(offeredCreationKinds(level)).toEqual([]);
     }
     // The machinery's grammar is untouched: the kinds are still named.
     expect(creationKinds("concept")).toEqual(["word", "lack"]);

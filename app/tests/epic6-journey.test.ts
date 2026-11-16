@@ -65,6 +65,7 @@ import {
   noticeVisibleIn,
 } from "../src/canvas/notices";
 import { PEEK_TOOLTIP, resolveTarget } from "../src/canvas/outwardRules";
+import { showsMapContent } from "../src/canvas/mapContentRules";
 import {
   BAND_ZOOM,
   distanceLabelVisible,
@@ -657,11 +658,17 @@ describe("levelFromZoom across all three bands, at the check's label-legible leg
     expect(linkWiresVisible("ground")).toBe(false);
     expect(cueShownIn("assumptions", "ground")).toBe(false);
     expect(cueShownIn("reach", "ground")).toBe(true);
-    // The concept family — the distances — reads in EVERY game: the partition
-    // is additive, so the pair never disappears as the word travels.
+    // DEPRECATED (hidden 2026-11-16 per separate-maps review): converted from
+    // "the concept family reads in EVERY game" — the pair no longer renders off
+    // concept. The LABEL rule still reads at every band's landing zoom (that is
+    // the machinery the sweep keeps), while the render is concept-only.
     for (const level of LEVELS) {
       expect(RENDER_MAP.all).toContain("distances" as never);
       expect(distanceLabelVisible(BAND_ZOOM[level])).toBe(true);
+      expect({ level, renders: showsMapContent(level) }).toEqual({
+        level,
+        renders: level === "concept",
+      });
     }
   });
 });
@@ -1260,7 +1267,9 @@ describe("the say-it structural test: a word's faces are never aggregated (ADR-0
         LEVELS.filter((level) => noticeGame(family) === level).length,
       ).toBeLessThanOrEqual(1);
     }
-    // The render map is additive: each own record belongs to exactly one game.
+    // DEPRECATED (hidden 2026-11-16 per separate-maps review): the render map
+    // below is the PRE-HIDE table (each own record belonged to one game, the
+    // shared content to all). What renders is ONE rule: concept only.
     expect([...RENDER_MAP.all]).toEqual([
       "words",
       "distances",

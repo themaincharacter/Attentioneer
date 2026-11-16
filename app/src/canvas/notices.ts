@@ -12,8 +12,14 @@ import type { Level } from "../workspace/level";
  * game the plane was showing. ADR-0019's no-aggregation rule and ADR-0016's
  * honest partition say otherwise — a dynamics-only record's notice belongs to
  * dynamics, a pointer's to ground. Each family is assigned to its game here,
- * and the strip renders ONLY the running game's groups plus the one group every
- * game shares (marks, distances and the shelf render in every game). Veils are
+ * and the strip renders ONLY the running game's groups plus the one SHARED
+ * group — record hygiene that must be surfaced wherever the person is (the
+ * veils and the ink always, and the marks whose content the separate-maps rule
+ * now blanks off concept: DEPRECATED, hidden 2026-11-16 per user review. THIS
+ * STRIP IS DELIBERATELY NOT GATED BY THAT RULE — an unreadable line is
+ * surfaced whatever the plane shows (ADR-0009), and the reported tension is
+ * that a notice can name a mark whose content this game hides; silencing it
+ * would be the lie). Veils are
  * the exception the table states out loud (ADR-0023): they cover levels 1–2,
  * so they belong to no single game, and their notices are record hygiene —
  * unreadable `map/veils.jsonl` lines ride the shared group wherever the person
@@ -41,13 +47,15 @@ export type NoticeFamily =
   | "veils"
   | "sketches";
 
-/** A family's game, or "all" for the content every game renders. */
+/** A family's game, or "all" for the notices that ride the shared group. */
 export type NoticeGame = Level | "all";
 
 /**
  * Which game owns each family's notice (RENDER_MAP's readings, one table):
- * marks render in every game; links, the playing set, loops and assumptions
- * are dynamics' own records; pointers are ground's.
+ * marks were every game's shared content and are CONCEPT-ONLY now (hidden
+ * 2026-11-16 per user review — separate maps), so their notices ride the shared
+ * group as hygiene rather than as a claim about the plane; links, the playing
+ * set, loops and assumptions are dynamics' own records; pointers are ground's.
  *
  * VEILS are the one family that is not a game's OWN record (ADR-0023): a veil
  * covers levels 1–2 and its sheet is absent at ground, so the table cannot say
@@ -95,9 +103,14 @@ export interface NoticeGroup {
 
 /**
  * The groups the strip renders in this game: the shared group first (the
- * content every game renders), then the running game's own — and never a group
- * for a game that is not running. Concept owns no record family, so it shows
- * only the shared group.
+ * families whose notices are record hygiene, surfaced wherever the person is),
+ * then the running game's own — and never a group for a game that is not
+ * running. Concept owns no record family, so it shows only the shared group.
+ * DEPRECATED (hidden 2026-11-16 per user review — separate maps): the shared
+ * group used to mean "the content every game renders"; the maps are separate
+ * now and some of that content is hidden off concept, but the strip keeps its
+ * own rule on purpose (see the header's note) — the reported tension is that it
+ * can name a record whose content this game hides.
  */
 export function noticeGroups(level: Level): NoticeGroup[] {
   // The shared group is every family assigned to "all" — read from the table so

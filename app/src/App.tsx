@@ -189,6 +189,8 @@ import {
 } from "./map/shelf";
 import { cueShownIn } from "./canvas/presenceRules";
 import { linkWiresVisible } from "./canvas/zoomBands";
+import { planeHint, showsMapContent } from "./canvas/mapContentRules";
+import { STEP_CRANK_HIDDEN, offered } from "./canvas/deprecations";
 import { createWriteQueue, type WriteQueue } from "./lib/writeQueue";
 import {
   createScenario,
@@ -240,8 +242,11 @@ import type { Workspace } from "./workspace/lifecycle";
  * quietened by open marks (Epic 3, ADR-0009).
  *
  * Creation lives on the double-click (Epic 3 feedback): a double-click on
- * empty plane opens a small word/lack menu there; choosing word coins in
- * place, choosing lack casts a bare open mark. A single click creates nothing.
+ * empty plane opens a small menu there. DEPRECATED (hidden 2026-11-16 per user
+ * review): the menu's lack kind is hidden (and, per the separate-maps review
+ * further down, the WORD is concept-only), so today the bubble paints the word
+ * above the anchor dot at concept and the pen's draw below it — a single click
+ * creates nothing.
  * The mark's own gestures are story 2's: the ring drags to bind/unbind, a
  * double-click on a bare ring grows it into a named question-word, and its ×
  * withdraws it. Wire geometry is derived from *live* word positions, so a
@@ -352,6 +357,21 @@ import type { Workspace } from "./workspace/lifecycle";
  * control's "coin a loop", which sits outside `.plane`. While the selector is
  * open the plane renders the DRAFT (`outOfPlay` in model.ts), so a word clicked
  * back in is readable before close.
+ *
+ * THE SEPARATE-MAPS REVIEW (DEPRECATED, hidden 2026-11-16 per user review) is
+ * the last word on WHAT RENDERS. The person's verdict: the three games' maps
+ * will NOT be the same maps — dynamics will grow modeling surfaces and ground
+ * file references, LATER. Until then the concept map's content renders at
+ * CONCEPT ONLY (`canvas/mapContentRules.ts`, behind a deprecations.ts flag),
+ * and the dynamics and ground maps are blank paper: no words, wires, marks,
+ * shelf, veils, links, loops, assumptions, quantities, reach handles or
+ * branch-derived readings. Everything stays WRITTEN (records, panels, handlers,
+ * pure rules); each render reads the ONE rule, so flipping the flag back
+ * restores the content with no edit here. The quiet chrome — paper, pan, zoom,
+ * the zoom chip, the level tabs, the pen's strip — and the PEN'S INK
+ * (`SketchLayer`, PROVISIONAL) keep rendering in every game, and the HONESTY
+ * SURFACES (`MarkNotices` and every scan) are deliberately not gated: an
+ * unreadable record is surfaced whatever the plane shows.
  */
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -1986,7 +2006,17 @@ function App() {
       closeComparison();
       if (cause === "jump") closePointers("switch-level");
       else closePointersQuietly();
-      if (shouldPromptForSet(cause, next, model !== null)) openSelector();
+      // DEPRECATED (hidden 2026-11-16 per user review — separate maps): the
+      // selector edits the PLAYING SET, a dynamics-map surface, and the map
+      // content rule blanks it off concept — so a deliberate entry no longer
+      // asks. The prompt rule itself (`shouldPromptForSet`) and the selector
+      // stay written and tested — delete this guard in the deprecated sweep.
+      if (
+        showsMapContent(next) &&
+        shouldPromptForSet(cause, next, model !== null)
+      ) {
+        openSelector();
+      }
     },
     [
       cancelPendingGestures,
@@ -3008,6 +3038,10 @@ function App() {
   // not a prompt to repeat.
   useEffect(() => {
     if (!workspace || !loaded) return;
+    // DEPRECATED (hidden 2026-11-16 per user review — separate maps): the same
+    // guard for the open that RESUMES in dynamics — a blank map cannot show the
+    // playing set the prompt would ask for — delete in the deprecated sweep.
+    if (!showsMapContent(workspace.resumeLevel)) return;
     if (!shouldPromptForSet("restore", workspace.resumeLevel, model !== null)) {
       return;
     }
@@ -3033,18 +3067,39 @@ function App() {
   // second one is visible rather than stacked exactly on the first.
   const pairCounts = new Map<string, number>();
 
+  // THE SEPARATE-MAPS RULE (added 2026-11-16 per user review): the concept
+  // map's record content renders at concept only while deprecations.ts's flag
+  // stands — the dynamics and ground maps are BLANK PAPER for now (their own
+  // content — modeling surfaces, file references — is a LATER story, not this
+  // one). ONE reading, `canvas/mapContentRules.ts`; every hiding point below
+  // asks it, so flipping the flag back restores the content with no edit here.
+  //
+  // NOT content, and deliberately left rendering in every game: the grid/paper,
+  // pan, zoom, the zoom chip, the three level tabs, the pen's strip while
+  // armed — and THE PEN'S INK (`SketchLayer` below), PROVISIONAL while per-map
+  // ink waits for the later "context" work. The HONESTY SURFACES
+  // (`MarkNotices` and every scan) are not gated either: an unreadable or
+  // orphaned record line is surfaced whatever the plane shows (ADR-0009); the
+  // tension — a notice can name a record whose content this game hides — is
+  // reported, never silenced.
+  const mapContent = showsMapContent(level);
+
   return (
     <>
       {/* DEPRECATED (hidden 2026-11-16 per user review): this plane used to
           take a dynamics-only creation hint naming the ring menu's lack and
-          assumption. The menu offers the word option alone now, so the
-          plane's default hint ("double-click: word") stands in every game —
-          delete in the deprecated sweep. */}
+          assumption. That creation grammar is hidden, and the SEPARATE-MAPS
+          rule owns the whole sentence now (`mapContentRules.ts`'s
+          `planeHint`): at concept it is byte-identically the old sentence
+          (word + the shelf's fold), off concept it names the pen and NOT the
+          shelf, because a blank map has no fold to drag past — delete the old
+          clause in the deprecated sweep. */}
       <CanvasPlane
         camera={camera}
         intents={intents}
         onPlaneDoubleClick={handlePlaneDoubleClick}
         gestureMode={gestureMode}
+        hint={planeHint(level)}
         lassoArmed={selectorOpen && lassoArmed}
         boxArmed={veilArmed}
         drawArmed={drawArmed}
@@ -3059,14 +3114,25 @@ function App() {
       >
         {/* the shelf's fold and margin: a place in world space (story 3). Its
             drawn extent covers the world's words (story 3 of Epic 6), so a word
-            set aside far below still reads as set aside. */}
-        <ShelfFold shelfX={shelfX} extent={fold} />
+            set aside far below still reads as set aside.
+
+            DEPRECATED (hidden 2026-11-16 per user review — separate maps): the
+            shelf is the concept map's content, so it renders at concept only;
+            the fold, its extent and the shelf record all stay — delete in the
+            deprecated sweep. */}
+        {mapContent && <ShelfFold shelfX={shelfX} extent={fold} />}
 
         {/* stored loops render at Level 2 only (story 3): a quiet closed route
             through each loop's words in path order, beneath the words so it
             hugs them, with the coined name near it. The route or the name opens
-            the walk; the name renames on double-click and removes on its ×. */}
-        {loopRoutes.map(({ loop, points, nameAt }) => (
+            the walk; the name renames on double-click and removes on its ×.
+
+            DEPRECATED (hidden 2026-11-16 per user review — separate maps): a
+            loop route is dynamics-map content and the dynamics map is blank
+            for now, so it renders at concept only (where none is ever drawn) —
+            the loop records, the route and the walk all stay — delete in the
+            deprecated sweep. */}
+        {mapContent && loopRoutes.map(({ loop, points, nameAt }) => (
           <LoopRoute
             key={`loop-${loopSlug(loop.name)}`}
             loop={loop}
@@ -3094,8 +3160,13 @@ function App() {
           />
         ))}
 
-        {/* bare lacks: one quiet ring per open spot (story 2) */}
-        {openSpots.map((spot) => (
+        {/* bare lacks: one quiet ring per open spot (story 2).
+
+            DEPRECATED (hidden 2026-11-16 per user review — separate maps): a
+            mark is concept-map content, so the rings render at concept only;
+            the mark record and its gestures all stay — delete in the deprecated
+            sweep. */}
+        {mapContent && openSpots.map((spot) => (
           <LackMark
             key={spot.key}
             x={spot.x}
@@ -3114,8 +3185,15 @@ function App() {
         ))}
 
         {/* bare-spot assumptions (story 4): one quiet diamond per spot that
-            carries a claim; pressing it opens the quiet overlay. Level 2 only. */}
+            carries a claim; pressing it opens the quiet overlay. Level 2 only.
+
+            DEPRECATED (hidden 2026-11-16 per user review — separate maps): the
+            diamond is dynamics-map content and the dynamics map is blank for
+            now, so the map-content rule closes it as well as the level — the
+            assumption records and the overlay all stay — delete in the
+            deprecated sweep. */}
         {level === "dynamics" &&
+          mapContent &&
           spotAssumptionTargets.map((spot) => (
             <AssumptionDiamond
               key={`assumption-spot-${spot.x}-${spot.y}`}
@@ -3131,8 +3209,14 @@ function App() {
             />
           ))}
 
-        {/* words */}
-        {refs.map((word) => (
+        {/* words
+
+            DEPRECATED (hidden 2026-11-16 per user review — separate maps): the
+            coined words are the concept map's content, so they render at
+            concept only. Every read, every gesture and the whole word row stay
+            written (the map content rule gates the RENDER, never the record) —
+            delete in the deprecated sweep. */}
+        {mapContent && refs.map((word) => (
           <ReferenceWord
             key={word.id}
             word={word}
@@ -3222,30 +3306,53 @@ function App() {
             and it owns its presses; the covered words are set aside by the
             region test above, never by a field on a record. LEVELS 1–2 ONLY:
             at ground no sheet renders (the game switch is the look-under). */}
-        {veilLive(level) &&
-          veils.map((veil) => (
-            <VeilSheet
-              key={veilKey(veil)}
-              veil={veil}
-              lifted={
-                lookUnderVeil !== null &&
-                veilKey(lookUnderVeil) === veilKey(veil)
-              }
-              onOpen={() => openLookUnder(veil)}
-              onRetire={() => removeVeil(veil)}
-            />
-          ))}
+        {veilLive(level) && (
+          <>
+            {/* DEPRECATED (hidden 2026-11-16 per user review — separate maps):
+                the level rule stays exactly as it was (veils cover Levels 1–2);
+                the SEPARATE-MAPS rule additionally blanks the sheet off concept
+                while the flag stands, because the dynamics map is blank paper
+                for now. Both readings render here, so a flip-back restores the
+                veil by its own flag alone — delete the second reading in the
+                deprecated sweep. */}
+            {mapContent &&
+              veils.map((veil) => (
+                <VeilSheet
+                  key={veilKey(veil)}
+                  veil={veil}
+                  lifted={
+                    lookUnderVeil !== null &&
+                    veilKey(lookUnderVeil) === veilKey(veil)
+                  }
+                  onOpen={() => openLookUnder(veil)}
+                  onRetire={() => removeVeil(veil)}
+                />
+              ))}
+          </>
+        )}
 
         {/* The map's ink (added 2026-11-16 per user review): every stroke of
             `map/sketches.jsonl` in world space, in FILE ORDER (later ink on
             top), drawn over the words and wires — the drawing is an annotation
             on the map, exactly as the pen's in-flight stroke previews it. The
             layer takes no press; the pen's own capture surface handles the
-            stroke while its mode is armed. */}
+            stroke while its mode is armed.
+
+            PROVISIONAL (kept in every game by the separate-maps review, hidden
+            2026-11-16 per user review): the draw tool is the one level-uniform
+            tool the previous review kept in the top menu, and per-map ink
+            arrives with the later "context" work. The map-content rule
+            deliberately does NOT gate this layer; the lead will confirm with
+            the person. */}
         <SketchLayer strokes={sketches} />
 
-        {/* wires */}
-        {distances.map((d) => {
+        {/* wires
+
+            DEPRECATED (hidden 2026-11-16 per user review — separate maps): the
+            distance wires are the concept map's content, so they render at
+            concept only; the distance records and the geometry stay — delete in
+            the deprecated sweep. */}
+        {mapContent && distances.map((d) => {
           const f = refs.find((r) => r.slug === d.from);
           const t = refs.find((r) => r.slug === d.to);
           if (!f || !t) return null;
@@ -3285,8 +3392,16 @@ function App() {
         {/* signed links (story 2, ADR-0012/0014): Level 2 only — Level 1
             renders exactly as before. Each directed link is its own wire, on
             its direction's side of the pair's canonical chord, with the sign
-            glyph at the target head. */}
-        {linkWiresVisible(level) &&
+            glyph at the target head.
+
+            DEPRECATED (hidden 2026-11-16 per user review — separate maps): the
+            link wires are dynamics-map content and the dynamics map is blank
+            for now, so the map-content rule closes them as well as the band
+            rule (which stays, unchanged, for the flip-back). The link records,
+            their signs and the geometry all stay — delete in the deprecated
+            sweep. */}
+        {mapContent &&
+          linkWiresVisible(level) &&
           links.map((link) => {
             const f = refs.find((r) => r.slug === link.from);
             const t = refs.find((r) => r.slug === link.to);
@@ -3464,15 +3579,17 @@ function App() {
         {/* the double-click creation menu: word or lack at Level 1; Level 2
             grows the third kind, assumption, about the bare spot (story 4).
             DEPRECATED (hidden 2026-11-16 per user review): the ring menu
-            offered lack (every game) and assumption (dynamics); it offers ONLY
-            the word option now, through gates.ts's `offeredCreationKinds`.
-            `creationKinds` still names each game's full grammar for the record
-            machinery — delete in the deprecated sweep.
+            offered lack (every game) and assumption (dynamics); through
+            gates.ts's `offeredCreationKinds` it now offers the WORD at concept
+            only and NOTHING off it (the separate-maps rule), while the bubble's
+            draw action below keeps rendering in every game. `creationKinds`
+            still names each game's full grammar for the record machinery —
+            delete in the deprecated sweep.
 
-            The pen's DRAW bubble sits beside the word (added 2026-11-16 per
-            user review): it is an ACTION, never a creation kind, so the grammar
-            above keeps its shape and `onDraw` arms the drawing mode instead of
-            creating anything. */}
+            The pen's DRAW bubble sits beside the word at concept and ALONE off
+            it (added 2026-11-16 per user review): it is an ACTION, never a
+            creation kind, so the grammar above keeps its shape and `onDraw`
+            arms the drawing mode instead of creating anything. */}
         {menuAt && (
           <PlaneMenu
             x={menuAt.x}
@@ -3751,7 +3868,12 @@ function App() {
           dynamics game's own reading. It lives outside `.plane` beside the
           level control, so the plane's armed gate never reaches it; one notch
           per press, no timer, no autoplay, nothing written. */}
-      {level === "dynamics" && (
+      {/* DEPRECATED (hidden 2026-11-16 per user review — separate maps): a
+          cranked step reads the playing set's quantities ON the map, and the
+          dynamics map is blank paper for now, so the crank is not offered. Its
+          component, its hook (`useStepRun`), its notes and its model stay
+          written — delete this hiding point in the deprecated sweep. */}
+      {level === "dynamics" && offered(STEP_CRANK_HIDDEN) && (
         <StepCrank
           notes={step.run?.notes ?? []}
           nameOf={nameOf}
@@ -3891,7 +4013,13 @@ function App() {
  * THE STRIP IS BAND-SCOPED now: it used to be the one unbanded aggregator,
  * naming every family's orphans whatever game the plane showed. It renders only
  * the groups `noticeGroups(level)` hands it — the shared "every game" group
- * (marks, which every game draws) plus the RUNNING game's own records. A
+ * (marks, veils and the ink: record hygiene, not a claim about the plane) plus
+ * the RUNNING game's own records. DEPRECATED (hidden 2026-11-16 per user review
+ * — separate maps): the map-content rule blanks marks off concept, and this
+ * strip is deliberately NOT gated by it — an unreadable or orphaned line is
+ * surfaced whatever the plane shows (ADR-0009), so it can name a record whose
+ * content this game hides. That tension is REPORTED, not silenced: hiding an
+ * honesty surface to make a blank map look tidier would be the lie. A
  * dynamics record's notice never appears in concept or ground, a pointer's
  * never in dynamics (ADR-0016's honest partition, ADR-0019's no-aggregation).
  * Each group carries its game's name as a quiet heading.

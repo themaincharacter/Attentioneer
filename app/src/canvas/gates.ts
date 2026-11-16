@@ -113,6 +113,7 @@ import {
   ASSUMPTION_CREATION_HIDDEN,
   LACK_CREATION_HIDDEN,
 } from "./deprecations";
+import { wordCreationOffered } from "./mapContentRules";
 
 /**
  * How a gesture is armed right now. Idle is the plain canvas.
@@ -500,9 +501,23 @@ export function creationKinds(level: Level): readonly CreationKind[] {
  * hiding flag (deprecations.ts) and the offer narrows to `["word"]` while
  * `creationKinds` keeps the full grammar written and tested — delete this
  * seam in the deprecated sweep.
+ *
+ * The SEPARATE-MAPS review (hidden 2026-11-16 per user review) narrows the
+ * offer once more, by LEVEL: the concept map's content renders at concept only,
+ * so coining a word on the blank dynamics/ground map would be a lie. The word
+ * is filtered through the ONE rule (mapContentRules.ts's `wordCreationOffered`)
+ * and the bubble there offers only `draw` — delete this narrowing in the
+ * deprecated sweep (the grammar below is untouched, so the sweep restores it by
+ * deleting the filters, never by rewriting the kinds).
  */
 export function offeredCreationKinds(level: Level): readonly CreationKind[] {
   return creationKinds(level).filter((kind) => {
+    if (kind === "word") {
+      // DEPRECATED (hidden 2026-11-16 per user review — separate maps): the
+      // word is concept-map content and is offered at concept only — delete in
+      // the deprecated sweep.
+      return wordCreationOffered(level);
+    }
     if (kind === "lack") {
       // DEPRECATED (hidden 2026-11-16 per user review): the lack kind was
       // offered by the ring menu and is now hidden — delete in the deprecated

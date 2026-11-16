@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { CONTENT_CLASSES } from "../src/canvas/gates";
 import { DEFAULT_BOX } from "../src/canvas/geometry";
 import { NOTICE_FAMILY_GAME } from "../src/canvas/notices";
+import { showsMapContent } from "../src/canvas/mapContentRules";
 import {
   VEIL_LEVELS,
   boxIsDrawable,
@@ -438,13 +439,21 @@ function placed(journey: Journey): PlacedWord[] {
     }));
 }
 
-/** The app's ONE cover reading (App.tsx): behind veilLive, else nothing. */
+/**
+ * The app's ONE cover reading (App.tsx): behind the veil's level rule AND the
+ * separate-maps content rule, else nothing.
+ *
+ * DEPRECATED (hidden 2026-11-16 per separate-maps review): the map-content
+ * rule blanks every record-derived surface off concept, so the cover is read at
+ * concept only while the flag stands — veilLive's Levels 1–2 rule is kept
+ * written underneath it (and still decides the flip-back).
+ */
 function coveredIn(
   level: Level,
   veils: readonly Veil[],
   words: readonly PlacedWord[],
 ): string[] {
-  if (!veilLive(level)) return [];
+  if (!veilLive(level) || !showsMapContent(level)) return [];
   return [...coveredWordSlugs(veils, words)].sort();
 }
 
@@ -1155,13 +1164,16 @@ describe("the ground gate: the game switch is the look-under", () => {
     expect(APP.indexOf("<VeilSheet")).toBeGreaterThan(APP.indexOf("{veilLive(level) &&"));
     expect(APP).toContain("? coveredWordSlugs(veils, selectorWords)");
     expect(APP).toContain(": new Set<string>()");
-    for (const level of ["concept", "dynamics"]) {
-      expect(coveredIn(level, withVeil(theMap()).veils, placed(theMap()))).toEqual([
-        "rain",
-        "soil",
-      ]);
+    // DEPRECATED (hidden 2026-11-16 per separate-maps review): converted from
+    // "concept and dynamics both read the cover" — the content rule blanks the
+    // dynamics map too, so only concept reads it while the flag stands.
+    expect(coveredIn("concept", withVeil(theMap()).veils, placed(theMap()))).toEqual([
+      "rain",
+      "soil",
+    ]);
+    for (const level of ["dynamics", "ground"] as const) {
+      expect(coveredIn(level, withVeil(theMap()).veils, placed(theMap()))).toEqual([]);
     }
-    expect(coveredIn("ground", withVeil(theMap()).veils, placed(theMap()))).toEqual([]);
     // The door is absent at ground too: no veil is coined where none shows.
     expect(LEVEL_CONTROL).toContain("{veilLive(level) && (");
     expect(LEVEL_CONTROL).toContain("onDrawVeil");
@@ -1181,10 +1193,14 @@ describe("the ground gate: the game switch is the look-under", () => {
     // The record module never takes a level: the gate cannot reach the file.
     expect(VEILS_SRC).not.toContain("workspace/level");
     expect(VEILS_SRC).not.toContain("veilLive");
-    // And back at dynamics the sheet's reading returns unchanged.
+    // And back at dynamics the RECORD reads unchanged — the blank map hides the
+    // sheet, never the veil (DEPRECATED, hidden 2026-11-16 per separate-maps
+    // review: converted from "the sheet's reading returns at dynamics", which
+    // the content rule now blanks; the record itself is asserted whole).
     const back = { ...ground, [YML]: withLevel(ground[YML], "dynamics") };
     expect(levelOfText(back[YML])).toBe("dynamics");
-    expect(coveredIn("dynamics", parsed.veils, placed(theMap()))).toEqual([
+    expect(coveredIn("dynamics", parsed.veils, placed(theMap()))).toEqual([]);
+    expect(coveredIn("concept", parsed.veils, placed(theMap()))).toEqual([
       "rain",
       "soil",
     ]);

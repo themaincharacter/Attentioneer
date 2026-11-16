@@ -138,7 +138,13 @@ describe("draw is an ACTION, never a creation kind", () => {
     }
     expect(creationKinds("concept")).toEqual(["word", "lack"]);
     expect(creationKinds("dynamics")).toEqual(["word", "lack", "assumption"]);
-    expect(offeredCreationKinds("dynamics")).toEqual(["word"]);
+    // DEPRECATED (hidden 2026-11-16 per separate-maps review): the word is
+    // CONCEPT-map content, so the bubble at dynamics and ground offers the pen's
+    // draw ALONE (gates.ts reads mapContentRules.ts's wordCreationOffered). The
+    // grammar above is the record machinery's and stays exactly as it was.
+    expect(offeredCreationKinds("concept")).toEqual(["word"]);
+    expect(offeredCreationKinds("dynamics")).toEqual([]);
+    expect(offeredCreationKinds("ground")).toEqual([]);
     // The type itself is untouched: the grammar never learned "draw".
     expect(GATES).toContain(
       'export type CreationKind = "word" | "lack" | "assumption";',

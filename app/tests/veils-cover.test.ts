@@ -390,8 +390,13 @@ describe("covered is not settled: the cover adds no field and no second quiet", 
     expect(rule(".word")).toContain("z-index: 2");
     // The app renders the sheets BEFORE the wires in the same layer, so a wire
     // crossing a veil still draws over its fill (provisional, ADR-0023).
+    // DEPRECATED (hidden 2026-11-16 per separate-maps review): the wires' block
+    // now carries the review's note and the map-content gate, so the marker read
+    // here is that render line, not the old one-line comment.
     const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-    expect(app.indexOf("<VeilSheet")).toBeLessThan(app.indexOf("{/* wires */}"));
+    expect(app.indexOf("<VeilSheet")).toBeLessThan(
+      app.indexOf("{mapContent && distances.map((d) => {"),
+    );
   });
 
   test("the sheet says nothing about itself at rest (presence only)", () => {

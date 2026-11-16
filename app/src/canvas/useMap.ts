@@ -204,8 +204,11 @@ export interface ConnectDraft {
  * (Epic 8 story 1) `setQuantity` ask `authoringLive` (gates.ts) before their
  * first persist, so at dynamics with no accepted set nothing authors whatever
  * armed it. Accepting a set is what arms them, and the accept writes the
- * synchronous mirror the seam reads. The words, distances and marks shared by
- * every game are never gated: they are not the dynamics game's own records.
+ * synchronous mirror the seam reads. The words, distances and marks the games
+ * once shared are never gated HERE: they are not the dynamics game's own
+ * records. (The separate-maps rule blanks their RENDER off concept — hidden
+ * 2026-11-16 per user review — but never their writes: the record layer is
+ * untouched and a flip-back restores the render.)
  *
  * Epic 8 story 1 adds quantities (ADR-0020): `map/quantities.jsonl` loaded with
  * the rest — two shapes (a stock line on a word, a flow line between two

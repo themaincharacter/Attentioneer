@@ -43,13 +43,16 @@ export const MENU_GAP = 9;
 export const MENU_DOT = 6;
 
 /**
- * Which choices the cluster paints right now. The word always sits above the
- * dot; the pen's draw bubble joins below it, in the slot the hidden lack bubble
- * used to hold; the deprecated lack and assumption bubbles keep their own
- * slots for the sweep.
+ * Which choices the cluster paints right now. The word sits above the dot WHEN
+ * OFFERED — the separate-maps review (hidden 2026-11-16 per user review) makes
+ * it concept-map content, so at dynamics and ground the top seat is empty and
+ * the pen's draw bubble (always below the dot, in the slot the hidden lack
+ * bubble used to hold) is the cluster. The geometry below already handles every
+ * membership; only the app's read of the offer changed. The deprecated lack and
+ * assumption bubbles keep their own slots for the sweep.
  */
 export interface MenuMembers {
-  /** Coin a word (always offered). */
+  /** Coin a word: concept-map content, offered at concept only. */
   word: boolean;
   /** DEPRECATED: the bare lack (hidden per the first review). */
   lack: boolean;

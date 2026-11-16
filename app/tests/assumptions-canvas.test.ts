@@ -134,10 +134,13 @@ describe("the Level 2 ring menu's third kind (ADR-0011's open decision)", () => 
   // the third kind (or the lack) — it offers the word alone. The grammar
   // below is the record machinery's (a bare-spot claim still parses, states
   // and round-trips) and is kept covered for the deprecated sweep.
+  // DEPRECATED (hidden 2026-11-16 per separate-maps review): converted — the
+  // ring menu's OFFER is concept-only (the word is concept-map content), so the
+  // dynamics menu is EMPTY while the grammar still names the third kind.
   test("the menu OFFERS only the word, so the third kind is not offered", () => {
-    for (const level of ["concept", "dynamics", "ground"] as const) {
-      expect(offeredCreationKinds(level)).toEqual(["word"]);
-    }
+    expect(offeredCreationKinds("concept")).toEqual(["word"]);
+    expect(offeredCreationKinds("dynamics")).toEqual([]);
+    expect(offeredCreationKinds("ground")).toEqual([]);
   });
 
   test("Level 1 offers exactly the word/lack pair it always did", () => {

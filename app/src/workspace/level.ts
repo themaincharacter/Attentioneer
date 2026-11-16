@@ -28,12 +28,21 @@ import {
  * (`atOrAbove`, inclusive), so the strictness of every boundary is stated once.
  *
  * THE HONEST PARTITION (ADR-0016's amendment) — the render map, one source:
- *   - every game renders words, distances, marks and the shelf;
- *   - the dynamics game ADDS its own records: links, loops, assumptions and
+ *   - every game rendered words, distances, marks and the shelf;
+ *   - the dynamics game ADDED its own records: links, loops, assumptions and
  *     the playing set (model.json);
- *   - the ground game ADDS pointers (the reach beyond the map) and, in story
- *     2, the window. Nothing is taken away, no game hides another's content.
+ *   - the ground game ADDED pointers (the reach beyond the map) and, in story
+ *     2, the window. Nothing was taken away, no game hid another's content.
  * `RENDER_MAP` spells that table out for tests and for the app's wiring.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate maps): the person's
+ * verdict is that the maps will NOT be the same maps, so the partition above is
+ * no longer what RENDERS. The dynamics and ground maps are blank paper for now:
+ * `canvas/mapContentRules.ts` is the ONE reading ("map content renders at
+ * concept only", behind a deprecations.ts flag) and every render path asks it.
+ * `RENDER_MAP` stays exactly as written — it is the pre-hide table of the
+ * records each game once drew, kept for the tests and for the deprecated sweep;
+ * reading it as "what shows today" would be the lie this note removes.
  *
  * The key is written canonically on change, and only the level line is
  * touched: comments, unknown keys and the shelf's fold stay exactly as they
@@ -131,13 +140,18 @@ export function zoomChipPercent(zoom: number): number {
 }
 
 /**
- * The render map (ADR-0016's amendment): which records each game draws. Words,
- * distances, marks and the shelf render in EVERY game — the partition is
- * additive, never exclusive — while each game only ADDS its own records.
+ * The render map (ADR-0016's amendment): which records each game ONCE drew.
+ * Words, distances, marks and the shelf rendered in EVERY game — the partition
+ * was additive, never exclusive — while each game only ADDED its own records.
  * Rendering (glyphs, geometry, zoom interplay) stays ADR-0003's seam.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate maps): this table is
+ * now the PRE-HIDE record of what the copy-over consisted of, kept for the
+ * tests and the deprecated sweep. What actually renders is
+ * `canvas/mapContentRules.ts`'s rule: concept only, while the flag stands.
  */
 export const RENDER_MAP = {
-  /** The plane's common content: rendered by every game, unchanged. */
+  /** The concept map's content: once rendered by every game, now concept only. */
   all: ["words", "distances", "marks", "shelf"],
   /** The dynamics game's own records (links, loops, assumptions, the set). */
   dynamics: ["links", "loops", "assumptions", "model"],

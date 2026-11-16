@@ -160,3 +160,63 @@ export const COMPARE_DOOR_HIDDEN: boolean = true;
 export function offered(hidden: boolean): boolean {
   return !hidden;
 }
+
+/* ------------------------------------------------------------------------- *
+ * The THIRD review (2026-11-16): SEPARATE MAPS — the concept map's content
+ * stops rendering at dynamics and ground.
+ *
+ * The person's verdict, after playing with all three games: the maps will NOT
+ * be THE SAME MAP. The dynamics map will grow its own modeling features later
+ * and the ground map its own file references — but not in this session. For
+ * now the dynamics and ground maps are BLANK PAPER: the concept map's record
+ * content stops being copied into them, and only quiet chrome remains (paper,
+ * pan, zoom, the zoom chip, the three level tabs and the pen's strip).
+ *
+ * Same discipline as the passes above, same sweep: nothing is deleted. Every
+ * component, every read, every record and every panel stays written and
+ * type-checked; each hiding point reads a flag through the ONE rule in
+ * `canvas/mapContentRules.ts`, so flipping the flag back restores the content
+ * without a component edit.
+ *
+ * The pen's ink is NOT hidden by this pass (PROVISIONAL): the draw tool is the
+ * one level-uniform tool the previous review kept, and per-map ink arrives
+ * with the later "context" work. See mapContentRules.ts.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review — separate maps): the same
+ * map's content — words, distance wires, marks, the shelf, veils, link wires,
+ * loop routes, assumption diamonds, quantity glyphs, the reach/pointer
+ * handles and every branch/scenario-derived reading — rendered in EVERY game
+ * because the three games were bands of one map. The review decided the maps
+ * will not be the same maps; until dynamics and ground grow their own content
+ * (a later story), they render NO map content at all. ONE flag covers the
+ * whole content class; `canvas/mapContentRules.ts` is its one reading and
+ * every hiding point in the app asks that rule — delete this seam and the
+ * copy-over in the deprecated sweep (the maps' own content is a LATER story,
+ * not a revival of this flag).
+ */
+export const MAP_CONTENT_OTHER_GAMES_HIDDEN: boolean = true;
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review — separate maps): the
+ * double-click creation bubble offered `word` in every game. A word is
+ * concept-map content, so coining one on a map that cannot render it would be
+ * a lie. The review's rule: the bubble at dynamics and ground offers only
+ * `draw`. The creation grammar (`creationKinds`) and the ghost's card
+ * derivation keep their exact shape; only the OFFER narrows — delete this
+ * seam in the deprecated sweep (the word returns only if the other maps grow
+ * concepts of their own).
+ */
+export const WORD_CREATION_OFF_CONCEPT_HIDDEN: boolean = true;
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review — separate maps): the step
+ * crank stood at dynamics as a panel outside the plane. A cranked step reads
+ * the playing set's quantities on the map, and the dynamics map is blank paper
+ * for now, so there is nothing for the crank to read. Its component, its hook
+ * (`useStepRun`), its notes and its model all stay written — delete this
+ * hiding point (not the machinery) in the deprecated sweep, when the dynamics
+ * map grows its own modeling surfaces.
+ */
+export const STEP_CRANK_HIDDEN: boolean = true;

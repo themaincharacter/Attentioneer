@@ -321,8 +321,12 @@ describe("the grown gate, as a whole", () => {
     // the word option (offeredCreationKinds); the grammar asserted below is the
     // record machinery's and stays covered — delete the hidden kinds in the
     // deprecated sweep.
-    for (const level of ["concept", "dynamics", "ground"] as const) {
-      expect(offeredCreationKinds(level)).toEqual(["word"]);
+    // DEPRECATED (hidden 2026-11-16 per separate-maps review): the OFFER is
+    // concept-only now — the word is concept-map content, so the blank
+    // dynamics/ground maps offer the pen's draw alone.
+    expect(offeredCreationKinds("concept")).toEqual(["word"]);
+    for (const level of ["dynamics", "ground"] as const) {
+      expect(offeredCreationKinds(level)).toEqual([]);
     }
     expect(creationKinds("concept")).toEqual(["word", "lack"]);
     expect(creationKinds("dynamics")).toEqual(["word", "lack", "assumption"]);

@@ -85,12 +85,16 @@ interface LevelControlProps {
  * so this control is no longer the only switch: the band is the game, and the
  * key it writes is only the resume hint.
  *
- * The names are the glossary's words and the honest partition holds: words,
- * distances, marks and the shelf render in every game; dynamics adds the
- * playing set, links, loops and assumptions; ground adds the pointers (the
- * outward reach) and leaves everything else exactly as it was. In dynamics the
- * control grows its two quiet text actions ("edit the playing set", "coin a
- * loop"); in ground it grows none — the reach lives on each word's handle.
+ * The names are the glossary's words. DEPRECATED (hidden 2026-11-16 per user
+ * review — separate maps): the old honest partition (words, distances, marks
+ * and the shelf in every game; dynamics adding the playing set, links, loops
+ * and assumptions; ground adding the pointers) is no longer what renders — the
+ * maps are becoming SEPARATE maps, and for now the dynamics and ground maps are
+ * BLANK PAPER (the ONE reading is canvas/mapContentRules.ts; the record
+ * machinery behind each game's additions is untouched). In dynamics the control
+ * used to grow its two quiet text actions ("edit the playing set", "coin a
+ * loop"); in ground its additions live on each word's handle — both are hidden
+ * with the rest of the menu's doors, and with the map content they acted on.
  *
  * Keyboard: the three jumpers are plain buttons in a labelled group, so Tab
  * reaches them and Enter or Space jumps; the game running is pressed
@@ -340,9 +344,17 @@ export function LevelControl({
 /**
  * Each game's quiet hover title, worded as a jump. Provisional: the wording
  * (the control's look and wording are ADR-0003's rendering seam).
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate maps): the old
+ * titles named the content each band copied over — "a playing set, signed links
+ * and loops" at dynamics, "the same map, with outward pointers" at ground.
+ * Those maps are BLANK PAPER now (mapContentRules.ts), so the titles stopped
+ * claiming content that is not there; the maps' own content is a LATER story.
+ * Restore the claims with a flip-back of the map-content flag, or rewrite them
+ * when the separate maps land — delete this wording in the deprecated sweep.
  */
 const LEVEL_TITLES: Record<Level, string> = {
   concept: "jump to concept — the wide band: words and distances",
-  dynamics: "jump to dynamics — the middle band: a playing set, signed links and loops",
-  ground: "jump to ground — the close band: the same map, with outward pointers",
+  dynamics: "jump to dynamics — the middle band",
+  ground: "jump to ground — the close band",
 };

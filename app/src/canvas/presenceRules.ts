@@ -24,8 +24,10 @@ export type PresenceCue = "reach" | "assumptions" | "loops" | "links";
 
 /**
  * Which game each cue belongs to, and ONLY that game. Everything else on the
- * plane (words, distances, marks, the shelf) renders in every game and has no
- * entry here — it announces nothing.
+ * plane (words, distances, marks, the shelf) belongs to the CONCEPT map and has
+ * no entry here — it announced nothing when it rendered in every game, and it
+ * announces nothing now that the separate-maps rule (mapContentRules.ts) renders
+ * it at concept only (DEPRECATED, hidden 2026-11-16 per user review).
  */
 export const CUE_BANDS: Record<PresenceCue, readonly Level[]> = {
   reach: ["ground"],
