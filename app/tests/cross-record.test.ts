@@ -29,6 +29,7 @@ import {
   findOrphanMarks,
   hasMark,
   parseMarks,
+  serializeMarkLine,
   serializeMarks,
   type Mark,
   type MarkTarget,
@@ -38,6 +39,7 @@ import {
   findOrphanPointers,
   parsePointers,
   pointerKey,
+  serializePointerLine,
   serializePointers,
   type Pointer,
 } from "../src/map/pointers";
@@ -88,12 +90,14 @@ import {
   quantityTargetOf,
   quantityWords,
   serializeQuantities,
+  serializeQuantityLine,
   type Quantity,
 } from "../src/map/quantities";
 import {
   danglingPins,
   parsePins,
   pinsFromAssumptions,
+  rewritePinWordTargets,
   serializePins,
 } from "../src/scenarios/pins";
 import { parseReference, serializeReference, type Reference } from "../src/map/refs";
@@ -130,6 +134,12 @@ import {
 } from "../src/workspace/level";
 import { createLevelHandoff } from "../src/workspace/levelHandoff";
 import { createGhostSession } from "../src/ghost/session";
+import {
+  askPull,
+  pullRecordSet,
+  type PullAskSource,
+  type PullReading,
+} from "../src/pull/ask";
 import { agentReply, withWorkspace, type Workspace } from "./ghost-harness";
 
 /**
@@ -2421,6 +2431,291 @@ describe("a PRISM lives beside the record families (Epic 12 story 4)", () => {
       expect(scratch.read(referenceRel)).toContain("an answer");
       // The record closed at intake: the log is byte-exact.
       expect(scratch.read(PRISMS_REL)).toBe(prismBytes);
+    });
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * 16. The pull reads the records the batches own (Epic 13 story 3).
+ *
+ * The cross-record question the pull's own suites cannot answer alone: the
+ * pull reads the SAME records the atomic batches move. A rename rewrites the
+ * addresses the pull walks (marks, claims, quantities, pointers, the branch's
+ * pins) and never the authored text; a re-taken reading shows the CURRENT
+ * records byte-verbatim - the claim's words can still say the old word (prose
+ * is never rewritten) while its ADDRESS is current. Nothing is pinned across:
+ * a reading is a value, the old one still carries the old bytes, and the new
+ * set is a NEW set (the addresses moved). A veil is not the batch's: its
+ * reading is byte-identical after the rename. Taking a reading writes nothing.
+ * ---------------------------------------------------------------------- */
+
+describe("the pull reads the records the batches own (Epic 13 story 3)", () => {
+  function stock(on: string, amount: number | null = null): Quantity {
+    return { type: "stock", on, amount, extra: {} };
+  }
+
+  function flow(
+    from: string,
+    to: string,
+    amount: number | null = null,
+  ): Quantity {
+    return { type: "flow", from, to, amount, extra: {} };
+  }
+
+  /** The batch's quantity lines: the pull reads the numbers, never a sum. */
+  function batchQuantities(): Quantity[] {
+    return [stock("mulch", 4), flow("mulch", "soil", 2), flow("rain", "soil")];
+  }
+
+  /** A veil beside the records (not one of the batch's records). */
+  function batchVeil(): Veil {
+    return {
+      name: "rain cover",
+      reason: "the soil records are muddled",
+      x: 120.5,
+      y: -40.25,
+      w: 300,
+      h: 200,
+      extra: {},
+    };
+  }
+
+  interface PullFixture {
+    batch: Batch;
+    quantities: Quantity[];
+    pins: Assumption[];
+    veils: Veil[];
+  }
+
+  function fixture(): PullFixture {
+    const batch = base();
+    return {
+      batch,
+      quantities: batchQuantities(),
+      pins: pinsFromAssumptions(batch.assumptions),
+      veils: [batchVeil()],
+    };
+  }
+
+  function sourceOf(f: PullFixture): PullAskSource {
+    return {
+      marks: f.batch.marks,
+      assumptions: f.batch.assumptions,
+      quantities: f.quantities,
+      pointers: f.batch.pointers,
+      pins: f.pins,
+      veils: f.veils,
+    };
+  }
+
+  function readingOf(f: PullFixture): PullReading {
+    return askPull(sourceOf(f));
+  }
+
+  function wordsOf(reading: PullReading, family: string): string[] {
+    return reading.sites
+      .filter((site) => site.family === family)
+      .map((site) => (site as { words: string }).words);
+  }
+
+  function veilOf(reading: PullReading) {
+    return reading.sites.find((site) => site.family === "veil");
+  }
+
+  test("the pull's words ARE the batch's own canonical record lines", () => {
+    const f = fixture();
+    const reading = readingOf(f);
+    expect(new Set(reading.sites.map((site) => site.family))).toEqual(
+      new Set(["mark", "assumption", "quantity", "pointer", "pin", "veil"]),
+    );
+    expect(new Set(wordsOf(reading, "mark"))).toEqual(
+      new Set(f.batch.marks.map(serializeMarkLine)),
+    );
+    expect(new Set(wordsOf(reading, "assumption"))).toEqual(
+      new Set(f.batch.assumptions.map(serializeAssumptionLine)),
+    );
+    expect(new Set(wordsOf(reading, "quantity"))).toEqual(
+      new Set(f.quantities.map(serializeQuantityLine)),
+    );
+    expect(new Set(wordsOf(reading, "pointer"))).toEqual(
+      new Set(f.batch.pointers.map(serializePointerLine)),
+    );
+    expect(new Set(wordsOf(reading, "pin"))).toEqual(
+      new Set(f.pins.map(serializeAssumptionLine)),
+    );
+    // The pull reads no link, loop, distance or membership: the batches own
+    // those records, and the reading invents no site for them (a link's SIGN
+    // never enters the reading at all).
+    expect(JSON.stringify(reading)).not.toContain('"sign"');
+    expect(reading.sites).toHaveLength(
+      f.batch.marks.length +
+        f.batch.assumptions.length +
+        f.quantities.length +
+        f.batch.pointers.length +
+        f.pins.length +
+        f.veils.length,
+    );
+  });
+
+  test("a rename leaves the reading's words verbatim-but-current — the reading is re-taken", () => {
+    const before = fixture();
+    const beforeReading = readingOf(before);
+    const beforeJson = JSON.stringify(beforeReading);
+    // Before: the mark's address is the old word; the claim's text names it too.
+    expect(wordsOf(beforeReading, "mark")).toContain(
+      '{"kind":"open","on":"mulch"}',
+    );
+    expect(wordsOf(beforeReading, "assumption")).toContain(
+      '{"on":"mulch","text":"mulch is a slow sponge"}',
+    );
+
+    // The rename batch, as the app applies it (the SAME pure steps, the same
+    // documented order), plus the pins' rewrite: an address change, no dangle.
+    const renamedBatch = renameThrough(before.batch, "mulch", "woodchip");
+    const after: PullFixture = {
+      batch: renamedBatch,
+      quantities: rewriteQuantityEndpoints(
+        before.quantities,
+        "mulch",
+        "woodchip",
+      ),
+      pins: rewritePinWordTargets(before.pins, "mulch", "woodchip"),
+      veils: before.veils,
+    };
+    const afterReading = readingOf(after);
+
+    // The reading is RE-TAKEN: its words are the CURRENT records' bytes.
+    expect(new Set(wordsOf(afterReading, "mark"))).toEqual(
+      new Set(renamedBatch.marks.map(serializeMarkLine)),
+    );
+    expect(new Set(wordsOf(afterReading, "assumption"))).toEqual(
+      new Set(renamedBatch.assumptions.map(serializeAssumptionLine)),
+    );
+    expect(new Set(wordsOf(afterReading, "quantity"))).toEqual(
+      new Set(after.quantities.map(serializeQuantityLine)),
+    );
+    expect(new Set(wordsOf(afterReading, "pointer"))).toEqual(
+      new Set(renamedBatch.pointers.map(serializePointerLine)),
+    );
+    expect(new Set(wordsOf(afterReading, "pin"))).toEqual(
+      new Set(after.pins.map(serializeAssumptionLine)),
+    );
+
+    // The ADDRESS moved; the authored words did not. The claim's words still
+    // say "mulch" while its target is the current word — verbatim, and current.
+    expect(wordsOf(afterReading, "assumption")).toContain(
+      '{"on":"woodchip","text":"mulch is a slow sponge"}',
+    );
+    expect(wordsOf(afterReading, "mark")).toContain(
+      '{"kind":"open","on":"woodchip"}',
+    );
+    expect(wordsOf(afterReading, "quantity")).toContain(
+      serializeQuantityLine(flow("woodchip", "soil", 2)),
+    );
+    expect(wordsOf(afterReading, "pointer")).toContain(
+      serializePointerLine({
+        on: "woodchip",
+        form: "path",
+        value: "notes/mulch.md",
+        extra: { rank: 1 },
+      }),
+    );
+    // The prose survives where it was authored (the text, the pointer value);
+    // no record's structured address still names the old word.
+    expect(JSON.stringify(afterReading)).toContain("mulch");
+    expect(
+      afterReading.sites.some(
+        (site) =>
+          (site.site as { slug?: string }).slug === "mulch" ||
+          (site.site as { from?: string }).from === "mulch",
+      ),
+    ).toBe(false);
+
+    // The branch's pins followed the same pass: a rename is no dangle.
+    expect(danglingPins(after.pins, renamedBatch.assumptions)).toEqual([]);
+    expect(
+      afterReading.sites
+        .filter((site) => site.family === "pin")
+        .some((site) => (site as { note: string | null }).note !== null),
+    ).toBe(false);
+
+    // The veil is NOT the batch's record: its reading is byte-identical.
+    expect(veilOf(afterReading)).toEqual(veilOf(beforeReading));
+
+    // Nothing was pinned across: the reading is a value. The old reading still
+    // carries the old bytes (it was never amended), and the new set is NEW.
+    expect(JSON.stringify(beforeReading)).toBe(beforeJson);
+    expect(wordsOf(beforeReading, "mark")).toContain(
+      '{"kind":"open","on":"mulch"}',
+    );
+    const beforeSet = pullRecordSet(beforeReading);
+    const afterSet = pullRecordSet(afterReading);
+    expect([...afterSet].some((key) => !beforeSet.has(key))).toBe(true);
+  });
+
+  test("taking the reading writes nothing: the batch's files stand byte-exact", () => {
+    return withWorkspace(async (scratch) => {
+      const f = fixture();
+      writeBatchRecords(scratch, f.batch);
+      scratch.write("map/quantities.jsonl", serializeQuantities(f.quantities));
+      scratch.write(
+        "scenarios/spring/assumption-pins.jsonl",
+        serializePins(f.pins),
+      );
+      scratch.write("map/veils.jsonl", serializeVeils(f.veils));
+      const watched = [
+        ...Object.keys(recordBytes(f.batch)),
+        "map/quantities.jsonl",
+        "scenarios/spring/assumption-pins.jsonl",
+        "map/veils.jsonl",
+      ];
+      const snapshot = (): Record<string, string | null> => {
+        const out: Record<string, string | null> = {};
+        for (const rel of watched) out[rel] = scratch.read(rel);
+        return out;
+      };
+
+      // The first reading, over the batch's bytes.
+      const firstSnapshot = snapshot();
+      const first = readingOf(f);
+      expect(first.sites.length).toBeGreaterThan(0);
+      expect(snapshot()).toEqual(firstSnapshot);
+
+      // The rename moves the batch's own records (the batch's writes); the
+      // re-taken reading then reads those bytes and writes nothing itself.
+      const renamedBatch = renameThrough(f.batch, "mulch", "woodchip");
+      writeBatchRecords(scratch, renamedBatch);
+      scratch.write(
+        "map/quantities.jsonl",
+        serializeQuantities(
+          rewriteQuantityEndpoints(f.quantities, "mulch", "woodchip"),
+        ),
+      );
+      scratch.write(
+        "scenarios/spring/assumption-pins.jsonl",
+        serializePins(rewritePinWordTargets(f.pins, "mulch", "woodchip")),
+      );
+      const renamedSnapshot = snapshot();
+      // The renamed batch's bytes, read back through the families' own parsers:
+      // the pull reads the records the app itself holds after the batch.
+      const second = askPull({
+        marks: parseMarks(scratch.read("map/marks.jsonl") ?? "").marks,
+        assumptions: parseAssumptions(
+          scratch.read("map/assumptions.jsonl") ?? "",
+        ).assumptions,
+        quantities: parseQuantities(
+          scratch.read("map/quantities.jsonl") ?? "",
+        ).quantities,
+        pointers: parsePointers(
+          scratch.read("map/pointers.jsonl") ?? "",
+        ).pointers,
+        pins: parsePins(
+          scratch.read("scenarios/spring/assumption-pins.jsonl") ?? "",
+        ).pins,
+        veils: parseVeils(scratch.read("map/veils.jsonl") ?? "").veils,
+      });
+      expect(second.sites.length).toBe(first.sites.length);
+      expect(snapshot()).toEqual(renamedSnapshot);
     });
   });
 });
