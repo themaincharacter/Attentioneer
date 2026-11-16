@@ -125,8 +125,10 @@ import {
  *   the ONE wash (pure CSS-rule scans).
  *   THE SURFACING NEGATIVE: nothing renders a veil's name or reason unasked -
  *   the sheet is presence only and the opened look-under is the ONLY reading.
- *   No presence accessor exists for the future pull (Epic 13): asserted as
- *   absence - no exported accessor, no cue band, no prompt path.
+ *   The presence accessor reserved for the pull is NOW BUILT (Epic 13 story
+ *   1): the pull module's projection is the ONE sanctioned coupling, and it
+ *   lives under pull/ - outside every render path. No other exported accessor,
+ *   cue band or prompt path exists.
  *   THE GROUND GATE: no sheet and no look-under at ground; the game switch is
  *   the look-under. A render rule (veilRules), never a record edit.
  *   THE PROMOTION CLAUSE: the keep is the already-built moves - a word and its
@@ -146,8 +148,11 @@ import {
  *   2. topVeilOf is the stacking CONTRACT, not an app reader: the app renders
  *      sheets in file order and never calls it (or veilsCoveringWord). Left as
  *      the story 1 helper it is; not a defect.
- *   3. The pull itself (Epic 13) and the context packet's veil sentence
- *      (Epic 10) are reserved, not built - asserted here as absence only.
+ *   3. The pull itself (Epic 13 story 1) is now built as the read-set reader
+ *      and its veil projection; measured against this epic, the reservation
+ *      became the pull module under pull/ (asserted: the only coupling). The
+ *      context packet's veil sentence (Epic 10) is built too; its scan lives
+ *      in that epic's own tests.
  *
  * Provisional (ADR-0023's own list): box-vs-stroke, sheets-in-file-order and
  * overlap, wire crossing, the sheet's look, the look-under's look, the
@@ -1039,16 +1044,39 @@ describe("nothing surfaces a veil unasked", () => {
     expect(rule(".veil-lookunder-reason")).toContain("white-space: pre-wrap");
   });
 
-  test("NO presence accessor exists for the future pull (asserted as absence)", () => {
-    // (i) No exported name couples a veil to the pull's vocabulary: a presence,
-    // a surface, a summary, a description, a hint, a prompt or an answer.
+  test("the pull is the ONLY veil accessor, and it lives in pull/ (Epic 13 story 1)", () => {
+    // (i) Epic 9 reserved the veil's presence/name/location reading for the
+    // future pull and asserted its absence. Epic 13 story 1 BUILT it: the pull
+    // module's projection is now the one sanctioned coupling of a veil to a
+    // presence reading, and it lives under pull/. Every OTHER export still may
+    // not couple a veil to a pull vocabulary (a presence, a surface, a summary,
+    // a description, a hint, a prompt or an answer).
     const pullish =
       /presence|surface|summar|describ|pull|ambient|hint|report|answer|suggest|prompt|count|score|tally|badge|title/i;
     const allExports = SOURCES.flatMap((entry) => exportedNames(entry.source));
     expect(allExports.length).toBeGreaterThan(100);
-    for (const name of allExports) {
-      const coupled = /veil/i.test(name) && pullish.test(name);
-      expect({ name, coupled }).toEqual({ name, coupled: false });
+    const veilCouplings = SOURCES.flatMap((entry) =>
+      exportedNames(entry.source)
+        .filter((name) => /veil/i.test(name) && pullish.test(name))
+        .map((name) => ({ path: entry.path, name })),
+    );
+    // The reservation exists now — and it is the pull's own projection shape.
+    expect(veilCouplings.map((entry) => entry.name)).toContain("PullVeilSite");
+    for (const coupling of veilCouplings) {
+      expect({ ...coupling, inPull: coupling.path.startsWith("pull/") }).toEqual({
+        ...coupling,
+        inPull: true,
+      });
+    }
+    for (const entry of SOURCES.filter((item) => !item.path.startsWith("pull/"))) {
+      for (const name of exportedNames(entry.source)) {
+        const coupled = /veil/i.test(name) && pullish.test(name);
+        expect({ path: entry.path, name, coupled }).toEqual({
+          path: entry.path,
+          name,
+          coupled: false,
+        });
+      }
     }
     for (const forbidden of [
       "veilPresence",
