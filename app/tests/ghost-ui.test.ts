@@ -334,6 +334,25 @@ describe("the ask surface is wired, minimally", () => {
     expect(source("canvas/GhostPanel.tsx")).toContain("packet.freeze.hash.slice(0, 12)");
   });
 
+  test("the run's sentences ride the ask, never a surface (the named follow-up)", () => {
+    // Epic 14 story 1's follow-up, wired: the session's run state lives in the
+    // ghosts hook and the ask is wired separately, so the app hands that
+    // handle's own read to the request hook — which reads it AT ASK TIME for
+    // the move and target the ask names and hands it to the packet. It is a
+    // prop thread into the ask, never a rendering: the surfaces' scans (in
+    // ghost-refusal.test.ts) ban the run state from a .tsx's rendering and
+    // permit exactly this one option.
+    expect(APP).toContain("priorRefusals: ghosts.priorRefusals,");
+    const hook = source("ghost/useRequest.ts");
+    expect(hook).toContain(
+      "priorRefusals = options.priorRefusals?.(move, target) ?? []",
+    );
+    expect(hook).toContain("priorRefusals,\n        view: options.view(),");
+    expect(source("ghost/useGhosts.ts")).toContain(
+      "session.priorRefusals(move, target)",
+    );
+  });
+
   test("the level control's door is the ask, at dynamics only", () => {
     const control = source("canvas/LevelControl.tsx");
     expect(control).toContain("onAsk: () => void;");

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GhostEnvelope } from "./envelope";
+import type { GhostEnvelope, GhostMove, GhostTarget } from "./envelope";
 import type { GhostIssue } from "./issues";
 import { ghostRows, type GhostRow } from "./list";
 import type { GhostFs } from "./port";
@@ -73,6 +73,16 @@ export interface GhostUiHandle {
   intakeIssues: readonly GhostIssue[];
   /** An act is running. */
   busy: boolean;
+  /**
+   * THE RUN'S PRIOR REFUSAL SENTENCES for one move and target (Epic 14 story
+   * 1, ADR-0031): the session's ephemeral reading, deduped by refusal key, in
+   * arrival order, at most N. The ask hook threads this into the packet's
+   * bounded run block; it is READ here, never rendered and never written. A
+   * surface that RENDERS it is still the story-2 scan's target; threading the
+   * sentences into the ask is the named follow-up (Epic 14's own). Empty
+   * before the open moment and empty again after the next one.
+   */
+  priorRefusals(move: GhostMove, target: GhostTarget): readonly string[];
   /**
    * File a pasted/imported model reply (the intake), with the frozen packet's
    * hash when the reply answers an ask (provenance only; never written to a
@@ -161,6 +171,20 @@ export function useGhosts(options: GhostUiOptions): GhostUiHandle {
             session,
             context: () => optionsRef.current.context(),
           },
+    [session],
+  );
+
+  /**
+   * THE RUN'S OWN WORDS, read on demand (Epic 14 story 1; the named follow-up):
+   * the ask hook is wired separately from this one, so it cannot see the
+   * session — this read is the seam. It is the session's reading at the moment
+   * of the ask (the run changes only through an intake), returns a copy so no
+   * caller can reach the run's own array, and answers empty before the open
+   * moment (there is no run yet). Nothing renders it here.
+   */
+  const priorRefusals = useCallback(
+    (move: GhostMove, target: GhostTarget): readonly string[] =>
+      session === null ? [] : [...session.priorRefusals(move, target)],
     [session],
   );
 
@@ -270,6 +294,7 @@ export function useGhosts(options: GhostUiOptions): GhostUiHandle {
     issues,
     intakeIssues,
     busy,
+    priorRefusals,
     intake,
     open,
     close,

@@ -1335,6 +1335,11 @@ function App() {
     view: () => packetView,
     cards: readCards,
     creationKinds: (game) => creationKinds(game),
+    // THE RUN'S SENTENCES (Epic 14 story 1's named follow-up): the session
+    // lives in the ghosts hook and the ask lives here, so this read is the
+    // seam — the packet asked after a refused intake carries the sentence.
+    // It is THREADED into the ask, never rendered: no surface reads the run.
+    priorRefusals: ghosts.priorRefusals,
   });
   const { close: closeGhosts } = ghosts;
 

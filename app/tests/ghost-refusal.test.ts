@@ -49,7 +49,9 @@ import { agentReply, withWorkspace, type Workspace } from "./ghost-harness";
  * exempt: a mark has no loop target form.
  *
  * The scans: the region reads only ADR-0026's inputs; run state can never
- * change region, slugs or source; no counter/heat/trail string rides a surface;
+ * change region, slugs or source; no counter/heat/trail string rides a surface,
+ * and the run state is never RENDERED on one — its sentences ride the ask
+ * instead (Epic 14 story 1's named follow-up; see the rendering scan below);
  * the killed words are absent; the contact flows are untouched.
  */
 
@@ -175,6 +177,24 @@ function codeOf(text: string): string {
   return text
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+}
+
+/**
+ * The text between a call's own parentheses (balanced), so a scan can speak
+ * about ONE call site instead of a whole file. Null when the call is absent.
+ */
+function callText(code: string, name: string): string | null {
+  const start = code.indexOf(name + "(");
+  if (start === -1) return null;
+  let depth = 0;
+  for (let at = start + name.length; at < code.length; at += 1) {
+    if (code[at] === "(") depth += 1;
+    else if (code[at] === ")") {
+      depth -= 1;
+      if (depth === 0) return code.slice(start + name.length + 1, at);
+    }
+  }
+  return null;
 }
 
 /** Every file under a folder, relative to it, with its bytes. */
@@ -669,13 +689,45 @@ describe("the scans: the region, the run, the surfaces, the killed words", () =>
     });
   });
 
-  test("no surface renders the refusal's machinery, the counter or the reading", () => {
+  /**
+   * THE BAN IS ON RENDERING, NOT ON THREADING (Epic 14 story 1's named
+   * follow-up, reconciled). The app's ask hook is wired separately from the
+   * ghosts hook, so the app hands the session's own read to `useGhostRequest`,
+   * which hands the sentences to the packet: a PROP thread from the run state
+   * into the ask, never a surface showing it. `priorRefusals` is therefore the
+   * ONE run-state name a .tsx may contain, and only inside that call's options.
+   * Everything else of the run — the counter, the refusal, the flow, the mark
+   * read, the sentence builder — stays out of a surface's code entirely, and a
+   * JSX attribute / rendered expression would put the run state on the surface.
+   */
+  test("the run state is never RENDERED; the ask's thread is a surface's one appearance", () => {
     expect(SURFACES.length).toBeGreaterThan(0);
+    const MACHINERY =
+      /N_RUN_LIMIT|runAttempts|attemptsFor|sentencesForTarget|RunStrike|limitReached|refusalFor|refusalSentence|markedAtStart|REFUSAL_(CORE|AGENT|PASTE)|GhostFlow/;
     for (const file of SURFACES) {
       const source = sourceOf(file);
-      expect(source).not.toMatch(
-        /N_RUN_LIMIT|runAttempts|priorRefusals|attemptsFor|sentencesForTarget|RunStrike|limitReached|refusalFor|refusalSentence|markedAtStart|REFUSAL_(CORE|AGENT|PASTE)|GhostFlow/,
-      );
+      const code = codeOf(source);
+      const askOptions = callText(code, "useGhostRequest");
+      // Outside the ask hook's own options, no surface may name the run.
+      const rest = askOptions === null ? code : code.replace(askOptions, " ");
+      expect({ file, machinery: MACHINERY.test(rest) }).toEqual({
+        file,
+        machinery: false,
+      });
+      expect({ file, read: rest.includes("priorRefusals") }).toEqual({
+        file,
+        read: false,
+      });
+      // The surface that wires the ask threads the session's own read — the
+      // named follow-up, asserted rather than assumed.
+      if (askOptions !== null) {
+        expect({ file, thread: askOptions.includes("priorRefusals: ghosts.priorRefusals") }).toEqual({
+          file,
+          thread: true,
+        });
+      }
+      // The person-facing sentences and the counting words never ride a
+      // surface, in code or in comment.
       expect(source).not.toContain("the person has spoken here");
       expect(source).not.toMatch(/\b(heat|trail|streak)\b/i);
     }

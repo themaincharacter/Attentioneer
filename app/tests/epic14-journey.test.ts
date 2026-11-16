@@ -88,11 +88,15 @@ import {
  * against bytes on disk, and the marks read is exercised through the session's
  * own port.
  *
- * NAMED FOLLOW-UP (outside this record-layer story): the app's React ask hook
- * (ghost/useRequest.ts) does not yet forward the session's prior refusals to
- * askForPacket; the record-layer ask asserted here does. Wiring the hook is the
- * apparatus/human pass's, and it must keep the surfaces' silence (the story-2
- * scan forbids the run's names in a .tsx file).
+ * NAMED FOLLOW-UP — WIRED, after the record layer (Epic 14 story 1's own
+ * follow-up): the ghosts hook now exposes the session's priorRefusals(move,
+ * target) read, the app threads it into ghost/useRequest.ts, and the ask hook
+ * hands those sentences to askForPacket at ASK time — the record-layer ask
+ * asserted here is the seam both halves read. Threading is a PROP, not a
+ * rendering: this file's scan and ghost-refusal.test.ts's now ban the run from
+ * a .tsx's RENDERING and permit exactly the ask hook's own option (see the
+ * never-rendered test below), where before they banned the name anywhere in a
+ * .tsx — a ban that forbade the very wiring the run needed.
  */
 
 const APP = fileURLToPath(new URL("..", import.meta.url)).replace(
@@ -195,6 +199,24 @@ function codeOf(text: string): string {
   return text
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+}
+
+/**
+ * The text between a call's own parentheses (balanced), so a scan can speak
+ * about ONE call site instead of a whole file. Null when the call is absent.
+ */
+function callText(code: string, name: string): string | null {
+  const start = code.indexOf(name + "(");
+  if (start === -1) return null;
+  let depth = 0;
+  for (let at = start + name.length; at < code.length; at += 1) {
+    if (code[at] === "(") depth += 1;
+    else if (code[at] === ")") {
+      depth -= 1;
+      if (depth === 0) return code.slice(start + name.length + 1, at);
+    }
+  }
+  return null;
 }
 
 const FILES = sourceFiles();
@@ -849,16 +871,32 @@ describe("(f) run state can never change the packet's region, slugs or source", 
  * ========================================================================= */
 
 describe("(g) the negative space: no counter, no heat, no trail, no killed word", () => {
-  test("no surface names the run's machinery or its counting words", () => {
+  test("no surface RENDERS the run's machinery or its counting words", () => {
     expect(SURFACES.length).toBeGreaterThan(0);
     for (const file of SURFACES) {
       const source = sourceOf(file);
+      const code = codeOf(source);
+      // THE BAN IS ON RENDERING, NOT ON THREADING (this epic's named follow-up,
+      // reconciled): the app hands the session's own read to useGhostRequest,
+      // which hands the sentences to the packet. So `priorRefusals` may appear
+      // inside that call's options — a prop thread into the ask — and nowhere
+      // else; a JSX attribute, a rendered expression or any other read would
+      // put the run state on a surface.
+      const askOptions = callText(code, "useGhostRequest");
+      const threaded = askOptions === null ? code : code.replace(askOptions, " ");
       expect({
         file,
         machinery: /N_RUN_LIMIT|runAttempts|priorRefusals|attemptsFor|sentencesForTarget|RunStrike|limitReached|refusalFor|refusalSentence|markedAtStart|REFUSAL_(CORE|AGENT|PASTE)|GhostFlow/.test(
-          source,
+          threaded,
         ),
       }).toEqual({ file, machinery: false });
+      if (askOptions !== null) {
+        // The surface that wires the ask threads the session's own read.
+        expect({
+          file,
+          thread: askOptions.includes("priorRefusals: ghosts.priorRefusals"),
+        }).toEqual({ file, thread: true });
+      }
       expect({ file, heat: /\b(heat|trail|streak)\b/i.test(source) }).toEqual({
         file,
         heat: false,

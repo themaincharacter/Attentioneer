@@ -144,6 +144,31 @@ function sourceOf(relative: string): string {
   return readFileSync(join(SRC, relative), "utf8");
 }
 
+/** A source file with its comments stripped, so a scan reads CODE only. */
+function codeOf(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+}
+
+/**
+ * The text between a call's own parentheses (balanced), so a scan can speak
+ * about ONE call site instead of a whole file. Null when the call is absent.
+ */
+function callText(code: string, name: string): string | null {
+  const start = code.indexOf(name + "(");
+  if (start === -1) return null;
+  let depth = 0;
+  for (let at = start + name.length; at < code.length; at += 1) {
+    if (code[at] === "(") depth += 1;
+    else if (code[at] === ")") {
+      depth -= 1;
+      if (depth === 0) return code.slice(start + name.length + 1, at);
+    }
+  }
+  return null;
+}
+
 const FILES = sourceFiles();
 
 describe("the run key: (move, target, issue code), and nothing else", () => {
@@ -594,13 +619,39 @@ describe("the source: no writer, no persistence, no voice", () => {
     expect(named.sort()).toEqual(["ghost/packet.ts", "ghost/runState.ts"]);
   });
 
-  test("no surface renders the counter or the run's sentences", () => {
+  /**
+   * THE BAN IS ON RENDERING, NOT ON THREADING (Epic 14 story 1's named
+   * follow-up; the story-2 scan in ghost-refusal.test.ts is reconciled the
+   * same way). The app threads the session's `priorRefusals(move, target)`
+   * read into `useGhostRequest`, which hands the sentences to the packet: a
+   * prop thread into the ask, never a surface showing the run. So
+   * `priorRefusals` may appear inside that one call's options; the counter,
+   * the sentences' source and the rest of the run stay out of every .tsx.
+   */
+  test("no surface RENDERS the counter or the run's sentences; its read rides the ask", () => {
     const surfaces = FILES.filter((file) => file.endsWith(".tsx"));
     expect(surfaces.length).toBeGreaterThan(0);
+    const MACHINERY =
+      /N_RUN_LIMIT|runAttempts|attemptsFor|sentencesForTarget|RunStrike|limitReached/;
     for (const file of surfaces) {
-      expect(sourceOf(file)).not.toMatch(
-        /N_RUN_LIMIT|runAttempts|priorRefusals|attemptsFor|sentencesForTarget|RunStrike|limitReached/,
-      );
+      const code = codeOf(sourceOf(file));
+      const askOptions = callText(code, "useGhostRequest");
+      // Outside the ask hook's own options, no surface may name the run.
+      const rest = askOptions === null ? code : code.replace(askOptions, " ");
+      expect({ file, machinery: MACHINERY.test(rest) }).toEqual({
+        file,
+        machinery: false,
+      });
+      expect({ file, read: rest.includes("priorRefusals") }).toEqual({
+        file,
+        read: false,
+      });
+      if (askOptions !== null) {
+        expect({
+          file,
+          thread: askOptions.includes("priorRefusals: ghosts.priorRefusals"),
+        }).toEqual({ file, thread: true });
+      }
     }
   });
 

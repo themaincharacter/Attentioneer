@@ -32,10 +32,20 @@ import type { GhostContext } from "./session";
  * (the frozen packet's hash moves with it); with the choice off, no card read
  * happens at all. The ghost layer never imports the card record.
  *
+ * THE RUN'S SENTENCES ride in as a READ (Epic 14 story 1's named follow-up):
+ * the session (and its run state) lives in the ghosts hook, this hook is wired
+ * separately, so the app hands over that handle's `priorRefusals(move,
+ * target)`. The read happens at ASK time, for the very move and target this
+ * ask names, so it cannot go stale between renders — and it is threaded into
+ * the packet's bounded run block, never rendered: the surfaces' scan bans the
+ * run state from RENDERING, not from riding the ask (ADR-0031).
+ *
  * Provisional: the hook's shape (selection + inclusion + ask), the fact that it
  * holds no queue/one-open state (story 3's pacing), the inclusion flag's name
- * and its default, and the default move (the registry's first row, which is
- * the only one until the expansion protocol's verdict is journaled).
+ * and its default, the default move (the registry's first row, which is the
+ * only one until the expansion protocol's verdict is journaled), and the run
+ * read's shape (a callback keyed by the move and target the ask itself names,
+ * rather than a value captured at render).
  */
 export interface GhostRequestOptions {
   /** The workspace root (absolute, as the app holds it). */
@@ -54,6 +64,13 @@ export interface GhostRequestOptions {
   cards?: () => Promise<readonly PacketCard[]>;
   /** The ring's authored kinds for a game, read at ask time (data, no import). */
   creationKinds?: (game: GhostGame) => readonly string[];
+  /**
+   * THE RUN'S PRIOR REFUSAL SENTENCES for one move and target, read at ASK
+   * time (Epic 14 story 1; the named follow-up). The person's side of the
+   * seam: the session lives in the ghosts hook, so the app hands over that
+   * handle's read. Absent or empty leaves the packet's run block out entirely.
+   */
+  priorRefusals?: (move: GhostMove, target: GhostTarget) => readonly string[];
   /** The move the person may ask for; defaults to the registry's only row. */
   move?: GhostMove;
 }
@@ -101,6 +118,10 @@ export function useGhostRequest(
     async (target: GhostTarget): Promise<AskResult> => {
       const move = options.move ?? moveOf(MOVES[0]);
       const request: PacketRequest = { move, target };
+      // THE RUN'S OWN WORDS (Epic 14): read from the session at ASK time, for
+      // the move and target this very ask names — never from the request, and
+      // never captured at render. The packet's bounded run block carries them.
+      const priorRefusals = options.priorRefusals?.(move, target) ?? [];
       // THE CARD IS THE PERSON'S (default OFF): read only when chosen, and only
       // for the move's own game. A hand edit to the file is therefore seen by
       // the next ask — the frozen packet's hash moves with the content.
@@ -124,6 +145,7 @@ export function useGhostRequest(
         includeCard,
         cards,
         creationKinds,
+        priorRefusals,
         view: options.view(),
       });
       setAsking(false);
