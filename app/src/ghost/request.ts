@@ -30,6 +30,12 @@ import { readGhostSnapshot } from "./snapshot";
  * bytes). Authorship by selection has no door here (ADR-0026); the card is the
  * person's to include or leave (ADR-0027).
  *
+ * THE RUN'S PRIOR REFUSAL SENTENCES (Epic 14 story 1, ADR-0031's packet bound)
+ * are the SESSION's ephemeral state, handed to the ask as its own option and
+ * forwarded to the packet (which dedupes and bounds them by N). The request
+ * type has no key for them, so a request can never invent a refusal, a count or
+ * a trail; the ask freezes them into bytes only when the run already said them.
+ *
  * The surface is where the packet's refusals live, before anything is frozen:
  * an unregistered move, another band than the move's game, an active branch
  * (ghosts are refused there), a target kind the move refuses in v1 (a spot is
@@ -81,6 +87,12 @@ export interface AskOptions {
   cards?: readonly PacketCard[];
   /** The canvas ring's authored kinds for the game (data; the moves line). */
   creationKinds?: readonly string[];
+  /**
+   * THE RUN'S PRIOR REFUSAL SENTENCES for this move and target (Epic 14 story
+   * 1, ADR-0031): read from the session's run state by the app, never from the
+   * request. Absent or empty leaves the packet's run block out entirely.
+   */
+  priorRefusals?: readonly string[];
   /** The map's records, as the app loaded them. */
   view: PacketView;
 }
@@ -208,6 +220,7 @@ export async function askForPacket(options: AskOptions): Promise<AskResult> {
       includeCard: options.includeCard === true,
       cards: options.cards,
       creationKinds: options.creationKinds,
+      run: { sentences: options.priorRefusals ?? [] },
       view: options.view,
       snapshot,
     }),

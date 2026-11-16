@@ -20,6 +20,7 @@ import {
   type MoveDefinition,
   type ParamField,
 } from "./registry";
+import { N_RUN_LIMIT } from "./runState";
 import type { GhostSnapshot } from "./snapshot";
 
 /**
@@ -86,10 +87,23 @@ import type { GhostSnapshot } from "./snapshot";
  * Levels are untouched here: the packet is the dynamics move's view, and the
  * request surface (request.ts) refuses another band.
  *
+ * THE BOUNDED RUN BLOCK (Epic 14 story 1, ADR-0031's final amendments amending
+ * ADR-0026): when the app hands the run's PRIOR REFUSAL SENTENCES, the packet
+ * gains ONE small block of the words those refusals already said, in arrival
+ * order, deduped and bounded by N_RUN_LIMIT. The block has no field for an
+ * attempt count, no order beyond arrival, and no trail of attempts — a
+ * repeated refusal's words appear once. It is sentences and a heading; its type
+ * cannot carry a number, and the assembler reads nothing from the run except
+ * those sentences, so run state can never choose the region, a slug or a
+ * region's source. With no prior refusal the block is absent entirely (no
+ * "none": a run with nothing to say is not a state to report), so closing the
+ * session drops the block with the run.
+ *
  * Provisional: the packet's wording and section order, PacketWord.box (the
  * veil's centre rule needs a rendered box — layout, not a record field), the
  * reading that a reference's prose memory is not carried (records, not
- * documents), the card line's exact spelling and the inclusion flag's name.
+ * documents), the card line's exact spelling, the inclusion flag's name, the
+ * run block's heading and its position after the records.
  */
 
 /** The packet's format tag (PROVISIONAL, but part of the bytes). */
@@ -101,6 +115,70 @@ export const PACKET_LIMIT = "This view; the map is larger.";
 /** The family's posture, verbatim (records ride as they stand). */
 export const PACKET_POSTURE =
   "Each record is carried as it stands — its own marks, its own words, its own unknown keys. A hand edit is kept and shown, never repaired or tidied.";
+
+/**
+ * The run block's heading (PROVISIONAL): a sentence, never a count. The block
+ * stands only when the run carries prior refusals, so the heading never
+ * appears in a fresh session's packet.
+ */
+export const PACKET_RUN_HEADING = "## What this move already came back with";
+
+/**
+ * What the app may hand the packet about the run (Epic 14 story 1): the prior
+ * refusal SENTENCES, and nothing else. There is no key for an attempt count, a
+ * key, an order or a region — this type has none, so a run cannot observe the
+ * map. The app reads them from the session's run state (never the other way
+ * around).
+ */
+export interface PacketRun {
+  /** The refusal sentences the run already said, in arrival order. */
+  readonly sentences: readonly string[];
+}
+
+/**
+ * The block the packet may render: a heading and the sentences, with no field
+ * for a number (so no count can be smuggled through the block's data either).
+ * Frozen when built.
+ */
+export interface PacketRunBlock {
+  readonly heading: string;
+  readonly sentences: readonly string[];
+}
+
+/**
+ * The run block's sentences: deduped, blanks dropped, in arrival order, at most
+ * `N_RUN_LIMIT` (ADR-0031's packet bound). A repeated sentence is ONE line —
+ * the block is what the refusals said, never how many times they said it.
+ */
+export function boundedRunSentences(
+  sentences: readonly string[],
+): readonly string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const sentence of sentences) {
+    if (typeof sentence !== "string") continue;
+    if (sentence.trim() === "" || seen.has(sentence)) continue;
+    seen.add(sentence);
+    out.push(sentence);
+    if (out.length >= N_RUN_LIMIT) break;
+  }
+  return out;
+}
+
+/**
+ * The run block for a packet, or null when the run carries no prior refusal.
+ * Pure and total: the input is sentences only, and the result's fields are a
+ * heading and sentences — the block cannot carry a count, a key or an order.
+ */
+export function runBlockOf(run: PacketRun | undefined): PacketRunBlock | null {
+  const raw = Array.isArray(run?.sentences) ? run.sentences : [];
+  const sentences = boundedRunSentences(raw);
+  if (sentences.length === 0) return null;
+  return Object.freeze({
+    heading: PACKET_RUN_HEADING,
+    sentences: Object.freeze(sentences),
+  });
+}
 
 /**
  * What each game is, for the packet's conventions section — the DEFAULT prose
@@ -264,6 +342,14 @@ export interface PacketInput {
    * card line's second move source. The registry rows are the first.
    */
   creationKinds?: readonly string[];
+  /**
+   * THE RUN'S PRIOR REFUSAL SENTENCES (Epic 14 story 1, ADR-0031's packet
+   * bound): the words this session's refusals already said for this move and
+   * target, handed in by the app from the session's run state. Absent or empty
+   * means no block. It carries no region, no slug and no source key, and the
+   * assembler reads nothing but `sentences`.
+   */
+  run?: PacketRun;
   /** The map's records, verbatim. */
   view: PacketView;
   /** The base-pin snapshot, read at the ask moment. */
@@ -541,6 +627,20 @@ function renderPacket(input: PacketInput, region: RegionSelection): string {
     const word = wordOf(view, slug);
     if (word === null) continue;
     lines.push(...wordBlock(word, view, false));
+  }
+
+  // THE BOUNDED RUN BLOCK (Epic 14 story 1, ADR-0031): the prior refusal
+  // sentences, in arrival order, at most N. Sentences only — no count, no trail,
+  // no attempt order. Absent entirely when the run has said nothing yet.
+  const runBlock = runBlockOf(input.run);
+  if (runBlock !== null) {
+    lines.push(runBlock.heading);
+    lines.push("");
+    runBlock.sentences.forEach((sentence, index) => {
+      if (index > 0) lines.push("");
+      for (const line of wrap(sentence)) lines.push(line);
+    });
+    lines.push("");
   }
 
   lines.push("## Veils over this view");

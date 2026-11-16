@@ -9,7 +9,9 @@ import {
   withPacketHash,
   type GhostEnvelope,
   type GhostGame,
+  type GhostMove,
   type GhostStep,
+  type GhostTarget,
 } from "./envelope";
 import { agentBodyIssues, validateGhost } from "./grammar";
 import {
@@ -22,9 +24,10 @@ import {
   writeInboxEnvelope,
   type DiscardReport,
 } from "./inbox";
-import { issue, type GhostIssue } from "./issues";
+import { issue, type GhostIssue, type GhostIssueCode } from "./issues";
 import { tauriGhostFs, type GhostFs } from "./port";
 import { findMove, pinOf } from "./registry";
+import { createRunState, runKeyOf, runPartsOf } from "./runState";
 import { readGhostSnapshot } from "./snapshot";
 
 /**
@@ -62,9 +65,20 @@ import { readGhostSnapshot } from "./snapshot";
  * the same proposal's hash. Nothing reads it back — the accept re-validates
  * the bytes and the key is allowed but never inspected.
  *
+ * THE RUN STATE (Epic 14 story 1, ADR-0031) is the session's ephemeral trace:
+ * every REFUSED intake that named a readable move and target records one
+ * attempt per refusal code in `createRunState` (in memory only), and
+ * `open()` discards it with the inbox — the ghost session's open moment IS the
+ * task. The session exposes the run's PRIOR REFUSAL SENTENCES for one move and
+ * target (`priorRefusals`) so a packet's bounded run block can carry them, and
+ * the attempt count (`runAttempts`) for the harness. Neither is rendered,
+ * persisted or spoken: the counter is never a person-facing value (the source
+ * scan asserts the surfaces' silence), and story 2 owns the loud stop it drives.
+ *
  * Provisional: the session's shape (the UI wiring is story 3's), the fact
- * that a level/branch switch is passed per call rather than held, and the
- * intake's optional `packetHash` argument.
+ * that a level/branch switch is passed per call rather than held, the
+ * intake's optional `packetHash` argument, and the run state's home and
+ * accessor names.
  */
 
 /** The app's running context at an intake/accept moment. */
@@ -133,7 +147,31 @@ export interface GhostSession {
   readonly workspacePath: string;
   /** The ids this session minted, in arrival order. */
   registered(): readonly string[];
-  /** The open moment: discard the inbox (replay refused) and forget ids. */
+  /**
+   * THE RUN'S PRIOR REFUSAL SENTENCES (Epic 14 story 1, ADR-0031): what this
+   * session's refused intakes already said for one move and target, deduped by
+   * refusal key, in arrival order, at most N (ADR-0031's bound). Empty until
+   * an intake fails, and empty again after `open()` (the run is the open
+   * moment). The packet's bounded run block is handed these sentences; no
+   * surface renders them on its own.
+   */
+  priorRefusals(move: GhostMove, target: GhostTarget): readonly string[];
+  /**
+   * How many attempts the run has at one refusal key (move, target, issue
+   * code) — the harness's read of the counter. The person cannot see it: no
+   * surface renders it and nothing persists it; the count lives in
+   * `runState.ts`'s closure only.
+   */
+  runAttempts(
+    move: GhostMove,
+    target: GhostTarget,
+    code: GhostIssueCode,
+  ): number;
+  /**
+   * The open moment: discard the inbox (replay refused), forget ids and
+   * discard the run state. The ghost session's open moment IS the task
+   * (ADR-0031), so nothing from the previous open survives.
+   */
   open(): Promise<DiscardReport>;
   /**
    * Paste/import raw model output -> wrap -> validate -> inbox.
@@ -192,25 +230,42 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
   const mintId = options.mintId ?? mintGhostId;
   const queue = createWriteQueue();
   const registeredIds = new Set<string>();
+  // THE RUN STATE (Epic 14 story 1, ADR-0031): the session's ephemeral trace,
+  // discarded at open() with the inbox. In memory only; runState.ts has no
+  // writer, no port and no storage import.
+  const run = createRunState();
 
   async function intakeInner(
     raw: string,
     context: GhostContext,
     packetHash: string | null | undefined,
   ): Promise<IntakeResult> {
-    const refused = (issues: readonly GhostIssue[]): IntakeResult => ({
-      ok: false,
-      envelope: null,
-      path: null,
-      issues,
-    });
+    /**
+     * Record the refusal as a run attempt when the reply named a readable move
+     * and target (ADR-0031's run key), then hand the refusal back. A reply with
+     * no readable parts has no key to count: it is refused exactly as before.
+     */
+    const refused = (
+      issues: readonly GhostIssue[],
+      body?: unknown,
+    ): IntakeResult => {
+      const parts = body === undefined ? null : runPartsOf(body);
+      if (parts !== null) {
+        run.recordRefusedAttempt({
+          move: parts.move,
+          target: parts.target,
+          issues,
+        });
+      }
+      return { ok: false, envelope: null, path: null, issues };
+    };
 
     const extracted = extractAgentOutput(raw);
     if (extracted.body === null) {
       return refused(extracted.problems.map((problem) => issue("intake", problem)));
     }
     const bodyIssues = agentBodyIssues(extracted.body);
-    if (bodyIssues.length > 0) return refused(bodyIssues);
+    if (bodyIssues.length > 0) return refused(bodyIssues, extracted.body);
 
     const entry = findMove(extracted.body.move);
     const snapshot = await readGhostSnapshot(fs, workspacePath, {
@@ -238,12 +293,13 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
     };
     const validation = validateGhost(candidate, snapshot);
     if (!validation.ok || validation.envelope === null) {
-      return refused(validation.issues);
+      return refused(validation.issues, extracted.body);
     }
     if (validation.applied) {
-      return refused([
-        issue("append-only", "the file already holds this claim; v1 only appends"),
-      ]);
+      return refused(
+        [issue("append-only", "the file already holds this claim; v1 only appends")],
+        extracted.body,
+      );
     }
     // THE PACKET-HASH PROVENANCE (Epic 11 story 3): attached AFTER the grammar
     // spoke. The hash names the frozen packet this reply answers; the filed
@@ -443,9 +499,20 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
       return [...registeredIds];
     },
 
+    priorRefusals(move, target) {
+      return run.sentencesForTarget(move, target);
+    },
+
+    runAttempts(move, target, code) {
+      return run.attemptsFor(runKeyOf(move, target, code));
+    },
+
     async open() {
       const report = await discardInbox(workspacePath, fs);
       registeredIds.clear();
+      // The run is the open moment: closing it discards every attempt and its
+      // refusal sentence. Nothing was ever written, so there is nothing to undo.
+      run.discard();
       return report;
     },
 
