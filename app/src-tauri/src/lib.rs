@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 mod head;
+mod marker;
 
 /// Thin byte-level fs bridge. What machine files say and how they serialize
 /// is owned by the frontend's `serialize.ts` (ADR-0004); this side only
@@ -92,6 +93,15 @@ fn read_text_head(path: String, max_lines: usize, max_bytes: usize) -> Result<he
     head::read(&path, max_lines, max_bytes)
 }
 
+/// Create the ghost inbox's in-flight marker EXCLUSIVELY (Epic 10 story 1,
+/// ADR-0025 decision 2): the `wx` open. `Ok(true)` when this call created it,
+/// `Ok(false)` when a marker was already there. The implementation and its
+/// tests live in `marker.rs`; the marker is never read and never resumed.
+#[tauri::command]
+fn create_marker_exclusive(path: String) -> Result<bool, String> {
+    marker::create_exclusive(&path)
+}
+
 /// The app-side config file (ADR-0002: the only app-side persistence).
 #[tauri::command]
 fn config_path() -> Result<String, String> {
@@ -115,6 +125,7 @@ pub fn run() {
             remove_file,
             remove_dir_all,
             read_text_head,
+            create_marker_exclusive,
             config_path
         ])
         .run(tauri::generate_context!())

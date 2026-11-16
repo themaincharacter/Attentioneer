@@ -58,6 +58,17 @@ export function scenarioDir(workspacePath: string, slug: string): string {
 }
 
 /**
+ * The records folder's WORKSPACE-RELATIVE spelling — `map` for the committed
+ * model, `scenarios/<slug>` for a branch (Epic 10 story 1: the ghost envelope's
+ * base pin names the folder without binding the proposal to one machine's
+ * workspace path). The one source of the arithmetic, so a caller never
+ * hand-joins a record path and the relative and absolute forms cannot drift.
+ */
+export function recordsRelDirOf(scenario: string | null): string {
+  return scenario === null ? MAP_DIR : `${SCENARIOS_DIR}/${scenario}`;
+}
+
+/**
  * The records folder the three variant-owned records live in right now:
  * `map/` for the committed model (`scenario === null`), the branch's folder
  * otherwise. The app asks this once per load; every record load and save takes
@@ -67,7 +78,5 @@ export function recordsDirOf(
   workspacePath: string,
   scenario: string | null,
 ): string {
-  return scenario === null
-    ? mapDir(workspacePath)
-    : scenarioDir(workspacePath, scenario);
+  return `${workspacePath}/${recordsRelDirOf(scenario)}`;
 }

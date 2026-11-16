@@ -74,3 +74,15 @@ export async function removeFile(path: string): Promise<void> {
 export async function removeDirAll(path: string): Promise<void> {
   await invoke("remove_dir_all", { path });
 }
+
+/**
+ * Create a marker file EXCLUSIVELY (Epic 10 story 1, ADR-0025 decision 2): the
+ * Rust command opens with `create_new` — the `wx`/O_EXCL open — so the answer
+ * is one atomic "did this call create it?". True means the caller owns the
+ * marker now; false means a marker was already there (a stale in-flight marker
+ * the ghost accept releases before re-claiming). The file is empty by
+ * construction: a sentinel, never a record.
+ */
+export async function createMarkerExclusive(path: string): Promise<boolean> {
+  return await invoke<boolean>("create_marker_exclusive", { path });
+}
