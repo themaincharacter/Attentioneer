@@ -1,6 +1,24 @@
 import { parseAssumptions } from "../map/assumptions";
-import { centerOf, type Box, type Point } from "../canvas/geometry";
 import type { GhostEnvelope, GhostStep, GhostTarget } from "./envelope";
+
+/*
+ * The ghost layer imports NO canvas module (Epic 11 story 1's source scan):
+ * what the preview needs from the rendering seam is only a word box's centre,
+ * which is two additions. The types and the tiny function are restated here on
+ * purpose, so the seam is a one-way door: canvas code may read ghost rules,
+ * never the reverse.
+ */
+
+/** A point on the plane. */
+type Point = { x: number; y: number };
+
+/** A word box's size. */
+type Box = { w: number; h: number };
+
+/** The box's centre, given its top-left position (the canvas's own reading). */
+function centerOf(pos: Point, box: Box): Point {
+  return { x: pos.x + box.w / 2, y: pos.y + box.h / 2 };
+}
 
 /**
  * THE PREVIEW'S RULES (Epic 10 story 3) — what the person's opening shows, and

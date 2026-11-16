@@ -355,6 +355,53 @@ export function authoredParamKeys(entry: MoveDefinition): string[] {
 }
 
 /**
+ * ONE REGISTRY ROW as the cards' moves derivation reads it: the game and the
+ * move. `MoveDefinition` satisfies it structurally, so the live table (or a
+ * test's fixture table) passes without adaptation.
+ */
+export interface GameMoveRow {
+  game: GhostGame;
+  move: GhostMove;
+}
+
+/**
+ * THE MOVES LINE OF A GAME'S CARD (Epic 11 story 1, ADR-0027 §3 as amended) —
+ * DERIVED, never authored, from the game's TWO move sources, both PASSED AS
+ * DATA:
+ *
+ *   - the registry rows (the game's registered agent moves, spelled
+ *     `family/verb`);
+ *   - the canvas's `creationKinds` for the game (the ring menu's authored
+ *     kinds), passed as a plain list rather than imported. This module is the
+ *     ghost layer, and the ghost layer NEVER imports the canvas (a source scan
+ *     in `cards.test.ts` holds that seam); the app — or a test — reads
+ *     `creationKinds(game)` and hands the result in.
+ *
+ * One helper, two sources: the order is the registry's table order first, then
+ * the ring's order, deduped. The line is never stored in a card (a card's
+ * authored parts are its conventions and its examples); deriving it where it
+ * is read is what keeps a hand-edited copy from becoming a second truth.
+ *
+ * Provisional: the spelling (a registered move as `family/verb`, a creation
+ * kind as its bare name) and the source order.
+ */
+export function gameMovesOf(
+  game: GhostGame,
+  registryRows: readonly GameMoveRow[],
+  creationKindsData: readonly string[],
+): string[] {
+  const moves: string[] = [];
+  for (const row of registryRows) {
+    if (row.game !== game) continue;
+    moves.push(`${row.move.family}/${row.move.verb}`);
+  }
+  for (const kind of creationKindsData) {
+    if (!moves.includes(kind)) moves.push(kind);
+  }
+  return moves;
+}
+
+/**
  * The registry as PLAIN DATA — the description the version hash walks. It is
  * derived from the live table (move, game, files, the params schema, the target
  * arity and rules incl. the refusal sentences, the boundary), so a new move or

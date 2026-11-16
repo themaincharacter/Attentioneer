@@ -117,6 +117,11 @@ import {
  * rewritten before the old file is dropped / after the word is known to exist,
  * so a crash always leaves something visible (a word, or a stale member name
  * the selector can rewrite) rather than a dangling reference to nothing.
+ *
+ * A GAME CARD (Epic 11 story 1) names no slug and no target: it is keyed by
+ * the game itself. No batch here rewrites or drops one, so this module has no
+ * cards writer, deliberately — a rename or a remove can never reach a note
+ * about a game.
  */
 
 /**
