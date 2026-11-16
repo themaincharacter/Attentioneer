@@ -11,6 +11,7 @@ import { AssumptionDiamond } from "./AssumptionDiamond";
 import { usePlane } from "./CanvasPlane";
 import {
   CROSS_LEVEL_FACES_HIDDEN,
+  SHELF_HIDDEN,
   TENTATIVE_MARK_HIDDEN,
 } from "./deprecations";
 import { QuantityGlyph } from "./QuantityGlyph";
@@ -768,7 +769,13 @@ export function ReferenceWord({
           aria-label="draw a distance"
           title="drag to another word"
         />
-        {marked && !renaming && !revealing && (
+        {/* DEPRECATED (hidden 2026-11-16 per user review): the reject control
+            (the quiet → that settled a word's open mark and set the word aside)
+            belongs to the SHELF, which the review removed. The button, its
+            handler and the composed settle + set-aside write (useMap's `reject`)
+            all stay written; flipping `SHELF_HIDDEN` back offers it again — delete
+            in the deprecated sweep. */}
+        {!SHELF_HIDDEN && marked && !renaming && !revealing && (
           <button
             type="button"
             className="word-reject"

@@ -239,10 +239,16 @@ describe("the physical wiring", () => {
     expect(wordSource).not.toContain("}, 1)");
   });
 
-  test("the camera has the band intent the jumper and the restore share", () => {
+  // CONVERTED (hidden 2026-11-16 per user review — separate mini-apps,
+  // ADR-0032): the camera used to share ONE band intent between the jumper and
+  // the restore. It keeps a camera PER MAP now, and the band intent stays
+  // written with no caller (the sweep's record of the retired jump).
+  test("the camera keeps the band intent (written) and a camera per map", () => {
     const cameraSource = source("../src/canvas/useCamera.ts");
     expect(cameraSource).toContain("setZoomBand");
-    expect(cameraSource).toContain("DEFAULT_CAMERA_ZOOM");
+    expect(cameraSource).toContain("initialMapCameras");
+    expect(cameraSource).toContain("withCameraOf");
+    expect(cameraSource).toContain("useCamera(\n  level: Level");
     expect(cameraSource).not.toContain("zoom: 1 }");
   });
 

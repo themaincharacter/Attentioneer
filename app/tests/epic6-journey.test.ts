@@ -47,7 +47,6 @@ import {
   type LevelPin,
 } from "../src/canvas/gates";
 import {
-  followCamera,
   followControlView,
   followTargets,
   screenPointOf,
@@ -74,7 +73,15 @@ import {
   linkWiresVisible,
   noteBand,
 } from "../src/canvas/zoomBands";
-import { INITIAL_CAMERA, zoomAbout, type Camera } from "../src/canvas/useCamera";
+import {
+  INITIAL_CAMERA,
+  cameraOf,
+  initialMapCameras,
+  withCameraOf,
+  zoomAbout,
+  type Camera,
+  type MapCameras,
+} from "../src/canvas/useCamera";
 import {
   DEFAULT_LEVEL,
   levelFromZoom,
@@ -123,9 +130,6 @@ const REFS = "map/references/";
 const REACH = "notes/rain-gutter.md";
 /** The bare lack's spot on the plane. */
 const LACK: Point = { x: 512, y: 640 };
-/** The window the app opens on (its jump and restore anchor at the centre). */
-const VIEW = { w: 1280, h: 720 };
-
 type Files = Record<string, string>;
 
 interface Journey {
@@ -323,56 +327,75 @@ interface Switch {
   cause: HandoffCause;
 }
 
-interface Move {
-  level: Level;
-  screen?: Point;
-}
+/**
+ * CONVERTED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * the rig is the app's level machinery in the NEW shape. The level TABS switch
+ * the maps (the handoff's `jump`, which writes the resume hint); the wheel only
+ * zooms within the current map and hands nothing to the handoff; each map keeps
+ * its OWN camera, so a switch comes back exactly where that map was left. The
+ * band machinery (the pin, the derivation, the settle cause) is still the
+ * handoff's — reachable, and proven alive — and the app simply stops calling it.
+ */
 
 interface Rig {
   journey: Journey;
   handoff: LevelHandoff;
   pin: LevelPin;
   switched: Switch[];
-  moved: Move[];
   saved: Level[];
   /** The local draft standing for the text in the focused field. */
   draft: () => string;
   type: (text: string) => void;
   /** How many times the switch path ran (a restore runs none). */
   closes: () => number;
-  /** The running game — the band's, as the handoff sampled it. */
+  /** The running map — set by a tab press or the open-restore, never a zoom. */
   level: () => Level;
-  /** The key's value on disk (null until the first crossing writes it). */
+  /** The key's value on disk (null until the first tab press writes it). */
   key: () => Level | null;
+  /** The RUNNING MAP's own camera (a switch brings the map back as it was). */
   camera: () => Camera;
   files: () => Files;
-  /** A wheel that settled AT the anchor word. */
+  /**
+   * A wheel that settled AT the anchor word: ordinary zoom, and NOTHING handed
+   * to the handoff (the return is always null — the wheel switches no map).
+   */
   settle: (zoom: number, pinned?: boolean) => number | null;
-  /** The pin lifted: re-derive from the zoom the camera ended on. */
+  /** The pin lifted: retired (nothing was held), the machinery is alive. */
   release: () => void;
-  jump: (level: Level, screen?: Point) => void;
-  /** The anchored follow: the word's own screen point is the anchor. */
+  /** A TAB press: switch maps. No camera move — the map has its own. */
+  jump: (level: Level) => void;
+  /** A word's follow control: the same switch trigger (it moves no camera). */
   follow: (word: Point, level: Level) => void;
 }
 
 /**
- * The app, reduced to its level machinery (App.tsx's real wiring): the handoff
- * starts at the default level and the open-restore sets the camera from the key
- * (never writes); a settle and a jump are the ONE trigger's two causes; the pin
- * gates a settled crossing; the camera intents are the shared setZoomBand — the
- * band's landing zoom about the given screen point (the viewport's centre
- * without one), so a camera move never flips the game as a side effect.
+ * The app, reduced to its map machinery (App.tsx's real wiring, in the shape the
+ * fourth review left it): the handoff starts at the default map and the
+ * open-restore sets the MAP from the key (never writes, never moves a camera);
+ * a TAB press is the handoff's jump — the one write trigger — and the wheel only
+ * zooms the running map's own camera. The level pin and the handoff's settle are
+ * still built here (machinery alive) and no wheel path calls them: the app gates
+ * them behind `zoomSwitchesMap` (canvas/shelfRules.ts).
  */
 function createRig(files: Files, restore: boolean): Rig {
   const journey = readJourney(files);
   let keyState = readKey(files);
   const switched: Switch[] = [];
-  const moved: Move[] = [];
   const saved: Level[] = [];
   let closes = 0;
   let draft = "";
-  let cameraState: Camera = INITIAL_CAMERA;
+  // ONE camera per map (PROVISIONAL): a tab switch restores that map exactly.
+  let cameras: MapCameras = initialMapCameras();
   const wordCentre = centreOfWord(journey, "rain");
+  const running = (): Level => handoff.level();
+  const cameraState = (): Camera => cameraOf(cameras, running());
+  const zoomRunningMap = (zoom: number, anchor: Point): void => {
+    cameras = withCameraOf(
+      cameras,
+      running(),
+      zoomAbout(cameraState(), zoom, anchor.x, anchor.y),
+    );
+  };
 
   const handoff = createLevelHandoff(DEFAULT_LEVEL, {
     onSwitch: (next, cause) => {
@@ -384,12 +407,10 @@ function createRig(files: Files, restore: boolean): Rig {
       closes += 1;
       draft = "";
     },
-    moveCamera: (next, screen) => {
-      moved.push({ level: next, screen });
-      const sx = screen?.x ?? VIEW.w / 2;
-      const sy = screen?.y ?? VIEW.h / 2;
-      cameraState = zoomAbout(cameraState, BAND_ZOOM[next], sx, sy);
-    },
+    // RETIRED (hidden 2026-11-16 per user review): the camera is no longer
+    // moved "into a band". Each map keeps its own camera, so the app passes a
+    // no-op here — the band intent (`setZoomBand`) stays written in useCamera.ts.
+    moveCamera: () => undefined,
     save: async (next) => {
       saved.push(next);
       // saveWorkspaceLevel reads workspace.yml and rewrites its level line
@@ -405,7 +426,6 @@ function createRig(files: Files, restore: boolean): Rig {
     handoff,
     pin,
     switched,
-    moved,
     saved,
     draft: () => draft,
     type: (text) => {
@@ -414,26 +434,31 @@ function createRig(files: Files, restore: boolean): Rig {
     closes: () => closes,
     level: () => handoff.level(),
     key: () => keyState,
-    camera: () => cameraState,
+    camera: () => cameraState(),
     files: () => write(journey, keyState),
-    settle: (zoom, pinned = false) => {
-      // The person wheels AT the word: the camera zooms about the word's own
-      // screen point, so it stays under the eye. The handoff sees only the
-      // settled zoom.
-      const anchor = screenPointOf(wordCentre, cameraState);
-      cameraState = zoomAbout(cameraState, zoom, anchor.x, anchor.y);
-      const next = pin.settle(zoom, pinned);
-      if (next !== null) handoff.settle(next);
-      return next;
+    settle: (zoom) => {
+      // The person wheels AT the word: the RUNNING MAP's camera zooms about the
+      // word's own screen point, so it stays under the eye. The handoff is never
+      // told — a zoom switches no map — so nothing is returned.
+      //
+      // DEPRECATED (hidden 2026-11-16 per user review): this used to ask the
+      // level pin and hand a crossing to `handoff.settle`. The pin still works
+      // (`rig.pin`) and the machinery is asserted alive below; the app just
+      // never asks it.
+      zoomRunningMap(zoom, screenPointOf(wordCentre, cameraState()));
+      return null;
     },
     release: () => {
-      handoff.settle(pin.release(cameraState.zoom));
+      // RETIRED: the pin held a wheel crossing; with no crossing there is
+      // nothing to release. The pure pin is still exercised (tests/level-pinning).
+      void pin.held();
     },
-    jump: (next, screen) => handoff.jump(next, screen),
-    follow: (word, next) => handoff.jump(next, screenPointOf(word, cameraState)),
+    jump: (next) => handoff.jump(next),
+    follow: (word, next) => handoff.jump(next),
   };
 
-  // The app's open: the key sets the camera into its band and writes NOTHING.
+  // The app's open: the key sets the MAP (its own camera comes with it) and
+  // writes NOTHING.
   if (restore) handoff.restore(keyState ?? DEFAULT_LEVEL);
   return rig;
 }
@@ -446,11 +471,6 @@ function freshRig(): Rig {
 /** Quit and reopen over the rig's current bytes. */
 function reopen(rig: Rig): Rig {
   return createRig(rig.files(), true);
-}
-
-function expectSamePoint(actual: Point, expected: Point): void {
-  expect(actual.x).toBeCloseTo(expected.x, 10);
-  expect(actual.y).toBeCloseTo(expected.y, 10);
 }
 
 /* -------------------------------------------------------------------------
@@ -674,24 +694,48 @@ describe("levelFromZoom across all three bands, at the check's label-legible leg
 });
 
 /* -------------------------------------------------------------------------
- * 3. The handoff: settle and jump write; restore never; reopen resumes.
+ * 3. The TABS switch the maps; the wheel never does; restore never writes.
  * ---------------------------------------------------------------------- */
 
-describe("the handoff: the wheel's settle and the jump write; restore never", () => {
-  test("wheel into dynamics at the pair's zoom: the switch writes the key byte-exactly", async () => {
+/**
+ * CONVERTED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032).
+ * This section used to prove the strict handoff by WHEEL: a settled crossing was
+ * derived into a band, the game switched and the key was rewritten. The review's
+ * verdict is that the maps are separate mini-apps and the TABS switch them, so
+ * the same walks now assert the NEW state — a wheel changes nothing but the
+ * running map's camera, a tab press is the one write trigger, each map comes
+ * back with its own camera, and the retired machinery is still alive for the
+ * flip-back (the pure pin, the derivation, the handoff's settle).
+ */
+describe("the TABS switch the maps; the wheel never does; restore never writes", () => {
+  test("a wheel through every old band boundary switches nothing", async () => {
     const rig = freshRig();
     const before = rig.files();
-    // The open-restore put the camera in concept; nothing was written.
-    expect(rig.moved).toEqual([{ level: "concept", screen: undefined }]);
     expect(rig.level()).toBe("concept");
     expect(rig.key()).toBeNull();
     expect(rig.saved).toEqual([]);
 
-    const handed = rig.settle(BAND_ZOOM.dynamics);
-    expect(handed).toBe(BAND_ZOOM.dynamics);
-    expect(rig.switched).toEqual([{ level: "dynamics", cause: "settle" }]);
-    // A settle never moves the camera: the wheel left it where it is.
-    expect(rig.moved).toHaveLength(1);
+    // The two old band landings and one zoom past both: the zooms that used to
+    // change the game change nothing now.
+    expect(levelFromZoom(BAND_ZOOM.dynamics)).toBe("dynamics");
+    expect(levelFromZoom(BAND_ZOOM.ground)).toBe("ground");
+    for (const zoom of [BAND_ZOOM.dynamics, BAND_ZOOM.ground, 3]) {
+      expect(rig.settle(zoom)).toBeNull();
+    }
+    expect(rig.switched).toEqual([]);
+    expect(rig.saved).toEqual([]);
+    expect(rig.key()).toBeNull();
+    expect(rig.level()).toBe("concept");
+    // The camera did move — ordinary within-map zoom, nothing else.
+    expect(rig.camera().zoom).toBe(3);
+    expect(mapOnly(rig.files())).toEqual(mapOnly(before));
+  });
+
+  test("a tab press switches the map and writes the hint byte-exactly", async () => {
+    const rig = freshRig();
+    const before = rig.files();
+    rig.jump("dynamics");
+    expect(rig.switched).toEqual([{ level: "dynamics", cause: "jump" }]);
     expect(rig.level()).toBe("dynamics");
     await rig.handoff.idle();
 
@@ -702,53 +746,54 @@ describe("the handoff: the wheel's settle and the jump write; restore never", ()
     expect(levelOfText(files["workspace.yml"])).toBe("dynamics");
     // Every comment, the format key and the fold stay exactly as they were.
     expect(files["workspace.yml"].startsWith(workspaceYml())).toBe(true);
-    // Nothing in the map moved: a crossing is a camera/game fact only.
+    // Nothing in the map moved: a switch is a map fact only.
     expect(mapOnly(files)).toEqual(mapOnly(before));
+  });
 
-    // The band and the key agree while running, and the pair reads here.
-    expect(levelFromZoom(rig.camera().zoom)).toBe(rig.level());
-    expect(distanceLabelVisible(rig.camera().zoom)).toBe(true);
-    expect(linkWiresVisible(rig.level())).toBe(true);
-    // The wheel was AT the word: it stayed under the eye.
-    expectSamePoint(
-      screenPointOf(RAIN, rig.camera()),
-      screenPointOf(RAIN, INITIAL_CAMERA),
+  test("each map keeps its OWN camera: switching back restores it exactly", async () => {
+    const rig = freshRig();
+    // Work on the concept map: zoom in at the word.
+    rig.settle(1.4);
+    const concept = rig.camera();
+    expect(concept.zoom).toBeCloseTo(1.4, 10);
+    expect(concept).not.toEqual(INITIAL_CAMERA);
+
+    rig.jump("dynamics");
+    await rig.handoff.idle();
+    // The dynamics map opens on ITS camera, not the concept one.
+    expect(rig.camera()).toEqual(cameraOf(initialMapCameras(), "dynamics"));
+    expect(rig.camera().zoom).toBe(BAND_ZOOM.dynamics);
+
+    // Come back to concept: exactly the view left behind, like a little app.
+    rig.jump("concept");
+    await rig.handoff.idle();
+    expect(rig.camera()).toEqual(concept);
+    expect(rig.files()["workspace.yml"]).toBe(
+      withLevel(workspaceYml(), "concept"),
     );
   });
 
-  test("the deliberate jump writes too, and the anchored follow is the same trigger", async () => {
+  test("the follow control is the same switch trigger and moves no camera", async () => {
     const rig = freshRig();
-    rig.settle(BAND_ZOOM.dynamics);
-    await rig.handoff.idle();
-    const beforeFollow = rig.camera();
-    const anchor = screenPointOf(RAIN, beforeFollow);
-
+    rig.settle(BAND_ZOOM.ground);
+    const concept = rig.camera();
     rig.follow(RAIN, "ground");
-    expect(rig.moved).toEqual([
-      { level: "concept", screen: undefined },
-      { level: "ground", screen: anchor },
-    ]);
-    expect(rig.switched).toEqual([
-      { level: "dynamics", cause: "settle" },
-      { level: "ground", cause: "jump" },
-    ]);
+    expect(rig.switched).toEqual([{ level: "ground", cause: "jump" }]);
     await rig.handoff.idle();
-    expect(rig.saved).toEqual(["dynamics", "ground"]);
-
-    const after = rig.camera();
-    expect(after).toEqual(followCamera(beforeFollow, "ground", RAIN));
-    expect(after.zoom).toBe(BAND_ZOOM.ground);
-    expect(levelFromZoom(after.zoom)).toBe(rig.level());
-    // The word is still under the eye: the anchor did not drift.
-    expectSamePoint(screenPointOf(RAIN, after), anchor);
+    expect(rig.saved).toEqual(["ground"]);
     expect(rig.files()["workspace.yml"]).toBe(
       withLevel(workspaceYml(), "ground"),
     );
+    // The ground map's own camera; the concept map's view is untouched.
+    expect(rig.camera().zoom).toBe(BAND_ZOOM.ground);
+    rig.jump("concept");
+    await rig.handoff.idle();
+    expect(rig.camera()).toEqual(concept);
   });
 
-  test("quit, reopen: the key resumes the game, opening writes NOTHING, every record reads as left", async () => {
+  test("quit, reopen: the key resumes the MAP, opening writes NOTHING, every record reads as left", async () => {
     const rig = freshRig();
-    rig.settle(BAND_ZOOM.dynamics);
+    rig.jump("dynamics");
     await rig.handoff.idle();
     rig.follow(RAIN, "ground");
     await rig.handoff.idle();
@@ -760,22 +805,21 @@ describe("the handoff: the wheel's settle and the jump write; restore never", ()
     const reopened = reopen(rig);
     expect(reopened.level()).toBe("ground");
     expect(reopened.switched).toEqual([{ level: "ground", cause: "restore" }]);
-    // The restore NEVER writes: opening is a read (ADR-0018 decision 2).
+    // The restore NEVER writes: opening is a read.
     expect(reopened.saved).toEqual([]);
     expect(reopened.key()).toBe("ground");
     expect(reopened.closes()).toBe(0);
-    // The camera lands in the resumed band; the map's bytes are unchanged.
-    expect(reopened.moved).toEqual([{ level: "ground", screen: undefined }]);
-    expect(levelFromZoom(reopened.camera().zoom)).toBe("ground");
+    // The resumed map opens on ITS OWN camera (there is no band to land in).
+    expect(reopened.camera()).toEqual(cameraOf(initialMapCameras(), "ground"));
     expect(reopened.files()).toEqual(files);
     expect(reopened.files()["workspace.yml"]).toBe(
       withLevel(workspaceYml(), "ground"),
     );
   });
 
-  test("a hand-edited key is honored on open and rewritten on the first crossing", async () => {
+  test("a hand-edited key is honored on open and rewritten on the first tab press", async () => {
     const rig = freshRig();
-    rig.settle(BAND_ZOOM.dynamics);
+    rig.jump("dynamics");
     await rig.handoff.idle();
     const files = rig.files();
     const handEdited: Files = {
@@ -792,8 +836,15 @@ describe("the handoff: the wheel's settle and the jump write; restore never", ()
     expect(reopened.files()["workspace.yml"]).toBe(handEdited["workspace.yml"]);
     expect(mapOnly(reopened.files())).toEqual(mapOnly(files));
 
-    // The first settled crossing rewrites the key, and only the key.
+    // A wheel changes nothing at all — not even on a resumed map.
     reopened.settle(BAND_ZOOM.concept);
+    await reopened.handoff.idle();
+    expect(reopened.saved).toEqual([]);
+    expect(reopened.level()).toBe("ground");
+    expect(reopened.files()["workspace.yml"]).toBe(handEdited["workspace.yml"]);
+
+    // The first TAB press rewrites the key, and only the key.
+    reopened.jump("concept");
     await reopened.handoff.idle();
     expect(reopened.saved).toEqual(["concept"]);
     expect(reopened.files()["workspace.yml"]).toBe(
@@ -801,49 +852,71 @@ describe("the handoff: the wheel's settle and the jump write; restore never", ()
     );
     expect(mapOnly(reopened.files())).toEqual(mapOnly(files));
   });
+
+  test("the pin and the derivation are alive: held machinery, no caller", async () => {
+    const rig = freshRig();
+    // The PURE pin still holds a settled crossing and hands it back on release
+    // — the machinery the sweep keeps, exercised directly.
+    expect(rig.pin.settle(DYNAMICS_FROM + 0.1, true)).toBeNull();
+    expect(rig.pin.held()).toBe(true);
+    expect(rig.pin.release(DYNAMICS_FROM + 0.1)).toBe(DYNAMICS_FROM + 0.1);
+    expect(rig.pin.held()).toBe(false);
+
+    // The app's wheel path never asks it: the map, the key and the text stay.
+    rig.type("half a thought");
+    rig.settle(DYNAMICS_FROM + 0.1, true);
+    rig.release();
+    expect(rig.switched).toEqual([]);
+    expect(rig.saved).toEqual([]);
+    expect(rig.level()).toBe("concept");
+    expect(rig.key()).toBeNull();
+    expect(rig.draft()).toBe("half a thought");
+  });
 });
 
 /* -------------------------------------------------------------------------
- * 4. The pinning invariant: armed OR focused holds a crossing.
+ * 4. Nothing is held from the person: the tabs switch on the press.
  * ---------------------------------------------------------------------- */
 
-describe("the pinning invariant: armed OR focused holds a crossing; typed text survives", () => {
-  test("an armed gesture holds the wheel: no switch, no write, the text survives", async () => {
+/**
+ * CONVERTED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * this section used to prove that an ARMED GESTURE or a FOCUSED FIELD held a
+ * wheel crossing so typed text survived it. With the wheel never switching, the
+ * text survives by construction (nothing is ever applied), and these tests walk
+ * the same gestures to assert that: the wheel is ordinary navigation under a
+ * gesture, under focus and under both, and the TAB press is the person's own
+ * move (it closes the transient, as the switch path always did).
+ */
+describe("no zoom is held from the person: the tabs switch on the press", () => {
+  test("an armed gesture changes nothing and keeps the typed text", async () => {
     const rig = freshRig();
     rig.type("an assumption in progress");
     const zoom = DYNAMICS_FROM + 0.1;
+    expect(shouldPinLevel("selector", NO_FOCUS)).toBe(true);
 
-    const handed = rig.settle(zoom, shouldPinLevel("selector", NO_FOCUS));
-    expect(handed).toBeNull();
-    expect(rig.pin.held()).toBe(true);
+    rig.settle(zoom, shouldPinLevel("selector", NO_FOCUS));
+    expect(rig.level()).toBe("concept");
     expect(rig.switched).toEqual([]);
     expect(rig.saved).toEqual([]);
     expect(rig.closes()).toBe(0);
     expect(rig.draft()).toBe("an assumption in progress");
-    // The camera moved; the game did not — and nothing was written.
+    // The camera moved; the map did not — and nothing was written.
     expect(rig.camera().zoom).toBeCloseTo(zoom, 10);
-    expect(rig.level()).toBe("concept");
     expect(rig.key()).toBeNull();
 
-    // The pin lifts (the gesture's end): the crossing runs the full switch
-    // path, and the ONE trigger writes once.
+    // The gesture's end changes nothing either: there is no crossing to apply.
     rig.release();
-    expect(rig.switched).toEqual([{ level: "dynamics", cause: "settle" }]);
-    expect(rig.closes()).toBe(1);
-    expect(rig.draft()).toBe("");
-    await rig.handoff.idle();
-    expect(rig.saved).toEqual(["dynamics"]);
-    expect(rig.key()).toBe("dynamics");
-    expect(rig.files()["workspace.yml"]).toBe(
-      withLevel(workspaceYml(), "dynamics"),
-    );
+    expect(rig.switched).toEqual([]);
+    expect(rig.saved).toEqual([]);
+    expect(rig.draft()).toBe("an assumption in progress");
   });
 
-  test("a focused text field pins exactly like an armed gesture", async () => {
+  test("a focused text field behaves exactly like an armed gesture", async () => {
     const rig = freshRig();
     rig.type("half a thought");
     const focus = focusStateOf({ tagName: "TEXTAREA" });
     expect(focus).toBe("text");
+    expect(shouldPinLevel("idle", focus)).toBe(true);
 
     rig.settle(GROUND_FROM + 0.2, shouldPinLevel("idle", focus));
     expect(rig.level()).toBe("concept");
@@ -851,15 +924,14 @@ describe("the pinning invariant: armed OR focused holds a crossing; typed text s
     expect(rig.draft()).toBe("half a thought");
 
     rig.release();
-    expect(rig.switched).toEqual([{ level: "ground", cause: "settle" }]);
-    expect(rig.draft()).toBe("");
-    await rig.handoff.idle();
-    expect(rig.saved).toEqual(["ground"]);
-    // The same crossing with nothing pinned settles at once (the rule's other
-    // side, so the pin is what held it).
+    expect(rig.switched).toEqual([]);
+    expect(rig.saved).toEqual([]);
+    // The same wheel with nothing focused is identical: the pin is moot now.
     const free = freshRig();
+    free.type("half a thought");
     free.settle(GROUND_FROM + 0.2, shouldPinLevel("idle", NO_FOCUS));
-    expect(free.switched).toEqual([{ level: "ground", cause: "settle" }]);
+    expect(free.switched).toEqual([]);
+    expect(free.draft()).toBe("half a thought");
   });
 
   test("a wheel across and back leaves nothing to apply and nothing written", async () => {
@@ -874,20 +946,22 @@ describe("the pinning invariant: armed OR focused holds a crossing; typed text s
     await rig.handoff.idle();
     expect(rig.saved).toEqual([]);
     expect(rig.key()).toBeNull();
+    expect(rig.level()).toBe("concept");
   });
 
-  test("a deliberate jump still switches under the pin: the person, not the wheel", async () => {
+  test("a tab press switches under anything: the person, not the wheel", async () => {
     const rig = freshRig();
     rig.type("mid-sentence");
     rig.settle(BAND_ZOOM.ground, true);
     rig.jump("dynamics");
-    expect(rig.moved).toEqual([
-      { level: "concept", screen: undefined },
-      { level: "dynamics", screen: undefined },
-    ]);
     expect(rig.switched).toEqual([{ level: "dynamics", cause: "jump" }]);
+    expect(rig.level()).toBe("dynamics");
     await rig.handoff.idle();
     expect(rig.saved).toEqual(["dynamics"]);
+    // The switch path closes the transient and its text — the tab press is the
+    // person's own act (the old pin's promise, kept through the switch path).
+    expect(rig.closes()).toBe(1);
+    expect(rig.draft()).toBe("");
   });
 });
 

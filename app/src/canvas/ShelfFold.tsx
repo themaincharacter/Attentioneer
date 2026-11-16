@@ -1,4 +1,5 @@
 import { foldCaptionTops, foldExtent, type FoldExtent } from "../map/shelf";
+import { shelfShown } from "./shelfRules";
 
 /**
  * The shelf as a place (ADR-0010): a quiet fold line across the world and a
@@ -25,11 +26,27 @@ const DEFAULT_EXTENT: FoldExtent = foldExtent([]);
 export function ShelfFold({
   shelfX,
   extent = DEFAULT_EXTENT,
+  shown = shelfShown(),
 }: {
   shelfX: number;
   /** The vertical span the world's shelf occupies (map/shelf.ts's rule). */
   extent?: FoldExtent;
+  /**
+   * Is the shelf drawn right now? Defaulted to the ONE reading
+   * (canvas/shelfRules.ts's `shelfShown`), so the flag is a runtime fact and a
+   * test can hand in `true` to demonstrate the flip-back.
+   */
+  shown?: boolean;
 }) {
+  // DEPRECATED (hidden 2026-11-16 per user review): the SHELF does not render.
+  // The review removed the fold, its shaded margin and its "set aside" captions
+  // from the concept map; the component keeps every element below, the extent
+  // rule keeps measuring (`map/shelf.ts`) and the app keeps passing the extent,
+  // so flipping `SHELF_HIDDEN` back restores the whole look with no edit. A
+  // word already set aside is not shown either (canvas/shelfRules.ts's
+  // `setAsideShown`) — delete the flag, this early return and the shelf's CSS in
+  // the deprecated sweep.
+  if (!shown) return null;
   return (
     <div className="shelf" aria-hidden="true">
       <div

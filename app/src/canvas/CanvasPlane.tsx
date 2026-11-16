@@ -54,18 +54,20 @@ import "./canvas.css";
  * landed on empty plane, so a hurried double-click on a word (which centers
  * it) can never create. `planePress.ts` holds the pure pair rule.
  *
- * A zoom gesture's settle is REPORTED (onZoomSettle): the zoom band is the
- * level at runtime (ADR-0018), so the input layer is where a band change is
- * observed — the app's handoff derives the game and decides whether to write.
- * The plane itself writes nothing.
+ * A zoom gesture's settle is still REPORTED (onZoomSettle), but nothing acts on
+ * it any more: DEPRECATED (hidden 2026-11-16 per user review — separate
+ * mini-apps, ADR-0032) the zoom band WAS the level at runtime, so this was where
+ * a band change was observed; now the wheel only zooms within the current map and
+ * the TABS switch maps, so the app's settle path is retired behind a flag. The
+ * report and the callback stay written for the flip-back; the plane itself writes
+ * nothing either way.
  *
- * The zoom chip's number is a BAND-AWARE read (story 2): it goes through the
- * same `atOrAbove` readings the renderer uses (`zoomChipPercent`), so it can
- * never show a rounded percent that names a game or a label state the plane is
- * not in — "55%" while the distance words are still folded, or "85%" while the
- * game is still concept.
+ * The zoom chip's number is a plain rounding of the camera's own zoom: with the
+ * zoom no longer picking a map it cannot imply a switch (the band-aware search
+ * `zoomChipPercent` still carries stays written behind the flag).
  *
- * Provisional: grid size and zoom-band behavior are not settled by any ADR yet.
+ * Provisional: grid size and the ordinary zoom clamp are not settled by any ADR
+ * yet.
  */
 
 /** Space between grid dots at 100% zoom. */
@@ -83,10 +85,12 @@ function isContentTarget(target: EventTarget | null): boolean {
 export interface PlaneApi {
   camera: Camera;
   /**
-   * Center the plane point (px, py) in the viewport. Without `zoom` it lands
-   * at the current BAND's landing zoom, so a click-to-center can never flip
-   * the game as a side effect (ADR-0018 decision 4); pass `zoom` to land
-   * exactly somewhere.
+   * Center the plane point (px, py) in the viewport, keeping the zoom the map is
+   * already at (ordinary navigation). DEPRECATED (hidden 2026-11-16 per user
+   * review — separate mini-apps): without `zoom` this used to land on the current
+   * BAND's landing zoom so centering could never flip the game (ADR-0018
+   * decision 4); the zoom no longer picks the map, so `centeringZoom` is the
+   * identity while the flag stands. Pass `zoom` to land exactly somewhere.
    */
   centerOn: (px: number, py: number, zoom?: number) => void;
 }
@@ -115,13 +119,14 @@ interface CanvasPlaneProps {
    */
   gestureMode?: GestureMode;
   /**
-   * The plane's quiet hint, in the running game's own words (story 4, and the
-   * separate-maps review). The ONE rule that words it is
-   * `canvas/mapContentRules.ts`'s `planeHint`: at concept the sentence is
-   * byte-identically the one the plane always showed (it names the word and
-   * the shelf's fold), while at dynamics and ground the map is blank paper —
-   * the creation clause names the pen and the shelf clause GOES, because a
-   * fold that is not there cannot be dragged past.
+   * The plane's quiet hint, in the running map's own words (story 4, the
+   * separate-maps review, and the shelf's removal). The ONE rule that words it
+   * is `canvas/mapContentRules.ts`'s `planeHint`: at concept the sentence names
+   * the word, while at dynamics and ground the map is blank paper and the
+   * creation clause names the pen. DEPRECATED (hidden 2026-11-16 per user
+   * review): the shelf's fold clause is GONE from every map — the shelf itself is
+   * hidden — so the sentence no longer says "drag past the fold to set aside";
+   * the clause stays written in the rule for the flip-back.
    *
    * DEPRECATED (hidden 2026-11-16 per user review): the hint used to take a
    * creation clause naming the ring menu's hidden kinds; those are hidden and
@@ -205,8 +210,10 @@ export function CanvasPlane({
   // DEPRECATED (hidden 2026-11-16 per user review): the hint named the ring
   // menu's word AND lack choices; the rule (mapContentRules.ts's `planeHint`)
   // owns the whole sentence now — delete the old clause in the deprecated
-  // sweep.
-  hint = "drag to pan · scroll to zoom · double-click: word · drag past the fold to set aside",
+  // sweep. The default also lost its shelf clause with the shelf itself (the
+  // fourth review): the app always passes `planeHint(level)`, and this fallback
+  // is that same sentence, folded no longer.
+  hint = "drag to pan · scroll to zoom · double-click: word",
   lassoArmed = false,
   boxArmed = false,
   drawArmed = false,
@@ -261,8 +268,9 @@ export function CanvasPlane({
       centerOn: (px, py, zoom) => {
         const el = planeRef.current;
         if (!el) return;
-        // No explicit zoom: land at the current band's landing zoom, so the
-        // click stays in the game it began in (ADR-0018 decision 4).
+        // No explicit zoom: keep the zoom the map is already at (ordinary
+        // navigation). `centeringZoom` returns that zoom while the zoom no
+        // longer picks the map, and the band's landing zoom on a flip-back.
         intents.centerOn(
           px,
           py,

@@ -1,6 +1,7 @@
 import type { Level } from "../workspace/level";
 import {
   MAP_CONTENT_OTHER_GAMES_HIDDEN,
+  SHELF_HIDDEN,
   WORD_CREATION_OFF_CONCEPT_HIDDEN,
 } from "./deprecations";
 
@@ -63,7 +64,12 @@ export const MAP_CONTENT_FAMILIES = [
   "distances",
   /** The marks: bare lacks, marked words, marked wires, marked links. */
   "marks",
-  /** The shelf's fold and margin. */
+  /**
+   * The shelf's fold and margin. DEPRECATED (hidden 2026-11-16 per user review):
+   * the shelf has its OWN hiding reading (`canvas/shelfRules.ts`, `SHELF_HIDDEN`)
+   * on top of this one — the family stays named here so the blank-map invariant
+   * still covers the copy-over, and the sweep can find it.
+   */
   "shelf",
   /** The veil sheets (Levels 1–2) and their look-under. */
   "veils",
@@ -127,18 +133,28 @@ export function wordCreationOffered(
 }
 
 /**
- * The plane's quiet hint, in the game's own words. At concept it is EXACTLY the
- * sentence the plane has always shown — the creation clause names the word and
- * a shelf is real, so "drag past the fold to set aside" stays. Off concept the
- * map is blank paper: the creation clause names the pen (the bubble offers
- * draw) and the shelf clause GOES, because a fold that is not there cannot be
- * dragged past (the review's "the hint must not name the shelf on a blank
- * map"). Provisional: the wording (ADR-0003's rendering seam).
+ * The plane's quiet hint, in the game's own words.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review): the SHELF is gone, so the
+ * hint LOSES its fold clause entirely — "drag past the fold to set aside" named
+ * a place that is no longer there, on every map (the fourth review asked for the
+ * shelf to go; the third review had already dropped the clause off concept).
+ * The OLD sentence stays written as the flip-back (`shelfHidden = false`), so
+ * setting `SHELF_HIDDEN` back to false restores it word for word — delete the
+ * clause and this note in the deprecated sweep.
+ *
+ * Off concept the map is still blank paper, so the creation clause names the pen
+ * (the bubble offers draw) exactly as the separate-maps review settled.
+ * Provisional: the wording (ADR-0003's rendering seam).
  */
-export function planeHint(level: Level): string {
+export function planeHint(
+  level: Level,
+  shelfHidden: boolean = SHELF_HIDDEN,
+): string {
   const creation = wordCreationOffered(level)
     ? "double-click: word"
     : "double-click: draw";
   const base = "drag to pan · scroll to zoom · " + creation;
-  return showsMapContent(level) ? base + " · drag past the fold to set aside" : base;
+  if (!showsMapContent(level)) return base;
+  return shelfHidden ? base : base + " · drag past the fold to set aside";
 }

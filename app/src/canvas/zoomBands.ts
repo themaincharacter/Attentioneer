@@ -15,6 +15,18 @@
  * used to disagree; now there is one. `levelFromZoom` — the derivation that
  * makes the band the game (ADR-0018) — reads these constants through it and
  * lives with the level's own rules in `workspace/level.ts`.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * THE BAND IS NO LONGER THE GAME AT RUNTIME. The three maps are separate
+ * mini-apps, the level TABS switch them and nothing else, and the wheel only
+ * zooms within the current map — so `DYNAMICS_FROM` and `GROUND_FROM` no longer
+ * switch anything, and nothing derives a map from a zoom. The constants, the
+ * comparison and the derivation all STAY WRITTEN and type-checked (the band
+ * tests still assert them, and `linkWiresVisible` still reads the running map);
+ * `BAND_ZOOM`'s three numbers now serve as each map's OPENING camera
+ * (`useCamera.ts`). Delete the band boundaries and the derivation in the
+ * deprecated sweep; the LABEL thresholds above are unaffected (they are content,
+ * not bands).
  */
 
 import type { Level } from "../workspace/level";
@@ -25,16 +37,18 @@ export const COLLAPSE_BELOW = 0.55;
 /** Below this zoom a distance hides its coined word; the wire always stays. */
 export const DISTANCE_LABEL_BELOW = 0.55;
 
-/**
- * The concept band ends here: at or past this zoom the game is dynamics
- * (provisional — tuned at the slice, not settled by any ADR).
- */
+// DEPRECATED (hidden 2026-11-16 per user review): this boundary used to switch
+// the map to dynamics at a settled zoom. The maps are separate mini-apps now —
+// the tabs switch them — so the number is the derivation's inert input only
+// (workspace/level.ts's `levelFromZoom`); delete it with the zoom switch in the
+// deprecated sweep.
+/** Where the old concept band ended (inert while ZOOM_SWITCHES_MAP_HIDDEN). */
 export const DYNAMICS_FROM = 0.85;
 
-/**
- * The dynamics band ends here: at or past this zoom the game is ground
- * (provisional — tuned at the slice, not settled by any ADR).
- */
+// DEPRECATED (hidden 2026-11-16 per user review): this boundary used to switch
+// the map to ground at a settled zoom — inert for the same reason as
+// DYNAMICS_FROM above; delete it with the zoom switch in the deprecated sweep.
+/** Where the old dynamics band ended (inert while ZOOM_SWITCHES_MAP_HIDDEN). */
 export const GROUND_FROM = 1.7;
 
 /**
@@ -82,6 +96,13 @@ export function linkWiresVisible(level: Level): boolean {
  * (a jump to concept never hides the distance words) and close to the familiar
  * 100% without leaving the band; dynamics keeps the old readable 100%; ground
  * is close enough to read a reach without hunting.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps): nothing
+ * LANDS on these zooms any more (the band jump and the band-aware centering are
+ * retired, ADR-0032). The three numbers live on as each map's OPENING camera
+ * (`useCamera.ts`'s `initialMapCameras`) — PROVISIONAL there, and the table
+ * keeps its name here for the sweep's record; delete the band meaning in the
+ * deprecated sweep.
  */
 export const BAND_ZOOM: Record<Level, number> = {
   concept: 0.8,

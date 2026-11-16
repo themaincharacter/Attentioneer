@@ -70,6 +70,13 @@ export function followAnchor(wordCentre: Point, camera: Camera): Point {
  * zoomed ABOUT the word's current screen position — so the word stays under
  * the eye across the jump. Pure, and identical to the camera intent's
  * `setZoomBand(target, anchor.x, anchor.y)`.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * each map keeps its OWN camera now, so a switch to another map cannot keep a
+ * world point under the eye — the map you land on brings back the view you left
+ * it at. The follow's LEVEL FACES are already hidden (`CROSS_LEVEL_FACES_HIDDEN`),
+ * so nothing calls this; the math stays written and tested for the flip-back —
+ * delete it in the deprecated sweep.
  */
 export function followCamera(
   camera: Camera,

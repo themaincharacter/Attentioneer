@@ -31,6 +31,16 @@ import { levelFromZoom, type Level } from "./level";
  * the handoff's write rule — a deliberate jump is still the one deliberate
  * cause.
  *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * THE WHEEL NO LONGER SWITCHES THE MAP. `settle` (the zoom-derived cause) has no
+ * caller any more: the three maps are separate mini-apps and the level TABS are
+ * the only way between them, so `jump` is now the tab press (it writes the
+ * resume hint, and the app no longer moves a camera "into a band") and `restore`
+ * is unchanged (the open reads the hint, writes nothing). The settle path, the
+ * derivation it reads and the level pin's holding stay WRITTEN and type-checked
+ * for the flip-back (`canvas/shelfRules.ts`'s `zoomSwitchesMap`) and for the
+ * sweep's record — delete the settle cause in the deprecated sweep.
+ *
  * Pure apart from its injected callbacks and the queue it owns, so the three
  * causes and their write behavior are asserted without a window.
  */
@@ -64,16 +74,21 @@ export interface LevelHandoff {
   /** The game running now (the band's, as of the last settle / jump / restore). */
   level: () => Level;
   /**
-   * A zoom gesture SETTLED: derive the band from the zoom and, when it changed,
-   * switch the game and queue the key write. The wheel is the trigger; the
-   * camera stays exactly where the gesture left it.
+   * DEPRECATED (hidden 2026-11-16 per user review): a zoom gesture SETTLED —
+   * derive the band from the zoom and, when it changed, switch the game and
+   * queue the key write. The wheel no longer changes the map, so nothing calls
+   * this; the machinery stays for the flip-back — delete it in the deprecated
+   * sweep.
    */
   settle: (zoom: number) => void;
   /**
-   * A deliberate jump to a game (the level control, or a word's follow): move
-   * the camera into the band's landing zoom — about `screen` when given, keeping
-   * that point under the eye — and when the game changed, switch and queue the
-   * write. Jumping to the game already running only moves the camera.
+   * A deliberate switch to a map: DEPRECATED (hidden 2026-11-16 per user review —
+   * separate mini-apps, ADR-0032) this used to move the camera into the band's
+   * landing zoom — about `screen` when given, keeping that point under the eye —
+   * and, when the game changed, switch and queue the write. Now it is the TAB
+   * PRESS: the map changes, the resume hint is written, and no camera moves (each
+   * map keeps its own). `screen` is still accepted (the word's follow passes one)
+   * and ignored by the app's no-op camera dependency — delete it in the sweep.
    */
   jump: (next: Level, screen?: Point) => void;
   /**

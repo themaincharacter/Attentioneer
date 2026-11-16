@@ -436,7 +436,17 @@ describe("the prompt policy: only a deliberate entry asks for a playing set", ()
   });
 });
 
-describe("the chip's band read at boundaries", () => {
+/**
+ * CONVERTED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * this block used to pin the chip's BAND-AWARE read — the percent stepped to the
+ * nearest whole percent that agreed with the game and the labels, because a
+ * rounded percent could name a band the plane was not in. The zoom no longer
+ * picks the map, so the chip is a PLAIN ROUNDING of the camera's own zoom and
+ * can neither imply nor cause a switch. Every old assertion is kept as the
+ * flip-back: a second argument of `true` is exactly what setting
+ * `ZOOM_SWITCHES_MAP_HIDDEN` back to false does.
+ */
+describe("the chip's read: plain rounding now, the band read on the flip-back", () => {
   const ZOOMS = [
     MIN_ZOOM,
     0.3,
@@ -465,9 +475,22 @@ describe("the chip's band read at boundaries", () => {
     MAX_ZOOM,
   ];
 
-  test("the chip agrees with every reading the plane renders from", () => {
+  /** The old band-aware read — the flip-back (flag false). */
+  const bandChip = (zoom: number): number => zoomChipPercent(zoom, true);
+
+  test("the chip is the camera's own zoom, rounded: it names no map", () => {
     for (const zoom of ZOOMS) {
-      const chip = zoomChipPercent(zoom) / 100;
+      expect(zoomChipPercent(zoom)).toBe(Math.round(zoom * 100));
+    }
+    // A percent can no longer imply a switch, so the boundary steps are gone.
+    expect(zoomChipPercent(0.846)).toBe(85);
+    expect(zoomChipPercent(0.549)).toBe(55);
+    expect(zoomChipPercent(1.699)).toBe(170);
+  });
+
+  test("the band read (flip-back) agrees with every reading the plane renders from", () => {
+    for (const zoom of ZOOMS) {
+      const chip = bandChip(zoom) / 100;
       // The level: the chip never names a game the zoom is not in.
       expect(levelFromZoom(chip)).toBe(levelFromZoom(zoom));
       // The labels: a chip at 55% while the words are folded would be a lie.
@@ -476,45 +499,48 @@ describe("the chip's band read at boundaries", () => {
     }
   });
 
-  test("0.846 reads 84%, never the rounded 85% the game has not entered", () => {
+  test("on the flip-back 0.846 reads 84%, never the rounded 85%", () => {
     expect(levelFromZoom(0.846)).toBe("concept");
     expect(Math.round(0.846 * 100)).toBe(85); // what a bare round would show
-    expect(zoomChipPercent(0.846)).toBe(84);
-    expect(zoomChipPercent(0.845)).toBe(84);
-    expect(zoomChipPercent(0.8499)).toBe(84);
+    expect(bandChip(0.846)).toBe(84);
+    expect(bandChip(0.845)).toBe(84);
+    expect(bandChip(0.8499)).toBe(84);
     // Exactly on the boundary the band IS dynamics, so 85% is honest.
     expect(levelFromZoom(DYNAMICS_FROM)).toBe("dynamics");
-    expect(zoomChipPercent(DYNAMICS_FROM)).toBe(85);
-    expect(zoomChipPercent(0.8501)).toBe(85);
+    expect(bandChip(DYNAMICS_FROM)).toBe(85);
+    expect(bandChip(0.8501)).toBe(85);
   });
 
-  test("0.549 reads 54%, never 55% while the labels are still folded", () => {
+  test("on the flip-back 0.549 reads 54%, never 55% while the labels fold", () => {
     expect(noteBand(0.549)).toBe("title");
     expect(Math.round(0.549 * 100)).toBe(55); // the rounded contradiction
-    expect(zoomChipPercent(0.549)).toBe(54);
+    expect(bandChip(0.549)).toBe(54);
     expect(noteBand(0.55)).toBe("full");
-    expect(zoomChipPercent(0.55)).toBe(55);
+    expect(bandChip(0.55)).toBe(55);
   });
 
-  test("the dynamics band's top edge reads 169%, not ground's 170%", () => {
+  test("on the flip-back the old dynamics top edge reads 169%, not ground's 170%", () => {
     expect(levelFromZoom(1.699)).toBe("dynamics");
     expect(Math.round(1.699 * 100)).toBe(170);
-    expect(zoomChipPercent(1.699)).toBe(169);
-    expect(zoomChipPercent(1.6999)).toBe(169);
+    expect(bandChip(1.699)).toBe(169);
+    expect(bandChip(1.6999)).toBe(169);
     expect(levelFromZoom(GROUND_FROM)).toBe("ground");
-    expect(zoomChipPercent(GROUND_FROM)).toBe(170);
-    expect(zoomChipPercent(1.7001)).toBe(170);
+    expect(bandChip(GROUND_FROM)).toBe(170);
+    expect(bandChip(1.7001)).toBe(170);
   });
 
-  test("the landing zooms read plainly (80% / 100% / 200%)", () => {
+  test("the opening cameras read plainly (80% / 100% / 200%)", () => {
     expect(zoomChipPercent(BAND_ZOOM.concept)).toBe(80);
     expect(zoomChipPercent(BAND_ZOOM.dynamics)).toBe(100);
     expect(zoomChipPercent(BAND_ZOOM.ground)).toBe(200);
+    expect(bandChip(BAND_ZOOM.concept)).toBe(80);
+    expect(bandChip(BAND_ZOOM.dynamics)).toBe(100);
+    expect(bandChip(BAND_ZOOM.ground)).toBe(200);
   });
 
-  test("the chip never shows a percent that names the next band", () => {
+  test("on the flip-back the chip never shows a percent that names the next band", () => {
     for (const zoom of ZOOMS) {
-      const chip = zoomChipPercent(zoom);
+      const chip = bandChip(zoom);
       if (levelFromZoom(zoom) === "concept") {
         expect(chip).toBeLessThan(DYNAMICS_FROM * 100);
       }

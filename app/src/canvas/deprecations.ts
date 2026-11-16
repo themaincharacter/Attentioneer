@@ -220,3 +220,92 @@ export const WORD_CREATION_OFF_CONCEPT_HIDDEN: boolean = true;
  * map grows its own modeling surfaces.
  */
 export const STEP_CRANK_HIDDEN: boolean = true;
+
+
+/* ------------------------------------------------------------------------- *
+ * The FOURTH review (2026-11-16): REMOVE THE SHELF, and REMOVE MAP-CHANGING BY
+ * ZOOM — one story, two retirements, both HIDE + DEPRECATE.
+ *
+ * The person's verdict, in two parts:
+ *
+ *   1. THE SHELF GOES. The fold at the plane's edge — the place a word dragged
+ *      past it was "set aside" — is not wanted. Same discipline as every pass
+ *      above: nothing is deleted. `map/shelf.ts` keeps the fold's record
+ *      (`shelf_x` still parses, still defaults, `isShelved` and `rejectSpot`
+ *      still compute, the extents still measure), and `canvas/shelfRules.ts` is
+ *      the ONE reading of "is the shelf shown right now". While the flag stands
+ *      the fold and its margin do not render, the word's reject control (settle
+ *      + set aside) is not offered, the drag-past-the-fold gesture sets nothing
+ *      aside, and the plane's hint loses its fold clause.
+ *      A WORD ALREADY SET ASIDE keeps its record exactly as it is and is NOT
+ *      SHOWN anywhere (see `setAsideShown`); flipping the flag back puts it back
+ *      on the shelf it never left, with no write.
+ *
+ *   2. THE ZOOM NO LONGER CHANGES THE MAP. The three maps are SEPARATE
+ *      mini-apps now (ADR-0032): the level tabs are the ONLY way to switch maps
+ *      (besides the workspace's own open-restore), and the wheel only zooms
+ *      within the map you are on. The band machinery stays written and
+ *      type-checked — `levelFromZoom`, the band constants, the level handoff's
+ *      settle, the camera's band intent and the level pin — but nothing calls
+ *      the wheel's path any more: `workspace/level.ts`'s derivation and
+ *      `canvas/zoomBands.ts`'s boundaries are inert data, and each map keeps its
+ *      OWN camera so a tab switch restores that map exactly like a little app.
+ *
+ * Same sweep comment on every hiding point:
+ *   `// DEPRECATED (hidden 2026-11-16 per user review): <what and why> — delete`
+ *   `// in the deprecated sweep`
+ *
+ * Provisional: both retirements are the review's call, the shapes of the
+ * remaining controls (the tabs' wording, the zoom clamp, the per-map cameras)
+ * are named PROVISIONAL at their sites, and the sweep that deletes the shelf and
+ * the band switch is a later session's story.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review): the SHELF (ADR-0010) — the
+ * fold and its shaded margin at the plane's edge, the word's reject control
+ * (the quiet → that settled a word and set it aside), the drag-past-the-fold
+ * gesture (a word whose centre crossed the fold read as set aside) and the
+ * plane hint's "drag past the fold to set aside" clause.
+ *
+ * The review asked for the shelf to go. Nothing is deleted: `map/shelf.ts` keeps
+ * the fold's record (`shelf_x` parses and defaults exactly as before,
+ * `isShelved`/`rejectSpot`/`foldExtent`/`foldCaptionTops` all still compute),
+ * `ShelfFold` keeps its whole markup, and the reject write in `useMap` is
+ * untouched. `canvas/shelfRules.ts` is the ONE reading of the flag for the
+ * render; flipping this flag back to `false` restores the fold, the gesture, the
+ * reject control and the hint clause with no component edit.
+ *
+ * The RECORDS stay, the PLACE does not: a word already set aside in an existing
+ * workspace keeps its file byte-exactly and is simply not shown while the flag
+ * stands (it lives on a shelf that is not there). `setAsideShown` is the reading
+ * a render asks before drawing a word.
+ *
+ * NAMED COST: while the shelf is hidden a word cannot be carried past the fold
+ * (`heldLeftOfTheFold` stops the drop at the old fold line) — otherwise a
+ * dropped word would land in the hidden set and vanish, which would be a data
+ * trap. The invisible edge is PROVISIONAL and is a report item for the review.
+ */
+export const SHELF_HIDDEN: boolean = true;
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review): ZOOM AS THE MAP SWITCH
+ * (ADR-0018 decision 1, superseded by ADR-0032). The wheel used to DERIVE the
+ * map from the settled zoom (`levelFromZoom`, a settled crossing rewrote
+ * `workspace.yml`'s `level` key through the level handoff), the level pin held
+ * a crossing while a gesture was armed or a field had focus, the camera's band
+ * intents kept every move inside the running band, and a click-to-center landed
+ * on the band's landing zoom.
+ *
+ * The review's verdict: the maps are SEPARATE mini-apps — the TABS switch them
+ * and nothing else, and the wheel only zooms within the map you are on. Every
+ * piece above stays written and type-checked (the derivation, the band
+ * constants, `LevelHandoff.settle`, `useCamera`'s band intent, the level pin and
+ * the focus reading) and simply stops driving the switch; each map keeps its OWN
+ * camera so a tab switch restores that map like a little app. Flipping this flag
+ * back to `false` restores the zoom-band behavior with no component edit.
+ *
+ * The `level` key STAYS as the resume hint — it remembers the last map you were
+ * on, and opening a workspace restores that map.
+ */
+export const ZOOM_SWITCHES_MAP_HIDDEN: boolean = true;

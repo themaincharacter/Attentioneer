@@ -8,6 +8,7 @@ import {
   GROUND_FROM,
   noteBand,
 } from "../canvas/zoomBands";
+import { zoomSwitchesMap } from "../canvas/shelfRules";
 
 /**
  * The level's RECORD (ADR-0016, amended by ADR-0018): the game is a quiet band
@@ -23,9 +24,23 @@ import {
  * the first settled crossing. The band and the key cannot disagree while
  * running: one source of behavior, one source of record, one direction each.
  *
- * `levelFromZoom` is the derivation that makes the band the game: it reads the
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps): ZOOM NO
+ * LONGER CHANGES THE MAP (ADR-0032 supersedes the band rule above). The three
+ * maps are separate mini-apps; the level TABS switch them and nothing else (plus
+ * the open-restore below), and the wheel only zooms within the map you are on.
+ * Everything above STAYS WRITTEN and type-checked — the derivation, the handoff,
+ * its queue, the band constants, the camera's band intent, the level pin — and
+ * simply stops driving the switch: `canvas/shelfRules.ts`'s `zoomSwitchesMap` is
+ * the ONE reading the app asks, and it is false while the flag stands. The key is
+ * STILL the resume hint: a tab press writes it, opening reads it. Delete the
+ * zoom-derived path (not the key, not the tab write) in the deprecated sweep.
+ *
+ * `levelFromZoom` is the derivation that made the band the game: it reads the
  * band constants from `canvas/zoomBands.ts` through the one shared comparison
  * (`atOrAbove`, inclusive), so the strictness of every boundary is stated once.
+ * DEPRECATED (hidden 2026-11-16 per user review): nothing derives the map from a
+ * zoom any more; the function stays written (the sweep's record of the rule and
+ * the band tests' subject) — delete it with the zoom switch.
  *
  * THE HONEST PARTITION (ADR-0016's amendment) — the render map, one source:
  *   - every game rendered words, distances, marks and the shelf;
@@ -84,12 +99,21 @@ export function levelFromZoom(zoom: number): Level {
 }
 
 /**
- * The zoom a click-to-center lands on: its band's landing zoom. Centering can
- * never flip the game as a side effect (ADR-0018 decision 4 — the old
- * `centerOn(..., 1)` landed in dynamics from every concept zoom).
+ * The zoom a click-to-center lands on.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps): it used
+ * to land on the CURRENT BAND's landing zoom, so centering could never flip the
+ * game as a side effect (ADR-0018 decision 4). With the zoom no longer changing
+ * the map, centering is ordinary navigation: it keeps the zoom the person is
+ * already at. The band read stays written as the flip-back — `switches` false
+ * restores the landing-zoom behavior — delete the band branch in the deprecated
+ * sweep. PROVISIONAL: "centering keeps the current zoom" is this story's call.
  */
-export function centeringZoom(zoom: number): number {
-  return BAND_ZOOM[levelFromZoom(zoom)];
+export function centeringZoom(
+  zoom: number,
+  switches: boolean = zoomSwitchesMap(),
+): number {
+  return switches ? BAND_ZOOM[levelFromZoom(zoom)] : zoom;
 }
 
 /**
@@ -112,11 +136,23 @@ export const DEFAULT_CAMERA_ZOOM = BAND_ZOOM[DEFAULT_LEVEL];
  * with all of them. So the chip can never say 55% while the labels are folded,
  * or 85% while the game is still concept.
  *
- * Provisional: the chip is one number (it does not name the band — that is the
+ * Provisional: the chip is one number (it does not name the map — that is the
  * level control's job), and the percent is not persisted anywhere.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps): the
+ * band-aware agreement search above existed because the zoom PICKED the map, so
+ * a rounded percent could name a map the plane was not in. The zoom no longer
+ * changes the map (ADR-0032) and the chip is a plain rounding of the camera's
+ * own zoom — it neither implies nor causes a switch. The old search stays
+ * written as the flip-back (`switches` false) — delete it in the deprecated
+ * sweep.
  */
-export function zoomChipPercent(zoom: number): number {
+export function zoomChipPercent(
+  zoom: number,
+  switches: boolean = zoomSwitchesMap(),
+): number {
   if (!Number.isFinite(zoom)) return Math.round(DEFAULT_CAMERA_ZOOM * 100);
+  if (!switches) return Math.round(zoom * 100);
   const band = levelFromZoom(zoom);
   const labels = distanceLabelVisible(zoom);
   const notes = noteBand(zoom);

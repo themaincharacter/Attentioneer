@@ -188,8 +188,11 @@ describe("the render paths ask the ONE rule", () => {
       // The bare-spot assumption diamonds (band rule kept, content rule added).
       "mapContent &&\n          spotAssumptionTargets.map(",
 
-      // The words.
-      "{mapContent && refs.map((word) => (",
+      // The words. CONVERTED (hidden 2026-11-16 per user review — the shelf):
+      // the list is `shownRefs`, every word but the ones set aside, which the
+      // removed shelf no longer shows (canvas/shelfRules.ts's `setAsideShown`);
+      // the words themselves are still the concept map's content, gated here.
+      "{mapContent && shownRefs.map((word) => (",
       // The veils' sheets (the 1-2 rule kept, content rule added).
       "mapContent &&\n              veils.map((veil) => (",
       // The distance wires.
@@ -221,16 +224,26 @@ describe("the render paths ask the ONE rule", () => {
     expect(PLANE).toContain("onZoomSettle");
   });
 
-  test("the plane hint is the same rule's sentence (concept byte-identical)", () => {
-    // Concept: EXACTLY the sentence the plane has always shown.
+  // CONVERTED (hidden 2026-11-16 per user review — the shelf): the hint used to
+  // keep its "drag past the fold to set aside" clause at concept, because a shelf
+  // was real there. The shelf is hidden on EVERY map now, so the clause is gone
+  // everywhere and the old sentence is the flip-back (second argument false,
+  // exactly what setting SHELF_HIDDEN to false does).
+  test("the plane hint is the same rule's sentence (no fold clause anywhere)", () => {
+    // Concept: the creation clause names the word; the fold clause is gone.
     expect(planeHint("concept")).toBe(
+      "drag to pan · scroll to zoom · double-click: word",
+    );
+    // The old sentence is written and restored by the flip-back.
+    expect(planeHint("concept", false)).toBe(
       "drag to pan · scroll to zoom · double-click: word · drag past the fold to set aside",
     );
-    // Off concept: the fold is not there, so the hint cannot name it.
-    for (const level of ["dynamics", "ground"] as const) {
-      expect(planeHint(level)).toBe(
-        "drag to pan · scroll to zoom · double-click: draw",
-      );
+    // Off concept: the map is blank paper, so the pen words the creation clause.
+    expect(planeHint("dynamics")).toBe(
+      "drag to pan · scroll to zoom · double-click: draw",
+    );
+    // No level names the shelf while it is hidden.
+    for (const level of ["concept", "dynamics", "ground"] as const) {
       expect(planeHint(level)).not.toContain("fold");
       expect(planeHint(level)).not.toContain("set aside");
       expect(planeHint(level)).not.toContain("shelf");
@@ -246,8 +259,11 @@ describe("the render paths ask the ONE rule", () => {
     // The rule module imports only the level type and the flags.
     expect(RULES).not.toContain('from "../map/');
     expect(RULES).not.toContain('from "./gates');
-    // The level tabs' hover titles stopped claiming content that is not there.
-    expect(CONTROL).toContain('dynamics: "jump to dynamics — the middle band"');
+    // The map tabs' hover titles: CONVERTED (hidden 2026-11-16 per user review —
+    // separate mini-apps, ADR-0032). They used to say "jump to … the middle band";
+    // with the zoom no longer picking the map there is no band to jump to, only a
+    // MAP to switch to (PROVISIONAL wording).
+    expect(CONTROL).toContain('dynamics: "switch maps — the dynamics map"');
     // The TITLES themselves no longer claim the old content (the DEPRECATED note
     // above them still quotes the old wording on purpose).
     expect(CONTROL.slice(CONTROL.indexOf("const LEVEL_TITLES"))).not.toContain(
@@ -446,8 +462,9 @@ describe("the negative space: no counters, scores or nudges", () => {
   test("the hint's and the titles' words say nothing and count nothing", () => {
     const seen = [
       ...LEVELS.map((level) => planeHint(level)),
-      "jump to dynamics — the middle band",
-      "jump to ground — the close band",
+      "switch maps — the concept map",
+      "switch maps — the dynamics map",
+      "switch maps — the ground map",
       "word",
       "draw",
     ];

@@ -1,19 +1,31 @@
 import { useMemo, useState } from "react";
-import { DEFAULT_CAMERA_ZOOM, type Level } from "../workspace/level";
+import { DEFAULT_LEVEL, LEVELS, type Level } from "../workspace/level";
 import { BAND_ZOOM } from "./zoomBands";
 
 /**
- * Camera seam (ADR-0003): the app owns the camera — one `{x, y, zoom}`
- * transform behind this hook. Content components read the camera; the input
- * layer (CanvasPlane) turns gestures into intents. Nothing outside this module
- * talks to d3-zoom.
+ * Camera seam (ADR-0003): the app owns the camera — one `{x, y, zoom}` transform
+ * per map behind this hook. Content components read the camera; the input layer
+ * (CanvasPlane) turns gestures into intents. Nothing outside this module talks to
+ * d3-zoom.
  *
- * Every camera intent is BAND-PRESERVING (ADR-0018 decision 4): `setZoomBand`
- * is the shared jump/restore intent that lands inside a band, `centerOn`
- * defaults (at the plane) to its band's landing zoom, and a camera move never
- * writes the level key — only the workspace's handoff does.
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * this hook used to own ONE camera whose every intent was BAND-PRESERVING
+ * (ADR-0018 decision 4) — `setZoomBand` landed inside a band, `centerOn` defaulted
+ * to its band's landing zoom, and the band was the game. The maps are SEPARATE
+ * mini-apps now: `useCamera(level)` keeps a camera PER MAP (position and zoom),
+ * so switching maps with the tabs restores that map exactly like a little app,
+ * and zoom is ordinary within-map navigation. PROVISIONAL: the per-map cameras
+ * are this story's shape (the alternative was one shared camera, which would
+ * have yanked the view across a tab switch).
  *
- * Provisional: the zoom limits are not settled by any ADR yet.
+ * `setZoomBand` STAYS WRITTEN and type-checked (the sweep's record of the band
+ * intent) and simply has no caller any more: the app switches maps by the tab,
+ * never by a camera move. Flipping `ZOOM_SWITCHES_MAP_HIDDEN` back and calling it
+ * again restores the band landing without a code change.
+ *
+ * Provisional: the zoom limits are the ordinary camera clamp now (they were the
+ * band-preserving clamp); 0.2 at the floor and 4 at the ceiling are this story's
+ * call, not any ADR's.
  */
 
 export interface Camera {
@@ -23,8 +35,60 @@ export interface Camera {
   zoom: number;
 }
 
+/** The ordinary zoom clamp (PROVISIONAL — no ADR settles the numbers). */
 export const MIN_ZOOM = 0.2;
 export const MAX_ZOOM = 4;
+
+/**
+ * Every map's camera: ONE per map, so a tab switch puts the person back exactly
+ * where they left that map (its position AND its zoom) instead of re-deriving a
+ * view from the new map's landing zoom.
+ */
+export type MapCameras = Record<Level, Camera>;
+
+/**
+ * The cameras a window opens on: each map at the origin, at its opening zoom.
+ * PROVISIONAL: `zoomOf` defaults to `zoomBands.ts`'s `BAND_ZOOM` table, which is
+ * the band machinery's landing zoom — the three numbers are reused here as each
+ * map's OPENING camera while the band rule itself retires (deprecations.ts's
+ * ZOOM_SWITCHES_MAP_HIDDEN). Nothing derives a map from them any more.
+ */
+export function initialMapCameras(
+  zoomOf: Record<Level, number> = BAND_ZOOM,
+): MapCameras {
+  const cameras = {} as MapCameras;
+  for (const level of LEVELS) {
+    cameras[level] = { x: 0, y: 0, zoom: zoomOf[level] };
+  }
+  return cameras;
+}
+
+/** The cameras every window opens on (one instance, frozen by convention). */
+export const INITIAL_CAMERAS: MapCameras = initialMapCameras();
+
+/**
+ * The default level's opening camera — ONE shared constant, so the opening
+ * camera and the opening map still agree (ADR-0018 decision 4's reading, kept
+ * alive by the tests and by the sweep's record).
+ */
+export const INITIAL_CAMERA: Camera = INITIAL_CAMERAS[DEFAULT_LEVEL];
+
+/** One map's camera, by map. Pure, so a tab switch is testable without a DOM. */
+export function cameraOf(cameras: MapCameras, level: Level): Camera {
+  return cameras[level];
+}
+
+/**
+ * The store with ONE map's camera replaced — a switch never touches the maps it
+ * is not on, which is the whole per-map promise. Pure.
+ */
+export function withCameraOf(
+  cameras: MapCameras,
+  level: Level,
+  camera: Camera,
+): MapCameras {
+  return { ...cameras, [level]: camera };
+}
 
 export interface CameraIntents {
   /** Adopt a raw transform — the input layer's normalized output. */
@@ -35,15 +99,17 @@ export interface CameraIntents {
   zoomAt: (factor: number, sx: number, sy: number) => void;
   /**
    * Move the plane point `(px, py)` to the screen point `(sx, sy)`.
-   * Pass `zoom` to land at a specific zoom; the plane passes its band's
-   * landing zoom by default, so centering never flips the game.
+   * Pass `zoom` to land at a specific zoom; without one the map keeps the zoom
+   * it is already at (ordinary navigation — PROVISIONAL).
    */
   centerOn: (px: number, py: number, sx: number, sy: number, zoom?: number) => void;
   /**
-   * Move the camera INTO a band (ADR-0018 decision 4): set the zoom to the
+   * DEPRECATED (hidden 2026-11-16 per user review): the band-preserving jump.
+   * Move the camera INTO a band (ADR-0018 decision 4): the zoom becomes the
    * band's landing zoom, keeping the screen point `(sx, sy)` fixed when given.
-   * It never recentres a world point, never persists position and NEVER writes
-   * the level key — the deliberate jump and the open-restore share it.
+   * It never wrote the level key. Nothing calls it any more (the zoom no longer
+   * switches maps; the tabs do) — the intent stays written for the flip-back and
+   * for the sweep's record.
    */
   setZoomBand: (level: Level, sx?: number, sy?: number) => void;
 }
@@ -53,22 +119,14 @@ export interface CameraApi {
   intents: CameraIntents;
 }
 
-/**
- * The camera every window opens on: the DEFAULT LEVEL's landing zoom, through
- * ONE shared constant (ADR-0018 decision 4), so the opening camera and the
- * opening game agree — the old hard-coded 100% sat in the dynamics band while
- * the default level was concept.
- */
-export const INITIAL_CAMERA: Camera = { x: 0, y: 0, zoom: DEFAULT_CAMERA_ZOOM };
-
 function clampZoom(zoom: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
 /**
  * The camera after zooming to `zoom` while keeping the screen point `(sx, sy)`
- * fixed — the arithmetic behind the wheel, `zoomAt` and the band jump. Pure,
- * so a band-preserving camera move is testable without a DOM.
+ * fixed — the arithmetic behind the wheel and `zoomAt`. Pure, so ordinary
+ * within-map zoom is testable without a DOM.
  */
 export function zoomAbout(
   camera: Camera,
@@ -85,38 +143,50 @@ export function zoomAbout(
   };
 }
 
-export function useCamera(initial: Camera = INITIAL_CAMERA): CameraApi {
-  const [camera, setCamera] = useState<Camera>(initial);
+/**
+ * The camera seam, PER MAP. `level` is the map on screen: the hook returns that
+ * map's camera and hands every intent the same map, so a gesture can never move
+ * a map the person is not looking at. A tab switch changes `level`, and the
+ * camera to come back is the one this store kept.
+ */
+export function useCamera(
+  level: Level,
+  initial: MapCameras = INITIAL_CAMERAS,
+): CameraApi {
+  const [cameras, setCameras] = useState<MapCameras>(initial);
 
-  const intents = useMemo<CameraIntents>(
-    () => ({
+  const intents = useMemo<CameraIntents>(() => {
+    /** Replace the CURRENT map's camera, leaving every other map's alone. */
+    const update = (next: (camera: Camera) => Camera): void => {
+      setCameras((all) => withCameraOf(all, level, next(all[level])));
+    };
+    return {
       setTransform: (t) => {
-        setCamera({ x: t.x, y: t.y, zoom: clampZoom(t.zoom) });
+        update(() => ({ x: t.x, y: t.y, zoom: clampZoom(t.zoom) }));
       },
       panBy: (dx, dy) => {
-        setCamera((c) => ({ ...c, x: c.x + dx, y: c.y + dy }));
+        update((c) => ({ ...c, x: c.x + dx, y: c.y + dy }));
       },
       zoomAt: (factor, sx, sy) => {
-        setCamera((c) => zoomAbout(c, c.zoom * factor, sx, sy));
+        update((c) => zoomAbout(c, c.zoom * factor, sx, sy));
       },
       centerOn: (px, py, sx, sy, zoom) => {
-        setCamera((c) => {
+        update((c) => {
           const z = clampZoom(zoom ?? c.zoom);
           return { zoom: z, x: sx - px * z, y: sy - py * z };
         });
       },
-      setZoomBand: (level, sx, sy) => {
-        setCamera((c) => {
-          const zoom = clampZoom(BAND_ZOOM[level]);
+      setZoomBand: (band, sx, sy) => {
+        update((c) => {
+          const zoom = clampZoom(BAND_ZOOM[band]);
           // With no anchor the position stands still: the zoom changes about
           // the plane origin, never a recentre (the open-restore's fallback).
           if (sx === undefined || sy === undefined) return { zoom, x: c.x, y: c.y };
           return zoomAbout(c, zoom, sx, sy);
         });
       },
-    }),
-    [],
-  );
+    };
+  }, [level]);
 
-  return { camera, intents };
+  return { camera: cameraOf(cameras, level), intents };
 }

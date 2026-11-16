@@ -418,7 +418,11 @@ describe("no cross-band surface: each game's own records stay in their game", ()
   // fronts each render, so the content is concept-only while the flag stands.
   test("the concept map's surfaces render behind the ONE rule", () => {
     expect(app).toContain("const mapContent = showsMapContent(level);");
-    expect(app).toContain("{mapContent && refs.map((word) => (");
+    // CONVERTED (hidden 2026-11-16 per user review): the words render through
+    // the SHELF's reading too — `shownRefs` is every word the record holds except
+    // the ones set aside, which the removed shelf no longer shows.
+    expect(app).toContain("{mapContent && shownRefs.map((word) => (");
+    expect(app).toContain("const shownRefs = useMemo(");
     expect(app).toContain("{mapContent && <ShelfFold shelfX={shelfX} extent={fold} />}");
     // The follow stays written inside the word row (machinery alive).
     expect(app.match(/game=\{level\}/g)?.length).toBe(1);

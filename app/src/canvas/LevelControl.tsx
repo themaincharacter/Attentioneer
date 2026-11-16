@@ -16,14 +16,15 @@ import {
 
 interface LevelControlProps {
   /**
-   * The game the zoom band is in right now, from the DERIVED level (the band's,
-   * not the workspace key's). It is the indicator's only source.
+   * The map on screen right now. It is the tabs' pressed state and nothing
+   * derived: the level comes from the tab press (or the workspace's open-restore),
+   * never from a zoom (ADR-0032).
    */
   level: Level;
   /**
-   * Jump the camera into a game's band (the shared jump intent). The app moves
-   * the camera into the band's landing zoom and, when the game changes, writes
-   * the resume hint through its queued write.
+   * Switch to another map — the TAB's whole job. The app sets the running map
+   * (that map's own camera comes back with it) and writes the resume hint
+   * through its queued write; no camera move is involved any more.
    */
   onJump: (level: Level) => void;
   /** Re-open the playing-set selector ("edit the playing set", ADR-0013). */
@@ -77,13 +78,20 @@ interface LevelControlProps {
 }
 
 /**
- * The quiet level control (ADR-0016, amended by ADR-0018): an INDICATOR and a
- * JUMPER. It names the game the zoom band is in — concept, dynamics or ground,
- * the glossary's words, read from the derived level and never from the
- * workspace key — and pressing a name JUMPS the camera into that band's landing
- * zoom (the direct-movement vehicle). The wheel is the other way between games,
- * so this control is no longer the only switch: the band is the game, and the
- * key it writes is only the resume hint.
+ * The quiet level control: THE MAP TABS. It names the map on screen — concept,
+ * dynamics or ground, the glossary's words — and pressing a name switches to it;
+ * the workspace's resume hint is written through the app's queued write.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * this row was an INDICATOR and a JUMPER of the ZOOM BAND (ADR-0016 amended by
+ * ADR-0018) — it named the game the band derived and pressing a name moved the
+ * camera into that band's landing zoom, with the wheel as the other way between
+ * maps. The maps are SEPARATE mini-apps now: the tabs switch them and NOTHING
+ * else does, the wheel only zooms within the current map, and each map brings
+ * its own camera back. The band wording below (hover titles, the group's label)
+ * is retired with the band rule — delete it in the deprecated sweep. PROVISIONAL:
+ * the new wording ("the concept map", "the dynamics map", "the ground map") and
+ * the fact that the tab is the only way between maps are this story's call.
  *
  * The names are the glossary's words. DEPRECATED (hidden 2026-11-16 per user
  * review — separate maps): the old honest partition (words, distances, marks
@@ -96,11 +104,12 @@ interface LevelControlProps {
  * loop"); in ground its additions live on each word's handle — both are hidden
  * with the rest of the menu's doors, and with the map content they acted on.
  *
- * Keyboard: the three jumpers are plain buttons in a labelled group, so Tab
- * reaches them and Enter or Space jumps; the game running is pressed
- * (`aria-pressed`) and inked a little darker. A wheel-caused switch never moves
- * focus here — the control is not yanked into the person's way (ADR-0018
- * decision 5); only a deliberate jump returns focus to it.
+ * Keyboard: the three tabs are plain buttons in a labelled group, so Tab reaches
+ * them and Enter or Space switches; the map running is pressed (`aria-pressed`)
+ * and inked a little darker. DEPRECATED (hidden 2026-11-16 per user review —
+ * separate mini-apps): the old note said "a wheel-caused switch never moves
+ * focus here" — there is no wheel-caused switch any more (ADR-0032): the tabs
+ * are the only way between maps, and a tab press is the person's own act.
  *
  * Epic 8 story 2 grows the dynamics section with the SCENARIO CHOOSER
  * (ADR-0021): the quiet list of named branches, the committed model ("the
@@ -138,7 +147,7 @@ interface LevelControlProps {
  * pull's read, the ghost ask) is still read and written by other features —
  * delete these doors in the deprecated sweep.
  *
- * Provisional: WHICH doors survive (the three jumpers and the pen, and nothing
+ * Provisional: WHICH doors survive (the three map tabs and the pen, and nothing
  * else) is the review's call, and the empty dynamics block is its consequence;
  * the sweep that deletes them is a later session's story.
  *
@@ -167,7 +176,7 @@ export function LevelControl({
     <div
       className="level-control"
       role="group"
-      aria-label={`zoom level — the game now: ${level}`}
+      aria-label={`maps — the map now: ${level}`}
       data-level={level}
     >
       {LEVELS.map((game) => (
@@ -342,19 +351,18 @@ export function LevelControl({
 }
 
 /**
- * Each game's quiet hover title, worded as a jump. Provisional: the wording
- * (the control's look and wording are ADR-0003's rendering seam).
+ * Each map's quiet hover title, worded as a SWITCH BETWEEN MAPS. Provisional:
+ * the wording (the control's look and wording are ADR-0003's rendering seam).
  *
- * DEPRECATED (hidden 2026-11-16 per user review — separate maps): the old
- * titles named the content each band copied over — "a playing set, signed links
- * and loops" at dynamics, "the same map, with outward pointers" at ground.
- * Those maps are BLANK PAPER now (mapContentRules.ts), so the titles stopped
- * claiming content that is not there; the maps' own content is a LATER story.
- * Restore the claims with a flip-back of the map-content flag, or rewrite them
- * when the separate maps land — delete this wording in the deprecated sweep.
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * the titles used to say "jump to …" and name the zoom bands ("the wide band",
+ * "the middle band", "the close band") — a zoom-derivation the review retired:
+ * the wheel no longer changes the map, so there is no band to jump to, only a
+ * MAP to switch to. The band wording is gone; delete this note (and any
+ * revival of the band phrasing) in the deprecated sweep.
  */
 const LEVEL_TITLES: Record<Level, string> = {
-  concept: "jump to concept — the wide band: words and distances",
-  dynamics: "jump to dynamics — the middle band",
-  ground: "jump to ground — the close band",
+  concept: "switch maps — the concept map",
+  dynamics: "switch maps — the dynamics map",
+  ground: "switch maps — the ground map",
 };

@@ -34,6 +34,13 @@ import {
  * The camera intents keep the band: centering lands on its band's landing zoom
  * and the default camera derives from the default level through one constant.
  * The window's feel is the human check.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * the BAND no longer picks the map. Everything this file asserts about the
+ * derivation stays true of the MACHINERY (which the sweep keeps for the
+ * flip-back), and the CONVERTED block below states the new contract: a zoom
+ * gesture changes nothing but the camera. tests/map-switch.test.ts pins the new
+ * state — the tabs switch maps, each map keeps its own camera.
  */
 
 /** A zoom was refused by the camera's limits? Then it is not a settled zoom. */
@@ -145,20 +152,35 @@ describe("the band landing zooms are reachable and inside their band", () => {
   });
 });
 
-describe("a click-to-center never flips the game", () => {
-  test("centering stays in the band it began in, from anywhere", () => {
+/**
+ * CONVERTED (hidden 2026-11-16 per user review — separate mini-apps, ADR-0032):
+ * this block used to assert that a click-to-center landed on its BAND's landing
+ * zoom, so centering could never flip the game. The zoom no longer picks the
+ * map: centering is ordinary navigation and keeps the zoom the map is already
+ * at. The band read stays written behind the flag and is asserted as the
+ * flip-back, so the machinery is provably alive.
+ */
+describe("a click-to-center is ordinary navigation (the map cannot flip)", () => {
+  test("centering keeps the zoom it began at, so it never changes the map", () => {
     for (const zoom of SETTLED_ZOOMS) {
+      expect(centeringZoom(zoom)).toBe(zoom);
       expect(levelFromZoom(centeringZoom(zoom))).toBe(levelFromZoom(zoom));
     }
   });
 
-  test("centering lands on its band's landing zoom", () => {
-    expect(centeringZoom(0.3)).toBe(BAND_ZOOM.concept);
-    expect(centeringZoom(0.7)).toBe(BAND_ZOOM.concept);
-    expect(centeringZoom(DYNAMICS_FROM)).toBe(BAND_ZOOM.dynamics);
-    expect(centeringZoom(1.5)).toBe(BAND_ZOOM.dynamics);
-    expect(centeringZoom(GROUND_FROM)).toBe(BAND_ZOOM.ground);
-    expect(centeringZoom(MAX_ZOOM)).toBe(BAND_ZOOM.ground);
+  test("the band-landing read stays written: it is the flip-back", () => {
+    // Passing switches = true is exactly what setting
+    // ZOOM_SWITCHES_MAP_HIDDEN back to false does: the landing zoom returns.
+    expect(centeringZoom(0.3, true)).toBe(BAND_ZOOM.concept);
+    expect(centeringZoom(0.7, true)).toBe(BAND_ZOOM.concept);
+    expect(centeringZoom(DYNAMICS_FROM, true)).toBe(BAND_ZOOM.dynamics);
+    expect(centeringZoom(1.5, true)).toBe(BAND_ZOOM.dynamics);
+    expect(centeringZoom(GROUND_FROM, true)).toBe(BAND_ZOOM.ground);
+    expect(centeringZoom(MAX_ZOOM, true)).toBe(BAND_ZOOM.ground);
+    // And it never leaves the band it began in, which was the old promise.
+    for (const zoom of SETTLED_ZOOMS) {
+      expect(levelFromZoom(centeringZoom(zoom, true))).toBe(levelFromZoom(zoom));
+    }
   });
 });
 

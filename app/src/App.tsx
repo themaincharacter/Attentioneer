@@ -191,6 +191,13 @@ import { cueShownIn } from "./canvas/presenceRules";
 import { linkWiresVisible } from "./canvas/zoomBands";
 import { planeHint, showsMapContent } from "./canvas/mapContentRules";
 import { STEP_CRANK_HIDDEN, offered } from "./canvas/deprecations";
+import {
+  heldLeftOfTheFold,
+  recordSetAside,
+  setAsideShown,
+  shelfShown,
+  zoomSwitchesMap,
+} from "./canvas/shelfRules";
 import { createWriteQueue, type WriteQueue } from "./lib/writeQueue";
 import {
   createScenario,
@@ -257,6 +264,13 @@ import type { Workspace } from "./workspace/lifecycle";
  * the playing-set selector writing map/model.json (ADR-0013), and the
  * interaction-mode gate suspending the plane's own gestures while the selector
  * is open.
+ *
+ * SUPERSEDED BY ADR-0032 (recorded, not rewritten — 2026-11-16): the two Epic 6
+ * paragraphs below describe the ZOOM BAND AS THE GAME, which the fourth review
+ * retired. The maps are separate mini-apps now; the TABS switch maps, the wheel
+ * only zooms within the current map, and each map keeps its own camera. Every
+ * piece named below stays written and type-checked behind `zoomSwitchesMap`
+ * (`canvas/shelfRules.ts`) and simply stops driving the switch.
  *
  * Epic 6 story 1 binds zoom to the game (ADR-0018): the ZOOM BAND is the game at
  * runtime, and `workspace.yml`'s `level` key is the resume hint in a strict
@@ -375,12 +389,18 @@ import type { Workspace } from "./workspace/lifecycle";
  */
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const { camera, intents } = useCamera();
-  // The running game (ADR-0018): the zoom band is the level at runtime. This
-  // state follows the band as the handoff samples it — a settled crossing or a
-  // deliberate jump. The workspace's `level` key is only the resume hint, read
-  // on open; it never sets this state by itself.
+  // The map on screen. DEPRECATED (hidden 2026-11-16 per user review — separate
+  // mini-apps, ADR-0032): this state used to follow the ZOOM BAND as the handoff
+  // sampled it, so a settled wheel crossing or a deliberate jump set it. Now the
+  // TABS set it (and the workspace's open-restore reads the `level` key); the
+  // wheel only zooms within the current map. The band machinery below stays
+  // written behind `canvas/shelfRules.ts`'s `zoomSwitchesMap` — delete the
+  // zoom-derived path in the deprecated sweep.
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
+  // The camera, PER MAP: switching maps with the tabs restores that map's own
+  // position and zoom, exactly like a little app (PROVISIONAL — the alternative
+  // was one shared camera).
+  const { camera, intents } = useCamera(level);
   // Story 2's pin, focus half (ADR-0018 decision 3): a TEXT FIELD holding focus
   // pins the level exactly like an armed gesture, so a wheel crossing can never
   // close the field or discard what is being typed. The reading is the
@@ -1160,10 +1180,50 @@ function App() {
   // Is this word set aside? Derived from where its centre sits past the fold —
   // no shelf flag, no stored state (ADR-0010). It is live during a drag (the
   // live position updates every frame), so the word quiets as it crosses.
+  //
+  // DEPRECATED (hidden 2026-11-16 per user review): the shelf is gone, so the
+  // QUIETING and every set-aside style are gone with it — while the flag stands
+  // this reading always answers false, which also keeps a drag past the old fold
+  // from looking like anything happens at all (the gesture sets nothing aside).
+  // The derivation stays written (map/shelf.ts) for the flip-back — delete this
+  // early return in the deprecated sweep.
   const shelvedOf = useCallback(
-    (word: Reference): boolean =>
-      word.slug !== null && isShelved(posOf(word).x, boxOf(word).w, shelfX),
+    (word: Reference): boolean => {
+      if (!shelfShown()) return false;
+      return word.slug !== null && isShelved(posOf(word).x, boxOf(word).w, shelfX);
+    },
     [posOf, boxOf, shelfX],
+  );
+
+  /**
+   * The words that are set aside in the RECORD right now — and so are not shown
+   * while the shelf is hidden (canvas/shelfRules.ts's `setAsideShown`).
+   *
+   * DEPRECATED (hidden 2026-11-16 per user review): the review removed the shelf
+   * and asked that a word already set aside "be simply not shown". The position
+   * is the whole record (ADR-0010), so the reading is the word's STORED x — never
+   * the live drag position, which would make a word vanish under the pointer
+   * mid-drag — and it tests the LEFT EDGE (`recordSetAside`), so a re-measure can
+   * never flip a visible word into the hidden set. Nothing is written and nothing
+   * is deleted: flip `SHELF_HIDDEN` back and every one of these words is on the
+   * shelf it never left — delete this memo and its readings in the deprecated
+   * sweep.
+   */
+  const setAsideSlugs = useMemo(() => {
+    const aside = new Set<string>();
+    for (const word of refs) {
+      if (word.slug === null) continue;
+      if (!setAsideShown(recordSetAside(word.x, shelfX))) {
+        aside.add(word.slug);
+      }
+    }
+    return aside;
+  }, [refs, shelfX]);
+
+  /** The words the plane draws: every word but the ones set aside (see above). */
+  const shownRefs = useMemo(
+    () => refs.filter((word) => word.slug === null || !setAsideSlugs.has(word.slug)),
+    [refs, setAsideSlugs],
   );
 
   // The fold's drawn extent (story 3): the shelf is a place in world space, so
@@ -2039,6 +2099,13 @@ function App() {
    */
   const moveCameraToBand = useCallback(
     (next: Level, screen?: Point) => {
+      // DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps,
+      // ADR-0032): the camera used to be moved INTO the new map's band. Each map
+      // keeps its OWN camera now, so a switch needs no camera move at all — the
+      // map you land on brings back the view you left it at. The band intent
+      // (`intents.setZoomBand`, useCamera.ts) stays written for the flip-back —
+      // delete this branch and the intent in the deprecated sweep.
+      if (!zoomSwitchesMap()) return;
       const el = document.querySelector<HTMLDivElement>(".plane");
       intents.setZoomBand(
         next,
@@ -2108,17 +2175,35 @@ function App() {
    * With nothing held there is nothing to re-derive: while the level is NOT
    * pinned, every settled crossing applies at once and every camera intent is
    * band-preserving, so the band and the camera cannot disagree.
+   *
+   * SUPERSEDED BY ADR-0032 (2026-11-16): the paragraph above is the pre-review
+   * promise. The wheel no longer changes the map, so nothing is ever held; the
+   * pin, this release and the focus reading stay written and idle behind
+   * `zoomSwitchesMap` for the flip-back.
    */
   const releasePin = useCallback(() => {
+    // DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps,
+    // ADR-0032): the pin existed to HOLD a wheel crossing so a zoom could not
+    // close an armed gesture or discard typed text. The wheel no longer changes
+    // the map, so there is nothing to hold and nothing to re-derive; the pin,
+    // `shouldPinLevel`, the focus reading and the handoff's settle all stay
+    // written and type-checked for the flip-back — delete this early return in
+    // the deprecated sweep.
+    if (!zoomSwitchesMap()) return;
     if (!levelPin.held()) return;
     handoff.settle(levelPin.release(cameraZoomRef.current));
   }, [handoff, levelPin]);
 
   /**
-   * Open-restore (ADR-0018 decision 2): the resume hint sets the camera into its
-   * band on open. It NEVER writes — a hand-edited key is honored here and
-   * rewritten only on the first settled crossing. A layout effect, so the first
-   * painted frame is already the resumed band (no concept flash before ground).
+   * Open-restore: the workspace's `level` hint sets the MAP on open, and it
+   * NEVER writes — a hand-edited key is honored here and rewritten only by a tab
+   * press. A layout effect, so the first painted frame is already the resumed
+   * map (no concept flash before ground).
+   *
+   * DEPRECATED (hidden 2026-11-16 per user review — separate mini-apps,
+   * ADR-0032): the restore used to move the camera INTO the resumed band as well
+   * (ADR-0018 decision 2). Each map keeps its own camera now, so the resumed map
+   * opens on its own opening camera; the hint still remembers the last map.
    */
   const restoredRef = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -2544,13 +2629,21 @@ function App() {
   );
 
   /**
-   * A zoom gesture settled (ADR-0018 decisions 3 and 5, story 2): while the
-   * level is PINNED — an armed gesture or a focused text field — the wheel
-   * moves the camera and nothing else. The crossing is HELD; the pin's release
-   * re-derives the band from the zoom the camera ended on.
+   * A zoom gesture settled. DEPRECATED (hidden 2026-11-16 per user review —
+   * separate mini-apps, ADR-0032): this is where the WHEEL used to switch the
+   * map — the settled zoom was derived into a band (ADR-0018 decision 1) and,
+   * unless the level pin held it (decision 3), the handoff switched the map and
+   * rewrote the resume hint (decision 2).
+   *
+   * The maps are separate mini-apps now: the TABS switch them and nothing else,
+   * and the wheel only zooms within the current map — so this path answers
+   * nothing at all while the flag stands. The pin, the derivation and the
+   * handoff's settle stay written and type-checked for the flip-back — delete
+   * this early return in the deprecated sweep.
    */
   const handleZoomSettle = useCallback(
     (zoom: number) => {
+      if (!zoomSwitchesMap()) return;
       const next = levelPin.settle(
         zoom,
         shouldPinLevel(gestureMode, focusStateRef.current),
@@ -2845,6 +2938,25 @@ function App() {
     [posOf, boxOf, shelfX, reject],
   );
 
+  /**
+   * A word's own write (rename, memory, drag settle) — with the SHELF's hold.
+   *
+   * DEPRECATED (hidden 2026-11-16 per user review): while the shelf is hidden a
+   * settled drag cannot park a word past the fold (`heldLeftOfTheFold` stops it
+   * at the old fold line). Without the hold the drop would land the word in the
+   * set-aside set the render no longer shows, and the person would watch their
+   * word vanish with nothing to bring it back. PROVISIONAL: the invisible edge is
+   * the review's named cost (deprecations.ts); it goes away with the flip-back —
+   * delete this wrapper in the deprecated sweep.
+   */
+  const changeWord = useCallback(
+    (word: Reference) => {
+      const x = heldLeftOfTheFold(word.x, shelfX);
+      updateReference(x === word.x ? word : { ...word, x });
+    },
+    [shelfX, updateReference],
+  );
+
   // Client point → plane point, for drops and camera-relative gestures.
   const toWorld = useCallback(
     (clientX: number, clientY: number): Point | null => {
@@ -2954,8 +3066,13 @@ function App() {
     const spot = menuAt;
     if (!spot) return;
     setMenuAt(null);
-    coinReference(spot.x, spot.y);
-  }, [menuAt, coinReference]);
+    // DEPRECATED (hidden 2026-11-16 per user review): a word coined past the old
+    // fold would land in the set-aside set the render no longer shows — it would
+    // vanish on its own measurement — so the coin is held just short of the fold
+    // while the shelf is hidden (PROVISIONAL: the review's named cost). Delete
+    // the hold with the shelf in the deprecated sweep.
+    coinReference(heldLeftOfTheFold(spot.x, shelfX), spot.y);
+  }, [menuAt, coinReference, shelfX]);
 
   /** The menu's lack choice: close it and cast the bare open mark. */
   const chooseLack = useCallback(() => {
@@ -3215,13 +3332,19 @@ function App() {
             coined words are the concept map's content, so they render at
             concept only. Every read, every gesture and the whole word row stay
             written (the map content rule gates the RENDER, never the record) —
-            delete in the deprecated sweep. */}
-        {mapContent && refs.map((word) => (
+            delete in the deprecated sweep.
+
+            DEPRECATED (hidden 2026-11-16 per user review): the render also asks
+            the SHELF's reading — `shownRefs` is every word the record holds EXCEPT
+            the ones set aside, which are not shown while the shelf is hidden
+            (`setAsideSlugs` above). Delete that filter with the shelf in the
+            deprecated sweep. */}
+        {mapContent && shownRefs.map((word) => (
           <ReferenceWord
             key={word.id}
             word={word}
             position={posOf(word)}
-            onChange={updateReference}
+            onChange={changeWord}
             onDiscard={discardReference}
             onRename={(candidate, newName) => {
               // A reference rename rewrites assumption targets for the word
@@ -3356,6 +3479,10 @@ function App() {
           const f = refs.find((r) => r.slug === d.from);
           const t = refs.find((r) => r.slug === d.to);
           if (!f || !t) return null;
+          // DEPRECATED (hidden 2026-11-16 per user review): a wire to a word the
+          // shelf hiding keeps off the plane would run to nothing, so it is not
+          // drawn either — delete with the shelf in the deprecated sweep.
+          if (setAsideSlugs.has(d.from) || setAsideSlugs.has(d.to)) return null;
           const pairKey =
             d.from < d.to ? `${d.from}\u0000${d.to}` : `${d.to}\u0000${d.from}`;
           const siblingIndex = pairCounts.get(pairKey) ?? 0;
@@ -3406,6 +3533,12 @@ function App() {
             const f = refs.find((r) => r.slug === link.from);
             const t = refs.find((r) => r.slug === link.to);
             if (!f || !t) return null;
+            // DEPRECATED (hidden 2026-11-16 per user review): the shelf's hiding
+            // keeps set-aside words off the plane, so a link to one is not drawn
+            // either — delete with the shelf in the deprecated sweep.
+            if (setAsideSlugs.has(link.from) || setAsideSlugs.has(link.to)) {
+              return null;
+            }
             const fCenter = centerOfWord(f);
             const tCenter = centerOfWord(t);
             // A self-link is legal and unremarkable: it renders as a short
@@ -3791,8 +3924,13 @@ function App() {
         />
       )}
 
-      {/* the quiet level control (ADR-0018): an indicator of the band's game
-          and a jumper between bands — the wheel is the other way */}
+      {/* The map tabs. DEPRECATED (hidden 2026-11-16 per user review — separate
+          mini-apps, ADR-0032): the row was an indicator of the BAND's game and a
+          jumper between bands, with the wheel as the other way between maps;
+          now it is the ONLY way: the tabs switch maps and the wheel only zooms
+          within the current one. Its new wording ("the concept map", "the
+          dynamics map", "the ground map") is PROVISIONAL — delete the band note
+          in the deprecated sweep. */}
       <LevelControl
         level={level}
         onJump={(next) => handoff.jump(next)}

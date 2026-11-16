@@ -512,11 +512,16 @@ describe("the same contract lands in the code (ADR-0018)", () => {
     );
   });
 
-  test("the control names the derived game and jumps; it never writes", () => {
+  // CONVERTED (hidden 2026-11-16 per user review — separate mini-apps,
+  // ADR-0032): the control used to name the DERIVED game (the zoom band's) and
+  // jump the camera into a band. It is now the MAP TABS: it names the map on
+  // screen and switches to another one; the zoom derives nothing. The old band
+  // wording stays written in the component's DEPRECATED note, which quotes it.
+  test("the control names the running map and switches; it never writes", () => {
     const controlSource = source("../src/canvas/LevelControl.tsx");
-    expect(controlSource).toContain("INDICATOR and a");
+    expect(controlSource).toContain("THE MAP TABS");
     expect(controlSource).toContain("onJump(game)");
-    expect(controlSource).toContain("derived level");
+    expect(controlSource).toContain("never from a zoom");
     expect(controlSource).not.toContain("zoom never changes the game");
     expect(controlSource).not.toContain("saveWorkspaceLevel");
   });
