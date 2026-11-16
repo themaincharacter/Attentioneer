@@ -24,6 +24,10 @@
  *
  * Provisional: the hiding (not deleting) posture is the review's own call; the
  * sweep that deletes these features is a later session's story.
+ *
+ * A SECOND review the same day cleared the TOP MENU (the level control) and
+ * asked for a draw choice on the creation menu. Its flags live in their own
+ * section further down, with the same discipline and the same sweep.
  */
 
 /**
@@ -57,3 +61,102 @@ export const TENTATIVE_MARK_HIDDEN: boolean = true;
  * level faces — delete in the deprecated sweep.
  */
 export const CROSS_LEVEL_FACES_HIDDEN: boolean = true;
+
+/* ------------------------------------------------------------------------- *
+ * The SECOND review (2026-11-16): the top menu, and the pen on the bubble menu.
+ *
+ * The person played with the app again and read the level control — the quiet
+ * row at the top of the window — as CLUTTER: everything in it except the three
+ * game jumpers and the map's `draw` toggle. Same discipline as the pass above,
+ * same sweep: each door below keeps its markup, its props and its handler, and
+ * the control simply stops offering it. The dynamics block becomes empty after
+ * the hides; that is the review's call, not an accident, and the three jumpers
+ * and the pen survive in EVERY game exactly as they were.
+ *
+ * The review also asked for a DRAW choice on the double-click creation menu.
+ * That one is NOT a hiding flag: the bubble is an ACTION (arm the same pen the
+ * control's toggle arms), never a creation kind, so gates.ts's
+ * `CreationKind`/`creationKinds`/`offeredCreationKinds` keep their shape and the
+ * ghost's card grammar keeps reading them. Nothing is deprecated by it.
+ *
+ * Provisional: which doors survive (the three game jumpers and the pen) is the
+ * review's call, exactly as the first pass's posture was; the sweep that
+ * deletes these doors is a later session's story.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review): the level control carried THE
+ * PULL ASK's door — the quiet "where am I thin…" button, and the pull's ONLY
+ * trigger. The review read the row as clutter and asked for the drawing tool
+ * and the game tabs alone, so the control stops offering the door; the door's
+ * component, the pull's reading and its panel all stay (the read is a record
+ * read, nothing else fires it) — delete in the deprecated sweep.
+ */
+export const PULL_DOOR_HIDDEN: boolean = true;
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review): the level control offered
+ * `veil` at Levels 1–2 — the arm of the veil's draw box. The review asked for
+ * the row's clutter to go; the box's arm, its coin field and the veils the
+ * record holds all stay (the level rule lives in veilRules.ts) — delete in the
+ * deprecated sweep.
+ */
+export const VEIL_DOOR_HIDDEN: boolean = true;
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review): the level control's dynamics
+ * section offered "edit the playing set" — the selector's door (ADR-0013). The
+ * review asked for the row's clutter to go, so the control stops offering it;
+ * the selector, its strip and every write it feeds stay (a deliberate jump into
+ * dynamics still asks for a missing set through the app's own prompt) — delete
+ * in the deprecated sweep.
+ */
+export const EDIT_SET_DOOR_HIDDEN: boolean = true;
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review): the dynamics section offered
+ * "coin a loop" — the path gesture's door (Epic 4 story 3). The review asked
+ * for the row's clutter to go; the path session, the loop records and the walk
+ * all stay — delete in the deprecated sweep.
+ */
+export const COIN_LOOP_DOOR_HIDDEN: boolean = true;
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review): the dynamics section offered
+ * "ask…" — the ghost's ask surface (Epic 10 story 3). The review asked for the
+ * row's clutter to go; the ask panel, the packets and the held proposals all
+ * stay — delete in the deprecated sweep.
+ */
+export const ASK_DOOR_HIDDEN: boolean = true;
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review): the dynamics section hosted
+ * the SCENARIO CHOOSER (ADR-0021) — the branch list, "the map", and the one
+ * action that makes (or retires) a branch. The review asked for the row's
+ * clutter to go, so the control stops offering the chooser; the chooser, the
+ * branch records and the app's full switch path all stay. THE NAMED COST: the
+ * chooser is the only way back to the committed model from a branch, so a
+ * workspace whose active scenario is set stays in that branch — delete in the
+ * deprecated sweep.
+ */
+export const SCENARIO_CHOOSER_HIDDEN: boolean = true;
+
+/**
+ * DEPRECATED (hidden 2026-11-16 per user review): the dynamics section offered
+ * "compare…" — the frozen two-value reading of a branch against the committed
+ * model (ADR-0021 §7 amended), offered only once a branch exists. The review
+ * asked for the row's clutter to go; the comparison panel, its bridges and its
+ * refusal rules all stay — delete in the deprecated sweep.
+ */
+export const COMPARE_DOOR_HIDDEN: boolean = true;
+
+/**
+ * Is a hidden affordance OFFERED right now? The level control's hiding points
+ * read their flag through this one word (`offered(PULL_DOOR_HIDDEN)`), so the
+ * flip-back rule is executable: a flag set to `false` offers the affordance
+ * again without a component edit. The pass above reads `!FLAG` directly; this
+ * is that same rule, named once for the row the second review cleared.
+ */
+export function offered(hidden: boolean): boolean {
+  return !hidden;
+}

@@ -783,14 +783,18 @@ body {
 }
 
 /* The double-click creation menu (Epic 3 feedback): a small floating bubble
-   cluster at the plane point. Two frosted warm-white bubbles — word above,
-   lack below — hang off a single inked anchor dot, each on a hairline stem so
-   the cluster visibly belongs to its point. Single clicks create nothing, so
-   this is the only creation door. It lives inside .plane-inner and renders
-   above words and wires; one accent (the anchor dot), no counts, no captions,
-   no gimmicks. Motion is a short pop — fade + 0.92→1 scale with a 4px upward
-   drift, 180ms ease-out, a 28ms stagger between the choices — plus a 1.5px
-   hover lift. Every animation is duration-based, so the global
+   cluster at the plane point. Two frosted warm-white bubbles — word above, the
+   pen's draw below — hang off a single inked anchor dot, each on a hairline stem
+   so the cluster visibly belongs to its point. (The draw bubble joined
+   2026-11-16 with the review that asked for a drawing choice here; the
+   DEPRECATED lack and assumption bubbles keep their own slots below the dot, so
+   with their flags on the cluster is exactly the word + draw pair, SYMMETRIC
+   about the dot — the lift in planeMenuRules.ts is zero.) Single clicks create
+   nothing, so this is the only creation door. It lives inside .plane-inner and
+   renders above words and wires; one accent (the anchor dot), no counts, no
+   captions, no gimmicks. Motion is a short pop — fade + 0.92→1 scale with a 4px
+   upward drift, 180ms ease-out, a 28ms stagger between the choices — plus a
+   1.5px hover lift. Every animation is duration-based, so the global
    prefers-reduced-motion rule below neutralises it. */
 
 @keyframes plane-menu-pop {
@@ -907,11 +911,13 @@ body {
   animation-delay: 28ms;
 }
 
-/* DEPRECATED (hidden 2026-11-16 per user review): with the lack (and the
-   assumption) hidden the word bubble is the menu's ONLY choice, so it keeps the
-   upper position it always had — a stem reaching DOWN to the anchor dot and no
-   stagger — where the `:last-of-type` rules above would otherwise read it as
-   the lower bubble. Delete in the deprecated sweep. */
+/* DEPRECATED (hidden 2026-11-16 per user review): these rules kept the word
+   bubble in its UPPER seat — a stem reaching DOWN to the anchor dot and no
+   stagger — for the single-bubble cluster the first review left. The pen's draw
+   bubble (added 2026-11-16 per the second review) is the `:last-of-type`
+   choice again, so the word is no longer `:only-of-type` and these rules are
+   no longer reached; they stay written for the deprecated sweep, which deletes
+   the hidden choices. */
 .plane-menu-option:only-of-type::after {
   top: auto;
   bottom: -9px;

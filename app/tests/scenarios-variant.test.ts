@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { scopedMembership, variantAcceptWords } from "../src/scenarios/variant";
+import {
+  SCENARIO_CHOOSER_HIDDEN,
+  offered,
+} from "../src/canvas/deprecations";
 
 /**
  * Epic 8 story 2's membership-scoped sets (ADR-0021 decision 4), automated: a
@@ -167,6 +171,15 @@ describe("the chooser is quiet and only the person names a branch", () => {
   });
 
   test("it lives in the level control's dynamics action, outside the plane", () => {
+    // DEPRECATED (hidden 2026-11-16 per user review): the review read the level
+    // control as clutter and kept the game jumpers and the pen alone, so the
+    // chooser is WRITTEN in the dynamics action and no longer offered. The
+    // chooser, the branch records and the app's full switch path all stay; the
+    // named cost (the only way back to the committed model) is in
+    // deprecations.ts.
+    expect(SCENARIO_CHOOSER_HIDDEN).toBe(true);
+    expect(offered(SCENARIO_CHOOSER_HIDDEN)).toBe(false);
+    expect(controlSource).toContain("{offered(SCENARIO_CHOOSER_HIDDEN) && (");
     expect(controlSource).toContain("<ScenarioChooser");
     expect(controlSource).toContain("level === \"dynamics\" && (");
     expect(appSource).toContain("onChooseScenario={chooseScenario}");

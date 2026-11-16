@@ -361,6 +361,9 @@ describe("the hidden affordances (hidden 2026-11-16, not deleted)", () => {
       "src/canvas/PointerChooser.tsx",
       "src/canvas/gates.ts",
       "src/canvas/canvas.css",
+      // The second review's hiding points (the level control's doors) carry the
+      // same marker, so the sweep finds them the same way.
+      "src/canvas/LevelControl.tsx",
     ];
     for (const file of planes) {
       expect({ file, marked: source(file).includes(DEPRECATION) }).toEqual({

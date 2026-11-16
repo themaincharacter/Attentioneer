@@ -3,6 +3,16 @@ import type { Scenario } from "../scenarios/branch";
 import { PullDoor } from "./PullDoor";
 import { ScenarioChooser } from "./ScenarioChooser";
 import { veilLive } from "./veilRules";
+import {
+  ASK_DOOR_HIDDEN,
+  COIN_LOOP_DOOR_HIDDEN,
+  COMPARE_DOOR_HIDDEN,
+  EDIT_SET_DOOR_HIDDEN,
+  PULL_DOOR_HIDDEN,
+  SCENARIO_CHOOSER_HIDDEN,
+  VEIL_DOOR_HIDDEN,
+  offered,
+} from "./deprecations";
 
 interface LevelControlProps {
   /**
@@ -112,8 +122,21 @@ interface LevelControlProps {
  * The map's PEN joins as a level-uniform toggle (added 2026-11-16 per user
  * review): `draw` arms the quiet drawing layer in every game — the strokes are
  * the map's own records, not a game's — and the same button puts the pen down.
- * It is the one addition this review made to the control; nothing else about
- * the control moved.
+ *
+ * DEPRECATED (hidden 2026-11-16 per user review): the SAME review played with
+ * the control and read it as clutter. What survives is the tab switching (the
+ * three game jumpers) and the drawing tool; every other door — the pull ask,
+ * the veil, "edit the playing set", "coin a loop", "ask…", the scenario chooser
+ * and "compare…" — stays written here, keeps its prop and its handler, and is
+ * simply not offered, each behind its own flag in deprecations.ts. The
+ * dynamics block therefore renders nothing while the flags are on. Nothing was
+ * deleted: the record machinery behind every door (veils, branches, loops, the
+ * pull's read, the ghost ask) is still read and written by other features —
+ * delete these doors in the deprecated sweep.
+ *
+ * Provisional: WHICH doors survive (the three jumpers and the pen, and nothing
+ * else) is the review's call, and the empty dynamics block is its consequence;
+ * the sweep that deletes them is a later session's story.
  *
  * No badge, no count, no ceremony. Provisional: the wording, order and look
  * (ADR-0003/0016/0018/0021/0023/0030), and the landing zoom each jump arrives
@@ -159,23 +182,40 @@ export function LevelControl({
           trigger, offered in every game (the read set spans the levels). It
           sits outside `.plane` beside the control's other actions, so the
           plane's armed gate never reaches it. Provisional: the wording and
-          this being the door. */}
-      <PullDoor onOpen={onAskPull} />
+          this being the door.
+
+          DEPRECATED (hidden 2026-11-16 per user review): the review read this
+          row as clutter — everything but the three game jumpers and the pen —
+          so the door is no longer offered. The component, the pull's reading
+          and its panel keep working (nothing else triggers the read) — delete
+          in the deprecated sweep. */}
+      {offered(PULL_DOOR_HIDDEN) && <PullDoor onOpen={onAskPull} />}
       {/* Epic 9 story 1's veil door (ADR-0023): LEVELS 1–2 ONLY, so it lives
           outside the dynamics block — the draw-box works at concept AND
           dynamics. It sits outside `.plane` beside the control's other
           actions, so the plane's armed gate never reaches it; arming runs the
           app's cancel-pending path, then the gate's `veil` mode owns the
-          pointer. Provisional: the wording and this being the door. */}
+          pointer. Provisional: the wording and this being the door.
+
+          DEPRECATED (hidden 2026-11-16 per user review): the review read this
+          row as clutter and kept only the game jumpers and the pen, so the
+          veil's door is no longer offered. The arm, the box, the coin field and
+          the level rule (veilRules.ts) all stay — the level wrapper is kept
+          outside the hiding gate so the rule stays written and tested — delete
+          in the deprecated sweep. */}
       {veilLive(level) && (
-        <button
-          type="button"
-          className="level-veil"
-          title="draw a box around what to set aside, then name it and say why"
-          onClick={onDrawVeil}
-        >
-          veil
-        </button>
+        <>
+          {offered(VEIL_DOOR_HIDDEN) && (
+            <button
+              type="button"
+              className="level-veil"
+              title="draw a box around what to set aside, then name it and say why"
+              onClick={onDrawVeil}
+            >
+              veil
+            </button>
+          )}
+        </>
       )}
       {/* The map's pen (added 2026-11-16 per user review): one quiet toggle,
           offered in EVERY game because the drawing is the map's own record —
@@ -190,59 +230,98 @@ export function LevelControl({
       >
         draw
       </button>
+      {/* The dynamics section, cleared by the review (see below): every door
+          here keeps its markup, its prop and its handler and is offered through
+          its own hiding flag. With the flags on the section renders nothing —
+          that is the review's call, not an accident — and flipping one flag
+          back restores just that door. */}
       {level === "dynamics" && (
         <>
-          <button
-            type="button"
-            className="level-edit"
-            title="edit the playing set"
-            onClick={onEditPlayingSet}
-          >
-            edit the playing set
-          </button>
+          {/* DEPRECATED (hidden 2026-11-16 per user review): "edit the playing
+              set" was the selector's door (ADR-0013). The review kept the game
+              jumpers and the pen alone, so the door is not offered; the
+              selector and its strip stay — delete in the deprecated sweep. */}
+          {offered(EDIT_SET_DOOR_HIDDEN) && (
+            <button
+              type="button"
+              className="level-edit"
+              title="edit the playing set"
+              onClick={onEditPlayingSet}
+            >
+              edit the playing set
+            </button>
+          )}
           {/* Story 3's door: there is no ring-menu kind for a loop (creation
               suspends while the path gesture is armed); the mode control's own
               quiet action arms it, like "edit the playing set" re-runs the
-              selector. Provisional: the wording and this being the door. */}
-          <button
-            type="button"
-            className="level-loop"
-            title="click a loop's words in order, then name it"
-            onClick={onCoinLoop}
-          >
-            coin a loop
-          </button>
+              selector. Provisional: the wording and this being the door.
+
+              DEPRECATED (hidden 2026-11-16 per user review): the review kept
+              the game jumpers and the pen alone, so "coin a loop" is no longer
+              offered; the path session, the loop records and the walk stay —
+              delete in the deprecated sweep. */}
+          {offered(COIN_LOOP_DOOR_HIDDEN) && (
+            <button
+              type="button"
+              className="level-loop"
+              title="click a loop's words in order, then name it"
+              onClick={onCoinLoop}
+            >
+              coin a loop
+            </button>
+          )}
           {/* Epic 10 story 3's door: the ghost's ask surface — ask for a packet
               about one target, or hand a model's reply back as a proposal. It
               sits outside `.plane` like the control's other actions, so the
               plane's armed gate never reaches it. Provisional: the wording and
-              this being the door. */}
-          <button
-            type="button"
-            className="level-ask"
-            title="ask for a context packet, or file a model's proposal"
-            onClick={onAsk}
-          >
-            ask…
-          </button>
+              this being the door.
+
+              DEPRECATED (hidden 2026-11-16 per user review): the review kept
+              the game jumpers and the pen alone, so the ask door is no longer
+              offered; the ask panel, the packets and the held proposals stay —
+              delete in the deprecated sweep. */}
+          {offered(ASK_DOOR_HIDDEN) && (
+            <button
+              type="button"
+              className="level-ask"
+              title="ask for a context packet, or file a model's proposal"
+              onClick={onAsk}
+            >
+              ask…
+            </button>
+          )}
           {/* Epic 8 story 2's branch chooser (ADR-0021): the list of named
               branches, the committed model, and the quiet × that RETIRES a
               branch by deleting its folder. It sits outside `.plane` like the
               control's other actions, so the plane's armed gate never reaches
-              it; a switch runs the app's full switch path. */}
-          <ScenarioChooser
-            scenarios={scenarios}
-            active={activeScenario}
-            onChoose={onChooseScenario}
-            onBranch={onBranchScenario}
-            onRetire={onRetireScenario}
-          />
+              it; a switch runs the app's full switch path.
+
+              DEPRECATED (hidden 2026-11-16 per user review): the review kept
+              the game jumpers and the pen alone, so the chooser is no longer
+              offered. The chooser, the branch records and the app's switch path
+              stay — and the named cost is recorded in deprecations.ts: it was
+              the only way back to the committed model from a branch — delete in
+              the deprecated sweep. */}
+          {offered(SCENARIO_CHOOSER_HIDDEN) && (
+            <ScenarioChooser
+              scenarios={scenarios}
+              active={activeScenario}
+              onChoose={onChooseScenario}
+              onBranch={onBranchScenario}
+              onRetire={onRetireScenario}
+            />
+          )}
           {/* Epic 8 story 4's door: the comparison reads ONE branch against
               the committed model, so it is offered only once a branch exists.
               It opens the quiet panel just outside `.plane` like the crank;
               the pick inside it is an explicit pick of this session, never the
-              resume hint (issue 04's ruling). */}
-          {scenarios.length > 0 && (
+              resume hint (issue 04's ruling).
+
+              DEPRECATED (hidden 2026-11-16 per user review): the review kept
+              the game jumpers and the pen alone, so "compare…" is no longer
+              offered; the panel, its bridges and its refusal rules stay —
+              delete in the deprecated sweep. */}
+          {scenarios.length > 0 && offered(COMPARE_DOOR_HIDDEN) && (
             <button
               type="button"
               className="level-compare"

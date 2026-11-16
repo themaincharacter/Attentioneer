@@ -12,6 +12,7 @@ import {
   CONTENT_CLASSES,
   WORD_CONTROL_CLASSES,
 } from "../src/canvas/gates";
+import { ASK_DOOR_HIDDEN, offered } from "../src/canvas/deprecations";
 import { ASSUMPTIONS_FILE } from "../src/ghost/registry";
 import {
   GHOST_FORMAT,
@@ -353,10 +354,17 @@ describe("the ask surface is wired, minimally", () => {
     );
   });
 
-  test("the level control's door is the ask, at dynamics only", () => {
+  test("the level control's ask door is written at dynamics and hidden there", () => {
+    // DEPRECATED (hidden 2026-11-16 per user review): the review read the level
+    // control as clutter and kept the game jumpers and the pen alone, so the
+    // door is no longer OFFERED — the panel, the packets and the whole wiring
+    // below stay, and flipping the flag back restores a working door.
+    expect(ASK_DOOR_HIDDEN).toBe(true);
+    expect(offered(ASK_DOOR_HIDDEN)).toBe(false);
     const control = source("canvas/LevelControl.tsx");
     expect(control).toContain("onAsk: () => void;");
-    expect(control).toContain(">\n            ask…");
+    expect(control).toContain("{offered(ASK_DOOR_HIDDEN) && (");
+    expect(control).toContain(">\n              ask…");
     const dynamics = control.slice(
       control.indexOf('{level === "dynamics" && ('),
       control.indexOf("<ScenarioChooser"),

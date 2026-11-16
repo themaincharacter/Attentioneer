@@ -28,6 +28,7 @@ import {
   type PullSite,
 } from "../src/pull/reader";
 import { LevelControl } from "../src/canvas/LevelControl";
+import { PULL_DOOR_HIDDEN, offered } from "../src/canvas/deprecations";
 import { PullDoor } from "../src/canvas/PullDoor";
 import { PullPanel } from "../src/canvas/PullPanel";
 import {
@@ -327,7 +328,7 @@ describe("the trigger rule: the ask is the only way in (source-scanned)", () => 
     expect(askers).toEqual(["App.tsx"]);
   });
 
-  test("the door is one quiet button, mounted once in the level control", () => {
+  test("the door is one quiet button, written once in the level control and hidden there", () => {
     const html = renderToStaticMarkup(createElement(PullDoor, { onOpen: noop }));
     expect(html.match(/<button/g) ?? []).toHaveLength(1);
     expect(html).toContain('type="button"');
@@ -344,8 +345,16 @@ describe("the trigger rule: the ask is the only way in (source-scanned)", () => 
       "canvas/PullDoor.tsx",
     ]);
     const control = source("canvas/LevelControl.tsx");
+    // DEPRECATED (hidden 2026-11-16 per user review): the review read the level
+    // control as clutter and kept the game jumpers and the pen alone, so the
+    // door is WRITTEN once but not offered — flipping the flag back restores it
+    // and the deprecated sweep deletes it.
+    expect(PULL_DOOR_HIDDEN).toBe(true);
+    expect(offered(PULL_DOOR_HIDDEN)).toBe(false);
     expect(control.match(/<PullDoor /g) ?? []).toHaveLength(1);
-    expect(control).toContain("<PullDoor onOpen={onAskPull} />");
+    expect(control).toContain(
+      "{offered(PULL_DOOR_HIDDEN) && <PullDoor onOpen={onAskPull} />}",
+    );
     // The button itself is inert: a label, a title, one press.
     const door = source("canvas/PullDoor.tsx");
     expect(door).toContain("onClick={onOpen}");
@@ -363,7 +372,13 @@ describe("the trigger rule: the ask is the only way in (source-scanned)", () => 
     );
   });
 
-  test("no level is a gate on the ask: the door renders in every game", () => {
+  test("no level is a gate on the ask: the door is hidden in EVERY game", () => {
+    // DEPRECATED (hidden 2026-11-16 per user review): the review read the level
+    // control as clutter — the three game jumpers and the pen, nothing else — so
+    // the door is offered in no game at all now (it was offered in all three).
+    // What the render still proves: the offer is level-UNIFORM either way, and
+    // the jumpers and the pen survive in every game.
+    expect(PULL_DOOR_HIDDEN).toBe(true);
     for (const level of LEVELS) {
       const html = renderToStaticMarkup(
         createElement(LevelControl, {
@@ -372,6 +387,8 @@ describe("the trigger rule: the ask is the only way in (source-scanned)", () => 
           onEditPlayingSet: noop,
           onCoinLoop: noop,
           onDrawVeil: noop,
+          onDraw: noop,
+          drawArmed: false,
           scenarios: [],
           activeScenario: null,
           onChooseScenario: noop,
@@ -382,8 +399,32 @@ describe("the trigger rule: the ask is the only way in (source-scanned)", () => 
           onAskPull: noop,
         }),
       );
-      expect(html.match(/class="pull-door"/g) ?? []).toHaveLength(1);
-      expect(html).toContain(PULL_DOOR_LABEL);
+      expect(html.match(/class="pull-door"/g) ?? []).toHaveLength(0);
+      expect(html).not.toContain(PULL_DOOR_LABEL);
+      // The survivors, exactly: the three jumpers and the map's pen.
+      for (const game of LEVELS) {
+        expect({ level, game, offeredIn: html.includes(">" + game + "</button>") }).toEqual({
+          level,
+          game,
+          offeredIn: true,
+        });
+      }
+      expect(html).toContain('class="level-draw');
+      // Nothing else from the row is offered there either.
+      for (const door of [
+        'class="level-veil"',
+        'class="level-edit"',
+        'class="level-loop"',
+        'class="level-ask"',
+        'class="level-compare"',
+        'class="scenario-chooser"',
+      ]) {
+        expect({ level, door, found: html.includes(door) }).toEqual({
+          level,
+          door,
+          found: false,
+        });
+      }
     }
     // The pull's own files never speak a level: the reading belongs to no game.
     for (const file of [

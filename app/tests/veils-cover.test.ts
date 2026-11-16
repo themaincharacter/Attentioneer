@@ -23,6 +23,7 @@ import {
   WORD_CONTROL_CLASSES,
 } from "../src/canvas/gates";
 import { LEVELS } from "../src/workspace/level";
+import { VEIL_DOOR_HIDDEN, offered } from "../src/canvas/deprecations";
 
 /**
  * Epic 9 story 1's cover, automated (ADR-0023): the veil is a render-time
@@ -259,7 +260,14 @@ describe("the ground gate: no sheet at ground (a render rule)", () => {
       new URL("../src/canvas/LevelControl.tsx", import.meta.url),
       "utf8",
     );
+    // DEPRECATED (hidden 2026-11-16 per user review): the review read the level
+    // control as clutter and kept the game jumpers and the pen alone, so the
+    // door is offered in NO game now. The level rule stays written (and is what
+    // a flip-back restores), and so does the arm, the box and the coin field.
+    expect(VEIL_DOOR_HIDDEN).toBe(true);
+    expect(offered(VEIL_DOOR_HIDDEN)).toBe(false);
     expect(control).toContain("{veilLive(level) && (");
+    expect(control).toContain("{offered(VEIL_DOOR_HIDDEN) && (");
     expect(control).toContain("onDrawVeil");
     // The write is where the rule is enforced as well (useMap's createVeil).
     const map = readFileSync(

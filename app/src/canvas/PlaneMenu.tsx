@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { usePlane } from "./CanvasPlane";
 import type { CreationKind } from "./gates";
+import { menuCluster, menuTransform } from "./planeMenuRules";
 
 interface PlaneMenuProps {
   /** Plane point the menu is anchored to; its center dot sits exactly there. */
@@ -22,6 +23,19 @@ interface PlaneMenuProps {
   onLack: () => void;
   /** State an assumption about the bare spot — the quiet text field opens. */
   onAssumption?: () => void;
+  /**
+   * ARM THE MAP'S PEN from the bubble (PROVISIONAL, added 2026-11-16 per user
+   * review): the review asked for a DRAW choice here, so the map's drawing tool
+   * is reachable where a person already is — the point they double-clicked.
+   *
+   * It is an ACTION, never a creation kind: no `CreationKind` grows (the
+   * creation grammar and the ghost's card derivation that reads it keep their
+   * shape). The app hands this to its own handler, which runs the one
+   * cancel-pending path, selects the strip's PEN explicitly (the eraser stays
+   * one press away once armed) and arms the gate's `draw` mode — the same pen
+   * the level control's toggle arms. The press dismisses the cluster.
+   */
+  onDraw: () => void;
   /** Dismiss without creating anything (Esc or a press outside the ring). */
   onClose: () => void;
 }
@@ -35,24 +49,37 @@ interface PlaneMenuProps {
  * (ADR-0011's open decision, ADR-0016) — and Level 1 renders exactly as before.
  *
  * DEPRECATED (hidden 2026-11-16 per user review): the person played with the
- * app and asked for the concept layer simplified — double-clicking a spot
- * offers ONLY the word option. The `lack` bubble and the Level 2
- * `assumption` bubble keep their code, their handlers and their CSS, and are
- * simply not offered (gates.ts's `offeredCreationKinds`); the menu now paints
- * the one word bubble on the anchor dot. Delete the hidden choices in the
+ * app and asked for the concept layer simplified — double-clicking a spot no
+ * longer offers the bare lack. The `lack` bubble and the Level 2 `assumption`
+ * bubble keep their code, their handlers and their CSS, and are simply not
+ * offered (gates.ts's `offeredCreationKinds`). Delete the hidden choices in the
  * deprecated sweep.
  *
- * The cluster is two frosted warm-white bubbles hanging off an inked anchor
- * dot (word above, lack below, each on a hairline stem), so it reads as a
- * small menu floating over the paper plane rather than a slab on it. The dot
- * marks the exact anchor. It lives inside `.plane-inner`, so it follows the
- * map the way the coin fields do and renders above words and wires; it
- * counter-scales against the camera so a choice stays readable at every zoom.
- * Esc or a press anywhere outside dismisses it; both choices are real buttons,
- * reachable by Tab and activated by Enter or Space. The raw mousedown listener
- * keeps the press from reaching d3-zoom (no pan) and the plane's press counter
- * (the d3-zoom discipline in ringDrag.ts). The opening pop and hover lift are
- * look-only; reduced motion collapses them.
+ * THE PEN JOINS (PROVISIONAL, added 2026-11-16 per user review): the same review
+ * asked for a DRAW choice here — the map's drawing tool, where the person
+ * already is. `draw` is the second quiet bubble below the anchor dot, in the
+ * slot the hidden lack bubble used to hold, and it is an ACTION: the press runs
+ * the app's one cancel-pending path, selects the strip's PEN explicitly and arms
+ * the gate's `draw` mode (exactly the level control's toggle), then the cluster
+ * dismisses. It is NOT a creation kind — the creation grammar keeps its shape —
+ * so nothing here creates a record by being offered. Once armed, a double-click
+ * can open no bubble at all (gates.ts's `shouldCreate` is false in `draw`, and
+ * the pen's capture surface owns the pointer), so the menu cannot re-open under
+ * the pen and nothing can double-arm it.
+ *
+ * The cluster is two frosted warm-white bubbles hanging off an inked anchor dot
+ * (the word above, the pen's draw below, each on a hairline stem), so it reads
+ * as a small menu floating over the paper plane rather than a slab on it. The
+ * dot marks the exact anchor: the column is SYMMETRIC about it, so the lift is
+ * zero, and the lift rides inside the inverse-camera scale (planeMenuRules.ts)
+ * so the dot stays on the plane point at every zoom. It lives inside
+ * `.plane-inner`, so it follows the map the way the coin fields do and renders
+ * above words and wires; it counter-scales against the camera so a choice stays
+ * readable at every zoom. Esc or a press anywhere outside dismisses it; every
+ * choice is a real button, reachable by Tab and activated by Enter or Space.
+ * The raw mousedown listener keeps the press from reaching d3-zoom (no pan) and
+ * the plane's press counter (the d3-zoom discipline in ringDrag.ts). The opening
+ * pop and hover lift are look-only; reduced motion collapses them.
  */
 export function PlaneMenu({
   x,
@@ -64,6 +91,7 @@ export function PlaneMenu({
   onWord,
   onLack,
   onAssumption,
+  onDraw,
   onClose,
 }: PlaneMenuProps) {
   const { camera } = usePlane();
@@ -109,26 +137,33 @@ export function PlaneMenu({
     return () => el.removeEventListener("mousedown", stop);
   }, []);
 
-  // DEPRECATED (hidden 2026-11-16 per user review): with the lack (and the
-  // assumption) hidden, the cluster is ONE bubble above the dot, so the dot is
-  // no longer the cluster's centre. The whole cluster lifts by the bubble's
-  // half-height plus the gap, keeping the DOT on the exact plane point. The
-  // arithmetic is provisional (a 30px bubble and a 9px gap, halved); delete
-  // with the hidden choices in the deprecated sweep.
-  const singleChoiceLift = kinds.length <= 1 ? 19.5 : 0;
+  // THE CLUSTER AS IT IS PAINTED (planeMenuRules.ts): the lift is the DOT's
+  // offset from the cluster's centre, computed from the choices actually
+  // offered — the word above, the pen's draw below, plus the DEPRECATED lack
+  // and assumption bubbles if their flags are ever flipped back. The word +
+  // draw cluster is SYMMETRIC about the dot, so its lift is zero; the
+  // single-word cluster this menu painted after the first review needed half a
+  // bubble plus the gap, and the same rule still returns that for it.
+  const cluster = menuCluster({
+    word: true,
+    lack: kinds.includes("lack"),
+    assumption: kinds.includes("assumption") && onAssumption !== undefined,
+    draw: true,
+  });
 
   return (
     <div
       ref={rootRef}
-      className={`plane-menu${kinds.length <= 1 ? " plane-menu-single" : ""}`}
+      className={`plane-menu${cluster.total <= 1 ? " plane-menu-single" : ""}`}
       style={{
         left: x,
         top: y,
         // The plane-inner is scaled by the camera; undo that so the bubble
-        // cluster stays readable screen-size while its anchor dot stays on the
-        // plane point (the dot is the root's centre, so scaling about that
-        // centre keeps it there).
-        transform: `translate(-50%, -50%) translateY(${-singleChoiceLift}px) scale(${1 / camera.zoom})`,
+        // cluster stays readable screen-size, and then lift the cluster by the
+        // DOT's offset from its centre — inside the inverse scale, so the lift
+        // is a screen length and the dot lands on the plane point at every
+        // zoom (planeMenuRules.ts).
+        transform: menuTransform(cluster.lift, camera.zoom),
       }}
       role="group"
       aria-label="create at this point"
@@ -144,11 +179,31 @@ export function PlaneMenu({
         word
       </button>
       <span className="plane-menu-dot" aria-hidden="true" />
+      {/* THE PEN (PROVISIONAL, added 2026-11-16 per user review): the review
+          asked for a DRAW choice on this menu, so the map's drawing tool is
+          offered where the person already is. It holds the slot the hidden lack
+          bubble used to fill — directly below the anchor dot — so the cluster
+          stays SYMMETRIC about the dot (word above, draw below; the lift is
+          zero) and the dot keeps its exact seat on the plane point. It is an
+          ACTION, not a creation kind: pressing it arms the pen (the level
+          control's own path) and the cluster dismisses, with the strip's eraser
+          one press away once armed. Provisional: the wording ("draw here") and
+          this being the second bubble. */}
+      <button
+        type="button"
+        className="plane-menu-option plane-menu-draw"
+        aria-label="draw here"
+        title="draw here — arm the pen and drag a stroke"
+        onClick={onDraw}
+      >
+        draw
+      </button>
       {/* DEPRECATED (hidden 2026-11-16 per user review): the ring menu's
-          `lack` choice opened the bare open mark at the point. The review asked
-          for the menu to offer ONLY the word option, so the choice is not
-          rendered; its code, the bare ring's cast and `map/marks.jsonl` all
-          stay — delete in the deprecated sweep. */}
+          `lack` choice opened the bare open mark at the point. The first review
+          asked for the menu to stop offering it (the second review added only
+          the pen's draw bubble), so the choice is not rendered; its code, the
+          bare ring's cast and `map/marks.jsonl` all stay — delete in the
+          deprecated sweep. */}
       {kinds.includes("lack") && (
         <button
           type="button"
@@ -162,10 +217,10 @@ export function PlaneMenu({
       )}
       {/* Level 2's third kind (ADR-0011's open decision, ADR-0016): state an
           assumption about this bare spot. Rendered only when the level offers
-          it, so Level 1's menu is exactly the word/lack pair it always was.
+          it, so the grammar's extra kind still has its slot.
           DEPRECATED (hidden 2026-11-16 per user review): the dynamics game's
-          third kind is no longer offered — the menu shows only the word
-          option; the record and its overlay stay — delete in the deprecated
+          third kind is no longer offered — the cluster paints the word and the
+          pen; the record and its overlay stay — delete in the deprecated
           sweep. */}
       {kinds.includes("assumption") && onAssumption && (
         <button

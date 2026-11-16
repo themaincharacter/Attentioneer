@@ -2950,6 +2950,25 @@ function App() {
     );
   }, [menuAt, openAssumptions]);
 
+  /**
+   * The menu's DRAW choice (PROVISIONAL, added 2026-11-16 per user review): the
+   * review asked for the map's pen on the bubble cluster, not only in the level
+   * control. It is an ACTION, not a creation kind — no `CreationKind` grows, so
+   * the creation grammar and the ghost's card derivation keep their shape. The
+   * press selects the strip's PEN explicitly (the bubble says "draw"; the eraser
+   * stays one press away once armed), then runs the app's ONE cancel-pending
+   * path (one armed surface at a time — this is also what dismisses the cluster)
+   * and arms the gate's `draw` mode, exactly as the level control's toggle does.
+   * It always ARMS rather than toggles: the cluster only exists while the gate is
+   * idle, and while the pen is armed a double-click opens nothing
+   * (gates.ts's `shouldCreate`), so nothing here can double-arm the pen.
+   */
+  const chooseDraw = useCallback(() => {
+    setPenTool("pen");
+    cancelPendingGestures();
+    setDrawArmed(true);
+  }, [cancelPendingGestures]);
+
   // Track the pointer live during a connect draw so the dashed preview follows,
   // and end the draw when the pointer is released off a target word.
   //
@@ -3448,7 +3467,12 @@ function App() {
             offered lack (every game) and assumption (dynamics); it offers ONLY
             the word option now, through gates.ts's `offeredCreationKinds`.
             `creationKinds` still names each game's full grammar for the record
-            machinery — delete in the deprecated sweep. */}
+            machinery — delete in the deprecated sweep.
+
+            The pen's DRAW bubble sits beside the word (added 2026-11-16 per
+            user review): it is an ACTION, never a creation kind, so the grammar
+            above keeps its shape and `onDraw` arms the drawing mode instead of
+            creating anything. */}
         {menuAt && (
           <PlaneMenu
             x={menuAt.x}
@@ -3457,6 +3481,7 @@ function App() {
             onWord={chooseWord}
             onLack={chooseLack}
             onAssumption={chooseAssumption}
+            onDraw={chooseDraw}
             onClose={closePlaneMenu}
           />
         )}

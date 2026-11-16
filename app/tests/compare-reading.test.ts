@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { CONTENT_CLASSES, WORD_CONTROL_CLASSES } from "../src/canvas/gates";
+import { COMPARE_DOOR_HIDDEN, offered } from "../src/canvas/deprecations";
 import type { Assumption } from "../src/map/assumptions";
 import type { Link } from "../src/map/links";
 import type { Quantity } from "../src/map/quantities";
@@ -571,8 +572,15 @@ describe("the quiet view: Level 2 only, no gate class", () => {
   });
 
   test("the door lives in the level control's dynamics section", () => {
+    // DEPRECATED (hidden 2026-11-16 per user review): the review read the level
+    // control as clutter and kept the game jumpers and the pen alone, so the
+    // door is written here and no longer offered; the panel, its bridges and its
+    // refusal rules stay — delete in the deprecated sweep.
+    expect(COMPARE_DOOR_HIDDEN).toBe(true);
+    expect(offered(COMPARE_DOOR_HIDDEN)).toBe(false);
     expect(CONTROL).toContain('className="level-compare"');
     expect(CONTROL).toContain("onClick={onCompare}");
+    expect(CONTROL).toContain("scenarios.length > 0 && offered(COMPARE_DOOR_HIDDEN)");
     // Only once a branch exists: a reading needs one.
     expect(CONTROL).toContain("scenarios.length > 0 &&");
     expect(CONTROL.indexOf('{level === "dynamics" && (')).toBeLessThan(
