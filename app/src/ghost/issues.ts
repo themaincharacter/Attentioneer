@@ -7,48 +7,60 @@
  * certainty label. Pure data — this module imports nothing.
  */
 
-/** What a refusal is about. */
-export type GhostIssueCode =
+/**
+ * Every refusal code the app may produce, in vocabulary order. It is DATA (not
+ * only a type) so a test can scan a human-facing surface for validator
+ * vocabulary: the packet's behavioral boundary must never echo one of these
+ * (ADR-0026; the ticket's "the boundary is behavioral, not a validator echo").
+ * Epic 10 story 2 added the array; the type below still holds the one union.
+ */
+export const GHOST_ISSUE_CODES = [
   /** The file is not the ghost format (or is not JSON at all). */
-  | "format"
+  "format",
   /** A key, a type or the envelope's own shape is wrong. */
-  | "shape"
+  "shape",
+  /** The ask's region does not carry the word the move is about. */
+  "region",
   /** A key the envelope does not keep (hand edits change values, not keys). */
-  | "unknown-key"
+  "unknown-key",
   /** A slot that would let the agent coin a name — refused everywhere. */
-  | "name-slot"
+  "name-slot",
   /** The move is not in the registry (only registered ids accept). */
-  | "unregistered-move"
+  "unregistered-move",
   /** The target's kind is not one the record grammar has. */
-  | "target-shape"
+  "target-shape",
   /** A known target kind the move refuses in v1 (a spot, a link). */
-  | "refused-target"
+  "refused-target",
   /** The move's authored content (text) is wrong. */
-  | "params"
+  "params",
   /** The prose rationale is missing or empty. */
-  | "rationale"
+  "rationale",
   /** The base pin's own shape is wrong. */
-  | "expect-shape"
+  "expect-shape",
   /** The game the ghost was built in is not the game running. */
-  | "game"
+  "game",
   /** The level (the band) moved since the ghost was built. */
-  | "level"
+  "level",
   /** A branch is active: ghosts are refused (the base pin fails). */
-  | "branch"
+  "branch",
   /** The target the claim is about is not on the map. */
-  | "dangling-target"
+  "dangling-target",
   /** The dry run would not only append (rewrite, drop, or a duplicate claim). */
-  | "append-only"
+  "append-only",
   /** v1 moves write one file, and the pin names exactly that file. */
-  | "single-file"
+  "single-file",
   /** The base pin does not match the file the move would write. */
-  | "pin"
+  "pin",
   /** The ghost's id is not one shape the inbox can hold. */
-  | "id"
+  "id",
   /** The pasted reply carries no patch body, or not one the app can read. */
-  | "intake"
+  "intake",
   /** The app could not write/claim its marker (an fs failure, not a refusal). */
-  | "write";
+  "write",
+] as const;
+
+/** What a refusal is about (the one union the array above spells). */
+export type GhostIssueCode = (typeof GHOST_ISSUE_CODES)[number];
 
 /** One refusal: a code the app switches on and a sentence it can show. */
 export interface GhostIssue {

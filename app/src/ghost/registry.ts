@@ -1,3 +1,4 @@
+import { canonicalJson } from "../lib/serialize";
 import {
   addAssumption,
   assumptionKey,
@@ -49,6 +50,9 @@ import type { GhostSnapshot } from "./snapshot";
 /** The one file `assumption/add` writes (workspace-relative; PROVISIONAL). */
 export const ASSUMPTIONS_FILE = "map/assumptions.jsonl";
 
+/** The registry description's format tag (PROVISIONAL) — part of its hash. */
+export const REGISTRY_FORMAT = "attentioneer-registry/1";
+
 /** One params field the agent may author. */
 export interface ParamField {
   /** The params key. */
@@ -95,8 +99,23 @@ export interface MoveDefinition {
   files: readonly string[];
   /** The params the agent may author, and nothing else (no name slot). */
   params: readonly ParamField[];
+  /**
+   * How many targets one authored body may name. v1 is EXACTLY ONE: the
+   * envelope carries one `target`, and the params carry none (the target is
+   * never copied into params — there is one place a target lives).
+   */
+  targetCount: number;
   /** Every target kind the record grammar knows, allowed or refused. */
   targets: readonly TargetRule[];
+  /**
+   * What the move DOES, in the person's own language — the packet's behavioral
+   * boundary (ADR-0026; the ticket's "explore vs edit" lane). It is registry
+   * DATA, never a rendering of the validator: no issue code, no envelope key,
+   * no grammar vocabulary may appear here (the packet states the behavior; the
+   * grammar holds the keys — echoing them would turn a grammar-fail into a
+   * prompt-compliance).
+   */
+  boundary: string;
   /** The ONE deriver: build the read-only steps from target + params. */
   steps: (target: GhostTarget, params: Record<string, unknown>) => GhostStep[];
   /**
@@ -229,6 +248,7 @@ export const ADD_ASSUMPTION: MoveDefinition = {
   game: "dynamics",
   files: [ASSUMPTIONS_FILE],
   params: [{ key: "text", kind: "text" }],
+  targetCount: 1,
   targets: [
     { kind: "word", allowed: true },
     { kind: "loop", allowed: true },
@@ -246,6 +266,8 @@ export const ADD_ASSUMPTION: MoveDefinition = {
   ],
   steps: deriveAddAssumptionSteps,
   closure: closureAddAssumption,
+  boundary:
+    "Add one claim beside one word or one loop. Nothing else changes: no word, mark, distance, loop, veil or existing claim is rewritten, renamed or removed. Nothing is named — a name is the person's to coin.",
 };
 
 /** The registry, in table order (the fact the derived hash will walk later). */
@@ -303,4 +325,73 @@ export function pinOf(
     level: snapshot.level,
     game: entry.game,
   };
+}
+
+/*
+ * The registry's TARGET RULES as data (Epic 10 story 2): the packet states the
+ * move's shape and its operations from these helpers, so expansion (a new row)
+ * changes the packet's move section without a rendering edit — and the story's
+ * target rules are asserted at the registry, not in a prompt.
+ */
+
+/** The target kinds the agent may author, in table order (the move's operations). */
+export function authorableTargetKinds(
+  entry: MoveDefinition,
+): GhostTarget["kind"][] {
+  return entry.targets.filter((rule) => rule.allowed).map((rule) => rule.kind);
+}
+
+/** The registry's rule for one target kind; null when the record grammar has none. */
+export function targetRuleOf(
+  entry: MoveDefinition,
+  kind: GhostTarget["kind"],
+): TargetRule | null {
+  return entry.targets.find((rule) => rule.kind === kind) ?? null;
+}
+
+/** The params keys the agent may author, in schema order (the move's content). */
+export function authoredParamKeys(entry: MoveDefinition): string[] {
+  return entry.params.map((field) => field.key);
+}
+
+/**
+ * The registry as PLAIN DATA — the description the version hash walks. It is
+ * derived from the live table (move, game, files, the params schema, the target
+ * arity and rules incl. the refusal sentences, the boundary), so a new move or
+ * an edited rule changes the hash and nothing else does. The derivers' code is
+ * not hashed (a behavior hash is not a version): two tables that declare the
+ * same rows are the same registry.
+ */
+export function registryDescription(
+  moves: readonly MoveDefinition[] = MOVES,
+): unknown {
+  return {
+    format: REGISTRY_FORMAT,
+    moves: moves.map((entry) => ({
+      move: { family: entry.move.family, verb: entry.move.verb },
+      game: entry.game,
+      files: [...entry.files],
+      targetCount: entry.targetCount,
+      params: entry.params.map((field) => ({
+        key: field.key,
+        kind: field.kind,
+      })),
+      targets: entry.targets.map((rule) => ({
+        kind: rule.kind,
+        allowed: rule.allowed,
+        refusal: rule.refusal ?? null,
+      })),
+      boundary: entry.boundary,
+    })),
+  };
+}
+
+/**
+ * The registry VERSION: a hash DERIVED from the table above, never a
+ * hand-bumped literal (ADR-0025's amendment; ADR-0026 decision 3). It is the
+ * third part of the packet's frozen triple, so two expansion runs are
+ * comparable: the same bytes against the same pin under the same registry.
+ */
+export function registryHash(moves: readonly MoveDefinition[] = MOVES): string {
+  return sha256Hex(canonicalJson(registryDescription(moves)));
 }
