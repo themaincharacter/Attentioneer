@@ -43,8 +43,10 @@ export const GHOST_ISSUE_CODES = [
   "level",
   /** A branch is active: ghosts are refused (the base pin fails). */
   "branch",
-  /** The dynamics game has no accepted playing set: a ghost is refused. */
+  /** A game whose policy requires an accepted playing set has none. */
   "no-playing-set",
+  /** The game's authoring policy is missing or malformed: fail-closed refuse. */
+  "policy",
   /** The target the claim is about is not on the map. */
   "dangling-target",
   /** The dry run would not only append (rewrite, drop, or a duplicate claim). */

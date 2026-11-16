@@ -18,10 +18,14 @@ import { issue, type GhostIssue } from "./issues";
 import {
   appendLine,
   findMove,
+  gamePolicyOf,
+  isParamKind,
   moveOf,
+  MOVES,
   type DryRun,
   type DryRunFile,
   type MoveDefinition,
+  type ParamField,
 } from "./registry";
 import type { GhostSnapshot } from "./snapshot";
 
@@ -31,10 +35,12 @@ import type { GhostSnapshot } from "./snapshot";
  *
  * It checks: the envelope's shape and keys (its own keys exactly; no name slot
  * anywhere; no unknown key in the agent's body, move, params or target); that
- * the move is registered; the move's params schema and target rules; the game,
- * level and folder pins; THE SET GATE (a dynamics move is refused when no
- * playing set is accepted — ADR-0025 decision 3, the authoring rule the plane's
- * writers obey through `authoringLive`); the base pin against the file ACTUALLY
+ * the move is registered; its declared target count (the envelope carries one);
+ * the move's params schema and target rules; the game, level and folder pins;
+ * THE SET GATE, read from the game's POLICY DATA (GAME_POLICY — a game whose
+ * policy requires an accepted playing set refuses without one; ADR-0025
+ * decision 3, the authoring rule the plane's writers obey through
+ * `authoringLive`); the base pin against the file ACTUALLY
  * on disk; and append-only closure by APPLYING the derived steps to the
  * snapshot and parsing
  * the result back — a derived list alone proves nothing. It re-derives the
@@ -205,6 +211,69 @@ function readTarget(
   return { ok: true, target: { kind: "link", from: value.from, to: value.to } };
 }
 
+/**
+ * ONE params field, validated by its declared kind — FAIL-CLOSED (Epic 11
+ * story 2). An unknown kind REFUSES (it is never skipped as "nothing to
+ * check", which is how an unvalidated params value would slip through under
+ * a cheap model); an enum whose allowed values are not data REFUSES; and a
+ * value that is not the declared kind REFUSES. The grammar understands
+ * exactly the kinds in `PARAM_KINDS`.
+ */
+function paramIssuesOf(field: ParamField, raw: unknown): GhostIssue[] {
+  if (!isParamKind(field.kind)) {
+    return [
+      issue(
+        "params",
+        `"${field.key}" declares the "${field.kind}" kind, which this grammar does not know; only text, number and enum are checked, so the value is refused rather than passed unvalidated`,
+      ),
+    ];
+  }
+  if (field.kind === "text") {
+    if (typeof raw !== "string" || raw.trim() === "") {
+      return [issue("params", `"${field.key}" must be non-empty prose`)];
+    }
+    if (raw !== raw.trim()) {
+      return [
+        issue(
+          "params",
+          `"${field.key}" has surrounding whitespace; the app writes exactly what the envelope says`,
+        ),
+      ];
+    }
+    return [];
+  }
+  if (field.kind === "number") {
+    if (typeof raw !== "number" || !Number.isFinite(raw)) {
+      return [issue("params", `"${field.key}" must be a finite number`)];
+    }
+    return [];
+  }
+  // An enum: the allowed values are the schema's DATA, and a missing or
+  // malformed list cannot be honoured, so every value refuses.
+  const values = field.values;
+  if (
+    !Array.isArray(values) ||
+    values.length === 0 ||
+    values.some((entry) => typeof entry !== "string" || entry === "")
+  ) {
+    return [
+      issue(
+        "params",
+        `"${field.key}" is an enum with no allowed values; a declaration whose data is missing refuses rather than accepts any value`,
+      ),
+    ];
+  }
+  if (typeof raw !== "string" || !values.includes(raw)) {
+    return [
+      issue(
+        "params",
+        `"${field.key}" must be one of ${values.map((entry) => JSON.stringify(entry)).join(", ")}`,
+      ),
+    ];
+  }
+  return [];
+}
+
 function readParams(
   value: unknown,
   entry: MoveDefinition,
@@ -215,26 +284,8 @@ function readParams(
   const keys = keyIssuesOf(value, entry.params.map((field) => field.key));
   if (keys.length > 0) return { ok: false, issues: keys };
   for (const field of entry.params) {
-    const raw = value[field.key];
-    if (field.kind === "text") {
-      if (typeof raw !== "string" || raw.trim() === "") {
-        return {
-          ok: false,
-          issues: [issue("params", `"${field.key}" must be non-empty prose`)],
-        };
-      }
-      if (raw !== raw.trim()) {
-        return {
-          ok: false,
-          issues: [
-            issue(
-              "params",
-              `"${field.key}" has surrounding whitespace; the app writes exactly what the envelope says`,
-            ),
-          ],
-        };
-      }
-    }
+    const issues = paramIssuesOf(field, value[field.key]);
+    if (issues.length > 0) return { ok: false, issues };
   }
   return { ok: true, params: value };
 }
@@ -340,10 +391,15 @@ function reconciled(
  * (from a file or the intake's wrap), read defensively: this is the same
  * grammar for the agent's body, a hand-edited envelope and the intake's own
  * output, so there is one door.
+ *
+ * The MOVE TABLE is a parameter (Epic 11 story 2): the shipped default is the
+ * live registry, and a fixture table lets a test prove the expansion path —
+ * the same checklist, a second row — WITHOUT registering a move.
  */
 export function validateGhost(
   candidate: unknown,
   snapshot: GhostSnapshot,
+  moves: readonly MoveDefinition[] = MOVES,
 ): GhostValidation {
   if (!isPlainObject(candidate)) {
     return refused([issue("shape", "the envelope is not a JSON object")]);
@@ -364,12 +420,25 @@ export function validateGhost(
 
   const move = readMove(candidate.move);
   if (!move.ok) return refused(move.issues);
-  const entry = findMove(move.move);
+  const entry = findMove(move.move, moves);
   if (entry === null) {
     return refused([
       issue(
         "unregistered-move",
         `${move.move.family}/${move.move.verb} is not a registered move`,
+      ),
+    ]);
+  }
+
+  // TARGET ARITY IS GRAMMAR-READ (Epic 11 story 2): the envelope carries
+  // exactly one `target` and the params never copy it, so a row declaring
+  // another count cannot be honoured. Fail-closed: refuse rather than check
+  // one target of several (a malformed count refuses too).
+  if (entry.targetCount !== 1) {
+    return refused([
+      issue(
+        "target-shape",
+        `the move declares ${entry.targetCount} targets; the envelope carries exactly one, so the grammar refuses rather than check a single target of ${entry.targetCount}`,
       ),
     ]);
   }
@@ -441,16 +510,21 @@ export function validateGhost(
   }
   if (contextIssues.length > 0) return refused(contextIssues);
 
-  // THE SET GATE (ADR-0025 decision 3; ADR-0013 decision 1): a ghost is an
-  // authoring move, and the dynamics game authors nothing until a playing set
-  // is accepted. This is the same rule the plane's writers obey through
-  // `authoringLive`, enforced at BOTH ghost doors — the intake and the accept
-  // each read a fresh snapshot, so a set withdrawn between them refuses the
-  // accept. Absence, not emptiness, is what "no set" means: an accepted EMPTY
-  // set is still an accepted set (the selector's own rule).
-  // Provisional: keyed on the move's GAME rather than registry data, because the
-  // requirement is the game's (ADR-0013), not one move's.
-  if (entry.game === "dynamics" && snapshot.playing === null) {
+  // THE SET GATE (ADR-0025 decision 3; ADR-0013 decision 1) — read from the
+  // game's POLICY DATA (Epic 11 story 2), never from a game-name branch: a
+  // ghost is an authoring move, and a game whose policy requires an accepted
+  // playing set authors nothing until one is. This is the same rule the
+  // plane's writers obey through `authoringLive`, enforced at BOTH ghost
+  // doors — the intake and the accept each read a fresh snapshot, so a set
+  // withdrawn between them refuses the accept. Absence, not emptiness, is
+  // what "no set" means: an accepted EMPTY set is still an accepted set (the
+  // selector's own rule).
+  //
+  // Fail-closed: a game with no policy row (or a malformed row) REFUSES; a
+  // missing requirement must never read as "no requirements".
+  const policy = gamePolicyOf(entry.game);
+  if (!policy.ok) return refused(policy.issues);
+  if (policy.policy.requiresPlayingSet === true && snapshot.playing === null) {
     return refused([
       issue(
         "no-playing-set",

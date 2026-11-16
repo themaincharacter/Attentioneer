@@ -13,8 +13,10 @@ import type { GhostExpect, GhostGame, GhostTarget } from "./envelope";
 import {
   authorableTargetKinds,
   pinOf,
+  registeredMovesOf,
   registryHash,
   type MoveDefinition,
+  type ParamField,
 } from "./registry";
 import type { GhostSnapshot } from "./snapshot";
 
@@ -62,7 +64,9 @@ import type { GhostSnapshot } from "./snapshot";
  *
  * The behavioral boundary is the registry's own boundary string (data): what
  * the move DOES, never the validator's keys (echoing the grammar would turn a
- * cheap grammar-fail into prompt-compliance).
+ * cheap grammar-fail into prompt-compliance). The move's shape and the game's
+ * REGISTERED moves are the registry's too (Epic 11 story 2): the operations
+ * line is derived from the same table, never hand-copied here.
  *
  * Levels are untouched here: the packet is the dynamics move's view, and the
  * request surface (request.ts) refuses another band.
@@ -96,7 +100,24 @@ const GAME_CONVENTIONS: Record<GhostGame, string> = {
 /** How a params field is described in the packet (by kind, not by code). */
 const PARAM_KIND_GLOSS: Record<string, string> = {
   text: "prose, carried exactly as written",
+  number: "a finite number",
+  enum: "one of a set of values",
 };
+
+/**
+ * One params field, in the packet's words. An enum states its allowed
+ * VALUES (the schema's own data, Epic 11 story 2); an unknown kind falls
+ * back to the raw declaration, which is a string from the registry's data,
+ * never validator vocabulary.
+ */
+function paramGlossOf(field: ParamField): string {
+  if (field.kind === "enum") {
+    const values = field.values ?? [];
+    if (values.length === 0) return "one of a set of values";
+    return "one of " + values.join(", ");
+  }
+  return PARAM_KIND_GLOSS[field.kind] ?? field.kind;
+}
 
 /**
  * One word's record as the packet reads it: the reference's own fields (its
@@ -194,6 +215,14 @@ export interface PacketInput {
   view: PacketView;
   /** The base-pin snapshot, read at the ask moment. */
   snapshot: GhostSnapshot;
+  /**
+   * The registry table the packet reads (defaults to the live registry). The
+   * operations line is the GAME'S REGISTERED moves, derived from this table
+   * (Epic 11 story 2), so a second row changes the packet without a
+   * rendering edit — and a test's fixture table proves the derivation
+   * without registering a move.
+   */
+  moves?: readonly MoveDefinition[];
 }
 
 /** A word's placement for the veil's centre rule (the record's x/y + the box). */
@@ -359,9 +388,7 @@ function loopBlock(loop: Loop, view: PacketView): string[] {
 /** The move's authored fields, spelled by their registry schema (data). */
 function authoredFields(entry: MoveDefinition): string {
   return entry.params
-    .map(
-      (field) => field.key + " — " + (PARAM_KIND_GLOSS[field.kind] ?? field.kind),
-    )
+    .map((field) => field.key + " — " + paramGlossOf(field))
     .join("; ");
 }
 
@@ -386,6 +413,17 @@ function renderPacket(input: PacketInput, region: RegionSelection): string {
   lines.push("game: " + entry.game);
   lines.push("authors: " + authoredFields(entry));
   lines.push("targets: one of " + authorableTargetKinds(entry).join(", "));
+  // THE GAME'S REGISTERED MOVES, derived from the registry table (Epic 11
+  // story 2): the packet states the game's operations, never a hand-copied
+  // list. "none" is said, not left blank (a game with no registered move is
+  // a fact, not an omission).
+  const operations = registeredMovesOf(entry.game, input.moves);
+  lines.push(
+    "registered moves in " +
+      entry.game +
+      ": " +
+      (operations.length === 0 ? "none" : operations.join(", ")),
+  );
   lines.push("");
 
   lines.push("## The game this move belongs to");
@@ -488,7 +526,7 @@ export function assemblePacket(input: PacketInput): Packet {
   const freeze = freezePacket(
     bytes,
     pinOf(input.snapshot, input.entry),
-    registryHash(),
+    registryHash(input.moves),
   );
   return { freeze, region };
 }

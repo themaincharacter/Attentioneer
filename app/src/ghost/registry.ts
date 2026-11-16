@@ -53,12 +53,138 @@ export const ASSUMPTIONS_FILE = "map/assumptions.jsonl";
 /** The registry description's format tag (PROVISIONAL) — part of its hash. */
 export const REGISTRY_FORMAT = "attentioneer-registry/1";
 
+/*
+ * THE PER-GAME AUTHORING POLICY (Epic 11 story 2, ADR-0025 decision 1 as
+ * amended): game rules are DATA, never a game-name branch in the checklist.
+ *
+ * A policy row says what the GAME requires before the game authors anything at
+ * all. The one requirement the table carries today is ADR-0025 decision 3's
+ * (ADR-0013 decision 1): the dynamics game authors nothing until a playing set
+ * is accepted. The grammar ASKS the row (`gamePolicyOf`) and refuses with the
+ * record's own words, so a second game's requirement is a second field here
+ * plus the one check that reads it, and a new game is a new row.
+ *
+ * FAIL-CLOSED, like everything in this table: a game with no row, a row
+ * carrying a field this build does not know, or a field whose value is not the
+ * declared type REFUSES. A missing requirement must never read as "no
+ * requirements".
+ *
+ * Provisional: the shape (one optional boolean today), the field names and
+ * whether a policy ever grows more than requirements (story 2's own note).
+ */
+export interface GamePolicy {
+  /** May a ghost author in this game only behind an accepted playing set? */
+  readonly requiresPlayingSet?: boolean;
+}
+
+/** The policy row's known fields, exactly (an unknown field refuses). */
+export const GAME_POLICY_KEYS: readonly string[] = ["requiresPlayingSet"];
+
+/** The per-game authoring policy table (PROVISIONAL shape). */
+export const GAME_POLICY: Readonly<Record<string, GamePolicy>> = {
+  concept: {},
+  dynamics: { requiresPlayingSet: true },
+  ground: {},
+};
+
+/** What reading one game's policy yielded: the row, or why it refuses. */
+export type GamePolicyRead =
+  | { ok: true; policy: GamePolicy }
+  | { ok: false; issues: readonly GhostIssue[] };
+
+/**
+ * Read one game's policy row, fail-closed (see the table's note). The table is
+ * a parameter so a fixture can prove the reader's refusals without touching
+ * the live data; the grammar calls it with the shipped table.
+ */
+export function gamePolicyOf(
+  game: string,
+  table: Readonly<Record<string, unknown>> = GAME_POLICY,
+): GamePolicyRead {
+  if (!Object.prototype.hasOwnProperty.call(table, game)) {
+    return {
+      ok: false,
+      issues: [
+        issue(
+          "policy",
+          `the ${game} game has no authoring policy; a missing policy refuses rather than permits`,
+        ),
+      ],
+    };
+  }
+  const row = table[game];
+  if (!isPlainObject(row)) {
+    return {
+      ok: false,
+      issues: [
+        issue(
+          "policy",
+          `the ${game} game's policy is not a row of named requirements`,
+        ),
+      ],
+    };
+  }
+  const issues: GhostIssue[] = [];
+  for (const key of Object.keys(row)) {
+    if (!GAME_POLICY_KEYS.includes(key)) {
+      issues.push(
+        issue(
+          "policy",
+          `the ${game} game's policy carries an unknown field "${key}"; the grammar refuses rather than ignore a requirement it cannot read`,
+        ),
+      );
+    }
+  }
+  if (
+    "requiresPlayingSet" in row &&
+    typeof row.requiresPlayingSet !== "boolean"
+  ) {
+    issues.push(
+      issue(
+        "policy",
+        `the ${game} game's policy "requiresPlayingSet" is not a yes/no`,
+      ),
+    );
+  }
+  if (issues.length > 0) return { ok: false, issues };
+  return { ok: true, policy: row as GamePolicy };
+}
+
+/**
+ * The params kinds the grammar VALIDATES (Epic 11 story 2). Fail-closed: a row
+ * may declare a kind this list does not carry, and the grammar then REFUSES —
+ * it never skips the value unvalidated (the cheap-model default would
+ * otherwise pass an unknown kind straight through).
+ */
+export type ParamKind = "text" | "number" | "enum";
+
+/** The known params kinds, as data (the grammar's check and tests read it). */
+export const PARAM_KINDS: readonly ParamKind[] = ["text", "number", "enum"];
+
+/** Is a declared kind one the grammar validates? */
+export function isParamKind(value: unknown): value is ParamKind {
+  return (
+    typeof value === "string" &&
+    (PARAM_KINDS as readonly string[]).includes(value)
+  );
+}
+
 /** One params field the agent may author. */
 export interface ParamField {
   /** The params key. */
   key: string;
-  /** Its JSON kind. v1 knows prose only. */
-  kind: "text";
+  /**
+   * Its declared JSON kind. Deliberately a plain string: a row may DECLARE a
+   * kind this grammar build does not know, and the grammar must refuse the
+   * value fail-closed rather than wave it through.
+   */
+  kind: string;
+  /**
+   * An enum's allowed values, as data — present exactly when `kind` is
+   * "enum". A missing or malformed list refuses (the declaration cannot be
+   * honoured, so no value may pass).
+   */
+  values?: readonly string[];
 }
 
 /** One target kind the move knows: allowed, or refused with a reason. */
@@ -100,9 +226,11 @@ export interface MoveDefinition {
   /** The params the agent may author, and nothing else (no name slot). */
   params: readonly ParamField[];
   /**
-   * How many targets one authored body may name. v1 is EXACTLY ONE: the
-   * envelope carries one `target`, and the params carry none (the target is
-   * never copied into params — there is one place a target lives).
+   * How many targets one authored body may name — GRAMMAR-READ, not merely
+   * declared (Epic 11 story 2). The envelope's shape carries exactly ONE
+   * `target` (the params never copy it — one place a target lives), so the
+   * grammar refuses any row whose count is not the number 1 rather than
+   * check one target of several. Fail-closed: a malformed count refuses.
    */
   targetCount: number;
   /** Every target kind the record grammar knows, allowed or refused. */
@@ -279,18 +407,25 @@ export function moveKeyOf(move: GhostMove): string {
 }
 
 /**
- * The registered move a value names, or null. Shape-only: an object with a
+ * The move a value names in a table, or null. Shape-only: an object with a
  * family and a verb that the table carries. The grammar has already checked
  * the move's keys when this is used after shape checks; it stays defensive
  * because the registry is the only door to "only registered ids accept".
+ *
+ * The TABLE is a parameter (Epic 11 story 2) so a fixture table can prove
+ * the expansion path through the same door — the shipped default is MOVES,
+ * and a fixture row is never registered by being validated.
  */
-export function findMove(value: unknown): MoveDefinition | null {
+export function findMove(
+  value: unknown,
+  moves: readonly MoveDefinition[] = MOVES,
+): MoveDefinition | null {
   if (!isPlainObject(value)) return null;
   const family = value.family;
   const verb = value.verb;
   if (typeof family !== "string" || typeof verb !== "string") return null;
   return (
-    MOVES.find(
+    moves.find(
       (entry) => entry.move.family === family && entry.move.verb === verb,
     ) ?? null
   );
@@ -305,6 +440,15 @@ export function moveOf(entry: MoveDefinition): GhostMove {
  * The base pin an intake mints from a snapshot: one digest per file the move
  * writes (an absent file pins as the empty string's digest), the records
  * folder, the running level and the move's game.
+ *
+ * THE LEVEL IS THE BINDING (Epic 11 story 2): `level` is the running band,
+ * and the grammar compares it with the snapshot's running level, exactly as
+ * it compares the move's game (`entry.game`) with that same running level.
+ * `game` is DOCUMENTATION — the move's registry game, recorded so the pin
+ * says which game it was minted for. The grammar never compares the pin's
+ * `game` with the app: the move's game is registry data, not a fact the
+ * snapshot carries. (The game pin must still NAME the move's game — a
+ * self-consistency shape check, never an environment binding.)
  */
 export function pinOf(
   snapshot: GhostSnapshot,
@@ -352,6 +496,23 @@ export function targetRuleOf(
 /** The params keys the agent may author, in schema order (the move's content). */
 export function authoredParamKeys(entry: MoveDefinition): string[] {
   return entry.params.map((field) => field.key);
+}
+
+/**
+ * THE GAME'S REGISTERED MOVES (Epic 11 story 2), in table order, spelled
+ * `family/verb` — the packet's operations line. Derived from the SAME table
+ * `findMove` reads, so a second row changes the packet without a rendering
+ * edit and the packet never invents a move. Only REGISTERED rows here: the
+ * canvas's authored kinds are the card's other source (`gameMovesOf`), not
+ * this line's.
+ */
+export function registeredMovesOf(
+  game: GhostGame,
+  moves: readonly MoveDefinition[] = MOVES,
+): string[] {
+  return moves
+    .filter((entry) => entry.game === game)
+    .map((entry) => `${entry.move.family}/${entry.move.verb}`);
 }
 
 /**
@@ -422,6 +583,9 @@ export function registryDescription(
       params: entry.params.map((field) => ({
         key: field.key,
         kind: field.kind,
+        // An enum's allowed values are part of the schema (data), so the
+        // version hash moves when the set of allowed values does.
+        values: field.values ?? null,
       })),
       targets: entry.targets.map((rule) => ({
         kind: rule.kind,
