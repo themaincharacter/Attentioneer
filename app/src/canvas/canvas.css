@@ -1017,17 +1017,21 @@ body {
 .level-loop:focus-visible,
 .level-veil:focus-visible,
 .level-ask:focus-visible,
+.pull-door:focus-visible,
 .playing-set-bar button:focus-visible,
 .playing-set-word:focus-visible {
   outline: 1.5px solid #6b675e;
   outline-offset: 1px;
 }
 
-/* "edit the playing set" / "coin a loop" / "veil": the control's quiet actions. */
+/* "edit the playing set" / "coin a loop" / "veil" / the pull ask: the
+   control's quiet actions. The pull's door is Epic 13 story 2's: one still
+   button, no badge and no dot — the press is the ask. */
 .level-edit,
 .level-loop,
 .level-veil,
-.level-ask {
+.level-ask,
+.pull-door {
   font: inherit;
   font-size: 11px;
   line-height: 1;
@@ -1046,7 +1050,8 @@ body {
 .level-edit:hover,
 .level-loop:hover,
 .level-veil:hover,
-.level-ask:hover {
+.level-ask:hover,
+.pull-door:hover {
   color: #1e2126;
 }
 
@@ -4472,4 +4477,84 @@ body {
   font-size: 10.5px;
   line-height: 1.4;
   color: #8d887c;
+}
+
+/* THE PULL ASK's reading (Epic 13 story 2, ADR-0030): the transient the one
+   press opens. The app's quiet panel idiom — fixed outside the plane, paper
+   background, one soft shadow — holding the selection sentence and ONE block of
+   the records' own lines. Quiet by construction: no accent colour, no urgency,
+   no pulse, and the only motion is the app's own fade-in. Provisional: the
+   look (ADR-0003/0030). */
+.pull-panel {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(460px, 48vw);
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+  padding: 7px 10px 9px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid #e4dfd4;
+  border-radius: 10px;
+  box-shadow: 0 3px 14px rgba(40, 35, 25, 0.1);
+  animation: fade-in 160ms ease-out;
+}
+
+.pull-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.pull-title {
+  font-size: 9.5px;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.pull-close {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #b3ac9e;
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.pull-close:hover,
+.pull-close:focus-visible {
+  color: #1e2126;
+  outline: none;
+}
+
+/* The selection, SAID: the reading's own words, quiet and set apart from the
+   records so the person reads the rule before the records. */
+.pull-said {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #8d887c;
+  font-style: italic;
+}
+
+/* One block: the records' own lines, verbatim and selectable. No headings, no
+   numbers, no grouping rules — the lines are co-present, exactly as the reader
+   walked them. */
+.pull-lines {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #4c4a44;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }

@@ -1,5 +1,6 @@
 import { LEVELS, type Level } from "../workspace/level";
 import type { Scenario } from "../scenarios/branch";
+import { PullDoor } from "./PullDoor";
 import { ScenarioChooser } from "./ScenarioChooser";
 import { veilLive } from "./veilRules";
 
@@ -44,6 +45,14 @@ interface LevelControlProps {
    * gate never reaches it.
    */
   onAsk: () => void;
+  /**
+   * THE PULL ASK (Epic 13 story 2, ADR-0030): open the transient reading of the
+   * records that exist, each at its own site. It is the pull's ONLY trigger and
+   * it is offered in every game — the read set spans the levels — and it sits
+   * outside `.plane` like the control's other actions, so the plane's armed
+   * gate never reaches it.
+   */
+  onAskPull: () => void;
 }
 
 /**
@@ -84,8 +93,14 @@ interface LevelControlProps {
  * the ONE level-uniform veil action: the lasso inside the playing-set selector
  * is a different arm and a different surface.
  *
+ * Epic 13 story 2 adds THE PULL ASK's door (ADR-0030): one quiet button, and
+ * the pull's ONLY trigger. It is offered in EVERY game — the read set spans the
+ * levels — and it opens the transient reading outside `.plane`; the press is
+ * the ask, and nothing here reads or writes.
+ *
  * No badge, no count, no ceremony. Provisional: the wording, order and look
- * (ADR-0003/0016/0018/0021/0023), and the landing zoom each jump arrives at.
+ * (ADR-0003/0016/0018/0021/0023/0030), and the landing zoom each jump arrives
+ * at.
  */
 export function LevelControl({
   level,
@@ -100,6 +115,7 @@ export function LevelControl({
   onRetireScenario,
   onCompare,
   onAsk,
+  onAskPull,
 }: LevelControlProps) {
   return (
     <div
@@ -120,6 +136,12 @@ export function LevelControl({
           {game}
         </button>
       ))}
+      {/* Epic 13 story 2's door: THE PULL ASK — one quiet button, the ONLY
+          trigger, offered in every game (the read set spans the levels). It
+          sits outside `.plane` beside the control's other actions, so the
+          plane's armed gate never reaches it. Provisional: the wording and
+          this being the door. */}
+      <PullDoor onOpen={onAskPull} />
       {/* Epic 9 story 1's veil door (ADR-0023): LEVELS 1–2 ONLY, so it lives
           outside the dynamics block — the draw-box works at concept AND
           dynamics. It sits outside `.plane` beside the control's other

@@ -14,8 +14,8 @@ import { fileURLToPath } from "node:url";
  *
  * The pull must never fire unasked: the reader has no door, no timer, no
  * subscription and no render path, and it is imported by nothing but the
- * pull-ask handler (story 2's; it does not exist yet, so the allowlist is
- * empty and THIS test is what keeps it that way). The module carries no
+ * pull-ask handler ("pull/ask.ts", story 2's one seam — the allowlist holds
+ * exactly that, and THIS test is what keeps it so). The module carries no
  * surface vocabulary (no badge, dot, count or cue) and no verdict vocabulary
  * (no fail, wrong, differ or contradict): the wording reports, and what speaks
  * is the record. The veil seam is asserted on the TYPES: the reader never
@@ -32,6 +32,8 @@ const SRC = join(APP, "src");
 const PULL = join(SRC, "pull");
 const READER = "pull/reader.ts";
 const PROJECTION = "pull/projection.ts";
+/** Story 2's ONE handler: the pull ask, and the reader's only caller. */
+const ASK = "pull/ask.ts";
 
 function source(rel: string): string {
   return readFileSync(join(SRC, rel), "utf8");
@@ -91,18 +93,20 @@ function importersOfReader(): string[] {
 }
 
 describe("the pull module sits outside every ambient path", () => {
-  test("the reader is imported only by the pull-ask handler (which does not exist yet)", () => {
+  test("the reader is imported only by the pull-ask handler", () => {
     // The scan can SEE an import: the reader's own "./projection" resolves.
     expect(imports(READER, "./projection", "pull/projection")).toBe(true);
     expect(imports(READER, "./projection", "pull/reader")).toBe(false);
     expect(imports("App.tsx", "./pull/reader", "pull/reader")).toBe(true);
-    // Story 2 adds the one handler ("pull/ask.ts") to this allowlist — and
-    // nothing else may ever join it.
-    const HANDLER_ALLOWLIST: string[] = [];
+    expect(imports("App.tsx", "./pull/ask", "pull/ask")).toBe(true);
+    // Story 2's ONE handler ("pull/ask.ts") is the allowlist — and nothing
+    // else may ever join it. The handler re-exports the reading's types, so the
+    // surface reads the shape from the handler and never from the reader.
+    const HANDLER_ALLOWLIST = [ASK];
     expect(importersOfReader()).toEqual(HANDLER_ALLOWLIST);
   });
 
-  test("the projection is imported only by the reader (and story 2's handler)", () => {
+  test("the projection is imported only by the reader and the pull-ask handler", () => {
     const importers = sourceFiles().filter(
       (file) =>
         file !== PROJECTION &&
@@ -110,9 +114,9 @@ describe("the pull module sits outside every ambient path", () => {
           imports(file, spec, "pull/projection"),
         ),
     );
-    // Type-only at the reader, and nowhere else: no render path holds the
+    // Type-only at the reader; the handler projects. No render path holds the
     // veil's projection either.
-    expect(importers).toEqual([READER]);
+    expect(new Set(importers)).toEqual(new Set([READER, ASK]));
   });
 
   test("the reader's imports are exactly the records it walks and the projection's type", () => {
@@ -141,18 +145,24 @@ describe("the pull module sits outside every ambient path", () => {
   test("the pull module is not a render path: no components, no effects, no timers", () => {
     const RENDER_TOKENS =
       /\b(useEffect|useState|useMemo|useCallback|useRef|setInterval|setTimeout|addEventListener|subscribe|requestAnimationFrame|MutationObserver|ResizeObserver|createRoot|render|mount|componentWill|componentDid|onClick|dispatchEvent)\b/;
-    for (const file of [READER, PROJECTION]) {
+    for (const file of [READER, PROJECTION, ASK]) {
       expect(bodyOnly(source(file))).not.toMatch(RENDER_TOKENS);
       expect(source(file)).not.toMatch(/react|\.tsx/);
     }
-    // The module is two plain .ts files — there is no component to mount.
-    expect(readdirSync(PULL).sort()).toEqual(["projection.ts", "reader.ts"]);
+    // The pull's three plain .ts files: the reader, the projection and the
+    // ask handler. There is no component here to mount — story 2's surface
+    // lives in canvas/ and reaches the reader only through the handler.
+    expect(readdirSync(PULL).sort()).toEqual([
+      "ask.ts",
+      "projection.ts",
+      "reader.ts",
+    ]);
   });
 
   test("no door, no clock, no ambient input: nothing can fire the pull", () => {
     const AMBIENT =
       /\b(window|document|globalThis|localStorage|sessionStorage|indexedDB|navigator|clipboard|fetch|Event|CustomEvent|EventTarget|Date|Timer)\b/;
-    for (const file of [READER, PROJECTION]) {
+    for (const file of [READER, PROJECTION, ASK]) {
       expect(bodyOnly(source(file))).not.toMatch(AMBIENT);
     }
   });
@@ -228,7 +238,7 @@ describe("the pull writes nothing (source level)", () => {
   test("no writer, no bridge, no storage in the pull module", () => {
     const WRITERS =
       /\b(writeTextFile|writeFile|writeFileSync|appendFile|appendFileSync|removeFile|renameFile|createDirAll|saveMarks|saveAssumptions|saveQuantities|savePointers|saveVeils|savePins|invoke|localStorage|sessionStorage|indexedDB)\b/;
-    for (const file of [READER, PROJECTION]) {
+    for (const file of [READER, PROJECTION, ASK]) {
       const body = bodyOnly(source(file));
       expect(body).not.toMatch(WRITERS);
       expect(body).not.toMatch(/\bworkspacePath\b|\bfs\b/);

@@ -79,6 +79,8 @@ import { OutwardWindow } from "./canvas/OutwardWindow";
 import { PlaneMenu } from "./canvas/PlaneMenu";
 import { PrismWindow } from "./canvas/PrismWindow";
 import { CANNOT_READ_LOG, NOT_LOGGED } from "./canvas/prismRules";
+import { PullPanel } from "./canvas/PullPanel";
+import { askPull, type PullReading } from "./pull/ask";
 import { AskPanel, type AskSessionView } from "./canvas/AskPanel";
 import { MakePanel } from "./canvas/MakePanel";
 import {
@@ -182,6 +184,7 @@ import { createWriteQueue, type WriteQueue } from "./lib/writeQueue";
 import {
   createScenario,
   listScenarios,
+  readScenarioPins,
   retireScenario,
   type Scenario,
 } from "./scenarios/branch";
@@ -501,6 +504,12 @@ function App() {
   const [compareRefusal, setCompareRefusal] = useState<CompareRefusal | null>(
     null,
   );
+  // THE PULL ASK (Epic 13 story 2, ADR-0030): the reading the one press made,
+  // or null while the surface is closed. It is EPHEMERAL app state — a value
+  // read on a press and dropped when the surface closes. There is no dismissal
+  // state, no suppression list and no stored last reading: closing IS the
+  // dismissal, and the next ask reads the records again.
+  const [pullReading, setPullReading] = useState<PullReading | null>(null);
   // The committed model's three variant records as the bridge reads and writes
   // them (the panel's open and re-read refresh this); and the in-order chain
   // of its one-record writes, so two presses can never interleave.
@@ -1839,6 +1848,17 @@ function App() {
   }, []);
 
   /**
+   * Close the pull ask's reading (Epic 13 story 2, ADR-0030 decision 4). The
+   * close IS the dismissal — the same act — so it drops the value and does
+   * nothing else: nothing is written, nothing is suppressed, and the reader
+   * keeps no memory of what was shown. A branch switch and a workspace change
+   * also close it: the pins and the map it read are not the ones now running.
+   */
+  const closePullAsk = useCallback(() => {
+    setPullReading(null);
+  }, []);
+
+  /**
    * Open the selector, pre-filled (ADR-0013): every current word on first
    * entry, the accepted set on a re-run. It is also the level control's
    * "edit the playing set".
@@ -2120,9 +2140,12 @@ function App() {
       // the one that just stopped running, and a reading is re-taken, never
       // carried across.
       closeComparison();
+      // The pull's reading goes with it, for the same reason: the pins it read
+      // belong to the branch that just stopped running.
+      closePullAsk();
       releasePin();
     },
-    [cancelPendingGestures, closeComparison, releasePin],
+    [cancelPendingGestures, closeComparison, closePullAsk, releasePin],
   );
 
   const scenarioDeps = useRef<ScenarioHandoffDeps>({
@@ -2308,6 +2331,61 @@ function App() {
   useEffect(() => {
     closeComparison();
   }, [workspace?.path, closeComparison]);
+
+  /* --------------------------------------------------------------------- *
+   * Epic 13 story 2: the pull ask (ADR-0030).
+   * --------------------------------------------------------------------- */
+
+  /**
+   * THE PULL ASK — the ONE press, and the pull's only trigger (ADR-0030
+   * decision 6). It hands the records the app already holds, plus the running
+   * branch's pins, to the one handler and keeps the reading it answers. The
+   * reading writes NOTHING: the handler has no path, no bridge and no writer,
+   * and nothing here does either.
+   *
+   * The committed model pins nothing, so with no branch there are no pins (the
+   * record's own absence). A branch's pins are read from its folder — the
+   * ordinary read, never a write — and a reading that cannot be made is not
+   * shown rather than invented (the comparison's rule, applied to the ask).
+   *
+   * Asking again is the same act: the state is replaced with a fresh reading of
+   * the records as they stand now, never merged with or compared to the last
+   * one. The surface compares nothing; the record set is the answer.
+   */
+  const openPullAsk = useCallback(() => {
+    const path = workspace?.path;
+    if (path === undefined) return;
+    // ONE handler call, whichever pins the press brings: the records the app
+    // holds, plus this branch's pin lines. Nothing else is passed and nothing
+    // is kept.
+    const show = (pins: readonly Assumption[]) => {
+      setPullReading(
+        askPull({ marks, assumptions, quantities, pointers, veils, pins }),
+      );
+    };
+    if (scenario === null) {
+      show([]);
+      return;
+    }
+    void readScenarioPins(path, scenario)
+      .then((parsed) => show(parsed.pins))
+      .catch(() => undefined);
+  }, [
+    workspace?.path,
+    scenario,
+    marks,
+    assumptions,
+    quantities,
+    pointers,
+    veils,
+  ]);
+
+  // A new workspace (or none) closes the reading: it was read from a map that
+  // is no longer open, and showing it under another map's name would be a lie.
+  // Closing writes nothing and remembers nothing.
+  useEffect(() => {
+    closePullAsk();
+  }, [workspace?.path, closePullAsk]);
 
   /**
    * The bridge's one write: take ONE deliberate edit of the committed records
@@ -3463,6 +3541,7 @@ function App() {
         onRetireScenario={retireBranch}
         onCompare={openComparison}
         onAsk={openGhostPanel}
+        onAskPull={openPullAsk}
       />
 
       {/* the ghosts (Epic 10 story 3): the held proposals as TEXT, in arrival
@@ -3550,6 +3629,20 @@ function App() {
           onReRead={rereadComparison}
           onClose={closeComparison}
         />
+      )}
+
+      {/* THE PULL ASK's reading (Epic 13 story 2, ADR-0030): the transient the
+          one press opens. It shows the selection sentence SAID and then the
+          sites as ONE block of the records' own lines — a veil's name and
+          location, a dangling pin's rule sentence — with no heading, no number,
+          no cursor, no total and no order claim. It writes nothing and keeps
+          nothing: closing it (Esc, its ×, a press away) drops the value, and
+          the next ask reads the records again. It sits outside `.plane` beside
+          the app's other quiet surfaces, so the plane's armed gate never
+          reaches it; a level switch leaves it standing (the reading belongs to
+          no game). */}
+      {pullReading !== null && (
+        <PullPanel reading={pullReading} onClose={closePullAsk} />
       )}
 
       {/* the path gesture's quiet hint (story 3): what the click does and how
