@@ -326,6 +326,25 @@ export const CONTENT_CLASSES = [
   "language-game-actions",
   "language-game-submit",
   "language-game-cancel",
+  // THE GROUND MAP's own layer (story 16.1): the reference row (name, reading,
+  // handle) and its creation bubble. Story 1's references take no press of
+  // their own (the layer is pointer-events: none; drag and rename are story 2),
+  // but they are content for the same belt-and-braces reason as the ink: an
+  // element inside the plane must never fall through to the plane's pan,
+  // creation or a word's press. The bubble is the live surface while it asks.
+  "ground-layer",
+  "ground-reference",
+  "ground-name",
+  "ground-reading",
+  "ground-handle",
+  "ground-bubble",
+  "ground-bubble-name",
+  "ground-bubble-file",
+  "ground-bubble-problem",
+  "ground-bubble-actions",
+  "ground-bubble-pick",
+  "ground-bubble-add",
+  "ground-bubble-cancel",
   // Epic 10 story 3's ghost: the ONLY ghost element inside the plane is the
   // opened preview's faint diamond at the target. It is read-only by
   // construction (pointer-events: none), and it exists only inside the

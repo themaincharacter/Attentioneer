@@ -121,9 +121,11 @@ export function renderedMapContent(
 /**
  * May the double-click bubble offer `word` in this game? Coining a word is
  * concept-map content: a word coined on a map that cannot render it would be a
- * lie, so the bubble at dynamics and ground offers only `draw`. Same shape as
- * `showsMapContent` and the same flip-back (its own flag, one concept
- * narrower).
+ * lie, so the word offer stays at concept. Story 16.1 gives ground its OWN
+ * creation affordance (a reference: a name and a text file, seen in
+ * `canvas/GroundBubble.tsx`), which is not this rule's business; dynamics
+ * still gets only the pen. Same shape as `showsMapContent` and the same
+ * flip-back (its own flag, one concept narrower).
  */
 export function wordCreationOffered(
   level: Level,
@@ -143,17 +145,27 @@ export function wordCreationOffered(
  * setting `SHELF_HIDDEN` back to false restores it word for word — delete the
  * clause and this note in the deprecated sweep.
  *
- * Off concept the map is still blank paper, so the creation clause names the pen
- * (the bubble offers draw) exactly as the separate-maps review settled.
+ * Off concept the map is still blank paper, so the creation clause names the
+ * pen at dynamics (the bubble offers draw) exactly as the separate-maps review
+ * settled. STORY 16.1 gives ground its own affordance — a reference (a name and
+ * a text file) — so the clause names that noun there; the word offer stays
+ * concept-only and the concept bubble's grammar is untouched.
  * Provisional: the wording (ADR-0003's rendering seam).
  */
 export function planeHint(
   level: Level,
   shelfHidden: boolean = SHELF_HIDDEN,
 ): string {
+  // Story 16.1 gives the ground map its OWN creation affordance (a reference:
+  // a name plus a text file, canvas/GroundBubble.tsx), so the hint names that
+  // noun there rather than the pen. Dynamics still has only the pen while it
+  // waits for its own modelling surfaces (PROVISIONAL, the separate-maps
+  // review's wording).
   const creation = wordCreationOffered(level)
     ? "double-click: word"
-    : "double-click: draw";
+    : level === "ground"
+      ? "double-click: reference"
+      : "double-click: draw";
   const base = "drag to pan · scroll to zoom · " + creation;
   if (!showsMapContent(level)) return base;
   return shelfHidden ? base : base + " · drag past the fold to set aside";

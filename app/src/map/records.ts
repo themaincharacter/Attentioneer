@@ -42,6 +42,32 @@ export const RECORD_FILE = {
   quantities: "quantities.jsonl",
 } as const;
 
+/**
+ * The GROUND map's OWN record files (story 16.1). They are deliberately NOT in
+ * `RECORD_FILE`: that table is the three variant-owned dynamics records a
+ * branch copies, while ground is its own map with its own truth and no
+ * branches. Both live in `map/` always and are never copied anywhere, so the
+ * workspace's `map/` folder alone rebuilds the ground view.
+ *
+ * PROVISIONAL (the story's record shapes, before an ADR): a line-oriented text
+ * file each, deduped by the slug spine. Story 1 writes one file per family; a
+ * later story may make the reading's cap/staleness honest, not these names.
+ */
+export const GROUND_RECORD_FILE = {
+  /** One line per grounded reference: `on | name | x | y`. */
+  ground: "ground.txt",
+  /** One line per reading, keyed to the same slug as its reference. */
+  readings: "readings.txt",
+} as const;
+
+/**
+ * The ground readings' text folder, beside `map/readings.txt`: one
+ * `<slug>.md` per reading, holding the file's opening lines as read. The
+ * name is provisional with the record shape; it is the one folder the ground
+ * map writes besides its two files.
+ */
+export const GROUND_READINGS_DIR = "readings";
+
 /** The committed model's records folder. */
 export function mapDir(workspacePath: string): string {
   return `${workspacePath}/${MAP_DIR}`;

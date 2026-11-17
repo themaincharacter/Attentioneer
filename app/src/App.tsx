@@ -59,6 +59,9 @@ import { GhostPanel } from "./canvas/GhostPanel";
 import { GhostPreview } from "./canvas/GhostPreview";
 import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
+import { GroundLayer } from "./canvas/GroundLayer";
+import { GroundBubble } from "./canvas/GroundBubble";
+import { useGround } from "./canvas/useGround";
 import { SketchToolbar } from "./canvas/SketchToolbar";
 import { LanguageGameBar } from "./canvas/LanguageGameBar";
 import { LanguageGameFill } from "./canvas/LanguageGameFill";
@@ -529,6 +532,12 @@ function App() {
     togglePointerMark,
   } = map;
 
+  // The ground map's OWN records (story 16.1): loaded from `map/ground.txt`,
+  // `map/readings.txt` and `map/readings/<slug>.md` whenever the workspace
+  // opens, and written through its own per-file queue. The concept map's
+  // reload never touches it (the maps are separate, ADR-0032).
+  const ground = useGround(workspace?.path ?? "");
+
   // The step's run (Epic 8 story 3, ADR-0022): an EPHEMERAL read of the ACTIVE
   // model, held in memory and never written. The key is the model's identity —
   // the records folder (a branch switch is a new model, even between identical
@@ -565,6 +574,13 @@ function App() {
   const [growAt, setGrowAt] = useState<Point | null>(null);
   // The plane point where the double-click creation menu is open, if any.
   const [menuAt, setMenuAt] = useState<Point | null>(null);
+  // The ground map's creation bubble, at the double-clicked point (story
+  // 16.1). It is its own affordance, not the concept menu: a name plus a text
+  // file, and nothing from the word/lack grammar.
+  const [groundAt, setGroundAt] = useState<Point | null>(null);
+  // Another workspace starts with no ground draft (its map folder is another
+  // map's truth; the bubble must never write into a map it was not opened on).
+  useEffect(() => setGroundAt(null), [workspace?.path]);
   // The playing-set selector (Epic 4 story 1, ADR-0013): its draft selection
   // and the draw tool's armed state. The gate arms while it is open.
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -1639,6 +1655,9 @@ function App() {
   /** Switching games cancels any pending gesture (ADR-0016). */
   const cancelPendingGestures = useCallback(() => {
     setMenuAt(null);
+    // The ground map's creation bubble is a transient like the concept menu:
+    // a level switch, a branch switch or a deliberate arm elsewhere closes it.
+    setGroundAt(null);
     setGrowAt(null);
     setSelectorOpen(false);
     setLassoArmed(false);
@@ -3334,12 +3353,40 @@ function App() {
     [beginConnect, level, model],
   );
 
-  /** A double-click on empty plane opens the word/lack menu at that point. */
-  const handlePlaneDoubleClick = useCallback((point: Point) => {
-    setMenuAt(point);
-  }, []);
+  /**
+   * A double-click on empty plane opens that map's creation affordance at the
+   * point. Concept (and, while it waits for its own modelling surfaces,
+   * dynamics) opens the ring menu; GROUND opens its own reference bubble
+   * (story 16.1) — a name and a text file, never a concept word. The two
+   * affordances are separate on purpose: `wordCreationOffered` stays
+   * concept-only and the ground noun is its own.
+   */
+  const handlePlaneDoubleClick = useCallback(
+    (point: Point) => {
+      if (level === "ground") {
+        setMenuAt(null);
+        setGroundAt(point);
+        return;
+      }
+      setGroundAt(null);
+      setMenuAt(point);
+    },
+    [level],
+  );
 
   const closePlaneMenu = useCallback(() => setMenuAt(null), []);
+  const closeGroundBubble = useCallback(() => setGroundAt(null), []);
+
+  /** The ground bubble's one write: the app's loaded ground state owns it. */
+  const addGroundAt = useCallback(
+    async (name: string, from: string) => {
+      if (groundAt === null) {
+        return { ok: false, message: "nothing was written." };
+      }
+      return ground.create(name, groundAt.x, groundAt.y, from);
+    },
+    [ground, groundAt],
+  );
 
   /** The menu's word choice: close it and open the in-place coin field. */
   const chooseWord = useCallback(() => {
@@ -3783,6 +3830,21 @@ function App() {
             the person. */}
         <SketchLayer strokes={sketches} />
 
+        {/* THE GROUND MAP's own layer (story 16.1): its references are drawn
+            at their points, with the reading's opening lines and the file's
+            name — never the concept map's words, distances, marks, veils,
+            ghosts or quantities. The separate-maps rule stays exactly as it
+            was; this is the ground map's own content, mounted only here. The
+            layer is in FILE ORDER and offers no action (story 1 draws only);
+            its rows are content, so a press on one never creates over it. */}
+        {level === "ground" && (
+          <GroundLayer
+            references={ground.references}
+            readings={ground.readings}
+            texts={ground.texts}
+          />
+        )}
+
         {/* wires
 
             DEPRECATED (hidden 2026-11-16 per user review — separate maps): the
@@ -4066,6 +4128,20 @@ function App() {
             onAssumption={chooseAssumption}
             onDraw={chooseDraw}
             onClose={closePlaneMenu}
+          />
+        )}
+
+        {/* THE GROUND MAP's creation bubble (story 16.1): double-click empty
+            paper, type a name, pick a text file. It is a DIFFERENT affordance
+            with a different noun from the concept ring menu above (which
+            ground never opens); `wordCreationOffered` stays concept-only. A
+            refused file shows one quiet sentence and creates nothing. */}
+        {level === "ground" && groundAt !== null && (
+          <GroundBubble
+            x={groundAt.x}
+            y={groundAt.y}
+            onAdd={addGroundAt}
+            onClose={closeGroundBubble}
           />
         )}
 
@@ -4488,6 +4564,8 @@ function App() {
         malformedPointers={malformedPointers}
         duplicatePointers={duplicatePointers}
         orphanPointers={orphanPointers}
+        malformedGround={ground.malformedGround}
+        malformedReadings={ground.malformedReadings}
         malformedQuantities={malformedQuantities}
         duplicateQuantities={duplicateQuantities}
         orphanQuantities={orphanQuantities}
@@ -4560,6 +4638,8 @@ function MarkNotices({
   malformedPointers,
   duplicatePointers,
   orphanPointers,
+  malformedGround,
+  malformedReadings,
   malformedQuantities,
   duplicateQuantities,
   orphanQuantities,
@@ -4623,6 +4703,15 @@ function MarkNotices({
   malformedPointers: readonly string[];
   duplicatePointers: readonly Pointer[];
   orphanPointers: readonly Pointer[];
+  /**
+   * The ground map's own records (story 16.1): unreadable lines in
+   * `map/ground.txt` and `map/readings.txt`, preserved and surfaced here.
+   * They ride the ground group directly rather than joining `NoticeFamily`
+   * (the quantities' precedent): that table names map families, and ground is
+   * a separate map whose notices belong only to its own group.
+   */
+  malformedGround: readonly string[];
+  malformedReadings: readonly string[];
   /** Quantities (Epic 8 story 1): unreadable lines, duplicates, lost/out-of-play words. */
   malformedQuantities: readonly string[];
   duplicateQuantities: readonly Quantity[];
@@ -4671,6 +4760,11 @@ function MarkNotices({
       duplicateQuantities.length > 0 ||
       orphanQuantities.length > 0 ||
       outOfPlayQuantities.length > 0);
+  // The ground map's own unreadable lines (story 16.1), surfaced under its
+  // group only: record hygiene, never a claim that the map draws them.
+  const hasGroundLines =
+    level === "ground" &&
+    (malformedGround.length > 0 || malformedReadings.length > 0);
   // The running game's groups, with the empty families dropped; a group with
   // nothing left is dropped too, so no bare heading ever renders (the dynamics
   // group survives when it is only carrying quantity lines).
@@ -4682,7 +4776,8 @@ function MarkNotices({
     .filter(
       (group) =>
         group.families.length > 0 ||
-        (group.game === "dynamics" && hasQuantities),
+        (group.game === "dynamics" && hasQuantities) ||
+        (group.game === "ground" && hasGroundLines),
     );
   if (groups.length === 0) return null;
 
@@ -4883,6 +4978,26 @@ function MarkNotices({
                 <div className="mark-notice" key={`duplicate-quantity-${index}`}>
                   a duplicate quantity line on {describeQuantityTarget(quantity, nameOf)} —
                   kept in {recordFile("quantities.jsonl")}
+                </div>
+              ))}
+            </>
+          )}
+          {group.game === "ground" && hasGroundLines && (
+            <>
+              {malformedGround.map((line, index) => (
+                <div
+                  className="mark-notice"
+                  key={`malformed-ground-${index}`}
+                >
+                  unreadable line in map/ground.txt: {line}
+                </div>
+              ))}
+              {malformedReadings.map((line, index) => (
+                <div
+                  className="mark-notice"
+                  key={`malformed-readings-${index}`}
+                >
+                  unreadable line in map/readings.txt: {line}
                 </div>
               ))}
             </>

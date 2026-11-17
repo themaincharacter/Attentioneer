@@ -5164,3 +5164,163 @@ body {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+
+/* ------------------------------------------------------------------------- *
+ * Story 16.1 — the GROUND map's own layer and its creation bubble.
+ *
+ * The separate-maps rule gave this map its own paper; this is its own content:
+ * the person's coined name, the pointed-at file's opening lines beneath it in a
+ * quiet body size, and the file's NAME as the handle (never the full path in
+ * the plane). One visual family with the concept map's words — same paper,
+ * same type scale — but its own component, so the ground map grows without
+ * borrowing the concept set (ADR-0032). Nothing counts or nudges.
+ * ------------------------------------------------------------------------- */
+
+/* The layer is world space and offers no action: story 1 draws references and
+   nothing else (drag and rename are story 2). The reference rows are content to
+   the gate, so a press on one is never read as empty paper. */
+.ground-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ground-reference {
+  position: absolute;
+  /* The reference is content, never empty paper: a press on it must not read
+     as a plane creation (the gate's content list carries its classes). */
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 340px;
+  user-select: none;
+  animation: fade-in 180ms ease-out;
+}
+
+/* The person's words: the concept map's word scale, same ink and weight. */
+.ground-name {
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: #1e2126;
+  white-space: nowrap;
+}
+
+/* The file's opening lines, read at add time and kept in the map folder. A
+   quiet body size, line breaks verbatim: this is what the file said, not a
+   summary of it. */
+.ground-reading {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #6f6a5f;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The handle's display: the file NAME only. The full path stays a record and
+   an authored fact, not a map label. */
+.ground-handle {
+  font-size: 11.5px;
+  color: #a09a8c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The creation bubble: world-anchored at the double-clicked point and
+   counter-scaled by the component (the naming popup's idiom). Provisional:
+   the card's look. */
+.ground-bubble {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 190px;
+  max-width: 270px;
+  padding: 7px 9px 8px;
+  background: rgba(255, 253, 248, 0.95);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 7px;
+  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.1);
+  animation: fade-in 140ms ease-out;
+}
+
+.ground-bubble-title {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.ground-bubble-name {
+  font: inherit;
+  font-size: 12px;
+  color: #2c2a26;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.ground-bubble-name::placeholder {
+  color: #c4beb1;
+}
+
+.ground-bubble-file {
+  font-size: 11px;
+  color: #8a8477;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 1px;
+}
+
+.ground-bubble-problem {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #a9522f;
+}
+
+.ground-bubble-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.ground-bubble-pick,
+.ground-bubble-add,
+.ground-bubble-cancel {
+  font: inherit;
+  font-size: 11px;
+  color: #6b675e;
+  background: transparent;
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.ground-bubble-pick:hover,
+.ground-bubble-add:hover,
+.ground-bubble-cancel:hover {
+  color: #1e2126;
+  border-color: #cfc8ba;
+}
+
+.ground-bubble-pick:disabled,
+.ground-bubble-add:disabled,
+.ground-bubble-cancel:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
