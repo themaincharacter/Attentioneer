@@ -6,6 +6,7 @@ mod head;
 mod marker;
 mod meta;
 mod paths;
+mod sidecar;
 
 /// Thin byte-level fs bridge. What machine files say and how they serialize
 /// is owned by the frontend's `serialize.ts` (ADR-0004); this side only
@@ -160,9 +161,14 @@ fn config_path() -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // ADR-0034 decision 3: the host owns the sidecar's lifecycle. The
+        // state holds the child and its pipe; `Drop` kills it, and the exit
+        // hook below kills it earlier so the process list is clean the moment
+        // the window closes.
+        .manage(sidecar::SidecarState::default())
         .invoke_handler(tauri::generate_handler![
             read_text_file,
             write_text_file,
@@ -177,8 +183,20 @@ pub fn run() {
             create_marker_exclusive,
             file_meta,
             read_file_bytes,
-            config_path
+            config_path,
+            sidecar::sidecar_start,
+            sidecar::sidecar_send,
+            sidecar::sidecar_status
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+    app.run(|app_handle, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+        ) {
+            use tauri::Manager;
+            app_handle.state::<sidecar::SidecarState>().kill();
+        }
+    });
 }

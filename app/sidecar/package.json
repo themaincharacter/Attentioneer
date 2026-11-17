@@ -1,0 +1,10 @@
+{
+  "name": "attentioneer-sidecar",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The turn's sidecar (Epic 15 story 1, ADR-0034): one provider POST over stdio. No dependency beyond Bun itself.",
+  "scripts": {
+    "start": "bun main.ts"
+  }
+}

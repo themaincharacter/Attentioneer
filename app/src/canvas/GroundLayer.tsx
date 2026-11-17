@@ -27,6 +27,7 @@ import {
 } from "./groundDrag";
 import { isGestureArmed, type GestureMode } from "./gates";
 import type { Point } from "./geometry";
+import { AskSidecarPanel } from "./AskSidecarPanel";
 import { GroundConceptPanel, GroundNote } from "./GroundNote";
 import {
   applyMention,
@@ -38,6 +39,7 @@ import {
   type MentionChoice,
 } from "./MentionPicker";
 import type { GroundAddResult } from "./useGround";
+import type { TurnPort } from "../turn/turn";
 
 /**
  * The ground map's own layer (story 16.1; story 16.2 made the row live; story
@@ -205,6 +207,13 @@ interface GroundLayerProps {
    */
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
   /**
+   * THE ASK (Epic 15 story 1): the app's turn port, handed to the expanded
+   * card's `ask…` verb. Optional so a render test needs no sidecar; the app
+   * passes the real one. The turn is NOT a move — nothing on this map is
+   * written by asking, and the panel keeps its own view state.
+   */
+  onAsk?: TurnPort;
+  /**
    * The workspace root, for the ONE cross-map read (story 16.7): the concept
    * map's word index, read-only, so a word mention can be drawn live or
    * dangling and the picker can offer the vocabulary. Optional so a render
@@ -235,6 +244,7 @@ export function GroundLayer({
   onPull,
   onDismissPull,
   onLink,
+  onAsk,
   workspacePath = "",
   interactionMode = "idle",
   zoom = 1,
@@ -349,6 +359,7 @@ export function GroundLayer({
           onPull={onPull}
           onDismissPull={onDismissPull}
           onLink={onLink}
+          onAsk={onAsk}
         />
       ))}
       {refusal !== null && (
@@ -432,6 +443,7 @@ function GroundCard({
   onPull,
   onDismissPull,
   onLink,
+  onAsk,
 }: {
   reference: GroundReference;
   reading: Reading | null;
@@ -464,6 +476,8 @@ function GroundCard({
   onPull?: (on: string) => Promise<GroundAddResult>;
   onDismissPull?: (on: string) => void;
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
+  /** The app's turn port for the expanded card's `ask…` verb (story 15.1). */
+  onAsk?: TurnPort;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -492,6 +506,10 @@ function GroundCard({
   // locally (view state, never a record), exactly like a chip whose target was
   // gone before the workspace opened.
   const [gone, setGone] = useState<readonly string[]>([]);
+  // STORY 15.1 — the ask panel is VIEW state too: opening it writes nothing,
+  // closing it forgets the answer, and the turn itself never touches the map.
+  // It exists only on the OPEN card.
+  const [asking, setAsking] = useState(false);
   // STORY 16.6 — the note's edit is VIEW state, like open/closed: nothing is
   // written until a save, and Esc leaves the stored note exactly as it was.
   // The refs mirror the draft so the press-away and Esc listeners (registered
@@ -512,6 +530,7 @@ function GroundCard({
     if (open) return;
     setPicker(null);
     setPanel(null);
+    setAsking(false);
   }, [open]);
 
   // Raw listener: d3-zoom stops mousedown at the plane (stopImmediatePropagation),
@@ -570,6 +589,9 @@ function GroundCard({
       // starts a drag (story 16.6).
       if ((e.target as HTMLElement).closest("button")) return;
       if ((e.target as HTMLElement).closest("textarea, input")) return;
+      // Story 15.1: the ask panel is a surface, not the card's body — a press
+      // on its labels, its head or its answer must not start a card drag.
+      if ((e.target as HTMLElement).closest(".ground-ask-panel")) return;
       // While a gesture is armed every plane press stands still — the card's
       // drag included (ADR-0016's gate).
       if (isGestureArmed(interactionMode)) return;
@@ -635,8 +657,12 @@ function GroundCard({
       setStep("idle");
       // Story 16.7: the picker and the concept panel are view state of an open
       // card, so a press away closes them with it. Nothing is written by that.
+      // Story 15.1: the ask panel is the same kind of view — closing the card
+      // forgets the answer, and no turn is left behind (its stop is the panel's
+      // timeout; nothing here writes).
       setPicker(null);
       setPanel(null);
+      setAsking(false);
       onClose();
     }
     function onKey(e: KeyboardEvent) {
@@ -653,6 +679,12 @@ function GroundCard({
         setPanel(null);
         return;
       }
+      // Story 15.1: Esc closes the ASK panel first, leaving the card (and its
+      // reading) where the person was looking.
+      if (asking) {
+        setAsking(false);
+        return;
+      }
       if (step === "asking") {
         setStep("idle");
         return;
@@ -665,7 +697,7 @@ function GroundCard({
       document.removeEventListener("mousedown", onPressAway, true);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open, step, panel]);
+  }, [open, step, panel, asking]);
 
   // The expanded body scrolls the STORED reading; the plane's wheel zoom must
   // not steal the scroll. Passive: this only stops the plane, never the page.
@@ -1001,6 +1033,20 @@ function GroundCard({
               </button>
             )
           )}
+          {/* STORY 15.1 — the ask verb, on the EXPANDED card only: the app's
+              first turn of its own. The anchored card's NAME is shown by the
+              panel; nothing else from the map is sent (story 3 adds the
+              packet). A turn is not a move: no record, no history, no mirror. */}
+          {open && onAsk !== undefined && (
+            <button
+              type="button"
+              className="ground-ask-open"
+              disabled={busy}
+              onClick={() => setAsking(true)}
+            >
+              ask…
+            </button>
+          )}
           {/* STORY 16.8 — the ONE pull verb, on the EXPANDED card only. It is
               the button's press and nothing else: no read on open, no watcher,
               no background read. It reprocesses an existing pull harmlessly
@@ -1062,6 +1108,17 @@ function GroundCard({
           name={panel.name}
           memory={panel.memory}
           onClose={() => setPanel(null)}
+        />
+      )}
+      {/* STORY 15.1 — the ask panel, beside the card it is anchored on. It
+          shows the card's name and NOTHING else from the map; the request is
+          the question plus a fixed instruction. View state only: closing it
+          leaves the card exactly as it was. */}
+      {open && asking && onAsk !== undefined && (
+        <AskSidecarPanel
+          name={reference.name}
+          turn={onAsk}
+          onClose={() => setAsking(false)}
         />
       )}
     </div>

@@ -60,6 +60,7 @@ import { GhostPreview } from "./canvas/GhostPreview";
 import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
 import { GroundLayer } from "./canvas/GroundLayer";
+import { createTurnPort } from "./turn/sidecar";
 import { GroundWires } from "./canvas/GroundWires";
 import { GroundBubble } from "./canvas/GroundBubble";
 import { useGround } from "./canvas/useGround";
@@ -413,6 +414,15 @@ import type { Workspace } from "./workspace/lifecycle";
  * SURFACES (`MarkNotices` and every scan) are deliberately not gated: an
  * unreadable record is surfaced whatever the plane shows.
  */
+/**
+ * THE TURN PORT (Epic 15 story 1): one for the window. It holds no process —
+ * `turn/sidecar.ts` asks Rust for a child on first use, and Rust owns that
+ * child's life (ADR-0034) — so a module-level value is safe here and lets the
+ * panel be a plain prop consumer. Nothing is spawned until the person presses
+ * send on a card.
+ */
+const turnPort = createTurnPort();
+
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   // The map on screen. DEPRECATED (hidden 2026-11-16 per user review — separate
@@ -3883,6 +3893,7 @@ function App() {
             onPull={ground.pull}
             onDismissPull={ground.dismissPull}
             onLink={ground.link}
+            onAsk={turnPort}
             workspacePath={workspace.path}
             interactionMode={gestureMode}
             zoom={camera.zoom}
