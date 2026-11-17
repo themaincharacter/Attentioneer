@@ -6,6 +6,7 @@ import {
   type TurnMessage,
   type TurnProvider,
 } from "./protocol";
+import { followUpMessages, type AskPacket } from "./packet";
 
 /**
  * ONE TURN (Epic 15 story 1): a provider, a question, one answer.
@@ -27,8 +28,19 @@ import {
  * story 3 adds the packet, and until then the panel's question is the whole of
  * what leaves (besides the provider's own base URL and model).
  *
- * PROVISIONAL: the timeout (60 s), the instruction's wording and the refusal
- * sentences. ADR-0034 settles the transport, not these.
+ * ONE RETRIEVAL (Epic 15 story 3). The app-sent Ask's packet is assembled by
+ * the pure assembler (turn/packet.ts) and sent as its ONE message. If that
+ * answer contains a single line of exactly the form "READ: <name>", and the
+ * name is a block the packet already carried, the app performs exactly ONE
+ * follow-up turn with that block's fuller text. One, because a chain of reads
+ * would be the app widening its own view without the person: the packet is a
+ * bounded view, and this single request is the amendment's whole exception. A
+ * name that is not a block, a read that refuses, or more than one READ line
+ * gets NO follow-up — the first answer stands, and the person is told so in
+ * one sentence (never silently).
+ *
+ * PROVISIONAL: the timeout (60 s), the instruction's wording, the READ syntax
+ * and the follow-up's sentence. ADR-0034 settles the transport, not these.
  */
 
 /** How long the panel waits for the answer before it stops the turn. */
@@ -222,6 +234,91 @@ export async function askTurnMessages(
   return await result;
 }
 
+/** The exact prefix a retrieval line must carry (PROVISIONAL, one space). */
+export const READ_PREFIX = "READ: ";
+
+/**
+ * The ONE name a first answer asks for, or null. Only a line of exactly
+ * "READ: <name>" counts — leading and trailing whitespace around the line is
+ * tolerated, but two such lines are NOT one request (the packet allows one),
+ * so the answer gets no follow-up rather than a guess at which it meant.
+ */
+export function readNameIn(answer: string): string | null {
+  const pattern = new RegExp("^" + READ_PREFIX + "(\\S.*)$");
+  let found: string | null = null;
+  for (const raw of answer.split(/\r?\n/)) {
+    const match = pattern.exec(raw.trim());
+    if (match === null) continue;
+    // Two requests are not one: the packet allows ONE named retrieval, so an
+    // answer that names two gets none rather than a coin toss.
+    if (found !== null) return null;
+    found = match[1].trim();
+  }
+  return found;
+}
+
+/** What one packet turn answered, and every byte that left getting there. */
+export interface PacketTurnAnswer {
+  /** The final result: the first answer, or the follow-up's. */
+  result: TurnResult;
+  /** Every message that left, in order (the readback's own bytes). */
+  messages: TurnMessage[];
+  /** The block the one follow-up fetched, or null when none happened. */
+  read: string | null;
+  /** A name asked for that this view did not carry (the first answer stands). */
+  missed: string | null;
+}
+
+/**
+ * Ask ONE packet turn, then at most ONE follow-up for the single block the
+ * model named. The packet's messages are sent verbatim; a READ of a block the
+ * packet carried is fetched once (the injected reader) and appended as ONE
+ * more user message; anything else settles the first answer as the answer.
+ * There is no second READ, no second fetch and no retry anywhere here.
+ */
+export async function askTurnPacket(
+  transport: TurnTransport,
+  provider: TurnProvider,
+  packet: AskPacket,
+  fetchBlock: (name: string) => Promise<string | null>,
+  options: TurnOptions = {},
+): Promise<PacketTurnAnswer> {
+  const first = await askTurnMessages(
+    transport,
+    provider,
+    packet.messages,
+    options,
+  );
+  const messages: TurnMessage[] = [...packet.messages];
+  if (first.kind !== "answer") {
+    return { result: first, messages, read: null, missed: null };
+  }
+  const name = readNameIn(first.text);
+  if (name === null) {
+    return { result: first, messages, read: null, missed: null };
+  }
+  if (!packet.retrievable.includes(name)) {
+    return { result: first, messages, read: null, missed: name };
+  }
+  let text: string | null;
+  try {
+    text = await fetchBlock(name);
+  } catch {
+    text = null;
+  }
+  if (text === null || text === "") {
+    return { result: first, messages, read: null, missed: name };
+  }
+  const followUp = followUpMessages(packet.messages, name, text);
+  const second = await askTurnMessages(
+    transport,
+    provider,
+    followUp,
+    options,
+  );
+  return { result: second, messages: followUp, read: name, missed: null };
+}
+
 /** Ask the sidecar to stop one turn; its `cancelled` line settles `askTurn`. */
 export async function stopTurn(
   transport: TurnTransport,
@@ -244,8 +341,12 @@ export type TurnStart =
  */
 export interface TurnPort {
   ask: (provider: TurnProvider, question: string) => Promise<TurnResult>;
-  /** The same turn, with the packet as the ONE user message, verbatim. */
-  sendPacket: (provider: TurnProvider, packet: string) => Promise<TurnResult>;
+  /** The packet turn: its ONE message, then at most one READ follow-up. */
+  sendPacket: (
+    provider: TurnProvider,
+    packet: AskPacket,
+    fetchBlock: (name: string) => Promise<string | null>,
+  ) => Promise<PacketTurnAnswer>;
   /** Start the child without asking (the app-sent Ask's egress check). */
   start: () => Promise<TurnStart>;
   stop: () => Promise<void>;

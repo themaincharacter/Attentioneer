@@ -1,19 +1,23 @@
 import { hasProvider, providerFrom, type StoredProvider } from "./provider";
 import type { TurnPort } from "./turn";
+import type { AskPacket } from "./packet";
+import type { TurnMessage } from "./protocol";
 
 /**
  * THE APP-SENT ASK'S EGRESS (Epic 15 story 2) — the send the app performs
  * itself, using the SAME envelope as story 1's turn.
  *
- * WHY ONE PROTOCOL: the Ask's packet is the person's authored question plus the
- * CITATIONS of the reaches they included. The clipboard Ask carries those bytes
- * by hand; this route carries exactly those bytes as ONE user message. The
- * packet is passed VERBATIM (see `buildPacketMessages`); nothing here adds a
- * preview, a pointer body or a map file — the app never pre-reads a target to
- * compose a question (ADR-0029 rule 3).
+ * WHY ONE PROTOCOL: the Ask's packet is the bounded view the app assembled
+ * around the anchored card (turn/packet.ts). The clipboard Ask carries the old
+ * citations-only bytes by hand; this route carries the packet's ONE message
+ * VERBATIM, and at most ONE follow-up for a block the model named with the
+ * packet's READ form. Nothing here re-reads, re-composes or trims: the bytes
+ * the person saw in the readback are the bytes that leave.
  *
  * THREE OUTCOMES, AND WHY THEY ARE ALL HONEST:
- *   - answered      — one answer came back and the Ask can log its ONE PRISM;
+ *   - answered      — one answer came back (the packet's, or the follow-up's
+ *                     when the model named one block) and the Ask can log its
+ *                     ONE PRISM;
  *   - unavailable   — nothing can leave (no provider, or the sidecar cannot
  *                     start). This is the STATED FALLBACK, not an Ask failure:
  *                     no record is written and the person may use the clipboard;
@@ -42,9 +46,23 @@ export const SIDECAR_UNAVAILABLE_SENTENCE =
 
 /** What the app-sent send reports: an answer, the fallback, or a failed turn. */
 export type PacketSend =
-  | { kind: "answered"; text: string }
+  | {
+      kind: "answered";
+      text: string;
+      /** Every message that left, verbatim (the readback, follow-up included). */
+      messages: readonly TurnMessage[];
+      /** The block the one follow-up fetched, or null. */
+      read: string | null;
+      /** A name the model asked for that the packet did not carry, or null. */
+      missed: string | null;
+    }
   | { kind: "unavailable"; sentence: string }
-  | { kind: "failed"; sentence: string };
+  | {
+      kind: "failed";
+      sentence: string;
+      /** The messages that left before the failure (the readback's bytes). */
+      messages: readonly TurnMessage[];
+    };
 
 /** The bridges the egress needs, injected (the app passes the real ones). */
 export interface PacketSendDeps {
@@ -54,6 +72,8 @@ export interface PacketSendDeps {
   apiKey: () => string;
   /** The turn port: start, send the packet, stop. */
   turn: TurnPort;
+  /** Read ONE sent block's fuller text (the pull reader); null for none. */
+  fetchBlock: (name: string) => Promise<string | null>;
 }
 
 /**
@@ -64,7 +84,7 @@ export interface PacketSendDeps {
  * written here.
  */
 export async function sendPacketApp(
-  packet: string,
+  packet: AskPacket,
   deps: PacketSendDeps,
 ): Promise<PacketSend> {
   let stored: StoredProvider;
@@ -82,12 +102,23 @@ export async function sendPacketApp(
     return { kind: "unavailable", sentence: SIDECAR_UNAVAILABLE_SENTENCE };
   }
 
-  const result = await deps.turn.sendPacket(
+  const turned = await deps.turn.sendPacket(
     providerFrom(stored, deps.apiKey()),
     packet,
+    deps.fetchBlock,
   );
-  if (result.kind === "answer") {
-    return { kind: "answered", text: result.text };
+  if (turned.result.kind === "answer") {
+    return {
+      kind: "answered",
+      text: turned.result.text,
+      messages: turned.messages,
+      read: turned.read,
+      missed: turned.missed,
+    };
   }
-  return { kind: "failed", sentence: result.sentence };
+  return {
+    kind: "failed",
+    sentence: turned.result.sentence,
+    messages: turned.messages,
+  };
 }

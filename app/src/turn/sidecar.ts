@@ -8,15 +8,17 @@ import {
 } from "./protocol";
 import {
   askTurnMessages,
-  buildPacketMessages,
+  askTurnPacket,
   buildTurnMessages,
   errorSentence,
   stopTurn,
+  type PacketTurnAnswer,
   type TurnPort,
   type TurnResult,
   type TurnStart,
   type TurnTransport,
 } from "./turn";
+import type { AskPacket } from "./packet";
 
 /**
  * THE WINDOW'S SIDE OF THE SIDECAR (Epic 15 story 1; ADR-0034).
@@ -166,10 +168,44 @@ export function createTurnPort(
     return result;
   }
 
+  /**
+   * The app-sent Ask's packet turn (Epic 15 story 3): the child is started
+   * FIRST, so "nothing left" is known rather than guessed; then the packet's
+   * ONE message crosses the pipe and at most one READ follow-up follows it.
+   */
+  async function runPacket(
+    provider: TurnProvider,
+    packet: AskPacket,
+    fetchBlock: (name: string) => Promise<string | null>,
+  ): Promise<PacketTurnAnswer> {
+    const started = await begin();
+    if (started.kind === "refused") {
+      return {
+        result: { kind: "error", sentence: started.sentence },
+        messages: [...packet.messages],
+        read: null,
+        missed: null,
+      };
+    }
+    const answer = await askTurnPacket(
+      transport,
+      provider,
+      packet,
+      fetchBlock,
+      {
+        onStart: (id) => {
+          active = id;
+        },
+      },
+    );
+    active = null;
+    return answer;
+  }
+
   return {
     start: begin,
     ask: (provider, question) => run(provider, buildTurnMessages(question)),
-    sendPacket: (provider, packet) => run(provider, buildPacketMessages(packet)),
+    sendPacket: runPacket,
     async stop() {
       if (active === null) return;
       const id = active;

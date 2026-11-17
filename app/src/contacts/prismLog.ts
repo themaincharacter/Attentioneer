@@ -34,6 +34,7 @@ import {
   type EgressContactRequest,
   type EgressContactResult,
 } from "./egress";
+import type { AskPacket } from "../turn/packet";
 import {
   abandonAsk,
   intakeAskResponse,
@@ -239,7 +240,7 @@ export function runEgressMove(
  */
 export function askContactDeps(
   workspacePath: string,
-  sendApp?: (packet: string) => Promise<AskAppSend>,
+  sendApp?: (packet: AskPacket) => Promise<AskAppSend>,
 ): AskContactDeps {
   const prisms = prismsPath(workspacePath);
   return {
@@ -266,7 +267,7 @@ export function askContactDeps(
  */
 export async function sendAskOut(
   request: AskRequest,
-  sendApp?: (packet: string) => Promise<AskAppSend>,
+  sendApp?: (packet: AskPacket) => Promise<AskAppSend>,
 ): Promise<AskSendResult> {
   const sent = await sendAsk(
     request,

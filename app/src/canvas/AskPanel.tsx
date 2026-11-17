@@ -6,9 +6,16 @@ import type {
   InFlightAsk,
 } from "../contacts/ask";
 import { declareAsk } from "../contacts/ask";
+import { assembleAskPacket } from "../turn/packet";
+import type { AskContext } from "../turn/context";
+import type { TurnMessage } from "../turn/protocol";
 import {
   ASK_ATTACH_LABEL,
   ASK_ATTACH_PLACEHOLDER,
+  ASK_BYTES_CLOSE,
+  ASK_BYTES_LABEL,
+  ASK_BYTES_OPEN,
+  ASK_CONTEXT_READING,
   ASK_COPY,
   ASK_HANDOFF,
   ASK_INCLUDED_LABEL,
@@ -27,7 +34,9 @@ import {
   ASK_SHOW_LOG,
   ASK_STOP,
   ASK_TITLE,
+  askReadWords,
   declarationWords,
+  packetDeclarationWords,
   responseWords,
   transportWord,
 } from "./contactRules";
@@ -35,7 +44,7 @@ import {
 /**
  * What the app holds while an Ask is open (Epic 12 story 3): the in-flight
  * question and, once it comes back, the WRAPPED response — CONTENT, held here
- * and in the app's state, never written by the app. `note` is a quiet
+ * and in the app's state, never written by the app. \`note\` is a quiet
  * sentence for a half-worked transport (the question left by copy; the OS
  * would not take the page).
  */
@@ -46,6 +55,20 @@ export interface AskSessionView {
   response: AskResponse | null;
   /** A quiet sentence for the session (null otherwise). */
   note: string | null;
+}
+
+/**
+ * THE READBACK (Epic 15 story 3): every message the app sent, verbatim, and
+ * the block the one follow-up fetched. It is held by the app (CONTENT,
+ * ephemeral) and shown by the panel's one verb — before the send the same
+ * bytes come from the pure assembler, so the person always sees exactly what
+ * left.
+ */
+export interface AskSentView {
+  /** Every message that left, in order, verbatim. */
+  messages: readonly TurnMessage[];
+  /** The block the one follow-up fetched, or null when none happened. */
+  read: string | null;
 }
 
 interface AskPanelProps {
@@ -71,6 +94,16 @@ interface AskPanelProps {
   fallback: string | null;
   /** The app is carrying the packet right now (the stop verb stands beside it). */
   running: boolean;
+  /**
+   * The previews the app read for the CURRENT inclusion (Epic 15 story 3), or
+   * null while it reads them. Nothing can leave before they are here: the
+   * declaration must name every block, and the send carries exactly its bytes.
+   */
+  context: AskContext | null;
+  /** Every message that left, once the app sent them (the readback), or null. */
+  sent: AskSentView | null;
+  /** The inclusion changed: the app reads exactly those previews, nothing else. */
+  onIncludedChange: (included: Pointer[]) => void;
   /** Send the question out: the app, or the clipboard/handoff fallback. */
   onSend: (
     question: string,
@@ -96,46 +129,73 @@ function rowKey(pointer: Pointer): string {
   return pointer.form + "\u0000" + pointer.value;
 }
 
+/** ONE message, verbatim: its role as a label, its bytes as they left. */
+function AskMessage({ message }: { message: TurnMessage }) {
+  return (
+    <div className="ask-message" data-role={message.role}>
+      <div className="ask-message-role">{message.role}</div>
+      <pre className="ask-message-text">{message.content}</pre>
+    </div>
+  );
+}
+
+/** The readback's block: every message, verbatim, in the order it left. */
+function AskBytes({ messages }: { messages: readonly TurnMessage[] }) {
+  return (
+    <div className="ask-bytes" role="group" aria-label={ASK_BYTES_LABEL}>
+      {messages.map((message, index) => (
+        <AskMessage key={index} message={message} />
+      ))}
+    </div>
+  );
+}
+
 /**
  * THE ASK PANEL (Epic 12 story 3, PROVISIONAL and deliberately plain) — the
  * question out, the response back, the keep kept separate.
  *
  * COMPOSING: the person's question prose, the reach it rides (the row the panel
  * opened from, or none), and the INCLUSION SET — which of the word's reaches
- * ride along. The packet carries the prose and the included CITATIONS only:
- * the app never reads a target to compose a question, so the inclusion is a set
- * of handles, never their content. The words say "sent", "copied" and
- * "handed", never "opened".
+ * ride along.
  *
- * COMPOSING, BEFORE ANYTHING LEAVES: the DECLARATION line names what will go —
- * the question's size, each included citation and its size, the packet's total.
- * It is derived from the same bytes the send carries, and the send is the
- * person's press; there is no send verb before it. The app carries the packet
- * (Epic 15 story 2); when no provider is configured — or the sidecar cannot
- * start — the panel says so in ONE sentence and the clipboard path becomes
- * visible. Falling back is stated, and a fallback is not a failure of the Ask.
+ * THE APP-SENT PACKET (Epic 15 story 3). With a provider the app carries a
+ * bounded packet assembled around THIS card: its coined name, its state
+ * sentence and the card's reading/note crops, each INCLUDED reach's citation
+ * with a bounded preview of its target, a fixed instruction offering ONE named
+ * retrieval, and the bound said in words. The previews are read by the app
+ * when the inclusion changes (never for a reach the person did not include),
+ * and the declaration here names EVERY block with its exact byte size and the
+ * total — derived from the same block bytes the send carries, so the line
+ * cannot drift. The one verb beside it opens those exact bytes, message by
+ * message, BEFORE the send; after the send the same verb opens what left,
+ * followed by the follow-up's message when the model named one block. The send
+ * waits until the previews are here.
  *
- * IN FLIGHT: the packet stays visible (what left), and the paste field is
- * where a clipboard response comes back — the ghost intake's sibling. "log it"
- * wraps the pasted text at intake (exact byte size + decode status) and appends
- * the ONE PRISM; the panel then holds the response as content and its "the log"
- * opens the Move's own PRISM window (record != visible: on demand, never a
- * gallery). An app-sent answer arrives in place, with the stop verb while the
- * turn runs. "nothing came back" closes the question with the no-response
- * outcome. An optional attached file rides the response, and the
- * workspace-boundary rule applies to it at intake.
+ * THE CLIPBOARD ROUTE (the stated fallback, and the only route when no
+ * provider is configured) is UNCHANGED: it carries the question plus the
+ * included CITATIONS, never a preview, so its declaration and its packet stay
+ * exactly what they were. The panel never hides which transport is live.
+ *
+ * IN FLIGHT: the paste field is where a clipboard response comes back — the
+ * ghost intake's sibling. "log it" wraps the pasted text at intake (exact byte
+ * size + decode status) and appends the ONE PRISM; the panel then holds the
+ * response as content and its "the log" opens the Move's own PRISM window
+ * (record != visible: on demand, never a gallery). An app-sent answer arrives
+ * in place, with the stop verb while the turn runs. "nothing came back" closes
+ * the question with the no-response outcome. An optional attached file rides
+ * the response, and the workspace-boundary rule applies to it at intake.
  *
  * THE KEEP is a SEPARATE act: a quiet button writes the response into this
  * word's memory (the existing Finding move). It never extends the PRISM — the
  * record was closed at intake — and the panel says "kept to memory" once.
  *
- * It sits OUTSIDE `.plane` (the ghost panel's neighbour): a fixed, quiet panel,
+ * It sits OUTSIDE \`.plane\` (the ghost panel's neighbour): a fixed, quiet panel,
  * not a world card. Esc or the × closes it; a press away does NOT (it holds
  * typed prose). Closing with the question still in flight appends nothing: an
  * unfinished Move has no record.
  *
- * Provisional: the look, the fixed placement, the packet's framing in the
- * panel, and the one attached file.
+ * Provisional: the look, the fixed placement, the readback's placement, the
+ * packet's headings in the readback, and the one attached file.
  */
 export function AskPanel({
   name,
@@ -147,6 +207,9 @@ export function AskPanel({
   note,
   fallback,
   running,
+  context,
+  sent,
+  onIncludedChange,
   onSend,
   onStop,
   onIntake,
@@ -165,6 +228,7 @@ export function AskPanel({
   });
   const [raw, setRaw] = useState("");
   const [attach, setAttach] = useState("");
+  const [showBytes, setShowBytes] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -196,6 +260,31 @@ export function AskPanel({
   }
 
   const handoffable = ride !== null && ride.form === "url";
+  const chosenNow = included();
+  const inclusionKey = chosenNow.map((pointer) => rowKey(pointer)).join("\u0001");
+
+  // The inclusion changed: the app reads EXACTLY these reaches' previews and
+  // nothing else. With no provider the panel composes the clipboard's older
+  // packet instead, which reads nothing.
+  useEffect(() => {
+    if (session !== null) return;
+    onIncludedChange(chosenNow);
+    // The key is the inclusion's identity; the rows are this word's own.
+  }, [inclusionKey, session]);
+
+  // The app-sent packet, assembled PURELY from the previews and the prose. The
+  // fallback's clipboard packet is a different composition (citations only)
+  // and is declared by its own unchanged helper.
+  const appRoute = fallback === null;
+  const packet =
+    appRoute && context !== null
+      ? assembleAskPacket({
+          question,
+          card: context.card,
+          reaches: context.reaches,
+          retrievable: context.retrievable,
+        })
+      : null;
 
   return (
     <div
@@ -251,7 +340,7 @@ export function AskPanel({
                 <label
                   className="ask-include"
                   key={index + rowKey(pointer)}
-                  title="ride this reach's citation in the packet"
+                  title="ride this reach in the packet"
                 >
                   <input
                     type="checkbox"
@@ -264,11 +353,44 @@ export function AskPanel({
             )}
           </div>
 
-          {/* THE DECLARATION, before anything leaves: the inclusion set and its
-              sizes, derived from the same packet the send carries. */}
-          <div className="ask-declaration">
-            {declarationWords(declareAsk(question, included()))}
-          </div>
+          {/* THE DECLARATION, before anything leaves: with a provider it names
+              every block of the app-sent packet and its size; on the fallback
+              it is the clipboard packet's line, unchanged. Both are derived
+              from the same bytes their send carries. */}
+          {appRoute ? (
+            packet !== null ? (
+              <div className="ask-declaration">
+                {packetDeclarationWords(packet.declaration)}
+              </div>
+            ) : (
+              <div className="ask-context" role="status">
+                {ASK_CONTEXT_READING}
+              </div>
+            )
+          ) : (
+            <div className="ask-declaration">
+              {declarationWords(declareAsk(question, included()))}
+            </div>
+          )}
+
+          {/* THE READBACK, before the send: the exact bytes, message by
+              message. Nothing else in the panel says what leaves. */}
+          {packet !== null && (
+            <>
+              <button
+                type="button"
+                className="ask-bytes-open"
+                title={ASK_BYTES_OPEN}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowBytes((shown) => !shown);
+                }}
+              >
+                {showBytes ? ASK_BYTES_CLOSE : ASK_BYTES_OPEN}
+              </button>
+              {showBytes && <AskBytes messages={packet.messages} />}
+            </>
+          )}
 
           {/* The stated fallback's one sentence (no provider, or no sidecar).
               A fallback is not a failure of the Ask: the clipboard is simply
@@ -280,11 +402,11 @@ export function AskPanel({
           )}
 
           <div className="ask-transports">
-            {fallback === null && (
+            {appRoute && (
               <button
                 type="button"
                 className="ask-send"
-                disabled={busy || running}
+                disabled={busy || running || packet === null}
                 title={ASK_SEND}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -342,7 +464,27 @@ export function AskPanel({
 
       {session !== null && (
         <>
-          <pre className="ask-packet">{session.ask.packet}</pre>
+          {sent !== null ? (
+            <>
+              <button
+                type="button"
+                className="ask-bytes-open"
+                title={ASK_BYTES_OPEN}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowBytes((shown) => !shown);
+                }}
+              >
+                {showBytes ? ASK_BYTES_CLOSE : ASK_BYTES_OPEN}
+              </button>
+              {showBytes && <AskBytes messages={sent.messages} />}
+              {sent.read !== null && (
+                <div className="ask-read">{askReadWords(sent.read)}</div>
+              )}
+            </>
+          ) : (
+            <pre className="ask-packet">{session.ask.packet}</pre>
+          )}
           <div className="ask-sent">{transportWord(session.ask.transport)}</div>
 
           {session.response === null && (

@@ -4414,7 +4414,8 @@ body {
 .ask-log,
 .ask-none,
 .ask-keep,
-.ask-show-log {
+.ask-show-log,
+.ask-bytes-open {
   font: inherit;
   font-size: 11px;
   line-height: 1;
@@ -4447,7 +4448,9 @@ body {
 .ask-keep:hover,
 .ask-keep:focus-visible,
 .ask-show-log:hover,
-.ask-show-log:focus-visible {
+.ask-show-log:focus-visible,
+.ask-bytes-open:hover,
+.ask-bytes-open:focus-visible {
   color: #1e2126;
   border-color: #8d887c;
   outline: none;
@@ -4536,12 +4539,61 @@ body {
   overflow-wrap: anywhere;
 }
 
-.ask-fallback {
+.ask-fallback,
+.ask-context {
   font-size: 10.5px;
   line-height: 1.4;
   color: #6b675e;
   border-left: 2px solid #ddd7cc;
   padding-left: 7px;
+}
+
+/* THE READBACK (Epic 15 story 3): the exact bytes sent, message by message.
+   A quiet paper block per message, the role as a small label, the content
+   verbatim in the packet's own monospace idiom. No accent, no urgency: the
+   bytes are the whole surface. PROVISIONAL: the look. */
+.ask-bytes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+.ask-message {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ask-message-role {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #b3ac9e;
+}
+
+.ask-message-text {
+  margin: 0;
+  max-height: 22vh;
+  overflow: auto;
+  padding: 5px 7px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: #4c4a44;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid #eee9df;
+  border-radius: 6px;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+/* The follow-up's quiet line: it asked for one block by name. */
+.ask-read {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #8d887c;
+  overflow-wrap: anywhere;
 }
 
 .ask-note,

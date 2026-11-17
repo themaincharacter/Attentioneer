@@ -7,6 +7,13 @@ import {
   type DecodeStatus,
   type Prism,
 } from "../map/prisms";
+import {
+  assembleAskPacket,
+  type AskPacket,
+  type AskPacketCard,
+  type AskPacketReach,
+} from "../turn/packet";
+import type { TurnMessage } from "../turn/protocol";
 import { resolveWithin, type Canonicalize } from "./boundary";
 import {
   contactAdmitsChange,
@@ -22,15 +29,24 @@ import {
  * THE MOVE, IN THREE MOMENTS:
  *   1. SEND (egress) — the person's authored question leaves by the APP
  *      (through the sidecar turn, Epic 15 story 2) or, when no provider is
- *      configured, by COPY (the clipboard) or by OS HANDOFF. Both routes carry
- *      the SAME PACKET — the prose plus the CITATIONS of the reaches the person
- *      chose to include, never their content: the app never pre-reads a target
- *      to compose a question (ADR-0029 rule 3). The declaration of that packet
- *      (the inclusion set and its sizes) is shown by the panel BEFORE the
- *      person's press. Nothing is appended by a question that never leaves: a
- *      question in flight is not a Move. An app-sent answer, when it comes
- *      back, is handed to the app's wiring, which runs the SAME intake below
- *      in the PRISM file's queue (one wrap, one PRISM).
+ *      configured, by COPY (the clipboard) or by OS HANDOFF.
+ *      THE APP-SENT ROUTE NOW CARRIES THE PACKET (Epic 15 story 3, ADR-0029's
+ *      amendment): the anchored card's name, state and bounded previews, the
+ *      included reaches' citations and their bounded previews, a fixed
+ *      instruction offering ONE named retrieval, and the bound said in words.
+ *      The previews were read by the app BEFORE this call (turn/context.ts) and
+ *      arrive as plain data, so this module still does no IO: it only hands the
+ *      pure assembler (turn/packet.ts) what it was given. THE CLIPBOARD ROUTE
+ *      IS UNCHANGED and still carries the question plus CITATIONS only — rule 3
+ *      was never about privacy being weaker, it was about the app not composing
+ *      from content it had not been given, and the clipboard still gets exactly
+ *      the person's prose and the pointers' natural citations.
+ *      The declaration of what will go (every block and its size, then the
+ *      total) is shown by the panel BEFORE the person's press, derived from the
+ *      SAME bytes the send carries. Nothing is appended by a question that
+ *      never leaves: a question in flight is not a Move. An app-sent answer,
+ *      when it comes back, is handed to the app's wiring, which runs the SAME
+ *      intake below in the PRISM file's queue (one wrap, one PRISM).
  *   2. INTAKE — the response comes back by PASTE (the ghost intake's sibling):
  *      the app WRAPS the pasted text, declares its exact byte size and its
  *      decode status AT INTAKE (ADR-0029 rule 5: a lossy text is said, never
@@ -251,19 +267,35 @@ export function askPacket(
  * `turn/egress.ts` owns it, and bun asserts the route with a script.
  */
 export type AskAppSend =
-  | { kind: "answered"; text: string }
+  | {
+      kind: "answered";
+      text: string;
+      /** Every message that left, verbatim — the readback's own bytes. */
+      messages: readonly TurnMessage[];
+      /** The block the one follow-up fetched, or null. */
+      read: string | null;
+      /** A name the model asked for that the packet did not carry, or null. */
+      missed: string | null;
+    }
   | { kind: "unavailable"; sentence: string }
-  | { kind: "failed"; sentence: string };
+  | {
+      kind: "failed";
+      sentence: string;
+      /** The messages that left before the failure (the readback's bytes). */
+      messages?: readonly TurnMessage[];
+    };
 
 /** The Ask's bridge surface (injected; see the module doc). */
 export interface AskContactDeps {
   /** Copy the packet to the clipboard; false when the copy failed. */
   copy: (text: string) => Promise<boolean>;
   /**
-   * Send the packet by the app's own turn (Epic 15 story 2). Absent means the
-   * app-sent route is not wired: the send falls back, stated.
+   * Send the assembled packet by the app's own turn (Epic 15 story 2/3). It
+   * receives the PACKET, not a string: the turn needs its messages and the
+   * names a single READ may retrieve, and the readback needs the same bytes.
+   * Absent means the app-sent route is not wired: the send falls back, stated.
    */
-  sendApp?: (packet: string) => Promise<AskAppSend>;
+  sendApp?: (packet: AskPacket) => Promise<AskAppSend>;
   /** Hand one url to the OS (the app passes the opener plugin's openUrl). */
   handOff: (url: string) => Promise<void>;
   /** The boundary's realpath (the app passes the Rust command's bridge). */
@@ -274,6 +306,21 @@ export interface AskContactDeps {
   writePrismsText: (text: string) => Promise<void>;
   /** Mint the app-side PRISM id. */
   mintId: () => string;
+}
+
+/**
+ * THE PREVIEWS the app read before an app-sent request (Epic 15 story 3): the
+ * anchored card's block facts, each INCLUDED reach's bounded preview, and the
+ * block names one follow-up may fetch. Plain data, read by turn/context.ts
+ * outside this module — the contact path stays IO-free. Absent means the app
+ * has no previews for this request: the packet then carries the card's slug and
+ * the citations alone, and offers no retrieval (the clipboard route never
+ * uses any of this).
+ */
+export interface AskPreviews {
+  card: AskPacketCard;
+  reaches: readonly AskPacketReach[];
+  retrievable: readonly string[];
 }
 
 /** One Ask request: the anchor, what rides, the prose and the transport. */
@@ -292,6 +339,8 @@ export interface AskRequest {
   transport: AskTransport;
   /** The workspace root an attached path resolves against. */
   workspacePath: string;
+  /** The bounded previews for the app-sent packet, when the app read them. */
+  previews?: AskPreviews;
 }
 
 /** What the app holds while the question is out: the Move is in flight. */
@@ -339,6 +388,15 @@ export type AskSendResult =
       /** The wrap + PRISM the app's queued intake produced (with `answer`). */
       response?: AskResponse;
       prism?: Prism;
+      /**
+       * Every message the app sent, verbatim (the readback). Absent on the
+       * clipboard routes, where the packet string is what the person copied.
+       */
+      sentMessages?: readonly TurnMessage[];
+      /** The block the one follow-up fetched, or null (app route only). */
+      read?: string | null;
+      /** A name the model asked for that the packet did not carry, or null. */
+      missed?: string | null;
     };
 
 /**
@@ -393,13 +451,12 @@ export async function sendAsk(
     }
   }
 
-  const packet = askPacket(request.question, request.included);
-
-  // THE APP-SENT ROUTE: the packet goes to the app's own turn. A provider that
-  // is not there, or a sidecar that cannot start, is the STATED FALLBACK — the
-  // question never left, so it is not a Move and nothing is logged. An answer
-  // comes back through the SAME intake as a paste.
+  // THE APP-SENT ROUTE composes through the new packet (story 3): the app
+  // handed over the bounded previews it read, and this is the pure assembly of
+  // them — no reader runs here. The CLIPBOARD ROUTES keep their own packet
+  // (the question plus citations), unchanged.
   if (request.transport === "app") {
+    const packet = assembleAskPacket(packetInputOf(request));
     const send = deps.sendApp;
     if (send === undefined) return { kind: "fallback", reason: NO_APP_ROUTE };
     let turned: AskAppSend;
@@ -411,16 +468,31 @@ export async function sendAsk(
     if (turned.kind === "unavailable") {
       return { kind: "fallback", reason: turned.sentence };
     }
-    const ask = inFlight(request, packet, "app");
+    const ask = inFlight(request, packet.text, "app");
     if (turned.kind === "failed") {
       // It may have left and produced no answer: one sentence, no record yet.
       // The panel keeps the question in flight so a paste can still log ONE.
-      return { kind: "sent", ask, note: turned.sentence };
+      return {
+        kind: "sent",
+        ask,
+        note: turned.sentence,
+        sentMessages: turned.messages ?? packet.messages,
+      };
     }
     // An answer is CONTENT handed back; the app's queued intake is the one
     // step that wraps it and appends the PRISM, so this route never writes.
-    return { kind: "sent", ask, note: null, answer: turned.text };
+    return {
+      kind: "sent",
+      ask,
+      note: null,
+      answer: turned.text,
+      sentMessages: turned.messages,
+      read: turned.read,
+      missed: turned.missed,
+    };
   }
+
+  const packet = askPacket(request.question, request.included);
 
   const copied = await deps.copy(packet);
   if (!copied) return { kind: "refused", reason: COPY_FAILED };
@@ -437,6 +509,39 @@ export async function sendAsk(
     kind: "sent",
     ask: inFlight(request, packet, request.transport),
     note,
+  };
+}
+
+/**
+ * The app-sent packet's pure input. With previews (the panel's normal case) the
+ * card's coined name, its state and the crops ride; without them — a caller
+ * that read nothing — the card is named by its slug, the reaches ride as
+ * citations only and no retrieval is offered. Nothing here reads.
+ */
+function packetInputOf(request: AskRequest): {
+  question: string;
+  card: AskPacketCard;
+  reaches: readonly AskPacketReach[];
+  retrievable: readonly string[];
+} {
+  const previews = request.previews;
+  if (previews === undefined) {
+    return {
+      question: request.question,
+      card: { name: request.on, state: null, reading: null, note: null },
+      reaches: request.included.map((pointer) => ({
+        form: pointer.form,
+        value: pointer.value,
+        preview: null,
+      })),
+      retrievable: [],
+    };
+  }
+  return {
+    question: request.question,
+    card: previews.card,
+    reaches: previews.reaches,
+    retrievable: previews.retrievable,
   };
 }
 

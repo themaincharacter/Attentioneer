@@ -3,6 +3,10 @@ import type {
   AskResponse,
   AskTransport,
 } from "../contacts/ask";
+import type {
+  AskPacketDeclaration,
+  AskPacketDeclarationLine,
+} from "../turn/packet";
 import { decodeWords } from "./prismRules";
 
 /**
@@ -155,6 +159,61 @@ export function declarationWords(declaration: AskDeclaration): string {
     " bytes in all"
   );
 }
+
+/**
+ * THE APP-SENT PACKET'S DECLARATION (Epic 15 story 3): every block and its
+ * exact byte size, then the whole packet's total. It is derived from the same
+ * block bytes the send carries, and it is the ONLY place a size appears — the
+ * bytes that go to the model carry no counts and no size figures.
+ */
+export function packetDeclarationWords(
+  declaration: AskPacketDeclaration,
+): string {
+  const parts = declaration.blocks.map(
+    (block) => packetBlockWords(block),
+  );
+  return (
+    ASK_DECLARATION_LABEL +
+    parts.join(" \u00b7 ") +
+    " \u00b7 " +
+    declaration.total +
+    " bytes in all"
+  );
+}
+
+/** One block, said by its kind (the card's name is quoted; a reach by citation). */
+function packetBlockWords(block: AskPacketDeclarationLine): string {
+  const size = block.size + " bytes";
+  switch (block.kind) {
+    case "question":
+      return "your question (" + size + ")";
+    case "card":
+      return "the card \u201c" + block.name + "\u201d (" + size + ")";
+    case "reach":
+      return block.name + " (" + size + ", a preview)";
+    case "instruction":
+      return "the instruction (" + size + ")";
+    case "bound":
+      return "the bound (" + size + ")";
+  }
+}
+
+/** While the app reads the included previews, nothing can leave yet. */
+export const ASK_CONTEXT_READING = "reading the included previews…";
+
+/** The readback's one verb: the exact bytes, message by message (PROVISIONAL). */
+export const ASK_BYTES_OPEN = "the exact bytes";
+export const ASK_BYTES_CLOSE = "hide the bytes";
+export const ASK_BYTES_LABEL = "what leaves, message by message (verbatim)";
+
+/** The follow-up's quiet line: it asked for ONE block and got it. */
+export function askReadWords(name: string): string {
+  return "it asked for one block by name; the follow-up brought: " + name;
+}
+
+/** A READ of a name this view did not carry: one sentence, the answer stands. */
+export const ASK_READ_MISSED =
+  "it asked for a target this view did not carry; the answer stands.";
 
 /**
  * The response's declared facts, said exactly: the byte size and the decode

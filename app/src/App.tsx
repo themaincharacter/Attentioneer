@@ -67,6 +67,14 @@ import {
   rememberedApiKey,
 } from "./turn/provider";
 import { NO_PROVIDER_SENTENCE, sendPacketApp } from "./turn/egress";
+import {
+  fetchAskBlock,
+  readAskContext,
+  type AskCardFacts,
+  type AskContext,
+} from "./turn/context";
+import type { AskPacket } from "./turn/packet";
+import { readingFor } from "./map/readings";
 import { GroundWires } from "./canvas/GroundWires";
 import { GroundBubble } from "./canvas/GroundBubble";
 import { useGround } from "./canvas/useGround";
@@ -123,11 +131,17 @@ import { PrismWindow } from "./canvas/PrismWindow";
 import { CANNOT_READ_LOG, NOT_LOGGED } from "./canvas/prismRules";
 import { PullPanel } from "./canvas/PullPanel";
 import { askPull, type PullReading } from "./pull/ask";
-import { AskPanel, type AskSessionView } from "./canvas/AskPanel";
+import {
+  AskPanel,
+  type AskSentView,
+  type AskSessionView,
+} from "./canvas/AskPanel";
 import { MakePanel } from "./canvas/MakePanel";
 import {
+  ASK_CONTEXT_READING,
   ASK_KEEP_FAILED,
   ASK_NEEDS_QUESTION,
+  ASK_READ_MISSED,
   ASK_SEND_FAILED,
 } from "./canvas/contactRules";
 import {
@@ -751,6 +765,15 @@ function App() {
   // is running now (the panel's stop verb). A fallback is not an Ask failure.
   const [askFallback, setAskFallback] = useState<string | null>(null);
   const [askAppRunning, setAskAppRunning] = useState(false);
+  // THE PACKET'S PREVIEWS AND READBACK (Epic 15 story 3): the bounded previews
+  // read for the CURRENT inclusion, whether a provider is configured (null
+  // until the config answers), the last inclusion the panel asked for, and
+  // every message that left. All of it EPHEMERAL app state — none is a record,
+  // and the app writes none of it.
+  const [askContext, setAskContext] = useState<AskContext | null>(null);
+  const [askProvider, setAskProvider] = useState<boolean | null>(null);
+  const [askIncluded, setAskIncluded] = useState<AskPointer[]>([]);
+  const [askSent, setAskSent] = useState<AskSentView | null>(null);
   // The ghost's ask surface (Epic 10 story 3): the one panel where the person
   // asks for a packet or hands a model's reply back. It sits outside `.plane`
   // like the control's other actions; closed by Esc, its ×, or a level switch
@@ -1864,6 +1887,10 @@ function App() {
     setAskKept(false);
     setAskFallback(null);
     setAskAppRunning(false);
+    setAskContext(null);
+    setAskProvider(null);
+    setAskIncluded([]);
+    setAskSent(null);
   }, []);
 
   /**
@@ -1886,13 +1913,22 @@ function App() {
       });
       // Is there a provider to carry the packet? The app-sent route is the
       // default; with none configured the panel says so in one sentence and
-      // the clipboard is the visible fallback (never a silent one).
+      // the clipboard is the visible fallback (never a silent one). The
+      // previews are read only once a provider is known to be there: the
+      // clipboard route reads no target (ADR-0029 rule 3 stands for it).
+      setAskProvider(null);
+      setAskContext(null);
+      setAskIncluded([]);
+      setAskSent(null);
       void loadProviderConfig()
         .then((stored) => {
-          if (!hasProvider(stored)) setAskFallback(NO_PROVIDER_SENTENCE);
+          const here = hasProvider(stored);
+          setAskProvider(here);
+          setAskFallback(here ? null : NO_PROVIDER_SENTENCE);
         })
         .catch(() => {
           // An unreadable config is the same honest nothing: the fallback.
+          setAskProvider(false);
           setAskFallback(NO_PROVIDER_SENTENCE);
         });
     },
@@ -1910,19 +1946,81 @@ function App() {
   }, [resetAsk]);
 
   /**
+   * THE INCLUSION CHANGED (Epic 15 story 3): remember exactly the reaches the
+   * person included and forget the previous previews at once, so no
+   * declaration can name a block this send would not carry while the app reads
+   * the new ones. Only the INCLUDED reaches are ever read.
+   */
+  const askChoose = useCallback((included: Pointer[]) => {
+    setAskIncluded(
+      included.map((pointer) => ({ form: pointer.form, value: pointer.value })),
+    );
+    setAskContext(null);
+  }, []);
+
+  /**
+   * READ the packet's previews (Epic 15 story 3): the card's crops from the
+   * loaded ground state, plus one bounded head per INCLUDED reach (the head
+   * reader's cap; a url is never fetched). The app-sent route only — with no
+   * provider there is no packet to declare, and the clipboard route reads no
+   * target at all (ADR-0029 rule 3 stands for it). A vanished panel drops the
+   * in-flight read's answer (one open Ask at a time).
+   */
+  useEffect(() => {
+    if (askAt === null || workspace === null || askProvider !== true) return;
+    const reference = ground.references.find((entry) => entry.on === askAt.on);
+    const facts: AskCardFacts = {
+      name: reference?.name ?? nameOf(askAt.on),
+      state: ground.states[askAt.on] ?? null,
+      reading: readingFor(ground.readings, askAt.on),
+      readingText: ground.texts[askAt.on] ?? null,
+      note: ground.notes[askAt.on] ?? null,
+    };
+    let live = true;
+    void readAskContext({
+      workspacePath: workspace.path,
+      card: facts,
+      included: askIncluded,
+    }).then((context) => {
+      if (live) setAskContext(context);
+    });
+    return () => {
+      live = false;
+    };
+  }, [
+    askAt,
+    workspace,
+    askProvider,
+    askIncluded,
+    ground.references,
+    ground.readings,
+    ground.states,
+    ground.texts,
+    ground.notes,
+    nameOf,
+  ]);
+
+  /**
    * The app-sent sender the Ask flow uses (Epic 15 story 2): the provider row
    * and the session's key are read at send time, and the turn port carries the
    * packet. `turn/egress.ts` decides the three outcomes; this wiring owns only
    * where the provider facts come from.
    */
   const askSendApp = useCallback(
-    (packet: string) =>
+    (packet: AskPacket) =>
       sendPacketApp(packet, {
         loadProvider: loadProviderConfig,
         apiKey: rememberedApiKey,
         turn: turnPort,
+        // The ONE follow-up's read: a block the packet already carried, its
+        // fuller text from the pull reader. Null (no read) for anything else,
+        // so a name outside the packet never widens the view.
+        fetchBlock: (name: string) =>
+          workspace === null
+            ? Promise.resolve(null)
+            : fetchAskBlock(workspace.path, name, askContext),
       }),
-    [],
+    [workspace, askContext],
   );
 
   /**
@@ -1941,6 +2039,12 @@ function App() {
         setAskNote(ASK_NEEDS_QUESTION);
         return;
       }
+      // Nothing leaves before the previews are here: the declaration must name
+      // every block, and the send carries exactly the bytes it declared.
+      if (transport === "app" && askContext === null) {
+        setAskNote(ASK_CONTEXT_READING);
+        return;
+      }
       setAskBusy(true);
       setAskNote(null);
       if (transport === "app") setAskAppRunning(true);
@@ -1956,6 +2060,16 @@ function App() {
           question,
           transport,
           workspacePath: workspace.path,
+          // The bounded previews the app read, as plain data: the contact path
+          // composes the packet from them and reads nothing itself.
+          previews:
+            askContext === null
+              ? undefined
+              : {
+                  card: askContext.card,
+                  reaches: askContext.reaches,
+                  retrievable: askContext.retrievable,
+                },
         },
         askSendApp,
       )
@@ -1973,7 +2087,17 @@ function App() {
           }
           setAskFallback(null);
           setAskSession(result.ask);
-          setAskSentNote(result.note);
+          setAskSentNote(
+            result.missed !== undefined && result.missed !== null
+              ? ASK_READ_MISSED
+              : result.note,
+          );
+          if (result.sentMessages !== undefined) {
+            setAskSent({
+              messages: result.sentMessages,
+              read: result.read ?? null,
+            });
+          }
           if (result.response !== undefined) setAskResponse(result.response);
           if (result.prism !== undefined) setAskPrism(result.prism);
         })
@@ -4433,7 +4557,10 @@ function App() {
           thrown away by a press; Esc / its × close it. */}
       {level === "ground" && askAt && (
         <AskPanel
-          name={nameOf(askAt.on)}
+          name={
+            ground.references.find((entry) => entry.on === askAt.on)?.name ??
+            nameOf(askAt.on)
+          }
           rows={findPointers(pointers, askAt.on).map((found) => found.pointer)}
           ride={
             askAt.ride === null
@@ -4446,6 +4573,9 @@ function App() {
           note={askNote}
           fallback={askFallback}
           running={askAppRunning}
+          context={askContext}
+          sent={askSent}
+          onIncludedChange={askChoose}
           onSend={askSend}
           onStop={askStop}
           onIntake={askIntake}
