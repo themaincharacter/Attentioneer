@@ -12,9 +12,12 @@ import {
   type PulledText,
 } from "../map/pull";
 import {
+  proposeSelectionName,
   previewText,
   readingFileName,
   readingStateWord,
+  selectionRefusal,
+  selectionSourceSlug,
   type Reading,
   type ReadingState,
 } from "../map/readings";
@@ -162,6 +165,36 @@ export function pullToDismiss(
   return previous !== null && previous !== next ? previous : null;
 }
 
+/**
+ * STORY 16.12 — WHERE THE NEW CARD GOES: beside its source, at the same scale,
+ * offset by a little more than a card's own width so the two never overlap.
+ * PURE, so the placement is not the confirm handler's only truth.
+ */
+export const SELECTION_OFFSET_X = 320;
+
+export function selectionPlacement(x: number, y: number): Point {
+  return { x: x + SELECTION_OFFSET_X, y };
+}
+
+/** The one quiet line for a source the map no longer carries (PROVISIONAL). */
+export const SELECTION_MISSING_SOURCE = "from a card that is gone";
+
+/**
+ * The footer's attribution (story 16.12): a FILE reading shows its file's NAME
+ * (never a path, the existing rule); a SELECTION shows its SOURCE CARD's name,
+ * and a source the map no longer carries is said quietly rather than repaired.
+ * PURE, so the rule is not the JSX's alone.
+ */
+export function readingProvenance(
+  reading: Reading,
+  cardNames: ReadonlyMap<string, string>,
+): string {
+  const source = selectionSourceSlug(reading);
+  if (source === null) return readingFileName(reading.from);
+  const name = cardNames.get(source);
+  return name === undefined ? SELECTION_MISSING_SOURCE : "from " + name;
+}
+
 interface GroundLayerProps {
   /** Every readable ground reference, in FILE ORDER. */
   references: readonly GroundReference[];
@@ -187,6 +220,18 @@ interface GroundLayerProps {
   onRepoint: (on: string, from: string) => Promise<GroundAddResult>;
   /** Remove this reference, its reading and its kept text (story 16.3). */
   onRemove: (on: string) => Promise<GroundAddResult>;
+  /**
+   * Make a new card out of a selection inside this card's expanded reading
+   * (story 16.12): the exact bytes, the source's slug as provenance, and a
+   * name the person confirmed. Optional so a render test needs no write path.
+   */
+  onCreateSelection?: (
+    sourceSlug: string,
+    name: string,
+    x: number,
+    y: number,
+    text: string,
+  ) => Promise<GroundAddResult>;
   /**
    * Save this card's note (story 16.6). Optional so a render test needs no
    * write path; the app always passes `useGround.setNote`.
@@ -251,6 +296,7 @@ export function GroundLayer({
   onRefresh,
   onRepoint,
   onRemove,
+  onCreateSelection,
   onSetNote,
   onPull,
   onDismissPull,
@@ -370,6 +416,7 @@ export function GroundLayer({
           onRefresh={onRefresh}
           onRepoint={onRepoint}
           onRemove={remove}
+          onCreateSelection={onCreateSelection}
           onSetNote={onSetNote}
           onPull={onPull}
           onDismissPull={onDismissPull}
@@ -457,6 +504,7 @@ function GroundCard({
   onRefresh,
   onRepoint,
   onRemove,
+  onCreateSelection,
   onSetNote,
   onPull,
   onDismissPull,
@@ -493,6 +541,14 @@ function GroundCard({
   onRefresh: GroundLayerProps["onRefresh"];
   onRepoint: GroundLayerProps["onRepoint"];
   onRemove: (reference: GroundReference) => Promise<GroundAddResult>;
+  /** Story 16.12: make a new card out of this card's selected reading bytes. */
+  onCreateSelection?: (
+    sourceSlug: string,
+    name: string,
+    x: number,
+    y: number,
+    text: string,
+  ) => Promise<GroundAddResult>;
   onSetNote?: (on: string, text: string) => Promise<GroundAddResult>;
   onPull?: (on: string) => Promise<GroundAddResult>;
   onDismissPull?: (on: string) => void;
@@ -508,6 +564,8 @@ function GroundCard({
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // STORY 16.12: the expanded card's READING is the selection surface.
+  const readingRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const dragRef = useRef<GroundDragState | null>(null);
   const [dragPos, setDragPos] = useState<Point | null>(null);
@@ -537,6 +595,14 @@ function GroundCard({
   // closing it forgets the answer, and the turn itself never touches the map.
   // It exists only on the OPEN card.
   const [asking, setAsking] = useState(false);
+  // STORY 16.12 — THE SELECTION is view state of the OPEN card: the exact text
+  // the person selected in its reading, and the PROPOSED name once they press
+  // `ask about this`. Nothing is created until they confirm; a collapse, a
+  // close or a cancel forgets both.
+  const [selected, setSelected] = useState<string | null>(null);
+  const [naming, setNaming] = useState<{ text: string; name: string } | null>(
+    null,
+  );
   // STORY 16.6 — the note's edit is VIEW state, like open/closed: nothing is
   // written until a save, and Esc leaves the stored note exactly as it was.
   // The refs mirror the draft so the press-away and Esc listeners (registered
@@ -558,6 +624,43 @@ function GroundCard({
     setPicker(null);
     setPanel(null);
     setAsking(false);
+    // Story 16.12: a closed card cannot offer a selection it no longer shows.
+    setSelected(null);
+    setNaming(null);
+  }, [open]);
+
+  // STORY 16.12 — THE SELECTION WATCHER. While the card is open, the DOM's
+  // selection is read whenever it changes; the affordance exists only when the
+  // selection is INSIDE this card's reading (a selection on the small card, in
+  // the note or on the plane is not one) and it goes away the moment the
+  // selection collapses. The text is taken EXACTLY as the selection reports it
+  // — no trim, no re-wrap — because those bytes become the new card's reading.
+  useEffect(() => {
+    if (!open) return;
+    function syncSelection() {
+      const selection = window.getSelection();
+      const reading = readingRef.current;
+      if (reading === null || selection === null || selection.isCollapsed) {
+        setSelected(null);
+        return;
+      }
+      if (selection.rangeCount === 0) {
+        setSelected(null);
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      if (
+        !reading.contains(range.startContainer) ||
+        !reading.contains(range.endContainer)
+      ) {
+        setSelected(null);
+        return;
+      }
+      const text = selection.toString();
+      setSelected(text === "" ? null : text);
+    }
+    document.addEventListener("selectionchange", syncSelection);
+    return () => document.removeEventListener("selectionchange", syncSelection);
   }, [open]);
 
   // Raw listener: d3-zoom stops mousedown at the plane (stopImmediatePropagation),
@@ -616,6 +719,10 @@ function GroundCard({
       // starts a drag (story 16.6).
       if ((e.target as HTMLElement).closest("button")) return;
       if ((e.target as HTMLElement).closest("textarea, input")) return;
+      // STORY 16.12: the EXPANDED card's reading is a SELECTION surface. A
+      // press there begins text selection, never a card drag — the small card
+      // stays a crop (there is nothing to select on it).
+      if (open && (e.target as HTMLElement).closest(".ground-reading")) return;
       // Story 15.1: the ask panel is a surface, not the card's body — a press
       // on its labels, its head or its answer must not start a card drag.
       if ((e.target as HTMLElement).closest(".ground-ask-panel")) return;
@@ -750,6 +857,12 @@ function GroundCard({
   // stored text itself, untouched. Neither path reads anything.
   const bodyText =
     shownText === null ? null : open ? shownText : previewText(shownText);
+  // Story 16.12: a selection has no source file, so the FILE verbs (refresh,
+  // re-point, read more) have nothing to act on; its bytes are already here.
+  const fileReading = reading !== null && reading.form !== "selection";
+  // The footer's one attribution: a file's NAME, or a selection's SOURCE NAME.
+  const provenance =
+    reading === null ? null : readingProvenance(reading, cardNames);
 
   async function run(action: () => Promise<GroundAddResult>) {
     if (busy) return;
@@ -801,6 +914,47 @@ function GroundCard({
       editingRef.current = true;
       setEditing(true);
     }
+  }
+
+  // STORY 16.12 — THE SELECTION'S THREE MOVES. `ask about this` only PROPOSES
+  // a name (the selection's first few words, whitespace collapsed for the name
+  // alone); the confirm is the one write, and a blank name is refused with one
+  // sentence before anything is queued. Cancel forgets the proposal; the text
+  // file and the new card appear only after the person's own confirm.
+  function askAboutSelection() {
+    if (selected === null || selected === "") return;
+    setNaming({ text: selected, name: proposeSelectionName(selected) });
+    setProblem(null);
+  }
+
+  function cancelSelection() {
+    setNaming(null);
+  }
+
+  async function makeSelection() {
+    if (naming === null || onCreateSelection === undefined || busy) return;
+    const refusal = selectionRefusal(naming.name, naming.text);
+    if (refusal !== null) {
+      setProblem(refusal);
+      return;
+    }
+    const at = selectionPlacement(reference.x, reference.y);
+    setBusy(true);
+    setProblem(null);
+    const result = await onCreateSelection(
+      reference.on,
+      naming.name.trim(),
+      at.x,
+      at.y,
+      naming.text,
+    );
+    setBusy(false);
+    if (!result.ok) {
+      setProblem(result.message);
+      return;
+    }
+    setNaming(null);
+    setSelected(null);
   }
 
   // STORY 16.7 — the picker's list and the mention's insert. Nothing here
@@ -982,7 +1136,12 @@ function GroundCard({
           />
         ) : null}
         {bodyText !== null && (
-          <div className="ground-reading">{bodyText}</div>
+          // Story 16.12: on the EXPANDED card this is the selection surface;
+          // the ref is what tells a selection inside the reading from one
+          // anywhere else on the map.
+          <div className="ground-reading" ref={readingRef}>
+            {bodyText}
+          </div>
         )}
         {/* STORY 16.8 — the PULL, below the stored reading as a CONTINUATION
             (same type, one hairline): what the person is looking at now,
@@ -996,9 +1155,15 @@ function GroundCard({
         )}
       </div>
       <div className="ground-footer">
-        {reading !== null && (
-          <div className="ground-handle">
-            {readingFileName(reading.from)}
+        {provenance !== null && (
+          <div
+            className={
+              reading !== null && reading.form === "selection"
+                ? "ground-handle ground-from"
+                : "ground-handle"
+            }
+          >
+            {provenance}
           </div>
         )}
         {word !== null && (
@@ -1008,6 +1173,59 @@ function GroundCard({
       {problem !== null && (
         <div className="ground-problem" role="status">
           {problem}
+        </div>
+      )}
+      {/* STORY 16.12 — THE NAME, before anything is written. The field is
+          PRE-FILLED with the proposed name and is the person's to edit; the
+          confirm writes the excerpt verbatim, and a blank name refuses with
+          the same one sentence the bubble uses. Esc or cancel forgets it. */}
+      {naming !== null && (
+        <div
+          className="ground-selection"
+          role="group"
+          aria-label="name the new card"
+        >
+          <input
+            className="ground-selection-name"
+            value={naming.name}
+            autoFocus
+            aria-label="name the new card"
+            disabled={busy}
+            onChange={(e) => {
+              setNaming({ text: naming.text, name: e.target.value });
+              if (problem !== null) setProblem(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") {
+                if (e.key !== "Escape") return;
+                // Esc cancels THIS field only (the card stays open).
+                e.preventDefault();
+                e.stopPropagation();
+                cancelSelection();
+                return;
+              }
+              e.preventDefault();
+              void makeSelection();
+            }}
+          />
+          <div className="ground-selection-actions">
+            <button
+              type="button"
+              className="ground-selection-make"
+              disabled={busy}
+              onClick={() => void makeSelection()}
+            >
+              make the card
+            </button>
+            <button
+              type="button"
+              className="ground-selection-cancel"
+              disabled={busy}
+              onClick={cancelSelection}
+            >
+              cancel
+            </button>
+          </div>
         </div>
       )}
       {step === "asking" ? (
@@ -1036,6 +1254,21 @@ function GroundCard({
         </div>
       ) : (
         <div className="ground-actions">
+          {/* STORY 16.12 — the ONE selection affordance: it exists while a
+              selection sits inside the expanded reading and vanishes when it
+              collapses. It only PROPOSES the name field (onMouseDown keeps the
+              selection alive by not taking focus); nothing is written by it. */}
+          {open && onCreateSelection !== undefined && selected !== null && naming === null && (
+            <button
+              type="button"
+              className="ground-select-ask"
+              disabled={busy}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={askAboutSelection}
+            >
+              ask about this
+            </button>
+          )}
           {/* STORY 16.6: the note's edit verb lives on the EXPANDED card. The
               done verb only exists while editing; Esc and a press away are the
               other exits (Esc abandons, a press away saves). */}
@@ -1077,8 +1310,9 @@ function GroundCard({
           {/* STORY 16.8 — the ONE pull verb, on the EXPANDED card only. It is
               the button's press and nothing else: no read on open, no watcher,
               no background read. It reprocesses an existing pull harmlessly
-              (the text is replaced in view state) and never writes. */}
-          {open && reading !== null && onPull !== undefined && (
+              (the text is replaced in view state) and never writes. Story
+              16.12: a selection has no source to read more of, so no verb. */}
+          {open && reading !== null && reading.form !== "selection" && onPull !== undefined && (
             <button
               type="button"
               className="ground-read-more"
@@ -1088,7 +1322,9 @@ function GroundCard({
               read more
             </button>
           )}
-          {reading !== null && (
+          {/* Story 16.12: a selection has no file to re-read or re-point, so
+              neither verb is drawn for it — its bytes are the map's own. */}
+          {fileReading && (
             <button
               type="button"
               className="ground-refresh"
@@ -1098,14 +1334,16 @@ function GroundCard({
               refresh
             </button>
           )}
-          <button
-            type="button"
-            className="ground-repoint"
-            disabled={busy}
-            onClick={() => void repoint()}
-          >
-            {reading === null ? "point at a file…" : "point at another file…"}
-          </button>
+          {reading === null || fileReading ? (
+            <button
+              type="button"
+              className="ground-repoint"
+              disabled={busy}
+              onClick={() => void repoint()}
+            >
+              {reading === null ? "point at a file…" : "point at another file…"}
+            </button>
+          ) : null}
           <button
             type="button"
             className="ground-remove"

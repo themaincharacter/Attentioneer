@@ -337,15 +337,17 @@ describe("authored moves only: the look leaves no line", () => {
     expect(existsSync(historyPath(workspace))).toBe(false);
   });
 
-  test("the hook appends from the eight authored write paths, no more", () => {
+  test("the hook appends from the nine authored write paths, no more", () => {
     // The only call form the verbs use; the definition is not a call site.
+    // Story 16.12 adds the selection card as the ninth authored write path.
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(8);
+    expect(calls.length).toBe(9);
   });
 
-  test("the mirror and the history own the same eight verbs", () => {
+  test("the mirror and the history own the same nine verbs", () => {
     const verbs = [
       "create",
+      "createSelection",
       "move",
       "refresh",
       "repoint",
@@ -569,6 +571,7 @@ describe("the whole log", () => {
   test("the history is written AFTER the record it describes", () => {
     const verbs = [
       "create",
+      "createSelection",
       "move",
       "refresh",
       "repoint",
@@ -585,6 +588,8 @@ describe("the whole log", () => {
       const writeAt = Math.max(
         body.lastIndexOf("await save"),
         body.lastIndexOf("await remove"),
+        // Story 16.12: the selection's write delegates to its helper.
+        body.lastIndexOf("await writeSelectionCard"),
       );
       expect(writeAt).toBeGreaterThan(-1);
       expect(writeAt).toBeLessThan(historyAt);

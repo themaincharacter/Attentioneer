@@ -414,6 +414,18 @@ export const CONTENT_CLASSES = [
   "ground-pulled-text",
   "ground-pulled-note",
   "ground-pulled-dismiss",
+  // Story 16.12: the SELECTION's one affordance, its name field and confirm
+  // verbs, and the provenance line a selection's card carries. They live
+  // inside the card, which is already content; listed anyway for the same
+  // belt-and-braces reason — a press on any of them must never fall through
+  // to the plane's pan, creation or a card drag.
+  "ground-select-ask",
+  "ground-selection",
+  "ground-selection-name",
+  "ground-selection-actions",
+  "ground-selection-make",
+  "ground-selection-cancel",
+  "ground-from",
   // Epic 10 story 3's ghost: the ONLY ghost element inside the plane is the
   // opened preview's faint diamond at the target. It is read-only by
   // construction (pointer-events: none), and it exists only inside the

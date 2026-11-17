@@ -410,6 +410,7 @@ describe("a pull WRITES NOTHING — the ephemeral guarantee", () => {
     expect(Object.keys(PULL_IO).sort()).toEqual([
       "pdfText",
       "readFileBytes",
+      "readStoredText",
       "readTextHead",
     ]);
     // The module's CODE (comments stripped) names no writer at all.
@@ -554,7 +555,11 @@ describe("the pull is VIEW STATE: the hook holds it, no writer sees it", () => {
     // The block is drawn only on the OPEN card.
     expect(LAYER).toContain("open && pulled !== undefined");
     // The verb too: a closed card has no read-more button.
-    expect(LAYER).toMatch(/open && reading !== null && onPull !== undefined/);
+    // Story 16.12: a selection has no source to read more of, so its card
+    // draws no pull verb — the file readings keep theirs.
+    expect(LAYER).toMatch(
+      /open && reading !== null && reading\.form !== "selection" && onPull !== undefined/,
+    );
   });
 
   test("closing the card forgets the look (the pure rule), and the layer obeys", () => {

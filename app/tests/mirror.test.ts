@@ -490,6 +490,7 @@ describe("a mirror failure never fails the move", () => {
 describe("the hook queues the mirror after every ground write", () => {
   const verbs = [
     "create",
+    "createSelection",
     "move",
     "refresh",
     "repoint",
@@ -510,14 +511,18 @@ describe("the hook queues the mirror after every ground write", () => {
       const writeAt = Math.max(
         body.lastIndexOf("await save"),
         body.lastIndexOf("await remove"),
+        // Story 16.12: a selection's write path delegates its saves to
+        // `writeSelectionCard` (text first, lines last) and then mirrors.
+        body.lastIndexOf("await writeSelectionCard"),
       );
       expect(writeAt).toBeGreaterThan(-1);
       expect(writeAt).toBeLessThan(mirrorAt);
     });
   }
 
-  test("exactly eight call sites (one per write path, not on load)", () => {
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(8);
+  test("exactly nine call sites (one per write path, not on load)", () => {
+    // Story 16.12 adds the selection card as the ninth authored write path.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(9);
   });
 
   test("opening never writes the mirror", () => {

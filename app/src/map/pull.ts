@@ -1,5 +1,6 @@
 import {
   readFileBytes,
+  readTextFile,
   readTextHead,
   type FileBytesAnswer,
   type TextHead,
@@ -16,6 +17,7 @@ import {
   readingAbsolutePath,
   readingExtract,
   readingRefusalMessage,
+  readingTextPath,
   type Reading,
 } from "./readings";
 
@@ -48,6 +50,11 @@ import {
  * "the file is larger than one reading; showing the first 96 KiB". The text
  * that comes back always fits it (cut on a UTF-8 boundary by the same
  * display-side belt-and-braces as the head window).
+ *
+ * STORY 16.12: a SELECTION has no source file, so its pull answers with the
+ * map's own stored excerpt — every byte there is, nothing more — through the
+ * same budget and the same sentence vocabulary. Nothing is stat'ed, resolved
+ * or re-read from a source, because there is no source to reach.
  *
  * PROVISIONAL: the 96 KiB budget (Slashspace's 96 KB per call is the
  * precedent, not a rule), the truncation wording, and the fact that a pull
@@ -95,6 +102,21 @@ export interface PulledText {
 }
 
 /**
+ * THE SELECTION'S PULL (story 16.12): a selection has no source file, so the
+ * map's own stored excerpt is ALL there is. This returns it — under the same
+ * budget, never re-read, never re-stamped — so the ONE retrieval a packet may
+ * make of a selection card answers with exactly the bytes the card holds.
+ * PURE, like the budget's line: same text in, same answer out.
+ */
+export function pullStoredText(
+  text: string,
+  budget: number = PULL_BUDGET_BYTES,
+): PullResult {
+  const clipped = clipHead(text, PULL_MAX_LINES, budget);
+  return { kind: "text", text: clipped.head, truncated: clipped.truncated };
+}
+
+/**
  * What one pull answered. A refusal is the existing sentence, a VALUE — the
  * pull never throws and never writes; the card shows the words where it stood.
  */
@@ -112,10 +134,21 @@ export interface PullIo {
   readFileBytes(path: string): Promise<FileBytesAnswer>;
   /** The INJECTED PDF extractor: the same seam a pick uses (story 16.4). */
   pdfText: PdfText;
+  /**
+   * STORY 16.12: the map's OWN record read, used only by a SELECTION's pull —
+   * its stored excerpt is all there is (there is no source file to open). A
+   * reader, never a writer; a fake may omit it and the real one is used.
+   */
+  readStoredText?(path: string): Promise<string | null>;
 }
 
 /** The real bridges, bound once so the module stays importable in bun tests. */
-export const PULL_IO: PullIo = { readTextHead, readFileBytes, pdfText };
+export const PULL_IO: PullIo = {
+  readTextHead,
+  readFileBytes,
+  pdfText,
+  readStoredText: readTextFile,
+};
 
 /**
  * A TEXT source's pull: the existing head read with the pull's larger limits.
@@ -190,6 +223,16 @@ export async function pullReading(
   budget: number = PULL_BUDGET_BYTES,
   io: PullIo = PULL_IO,
 ): Promise<PullResult> {
+  // STORY 16.12: a selection pulls the map's own excerpt, verbatim — there is
+  // no source file to locate, so no path is resolved and nothing is stat'ed.
+  if (reading.form === "selection") {
+    const readStored = io.readStoredText ?? readTextFile;
+    const stored = await readStored(readingTextPath(workspacePath, reading.on));
+    if (stored === null) {
+      return { kind: "refused", message: READING_REFUSALS.absent };
+    }
+    return pullStoredText(stored, budget);
+  }
   const path = readingAbsolutePath(workspacePath, reading);
   return readingExtract(reading) === "pdf"
     ? await pullPdf(path, budget, io)

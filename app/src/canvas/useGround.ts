@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fileMeta, removeFile, type FileMetaAnswer } from "../lib/fs";
+import { fileMeta as fsFileMeta, removeFile, type FileMetaAnswer } from "../lib/fs";
 import { createWriteQueue } from "../lib/writeQueue";
 import {
   cardAddEvent,
@@ -47,6 +47,9 @@ import {
   refreshReading,
   resolveReadingState,
   saveReadings,
+  selectionReading,
+  selectionRefusal,
+  storeSelectionText,
   takeReading,
   withReading,
   withReadingRemoved,
@@ -146,6 +149,11 @@ import { pullReading, type PulledText } from "../map/pull";
  *     one baseline line so a later replay knows where the board began. A
  *     malformed line is preserved and reported in the ground notices group; a
  *     failed append is one sentence and NEVER undoes the move.
+ *   - A SELECTION CARD (16.12): the person selects text inside an expanded
+ *     card's reading, names the new card, and `createSelection` writes the
+ *     excerpt's text file, its reading line (provenance `card://<source>`) and
+ *     the ground line, in that order. NO source is read or stat'ed, the source
+ *     card's files are never touched, and the excerpt can never be stale.
  *   - The whole read-modify-write runs through the app's one per-file
  *     discipline (`createWriteQueue`, ADR-0004/ADR-0018): one line at a time,
  *     never a whole-folder rewrite. THE PULL, THE MIRROR AND THE HISTORY ARE
@@ -246,6 +254,19 @@ export interface GroundView {
     y: number,
     from: string,
   ) => Promise<GroundAddResult>;
+  /**
+   * Make a NEW card whose reading is exactly the selected bytes (story 16.12):
+   * provenance is the source card's slug (`card://`), no file is read and
+   * nothing behind it can go stale. The name is the person's — the layer
+   * proposes it, and this refuses a blank one before touching a file.
+   */
+  createSelection: (
+    sourceSlug: string,
+    name: string,
+    x: number,
+    y: number,
+    text: string,
+  ) => Promise<GroundAddResult>;
   /** Move one reference to a dropped point (one line, on release). */
   move: (on: string, x: number, y: number) => Promise<GroundAddResult>;
   /** Re-read this reference's file, by the person's press only. */
@@ -291,6 +312,7 @@ export interface GroundView {
 type GroundLoaded = Omit<
   GroundView,
   | "create"
+  | "createSelection"
   | "move"
   | "refresh"
   | "repoint"
@@ -433,6 +455,68 @@ export async function removeGroundNote(
   }
 }
 
+/** The bridges a selection's creation needs; a test passes its own fakes. */
+export interface SelectionIo {
+  storeSelectionText: typeof storeSelectionText;
+  saveReadings: typeof saveReadings;
+  saveGround: typeof saveGround;
+}
+
+/** The real bridges, bound once so the hook's path is the tested one. */
+const SELECTION_IO: SelectionIo = {
+  storeSelectionText,
+  saveReadings,
+  saveGround,
+};
+
+/** What making a selection card produced: the next records and the new line. */
+export interface SelectionRecords {
+  references: GroundReference[];
+  readings: Reading[];
+  reading: Reading;
+}
+
+/**
+ * STORY 16.12 — MAKE A CARD OUT OF A SELECTION, in the house order:
+ *
+ *   1. the excerpt's text file FIRST (`map/readings/<new-slug>.md`, verbatim);
+ *   2. the readings line NEXT (so a crash leaves an orphan text, never a line
+ *      whose text is absent);
+ *   3. the ground line LAST — the same order every add uses, with the reading's
+ *      own two pieces text-first.
+ *
+ * NOTHING IS READ: no head, no extractor, no stat. The bytes are the person's
+ * selection exactly as taken, and the reading's provenance is the SOURCE CARD's
+ * slug — never a path. The slug dedupes against the map's references like every
+ * other coined name (ADR-0005 rule 4). PURE apart from the bridges it is handed.
+ */
+export async function writeSelectionCard(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+  malformedGround: readonly string[],
+  malformedReadings: readonly string[],
+  sourceSlug: string,
+  name: string,
+  x: number,
+  y: number,
+  text: string,
+  taken: string,
+  io: SelectionIo = SELECTION_IO,
+): Promise<SelectionRecords> {
+  const addition = addGroundReference(references, name.trim(), x, y);
+  const reading = selectionReading(addition.reference.on, sourceSlug, taken);
+  await io.storeSelectionText(workspacePath, reading.on, text);
+  const nextReadings = withReading(readings, reading);
+  await io.saveReadings(workspacePath, nextReadings, malformedReadings);
+  await io.saveGround(workspacePath, addition.references, malformedGround);
+  return {
+    references: addition.references,
+    readings: nextReadings,
+    reading,
+  };
+}
+
 /**
  * The states of every reference, from the readings and their metadata (story
  * 16.2). Pure apart from the answers it is handed: one reading per slug, its
@@ -455,14 +539,23 @@ function statesOf(
   return states;
 }
 
-/** Stat every reading's file once, in parallel, keyed by slug. */
-async function metasOf(
+/**
+ * Stat every reading's file once, in parallel, keyed by slug. STORY 16.12: a
+ * SELECTION has no source file, so it is not stat'ed at all and has no entry —
+ * its state is `current` by construction (the short-circuit in
+ * `resolveReadingState`), never a metadata answer that could go stale.
+ * The stat is injectable so a test can prove the skip without a disk.
+ */
+export async function metasOf(
   workspacePath: string,
   readings: readonly Reading[],
+  fileMeta: (path: string) => Promise<FileMetaAnswer> = fsFileMeta,
 ): Promise<Map<string, FileMetaAnswer>> {
   const metas = new Map<string, FileMetaAnswer>();
   await Promise.all(
     readings.map(async (reading) => {
+      // No source file, no stat: a selection can never be stale.
+      if (reading.form === "selection") return;
       metas.set(
         reading.on,
         await fileMeta(readingAbsolutePath(workspacePath, reading)),
@@ -753,6 +846,83 @@ export function useGround(workspacePath: string): GroundView {
               ),
             ];
           });
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * CREATE A SELECTION CARD (story 16.12): the person selected text inside an
+   * expanded card's reading and confirmed a name. The bytes are written
+   * VERBATIM and the reading's line records the SOURCE CARD, not a file. No
+   * head is read, nothing is stat'ed, and the source card's files are never
+   * touched — this only appends the new card's three pieces.
+   */
+  const createSelection = useCallback(
+    (
+      sourceSlug: string,
+      name: string,
+      x: number,
+      y: number,
+      text: string,
+    ): Promise<GroundAddResult> => {
+      // The two refusals the affordance also answers with, run BEFORE the
+      // queue so a blank name writes nothing at all.
+      const refusal = selectionRefusal(name, text);
+      if (refusal !== null) {
+        return Promise.resolve({ ok: false, message: refusal });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const written = await writeSelectionCard(
+            workspacePath,
+            referencesRef.current,
+            readingsRef.current,
+            malformedGroundRef.current,
+            malformedReadingsRef.current,
+            sourceSlug,
+            name,
+            x,
+            y,
+            text,
+            new Date().toISOString(),
+          );
+          referencesRef.current = written.references;
+          readingsRef.current = written.readings;
+          textsRef.current = {
+            ...textsRef.current,
+            [written.reading.on]: text,
+          };
+          // The excerpt is the map's own copy: current, and never stat'ed.
+          statesRef.current = {
+            ...statesRef.current,
+            [written.reading.on]: "current" as ReadingState,
+          };
+          setState(snapshot());
+          outcome = { ok: true };
+          // Story 16.10: a card appeared at a point. The history carries the
+          // MOVE only — the excerpt's words are never logged.
+          const placed = written.references.find(
+            (reference) => reference.on === written.reading.on,
+          );
+          queueHistory(() => [
+            cardAddEvent(
+              Date.now(),
+              written.reading.on,
+              placed?.x ?? Math.round(x),
+              placed?.y ?? Math.round(y),
+            ),
+          ]);
           queueMirror();
         })
         .then(() => outcome)
@@ -1215,6 +1385,7 @@ export function useGround(workspacePath: string): GroundView {
     malformedHistory: state.malformedHistory,
     loaded: state.loaded,
     create,
+    createSelection,
     move,
     refresh,
     repoint,

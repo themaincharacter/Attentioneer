@@ -4,6 +4,7 @@ import type { GroundReference } from "./ground";
 import { serializeGroundLinkLine, type GroundLink } from "./groundLinks";
 import {
   readingFileName,
+  selectionSourceSlug,
   type Reading,
   type ReadingState,
 } from "./readings";
@@ -153,9 +154,18 @@ export function renderMirror(view: MirrorView): string {
       view.states[reference.on] ?? (reading === null ? "unread" : "unreadable");
     lines.push("### " + flat(reference.name));
     // The file's NAME only: the mirror may be shared, and a full path is the
-    // person's machine and folder. The reading's record keeps the path.
+    // person's machine and folder. The reading's record keeps the path. STORY
+    // 16.12: a selection has no file — it says which CARD it came from, by the
+    // source's NAME, and a source the map no longer carries is said quietly.
     if (reading !== null) {
-      lines.push("file: " + readingFileName(reading.from));
+      const sourceSlug = selectionSourceSlug(reading);
+      if (sourceSlug === null) {
+        lines.push("file: " + readingFileName(reading.from));
+      } else {
+        lines.push(
+          "from: " + (nameOf.get(sourceSlug) ?? "a card that is gone"),
+        );
+      }
     }
     const sentence = STATE_SENTENCES[state];
     if (sentence !== null) lines.push("state: " + sentence);

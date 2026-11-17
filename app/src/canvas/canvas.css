@@ -5396,6 +5396,12 @@ body {
   display: block;
   -webkit-line-clamp: unset;
   overflow: visible;
+  /* STORY 16.12 — the expanded reading is the SELECTION surface (the card is
+     otherwise unselectable): text selection there is a plain selection of the
+     stored bytes, and the card's drag never starts on it. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 /* STORY 16.8 — the PULL: what the person asked to see more of, drawn as a
@@ -5821,6 +5827,65 @@ body {
   pointer-events: auto;
   cursor: pointer;
   animation: fade-in 140ms ease-out;
+}
+
+/* STORY 16.12 — A SELECTION BECOMES A CARD. The one affordance lives in the
+   card's verbs row (no floating toolbar over every selection), the name field
+   is the bubble's quiet input voice, and the provenance line is the footer's
+   usual small type — a source NAME, never a path. Nothing counts, scores or
+   nudges. PROVISIONAL (ADR-0003's rendering seam): the name block's look and
+   the confirm verb's wording. */
+.ground-select-ask {
+  font-style: italic;
+}
+
+.ground-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(141, 136, 124, 0.16);
+}
+
+.ground-selection-name {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+  font-size: 12px;
+  color: #2c2a26;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.ground-selection-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.ground-selection-actions button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  color: #8d8779;
+  cursor: pointer;
+}
+
+.ground-selection-actions button:hover {
+  color: #1e2126;
+}
+
+.ground-selection-actions button:disabled {
+  color: #c9c3b6;
+  cursor: default;
+}
+
+.ground-handle.ground-from {
+  font-style: italic;
 }
 
 

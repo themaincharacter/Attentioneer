@@ -65,6 +65,13 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * THE CAP IS STILL PROVISIONAL: the first 64 lines or 8 KiB, whichever comes
  * first (a hypothesis, not a rule).
  *
+ * STORY 16.12 ADDS A READING WITH NO SOURCE FILE (a SELECTION): the person
+ * selects text inside another card's expanded reading, names the new card, and
+ * those exact bytes become the card's reading. The line stores provenance
+ * (`from: card://<source-slug>`), never a path; its state is `current` by
+ * construction; nothing is stat'ed, re-read or refreshed behind it; and the
+ * bytes are the selection, verbatim — never trimmed, re-wrapped or normalized.
+ *
  * REFRESH IS THE ONLY RE-READ (story 16.2 decision 4): one affordance, pressed
  * by the person, re-takes the head under the same cap and stamps a new
  * `taken`/`bytes`. Nothing here watches, polls or re-reads on open; a
@@ -83,12 +90,25 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  */
 
 /**
- * The forms story 2 reads and writes. PROVISIONAL: a pick inside the workspace
+ * The forms a reading line may carry. PROVISIONAL: a pick inside the workspace
  * is `path` (workspace-relative), a pick outside is `at` (absolute,
  * machine-local). A `url` line is not a reading yet — it is surfaced as
  * unreadable input, not guessed into a form.
+ *
+ * STORY 16.12 adds `selection`: the text the person selected OUT of another
+ * card's expanded reading. It is a reading kind, never a note, and it has NO
+ * SOURCE FILE — its `from` is the provenance `card://<source-slug>`, never a
+ * path. A `selection` line carrying a path is refused (kept and reported, never
+ * guessed into a form), because a selection can never be stale and nothing
+ * behind it is ever stat'ed.
  */
-export const READING_FORMS: readonly PointerForm[] = ["path", "at"];
+export type ReadingForm = PointerForm | "selection";
+
+export const READING_FORMS: readonly ReadingForm[] = [
+  "path",
+  "at",
+  "selection",
+];
 
 /** Story 1's cap: the first 64 lines... (PROVISIONAL, not a rule). */
 export const READING_MAX_LINES = 64;
@@ -115,10 +135,14 @@ export interface Reading {
   on: string;
   /**
    * The storage form (ADR-0017's vocabulary, story 16.2's location rule): a
-   * `path` is workspace-relative, an `at` is absolute.
+   * `path` is workspace-relative, an `at` is absolute, and a `selection`
+   * has no source file at all (story 16.12) — its `from` is provenance.
    */
-  form: PointerForm;
-  /** The value in that form, stored verbatim (a legacy absolute `path` too). */
+  form: ReadingForm;
+  /**
+   * The value in that form, stored verbatim (a legacy absolute `path` too).
+   * For a `selection` this is `card://<source-slug>` and NEVER a path.
+   */
   from: string;
   /** When the head was taken, ISO-8601 (the writer's clock). */
   taken: string;
@@ -212,9 +236,17 @@ export function parseReadingLine(line: string): Reading | null {
   const [, on, form, from, taken, bytes, extract] = match;
   if (on === "" || from === "" || taken === "") return null;
   // The vocabulary is provisional: a form the app does not know yet is
-  // preserved and surfaced, never guessed into `path`.
-  if (!READING_FORMS.includes(form as PointerForm)) return null;
-  const reading: Reading = { on, form: form as PointerForm, from, taken };
+  // preserved and surfaced, never guessed into `path`. A SELECTION must name a
+  // card, never a path: a line that carries one is REFUSED (kept and reported),
+  // so no caller can ever stat, read or re-take behind it (story 16.12).
+  if (!READING_FORMS.includes(form as ReadingForm)) return null;
+  if (form === "selection" && !isSelectionProvenance(from)) return null;
+  const reading: Reading = {
+    on,
+    form: form as ReadingForm,
+    from,
+    taken,
+  };
   if (bytes !== undefined) reading.bytes = Number(bytes);
   // Absent means TEXT (a story-1 line), and it stays absent: a load never
   // writes the field in. A hand edit that says `text` is preserved as written.
@@ -341,11 +373,120 @@ export function readingFormFor(
   return { form: "at", from: picked };
 }
 
+/* ------------------------------------------------------------------------- *
+ * STORY 16.12 — A SELECTION IS A READING WITH NO SOURCE FILE.
+ *
+ * `from` is provenance, not a location: `card://<source-slug>`. Nothing behind
+ * a selection is ever stat'ed, read or re-taken, so a selection line that
+ * carries a path is refused at the parser (kept and reported like any other
+ * malformed line) rather than half-read as a file.
+ * ------------------------------------------------------------------------- */
+
+/** The provenance prefix a selection's `from` carries (PROVISIONAL). */
+export const SELECTION_PREFIX = "card://";
+
+/** The one provenance string a selection stores. */
+export function selectionProvenance(sourceSlug: string): string {
+  return SELECTION_PREFIX + sourceSlug;
+}
+
+/**
+ * Is this `from` a selection's provenance? A slug is one path-free token, so
+ * a PATH (POSIX, Windows drive, UNC, a relative one) can never pass — and that
+ * is exactly the refusal the parser needs.
+ */
+export function isSelectionProvenance(from: string): boolean {
+  if (!from.startsWith(SELECTION_PREFIX)) return false;
+  const slug = from.slice(SELECTION_PREFIX.length);
+  return slug !== "" && !/[\\/\s]/.test(slug);
+}
+
+/** The source card's slug a selection names, or null (a file reading). */
+export function selectionSourceSlug(reading: Reading): string | null {
+  if (reading.form !== "selection") return null;
+  return isSelectionProvenance(reading.from)
+    ? reading.from.slice(SELECTION_PREFIX.length)
+    : null;
+}
+
+/**
+ * ONE selection reading, built from the source card's slug (story 16.12). No
+ * `bytes` and no `extract`: nothing behind it can change, so there is no size
+ * to compare and no extractor to record. PURE — the caller writes the text and
+ * the line, in the house order.
+ */
+export function selectionReading(
+  on: string,
+  sourceSlug: string,
+  taken: string,
+): Reading {
+  return {
+    on,
+    form: "selection",
+    from: selectionProvenance(sourceSlug),
+    taken,
+  };
+}
+
+/** The one sentence a blank selection name answers (PROVISIONAL wording). */
+export const SELECTION_NAME_REFUSAL = "name it first.";
+
+/** The one sentence an empty selection answers (PROVISIONAL wording). */
+export const SELECTION_EMPTY_REFUSAL = "select some text first.";
+
+/**
+ * The creation's ONE refusal rule, PURE: a blank name (the person's word is the
+ * name, and nothing is created before they confirm it) and an empty selection
+ * write nothing. The caller runs this BEFORE the queue, so a refusal never
+ * reaches a file.
+ */
+export function selectionRefusal(name: string, text: string): string | null {
+  if (name.trim() === "") return SELECTION_NAME_REFUSAL;
+  if (text === "") return SELECTION_EMPTY_REFUSAL;
+  return null;
+}
+
+/** How many of the selection's first words propose its name (PROVISIONAL). */
+export const SELECTION_NAME_WORDS = 6;
+
+/**
+ * The name the affordance PROPOSES for a selection: its first few words,
+ * whitespace collapsed (the NAME only — the bytes written are never touched),
+ * cropped with one ellipsis when more words follow. The person edits or
+ * replaces it; only their confirm writes anything. PURE.
+ */
+export function proposeSelectionName(
+  text: string,
+  maxWords: number = SELECTION_NAME_WORDS,
+): string {
+  if (maxWords <= 0) return "";
+  const words = text.split(/\s+/).filter((word) => word !== "");
+  if (words.length === 0) return "";
+  const crop = words.slice(0, maxWords).join(" ");
+  return words.length > maxWords ? crop + "…" : crop;
+}
+
+/**
+ * Store one selection's bytes VERBATIM (story 16.12): the text file first, no
+ * cap, no trim, no re-wrap and no normalization — the record file IS the
+ * excerpt and nothing else. The caller writes the line last (the house order).
+ */
+export async function storeSelectionText(
+  workspacePath: string,
+  on: string,
+  text: string,
+  io: ReadingIo = READING_IO,
+): Promise<void> {
+  await io.createDirAll(readingsDir(workspacePath));
+  await io.writeTextFile(readingTextPath(workspacePath, on), text);
+}
+
 /**
  * The ABSOLUTE path a reading's file lives at, for a stat or a re-read. A
  * `path` is joined to the workspace; a LEGACY absolute `path` value is used
  * as it stands (story 1 wrote absolute paths under `path`, and the no-
  * migration rule means it must be read as written); an `at` is absolute.
+ * NEVER for a `selection`: it has no source file, and its callers skip it.
  */
 export function readingAbsolutePath(
   workspacePath: string,
@@ -387,6 +528,11 @@ export function resolveReadingState(
   now: number,
 ): ReadingState {
   if (reading === null) return "unread";
+  // STORY 16.12: a selection has NO source file, so it can never be stale. Its
+  // state is `current` by construction — the map's own excerpt is the source —
+  // and the SHORT-CIRCUIT comes before any metadata answer: no caller ever
+  // stats a selection (an empty answer is simply ignored here).
+  if (reading.form === "selection") return "current";
   if (meta === null || meta.kind === "refused") return "unreadable";
   if (!meta.exists) return "missing";
   if (!meta.is_file) return "unreadable";
@@ -527,7 +673,7 @@ async function readPdfOrRefuse(
 async function storeReading(
   workspacePath: string,
   on: string,
-  form: PointerForm,
+  form: ReadingForm,
   from: string,
   taken: TakenText,
   extract: ReadingExtract | undefined,

@@ -4246,6 +4246,7 @@ function App() {
             onRefresh={ground.refresh}
             onRepoint={ground.repoint}
             onRemove={ground.remove}
+            onCreateSelection={ground.createSelection}
             onSetNote={ground.setNote}
             onPull={ground.pull}
             onDismissPull={ground.dismissPull}

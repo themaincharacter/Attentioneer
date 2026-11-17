@@ -1,7 +1,7 @@
 import { readTextFile, writeTextFile } from "../lib/fs";
 import { canonicalJsonlLine } from "../lib/serialize";
 import type { GroundLink } from "./groundLinks";
-import type { PointerForm } from "./pointers";
+import type { ReadingForm } from "./readings";
 import { mapDir } from "./records";
 
 /**
@@ -96,7 +96,7 @@ export type HistoryEvent =
       readonly t: number;
       readonly type: "reading.take" | "reading.refresh";
       readonly slug: string;
-      readonly form: PointerForm;
+      readonly form: ReadingForm;
       readonly bytes: number | null;
     }
   | {
@@ -104,7 +104,7 @@ export type HistoryEvent =
       readonly t: number;
       readonly type: "reading.repoint";
       readonly slug: string;
-      readonly form: PointerForm;
+      readonly form: ReadingForm;
       /** The NEW target's file NAME only — never the path (content rule). */
       readonly from: string;
     }
@@ -164,7 +164,7 @@ export function cardRemoveEvent(t: number, slug: string): HistoryEvent {
 export function readingTakeEvent(
   t: number,
   slug: string,
-  form: PointerForm,
+  form: ReadingForm,
   bytes: number | null,
 ): HistoryEvent {
   return { v: HISTORY_VERSION, t, type: "reading.take", slug, form, bytes };
@@ -174,7 +174,7 @@ export function readingTakeEvent(
 export function readingRefreshEvent(
   t: number,
   slug: string,
-  form: PointerForm,
+  form: ReadingForm,
   bytes: number | null,
 ): HistoryEvent {
   return { v: HISTORY_VERSION, t, type: "reading.refresh", slug, form, bytes };
@@ -184,7 +184,7 @@ export function readingRefreshEvent(
 export function readingRepointEvent(
   t: number,
   slug: string,
-  form: PointerForm,
+  form: ReadingForm,
   from: string,
 ): HistoryEvent {
   return { v: HISTORY_VERSION, t, type: "reading.repoint", slug, form, from };
@@ -319,15 +319,15 @@ export function parseHistoryEvent(line: string): HistoryEvent | null {
             : null;
       if (slug === null || form === null) return null;
       return record.type === "reading.take"
-        ? readingTakeEvent(t, slug, form as PointerForm, bytes)
-        : readingRefreshEvent(t, slug, form as PointerForm, bytes);
+        ? readingTakeEvent(t, slug, form as ReadingForm, bytes)
+        : readingRefreshEvent(t, slug, form as ReadingForm, bytes);
     }
     case "reading.repoint": {
       const slug = stringField(record, "slug");
       const form = stringField(record, "form");
       const from = stringField(record, "from");
       if (slug === null || form === null || from === null) return null;
-      return readingRepointEvent(t, slug, form as PointerForm, from);
+      return readingRepointEvent(t, slug, form as ReadingForm, from);
     }
     case "note.set":
     case "note.remove": {
