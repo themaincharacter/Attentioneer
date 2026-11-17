@@ -61,11 +61,13 @@ import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
 import { GroundLayer } from "./canvas/GroundLayer";
 import { createTurnPort } from "./turn/sidecar";
+import { loadTurnSettings } from "./turn/provider";
 import {
-  hasProvider,
-  loadProviderConfig,
-  rememberedApiKey,
-} from "./turn/provider";
+  formatProviderRef,
+  resolveSelection,
+} from "./turn/providers";
+import { readSecret, secretStatus, secretStatusWords } from "./lib/secret";
+import { ProvidersPanel } from "./canvas/ProvidersPanel";
 import { NO_PROVIDER_SENTENCE, sendPacketApp } from "./turn/egress";
 import {
   fetchAskBlock,
@@ -774,6 +776,12 @@ function App() {
   const [askProvider, setAskProvider] = useState<boolean | null>(null);
   const [askIncluded, setAskIncluded] = useState<AskPointer[]>([]);
   const [askSent, setAskSent] = useState<AskSentView | null>(null);
+  // WHICH PROVIDER, AND WHERE THE KEY LIVES (Epic 15 story 4): the selection's
+  // providerId:modelId for the Ask panel's one line, and the store sentence.
+  // Neither is a key value — the key never enters a field.
+  const [askProviderRef, setAskProviderRef] = useState<string | null>(null);
+  const [askKeyStore, setAskKeyStore] = useState<string | null>(null);
+  const [providersOpen, setProvidersOpen] = useState(false);
   // The ghost's ask surface (Epic 10 story 3): the one panel where the person
   // asks for a packet or hands a model's reply back. It sits outside `.plane`
   // like the control's other actions; closed by Esc, its ×, or a level switch
@@ -1894,6 +1902,36 @@ function App() {
   }, []);
 
   /**
+   * Re-read what a turn would carry, and where a key is kept (Epic 15 story 4).
+   * The answer is a fact about the config rows and the store, never a key: the
+   * selection resolves to providerId:modelId or the stated fallback, and the
+   * store's sentence is the one line the Ask panel always shows.
+   */
+  const refreshProviderFacts = useCallback(() => {
+    void loadTurnSettings()
+      .then((settings) => {
+        const resolved = resolveSelection(settings);
+        const here = resolved.kind === "resolved";
+        setAskProvider(here);
+        setAskProviderRef(
+          here
+            ? formatProviderRef(settings.providerId, settings.modelId)
+            : null,
+        );
+        setAskFallback(here ? null : NO_PROVIDER_SENTENCE);
+      })
+      .catch(() => {
+        // An unreadable config is the same honest nothing: the fallback.
+        setAskProvider(false);
+        setAskProviderRef(null);
+        setAskFallback(NO_PROVIDER_SENTENCE);
+      });
+    void secretStatus().then((store) =>
+      setAskKeyStore(secretStatusWords(store)),
+    );
+  }, []);
+
+  /**
    * Open the quiet ASK panel (Epic 12 story 3) on the chooser's word, riding
    * this reach (or none at all). Nothing is tracked yet: the panel holds the
    * question's prose until it is sent, and a question that never leaves is not
@@ -1917,22 +1955,13 @@ function App() {
       // previews are read only once a provider is known to be there: the
       // clipboard route reads no target (ADR-0029 rule 3 stands for it).
       setAskProvider(null);
+      setAskProviderRef(null);
       setAskContext(null);
       setAskIncluded([]);
       setAskSent(null);
-      void loadProviderConfig()
-        .then((stored) => {
-          const here = hasProvider(stored);
-          setAskProvider(here);
-          setAskFallback(here ? null : NO_PROVIDER_SENTENCE);
-        })
-        .catch(() => {
-          // An unreadable config is the same honest nothing: the fallback.
-          setAskProvider(false);
-          setAskFallback(NO_PROVIDER_SENTENCE);
-        });
+      refreshProviderFacts();
     },
-    [pointerAt, cancelPendingGestures, resetAsk],
+    [pointerAt, cancelPendingGestures, resetAsk, refreshProviderFacts],
   );
 
   /**
@@ -2009,8 +2038,10 @@ function App() {
   const askSendApp = useCallback(
     (packet: AskPacket) =>
       sendPacketApp(packet, {
-        loadProvider: loadProviderConfig,
-        apiKey: rememberedApiKey,
+        loadSettings: loadTurnSettings,
+        // Read at send time, for the selected provider only; the key never
+        // enters React state, a field, a log or an error sentence.
+        apiKey: readSecret,
         turn: turnPort,
         // The ONE follow-up's read: a block the packet already carried, its
         // fuller text from the pull reader. Null (no read) for anything else,
@@ -4557,6 +4588,9 @@ function App() {
           thrown away by a press; Esc / its × close it. */}
       {level === "ground" && askAt && (
         <AskPanel
+          providerRef={askProviderRef}
+          keyStore={askKeyStore}
+          onProviders={() => setProvidersOpen((open) => !open)}
           name={
             ground.references.find((entry) => entry.on === askAt.on)?.name ??
             nameOf(askAt.on)
@@ -4584,6 +4618,23 @@ function App() {
           onLog={askLog}
           onClose={closeAskPanel}
         />
+      )}
+
+      {/* THE PROVIDERS PANEL (Epic 15 story 4): the person's rows, where the
+          key is kept and which provider a turn carries. It sits outside
+          `.plane` like the app's other quiet surfaces; the Ask panel opens it
+          and re-reads its selection when it closes. The card's ask mounts the
+          same piece beside itself. */}
+      {providersOpen && (
+        <div className="providers-slot">
+          <ProvidersPanel
+            onClose={() => {
+              setProvidersOpen(false);
+              refreshProviderFacts();
+            }}
+            onChanged={refreshProviderFacts}
+          />
+        </div>
       )}
 
       {/* The map tabs. DEPRECATED (hidden 2026-11-16 per user review — separate

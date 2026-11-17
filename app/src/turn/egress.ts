@@ -1,4 +1,8 @@
-import { hasProvider, providerFrom, type StoredProvider } from "./provider";
+import {
+  providerFrom,
+  resolveSelection,
+  type TurnSettings,
+} from "./providers";
 import type { TurnPort } from "./turn";
 import type { AskPacket } from "./packet";
 import type { TurnMessage } from "./protocol";
@@ -31,12 +35,18 @@ import type { TurnMessage } from "./protocol";
  * nothing else), the question, and the answer. This module has no fs import and
  * no write path at all.
  *
- * PROVISIONAL: the fallback sentences and whether a key is required (story 4's
- * provider rows and keychain decide that; today a configured base URL + model
- * is enough, because a local endpoint may have no key).
+ * PROVISIONAL: the fallback sentences and whether a key is required. Story 4
+ * settles the provider's identity as providerId:modelId; the key is still
+ * optional here, because a local endpoint on loopback may legitimately have
+ * none, and a wrong key fails one turn with one sentence.
  */
 
-/** No provider is configured: the clipboard is the visible fallback. */
+/**
+ * Nothing resolves (no rows, or the selected row/model is gone): the clipboard
+ * is the visible fallback. A removed provider clears the selection, so a turn
+ * that named it lands here and SAYS nothing is configured rather than reaching
+ * for a base URL nobody has any more.
+ */
 export const NO_PROVIDER_SENTENCE =
   "no provider is configured, so the question goes by clipboard — use copy below.";
 
@@ -66,10 +76,10 @@ export type PacketSend =
 
 /** The bridges the egress needs, injected (the app passes the real ones). */
 export interface PacketSendDeps {
-  /** The stored provider row (the key is deliberately NOT stored). */
-  loadProvider: () => Promise<StoredProvider>;
-  /** The session's key, read at send time (never logged, never written). */
-  apiKey: () => string;
+  /** The provider rows and the selection (the key is deliberately NOT here). */
+  loadSettings: () => Promise<TurnSettings>;
+  /** The key for one provider, read at send time (never logged, never shown). */
+  apiKey: (providerId: string) => Promise<string>;
   /** The turn port: start, send the packet, stop. */
   turn: TurnPort;
   /** Read ONE sent block's fuller text (the pull reader); null for none. */
@@ -87,13 +97,17 @@ export async function sendPacketApp(
   packet: AskPacket,
   deps: PacketSendDeps,
 ): Promise<PacketSend> {
-  let stored: StoredProvider;
+  let settings: TurnSettings;
   try {
-    stored = await deps.loadProvider();
+    settings = await deps.loadSettings();
   } catch {
     return { kind: "unavailable", sentence: NO_PROVIDER_SENTENCE };
   }
-  if (!hasProvider(stored)) {
+  // ONLY providerId:modelId decides whether a turn can leave: the row supplies
+  // the base URL and the model id, and a selection that no longer names a row
+  // is the stated fallback, not a guess at the nearest endpoint.
+  const resolved = resolveSelection(settings);
+  if (resolved.kind !== "resolved") {
     return { kind: "unavailable", sentence: NO_PROVIDER_SENTENCE };
   }
 
@@ -102,8 +116,12 @@ export async function sendPacketApp(
     return { kind: "unavailable", sentence: SIDECAR_UNAVAILABLE_SENTENCE };
   }
 
+  // Read the key at SEND time, for this provider only. A keyless local
+  // endpoint is legitimate, so an empty answer is passed on rather than
+  // refused here.
+  const apiKey = await deps.apiKey(resolved.provider.id);
   const turned = await deps.turn.sendPacket(
-    providerFrom(stored, deps.apiKey()),
+    providerFrom(resolved.provider, resolved.model, apiKey),
     packet,
     deps.fetchBlock,
   );

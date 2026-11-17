@@ -98,6 +98,19 @@ interface AskPanelProps {
   context: AskContext | null;
   /** Every message that left, once the app sent them (the readback), or null. */
   sent: AskSentView | null;
+  /**
+   * The providerId:modelId the app would send by (Epic 15 story 4), or null
+   * when nothing resolves. A string contract, never a base URL and never a key.
+   */
+  providerRef?: string | null;
+  /**
+   * WHERE KEYS LIVE on this machine ("the OS keychain", or the stated local
+   * file), or null before the store answers. Always shown while composing: a
+   * fallback that is not said is a silent one.
+   */
+  keyStore?: string | null;
+  /** Open the shared providers panel (rows, keys, the selection). */
+  onProviders?: () => void;
   /** The inclusion changed: the app reads exactly those previews, nothing else. */
   onIncludedChange: (included: Pointer[]) => void;
   /** Send the question out: the app, or the clipboard/handoff fallback. */
@@ -186,6 +199,9 @@ export function AskPanel({
   running,
   context,
   sent,
+  providerRef = null,
+  keyStore = null,
+  onProviders,
   onIncludedChange,
   onSend,
   onStop,
@@ -349,6 +365,32 @@ export function AskPanel({
               {declarationWords(declareAsk(question, included()))}
             </div>
           )}
+
+          {/* WHICH PROVIDER AND WHERE THE KEY LIVES (Epic 15 story 4): the
+              one string a turn carries (providerId:modelId), the store's one
+              sentence, and the verb that opens the shared providers panel.
+              Neither is a key value; nothing here can show one. */}
+          <div className="ask-provider-line" role="status">
+            <span className="ask-provider-ref">
+              {providerRef === null ? "no provider selected" : providerRef}
+            </span>
+            <span className="ask-key-store">
+              {keyStore === null ? "asking where keys live…" : keyStore}
+            </span>
+            {onProviders !== undefined && (
+              <button
+                type="button"
+                className="ask-providers-open"
+                title="providers: rows, keys, and the selection"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onProviders();
+                }}
+              >
+                providers…
+              </button>
+            )}
+          </div>
 
           {/* The stated fallback's one sentence (no provider, or no sidecar).
               A fallback is not a failure of the Ask: the clipboard is simply

@@ -6,6 +6,7 @@ mod head;
 mod marker;
 mod meta;
 mod paths;
+mod secrets;
 mod sidecar;
 
 /// Thin byte-level fs bridge. What machine files say and how they serialize
@@ -151,12 +152,18 @@ fn create_marker_exclusive(path: String) -> Result<bool, String> {
     marker::create_exclusive(&path)
 }
 
+/// The home directory the app's config (and the key fallback) hangs off. One
+/// rule, one place: `config_path` and `secrets_path` must never disagree
+/// about where the app's own files live.
+pub(crate) fn home_dir() -> Result<String, String> {
+    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
+    home.map_err(|_| "home directory is not set".to_string())
+}
+
 /// The app-side config file (ADR-0002: the only app-side persistence).
 #[tauri::command]
 fn config_path() -> Result<String, String> {
-    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
-    let home = home.map_err(|_| "home directory is not set".to_string())?;
-    Ok(format!("{}/.config/attentioneer/config.json", home))
+    Ok(format!("{}/.config/attentioneer/config.json", home_dir()?))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -184,6 +191,10 @@ pub fn run() {
             file_meta,
             read_file_bytes,
             config_path,
+            secrets::secret_status,
+            secrets::secret_set,
+            secrets::secret_get,
+            secrets::secret_delete,
             sidecar::sidecar_start,
             sidecar::sidecar_send,
             sidecar::sidecar_status

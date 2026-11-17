@@ -14,11 +14,7 @@ import {
   WIRE_VERSION,
   type SidecarLine,
 } from "../src/turn/protocol";
-import {
-  rememberedApiKey,
-  rememberApiKey,
-  providerFrom,
-} from "../src/turn/provider";
+import { providerFrom } from "../src/turn/providers";
 import {
   askTurn,
   buildTurnMessages,
@@ -170,14 +166,20 @@ describe("sentences and secrets", () => {
     expect(turnSentence({ kind: "error", sentence: "one line" })).toBe("one line");
   });
 
-  test("the session key is memory only, and the provider trims its fields", () => {
-    rememberApiKey("sk-session-only");
-    expect(rememberedApiKey()).toBe("sk-session-only");
-    expect(providerFrom({ baseUrl: "  http://host/v1 ", model: " m " }, "k")).toEqual({
+  test("the wire's provider is exactly baseUrl, model and key, trimmed", () => {
+    const provider = providerFrom(
+      { id: "local", name: "Local llama", baseUrl: "  http://host/v1 ", models: [] },
+      { id: " m ", name: "M", capabilities: { tools: false, vision: false } },
+      "k",
+    );
+    expect(provider).toEqual({
       baseUrl: "http://host/v1",
       model: "m",
       apiKey: "k",
     });
+    // ONLY the three fields 15.1's sidecar has always read: the row's name and
+    // id never ride on the wire.
+    expect(Object.keys(provider).sort()).toEqual(["apiKey", "baseUrl", "model"]);
   });
 });
 

@@ -7,7 +7,8 @@ import { createWriteQueue } from "./writeQueue";
  * The app's ONE config file — `~/.config/attentioneer/config.json`, whose
  * location the `config_path` command owns (ADR-0002: the only app-side
  * persistence). Two things live here today: the recent workspaces and the
- * turn's provider row (base URL and model).
+ * turn's provider ROWS (id, name, base URL, models) plus the selected
+ * providerId:modelId.
  *
  * WHY A MERGE AND NOT A REWRITE: each feature owns a top-level key, so a
  * second writer must not delete the first. `saveAppConfig` reads the file,
@@ -17,8 +18,10 @@ import { createWriteQueue } from "./writeQueue";
  * older value reappear under a newer one. One queue belongs to one file, so
  * this module owns the config's queue.
  *
- * The API KEY NEVER COMES HERE. It is in-memory for the session only (see
- * `turn/provider.ts`); the OS-keychain story is still to come.
+ * The API KEY NEVER COMES HERE. A key is a capability, not a setting: it is
+ * kept in the OS keychain, or — where no keychain answers — in ONE stated
+ * owner-only fallback file (see src-tauri/src/secrets.rs and lib/secret.ts).
+ * This file has no key field and no writer that could add one.
  *
  * PROVISIONAL: the file's shape and the keys' names are not settled by any ADR.
  */

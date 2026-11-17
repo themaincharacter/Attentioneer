@@ -37,7 +37,14 @@ import {
   sendPacketApp,
   type PacketSendDeps,
 } from "../src/turn/egress";
-import { hasProvider, EMPTY_PROVIDER } from "../src/turn/provider";
+import {
+  EMPTY_SETTINGS,
+  resolveSelection,
+  withProvider,
+  withSelection,
+  type ProviderRow,
+  type TurnSettings,
+} from "../src/turn/providers";
 import { askTurnMessages, askTurnPacket } from "../src/turn/turn";
 import type { PacketTurnAnswer, TurnPort } from "../src/turn/turn";
 import {
@@ -79,6 +86,20 @@ const QUESTION = "what does this reach say about rain?";
 const ANSWER = "an answer\nwith two lines";
 const URL_POINTER = { form: "url" as const, value: "https://example.org/chat" };
 const PATH_POINTER = { form: "path" as const, value: "notes/x.md" };
+
+/** One provider row, and the selection a turn carries (story 4's shape). */
+function providerRow(): ProviderRow {
+  return {
+    id: "local",
+    name: "Local",
+    baseUrl: "http://x",
+    models: [{ id: "m", name: "M", capabilities: { tools: false, vision: false } }],
+  };
+}
+
+function turnSettings(): TurnSettings {
+  return withSelection(withProvider(EMPTY_SETTINGS, providerRow()), "local", "m");
+}
 
 function request(overrides: Partial<AskRequest> = {}): AskRequest {
   return {
@@ -411,22 +432,32 @@ describe("the fallback is stated, not silent, and is not an Ask failure", () => 
     expect(h.writes()).toBe(0);
   });
 
-  test("hasProvider needs a base URL and a model; the key is not the test", () => {
-    expect(hasProvider(EMPTY_PROVIDER)).toBe(false);
-    expect(hasProvider({ baseUrl: "  ", model: "m" })).toBe(false);
-    expect(hasProvider({ baseUrl: "http://x", model: "" })).toBe(false);
-    expect(hasProvider({ baseUrl: "http://x", model: "m" })).toBe(true);
+  test("a turn leaves only when providerId:modelId names a row", () => {
+    expect(resolveSelection(EMPTY_SETTINGS).kind).toBe("refused");
+    // A selection that names a provider row with no such model resolves to
+    // nothing: the turn must not fall back to the row's first model.
+    const row = providerRow();
     expect(
-      hasProvider({ baseUrl: " http://x ", model: " m " }),
-    ).toBe(true);
+      resolveSelection(withSelection(withProvider(EMPTY_SETTINGS, row), "local",
+        "missing-model")).kind,
+    ).toBe("refused");
+    // A removed provider leaves the selection naming nothing.
+    expect(
+      resolveSelection(withSelection(withProvider(EMPTY_SETTINGS, row), "gone",
+        "m")).kind,
+    ).toBe("refused");
+    expect(
+      resolveSelection(withSelection(withProvider(EMPTY_SETTINGS, row), "local",
+        "m")).kind,
+    ).toBe("resolved");
   });
 
   test("the egress decides start-before-send, and says the two fallbacks", async () => {
     let starts = 0;
     let sends = 0;
-    const deps = (stored: { baseUrl: string; model: string }): PacketSendDeps => ({
-      loadProvider: async () => stored,
-      apiKey: () => "",
+    const deps = (settings: TurnSettings): PacketSendDeps => ({
+      loadSettings: async () => settings,
+      apiKey: async () => "",
       turn: turnPort({
         start: async () => {
           starts += 1;
@@ -439,7 +470,7 @@ describe("the fallback is stated, not silent, and is not an Ask failure", () => 
       }),
     });
 
-    const none = await sendPacketApp("packet", deps(EMPTY_PROVIDER));
+    const none = await sendPacketApp("packet", deps(EMPTY_SETTINGS));
     expect(none).toEqual({
       kind: "unavailable",
       sentence: NO_PROVIDER_SENTENCE,
@@ -447,10 +478,7 @@ describe("the fallback is stated, not silent, and is not an Ask failure", () => 
     expect(starts).toBe(0);
     expect(sends).toBe(0);
 
-    const refused = await sendPacketApp(
-      "packet",
-      deps({ baseUrl: "http://x", model: "m" }),
-    );
+    const refused = await sendPacketApp("packet", deps(turnSettings()));
     expect(refused).toEqual({
       kind: "unavailable",
       sentence: SIDECAR_UNAVAILABLE_SENTENCE,
@@ -467,8 +495,11 @@ describe("the fallback is stated, not silent, and is not an Ask failure", () => 
       retrievable: [],
     });
     const answered = await sendPacketApp(packet, {
-      loadProvider: async () => ({ baseUrl: "http://x", model: "m" }),
-      apiKey: () => "sk-not-logged",
+      loadSettings: async () => turnSettings(),
+      apiKey: async (providerId) => {
+        expect(providerId).toBe("local");
+        return "sk-not-logged";
+      },
       fetchBlock: async () => null,
       turn: turnPort({
         sendPacket: async (_provider, handed) => {
@@ -491,8 +522,8 @@ describe("the fallback is stated, not silent, and is not an Ask failure", () => 
     });
 
     const failed = await sendPacketApp(packet, {
-      loadProvider: async () => ({ baseUrl: "http://x", model: "m" }),
-      apiKey: () => "",
+      loadSettings: async () => turnSettings(),
+      apiKey: async () => "",
       fetchBlock: async () => null,
       turn: turnPort({
         sendPacket: async (): Promise<PacketTurnAnswer> => ({

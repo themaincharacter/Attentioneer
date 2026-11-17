@@ -24,6 +24,12 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# WHERE A KEY LIVES (Epic 15 story 4): the OS keychain, through the `keyring`
+# crate. Its default Linux store is the Secret Service over D-Bus; where no
+# session bus or no collection answers, `secrets.rs` falls back to ONE
+# owner-only file and SAYS SO through `secret_status` — never silently.
+keyring = "4"
+
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

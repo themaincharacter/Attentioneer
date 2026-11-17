@@ -5,61 +5,71 @@ import {
   fetchAskBlock,
   type AskCardFacts,
 } from "../turn/context";
+import { loadTurnSettings, saveTurnSettings } from "../turn/provider";
 import {
-  loadProviderConfig,
+  modelsForMove,
   providerFrom,
-  rememberApiKey,
-  rememberedApiKey,
-  saveProviderConfig,
-} from "../turn/provider";
+  resolveSelection,
+  withSelection,
+  formatProviderRef,
+  PROVIDER_SENTENCES,
+  type TurnSettings,
+} from "../turn/providers";
+import {
+  keyExists,
+  readSecret,
+  secretStatus,
+  secretStatusWords,
+  type SecretStore,
+} from "../lib/secret";
 import { TURN_SENTENCES, type TurnPort } from "../turn/turn";
 import type { TurnMessage } from "../turn/protocol";
 import { ASK_READ_MISSED } from "./contactRules";
 import { PacketSurface } from "./PacketSurface";
+import { ProvidersPanel } from "./ProvidersPanel";
 
 /**
- * THE CARD'S ASK PANEL (Epic 15 story 1; story 3b gives it the packet) — the
- * app's first turn of its own, anchored on the ground card it was opened from.
+ * THE CARD'S ASK PANEL (Epic 15 story 1; story 3b gives it the packet; story 4
+ * gives it providers) — the app's first turn of its own, anchored on the
+ * ground card it was opened from.
  *
- * WHAT IT SHOWS: the card's NAME (so it is obvious what the question is
- * about), the three provider facts (base URL, model, key), the question box,
- * the DECLARATION of what will go, the verb that opens the exact bytes, send,
- * stop while a turn runs, and the answer below. No counters, no token meters
- * and no cost — one answer is the whole of it.
+ * WHAT IT SHOWS: the card's NAME, which provider:model the turn carries (from
+ * the rows, never typed here), whether a key is kept for it, WHERE keys live on
+ * this machine, the question box, the DECLARATION of what will go, the verb
+ * that opens the exact bytes, send, stop while a turn runs, and the answer
+ * below. No counters, no token meters and no cost — one answer is the whole
+ * of it.
  *
- * THE SAME PACKET, ONE BLOCK (story 3b). The card's ask used to send the bare
- * hand-written question; the Ask Move had the packet, and one entry point must
- * not be poorer than the other. So this panel assembles the SAME honest packet
- * (turn/packet.ts's assembleCardPacket) around ONE anchored block: the card's
- * coined name, its state sentence when the reading is not current, its bounded
- * reading and note crops, the fixed instruction offering ONE `READ: <name>` of
- * that card, and the bound in words. The card's LINKS are never handed in:
- * a link is wordless wiring, and reading it as context would give it a meaning
- * the epic explicitly defers. The declaration and the exact-bytes readback are
- * the SHARED PacketSurface, the same piece the Ask Move renders — two copies
- * would drift, and then the honesty surface would be worth only the more
- * careful one.
+ * WHY THE PROVIDER IS A SELECTION AND NOT THREE FIELDS: the rows own the base
+ * URL and the models (turn/providers.ts); the turn carries providerId:modelId
+ * and the app re-derives the rest. The person edits rows in ONE panel (the
+ * shared ProvidersPanel), so this panel and the Ask Move cannot drift into two
+ * ideas of a provider.
+ *
+ * WHY THE KEY FIELD IS GONE: a key is write-only. It is set in the providers
+ * panel, its existence is stated here ("a key is set"), and it is read from the
+ * store at SEND time only — never rendered, never kept in state. The status
+ * sentence ("keys live in the OS keychain" / "a local file — not the OS
+ * keychain") is always visible, because a fallback that is not said is a
+ * silent one.
+ *
+ * THE SAME PACKET, ONE BLOCK (story 3b). This panel assembles the SAME honest
+ * packet (turn/packet.ts's assembleCardPacket) around ONE anchored block: the
+ * card's coined name, its state sentence when the reading is not current, its
+ * bounded reading and note crops, the fixed instruction offering ONE
+ * READ: <name> of that card, and the bound in words. The card's LINKS are never
+ * handed in: a link is wordless wiring, and reading it as context would give it
+ * a meaning the epic explicitly defers.
  *
  * ONE RETRIEVAL, NO RECORD. If the model's answer asks for the card's block by
- * its exact heading, the app fetches that block's fuller text ONCE (the pull
- * reader, its existing budget) and sends exactly one follow-up. A name the
- * packet did not carry, or a failed read, gets no follow-up: the first answer
- * stands, and the panel says so in one sentence. A card ask is NOT a Move: it
- * writes no PRISM, no history line and no mirror rewrite — this panel has no
- * record path at all.
- *
- * WHAT IT WRITES: the base URL and the model go into the app's config file
- * (the `config_path` command owns the location) so a provider is configured
- * once. THE KEY IS NOT WRITTEN ANYWHERE: it lives in `turn/provider.ts`'s
- * module memory for this session and vanishes with the process (the OS-keychain
- * story is still to come). Nothing here logs a line, a provider or a key.
+ * its exact heading, the app fetches that block's fuller text ONCE and sends
+ * exactly one follow-up. A name the packet did not carry, or a failed read,
+ * gets no follow-up: the first answer stands, and the panel says so in one
+ * sentence. A card ask is NOT a Move: it writes no PRISM, no history line and
+ * no mirror rewrite.
  *
  * WHAT IT KEEPS: nothing on the map. The answer is view state of this panel; a
  * close (or a quit) forgets it, and the card is exactly as it was.
- *
- * The port is a PROP (`TurnPort`) rather than an import of the Tauri bridge,
- * in the house idiom: the app passes the real sidecar, and a render test passes
- * a script. The panel never spawns, pipes or kills anything itself.
  *
  * PROVISIONAL (ADR-0003's rendering seam): the panel's shape, the field order,
  * the sentence wording and the declaration/readback placement.
@@ -79,12 +89,13 @@ export function AskSidecarPanel({
   /** Close the panel (view state; nothing is written by closing). */
   onClose: () => void;
 }) {
-  // The provider fields are seeded from the config file, the key from this
-  // session's memory. `loaded` keeps the first render honest: the fields fill
-  // when the read answers, without overwriting anything already typed.
-  const [baseUrl, setBaseUrl] = useState("");
-  const [model, setModel] = useState("");
-  const [apiKey, setApiKey] = useState(rememberedApiKey);
+  // The rows and the selection come from the config file; the store's name and
+  // whether a key exists come from the key bridge. None of it is a key value.
+  const [settings, setSettings] = useState<TurnSettings | null>(null);
+  const [store, setStore] = useState<SecretStore | null>(null);
+  const [keySet, setKeySet] = useState(false);
+  const [providersOpen, setProvidersOpen] = useState(false);
+  const [providerNote, setProviderNote] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [running, setRunning] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -94,13 +105,28 @@ export function AskSidecarPanel({
   const [missed, setMissed] = useState<string | null>(null);
   const [sent, setSent] = useState<readonly TurnMessage[] | null>(null);
 
+  /** Re-read the rows, the store and whether a key is kept (never its value). */
+  async function reloadFacts(): Promise<void> {
+    const loaded = await loadTurnSettings();
+    setSettings(loaded);
+    setStore(await secretStatus());
+    setKeySet(
+      loaded.providerId === "" ? false : await keyExists(loaded.providerId),
+    );
+  }
+
   useEffect(() => {
     let alive = true;
-    loadProviderConfig().then((stored) => {
+    void (async () => {
+      const loaded = await loadTurnSettings();
+      const status = await secretStatus();
+      const kept =
+        loaded.providerId === "" ? false : await keyExists(loaded.providerId);
       if (!alive) return;
-      setBaseUrl((current) => (current === "" ? stored.baseUrl : current));
-      setModel((current) => (current === "" ? stored.model : current));
-    });
+      setSettings(loaded);
+      setStore(status);
+      setKeySet(kept);
+    })();
     return () => {
       alive = false;
     };
@@ -116,6 +142,40 @@ export function AskSidecarPanel({
     retrievable: context.retrievable,
   });
 
+  const selectedProvider =
+    settings === null
+      ? null
+      : settings.providers.find(
+          (provider) => provider.id === settings.providerId,
+        ) ?? null;
+  // An ask is text-only today, so the capability filter excludes nothing yet;
+  // it is applied anyway, so a later move cannot silently offer a model that
+  // cannot do its job.
+  const offeredModels =
+    selectedProvider === null ? [] : modelsForMove(selectedProvider, {});
+
+  /**
+   * Change which provider:model a turn carries. The selection is written at
+   * once: the Ask Move reads the same setting, and a choice here that did not
+   * persist would make two doors disagree. A failed write is one sentence, and
+   * the turn still uses what is on screen.
+   */
+  async function choose(providerId: string, modelId: string): Promise<void> {
+    if (settings === null) return;
+    const next = withSelection(settings, providerId, modelId);
+    setSettings(next);
+    setProviderNote(null);
+    setKeySet(providerId === "" ? false : await keyExists(providerId));
+    try {
+      await saveTurnSettings(next);
+    } catch (error) {
+      const text = String(error).replace(/\s+/g, " ").trim();
+      setProviderNote(
+        text === "" ? "the provider choice could not be saved" : text,
+      );
+    }
+  }
+
   async function send(): Promise<void> {
     if (running) return;
     const asked = question.trim();
@@ -123,21 +183,22 @@ export function AskSidecarPanel({
       setSentence(TURN_SENTENCES.noQuestion);
       return;
     }
-    const base = baseUrl.trim();
-    const chosen = model.trim();
-    if (base === "" || chosen === "") {
-      setSentence(TURN_SENTENCES.noProvider);
+    // Re-read the rows AT SEND: another surface may have removed the provider
+    // since this panel mounted, and a turn must never use a row that is gone.
+    // providerId:modelId is the ONLY provider fact it carries; the row supplies
+    // the base URL, and a selection that no longer names a row says nothing is
+    // configured — never a guess at the nearest endpoint.
+    const current = await loadTurnSettings();
+    setSettings(current);
+    const resolved = resolveSelection(current);
+    if (resolved.kind !== "resolved") {
+      setSentence(PROVIDER_SENTENCES.nothing);
       return;
     }
-    // The key is kept for the session and never persisted. A config write that
-    // fails is not the turn's failure: the answer can still arrive, and the
-    // settings simply do not survive the quit.
-    rememberApiKey(apiKey);
-    try {
-      await saveProviderConfig(base, chosen);
-    } catch {
-      // Ignored on purpose: the turn does not depend on the file.
-    }
+    // The key is read NOW, for this provider only, and handed straight to the
+    // request line. It is never put in state, rendered or logged.
+    const apiKey = await readSecret(resolved.provider.id);
+
     setSentence(null);
     setAnswer(null);
     setRead(null);
@@ -149,7 +210,7 @@ export function AskSidecarPanel({
     // context was built. A name the view did not carry answers null, so the
     // first answer stands and nothing outside the packet is ever read.
     const answered = await turn.sendPacket(
-      providerFrom({ baseUrl: base, model: chosen }, apiKey),
+      providerFrom(resolved.provider, resolved.model, apiKey),
       packet,
       (blockName) =>
         workspacePath === ""
@@ -200,43 +261,81 @@ export function AskSidecarPanel({
         </button>
       </div>
 
-      {/* The provider facts. The key's field masks its text and is never
-          echoed; the two settings beside it are the config file's. */}
+      {/* THE PROVIDER ROWS' ONE FACT ON THIS PANEL: which provider:model the
+          turn carries, from the rows; the verb that opens the shared panel. */}
       <div className="ground-ask-provider">
         <label className="ground-ask-field">
-          <span>base URL</span>
-          <input
-            type="text"
-            value={baseUrl}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="https://api.example.com/v1"
-            onChange={(e) => setBaseUrl(e.target.value)}
-          />
+          <span>provider</span>
+          <select
+            value={settings?.providerId ?? ""}
+            aria-label="the provider a turn carries"
+            onChange={(e) => {
+              const provider = settings?.providers.find(
+                (row) => row.id === e.target.value,
+              );
+              void choose(e.target.value, provider?.models[0]?.id ?? "");
+            }}
+          >
+            <option value="">nothing selected</option>
+            {(settings?.providers ?? []).map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider.name}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="ground-ask-field">
           <span>model</span>
-          <input
-            type="text"
-            value={model}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="model id"
-            onChange={(e) => setModel(e.target.value)}
-          />
+          <select
+            value={settings?.modelId ?? ""}
+            aria-label="the model a turn carries"
+            onChange={(e) =>
+              void choose(settings?.providerId ?? "", e.target.value)
+            }
+          >
+            <option value="">no model</option>
+            {offeredModels.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name}
+              </option>
+            ))}
+          </select>
         </label>
-        <label className="ground-ask-field">
-          <span>api key</span>
-          <input
-            type="password"
-            value={apiKey}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="kept in memory for this session"
-            onChange={(e) => setApiKey(e.target.value)}
-          />
-        </label>
+        <div className="ground-ask-keys">
+          <span className="ground-ask-ref">
+            {formatProviderRef(
+              settings?.providerId ?? "",
+              settings?.modelId ?? "",
+            ) || "nothing configured"}
+          </span>
+          <span className="ground-ask-key-state">
+            {keySet ? "a key is set" : "no key is set"}
+          </span>
+          <button
+            type="button"
+            className="ground-ask-open"
+            onClick={() => setProvidersOpen((open) => !open)}
+          >
+            {providersOpen ? "hide providers" : "providers…"}
+          </button>
+        </div>
+        {/* THE STATUS SENTENCE, always visible: which store keeps keys here. */}
+        <div className="ground-ask-key-store" role="status">
+          {store === null ? "asking where keys live…" : secretStatusWords(store)}
+        </div>
+        {providerNote !== null && (
+          <div className="ground-ask-problem" role="status">
+            {providerNote}
+          </div>
+        )}
       </div>
+
+      {providersOpen && (
+        <ProvidersPanel
+          onClose={() => setProvidersOpen(false)}
+          onChanged={() => void reloadFacts()}
+        />
+      )}
 
       <textarea
         className="ground-ask-question"
