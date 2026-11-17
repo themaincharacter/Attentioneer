@@ -190,6 +190,12 @@ export const PROVIDER_SENTENCES = {
   noId: "a provider needs a name with a letter or a digit in it",
   noBaseUrl: "a provider needs a base URL",
   badBaseUrl: "a provider's base URL must be http or https",
+  /**
+   * Plain http is for a model on THIS machine; anywhere else the key and the
+   * conversation would travel in clear text. PROVISIONAL wording.
+   */
+  insecureBaseUrl:
+    "a remote provider needs https: plain http is only for a model on this machine",
   noModels: "a provider needs at least one model",
   modelNoId: "a model needs an id",
   modelNoName: "a model needs a name",
@@ -555,8 +561,10 @@ export interface ModelDraft {
  * Turn a draft into a row, or refuse with the one sentence the form shows.
  * WHY REFUSE AT THE WRITE: the config must never hold a row the app cannot act
  * on — a nameless row has no id to hang a key on, a base URL that is not
- * http(s) cannot be fetched, and a provider with no model can never resolve a
- * turn. taken is every id already used, so a new row cannot shadow one.
+ * http(s) cannot be fetched, a plain-http remote URL would send the key in
+ * clear text (see `baseUrlProblem`), and a provider with no model can never
+ * resolve a turn. taken is every id already used, so a new row cannot shadow
+ * one.
  */
 export function validateProviderRow(
   draft: ProviderDraft,
@@ -576,7 +584,8 @@ export function validateProviderRow(
 
   const baseUrl = draft.baseUrl.trim();
   if (baseUrl === "") return refused(PROVIDER_SENTENCES.noBaseUrl);
-  if (!isHttpUrl(baseUrl)) return refused(PROVIDER_SENTENCES.badBaseUrl);
+  const urlProblem = baseUrlProblem(baseUrl);
+  if (urlProblem !== null) return refused(urlProblem);
 
   if (draft.models.length === 0) return refused(PROVIDER_SENTENCES.noModels);
   const models: ModelRow[] = [];
@@ -829,13 +838,38 @@ function capabilitiesOf(draft: ModelDraft): ModelCapabilities {
   return capabilities;
 }
 
-function isHttpUrl(text: string): boolean {
+/** The hosts a plain `http://` base URL may name: this machine's loopback. */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
+  "127.0.0.1",
+  "[::1]",
+  "localhost",
+]);
+
+/** Is this host this machine? (The URL parser already case-folds it.) */
+export function isLoopbackHost(hostname: string): boolean {
+  return LOOPBACK_HOSTS.has(hostname.toLowerCase());
+}
+
+/**
+ * THE HTTPS RULE (story 15.9). A base URL is storable when it is `https://`
+ * anywhere, or `http://` for LOOPBACK ONLY — `127.0.0.1`, `[::1]` or
+ * `localhost`, any port and any path. Every other host must be https: a
+ * plain-http remote endpoint would send the key and the whole conversation in
+ * clear text. A failing URL gets the ONE sentence to refuse with; there is no
+ * warning-only path and no silent upgrade — the row is not stored at all.
+ */
+export function baseUrlProblem(text: string): string | null {
+  let url: URL;
   try {
-    const url = new URL(text);
-    return url.protocol === "http:" || url.protocol === "https:";
+    url = new URL(text);
   } catch {
-    return false;
+    return PROVIDER_SENTENCES.badBaseUrl;
   }
+  if (url.protocol === "https:") return null;
+  if (url.protocol !== "http:") return PROVIDER_SENTENCES.badBaseUrl;
+  return isLoopbackHost(url.hostname)
+    ? null
+    : PROVIDER_SENTENCES.insecureBaseUrl;
 }
 
 function refused(sentence: string): Refusal {

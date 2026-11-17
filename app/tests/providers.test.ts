@@ -6,6 +6,7 @@ import {
   BUILTIN_PROVIDERS,
   EMPTY_SETTINGS,
   PROVIDER_SENTENCES,
+  baseUrlProblem,
   builtinsUnderPerson,
   capabilitiesMeet,
   formatProviderRef,
@@ -27,6 +28,7 @@ import {
   type TurnSettings,
 } from "../src/turn/providers";
 import { requestLine, parseRequestLine } from "../src/turn/protocol";
+import { localBaseUrl } from "../src/turn/local";
 import { SECRET_SENTENCES, secretStatusWords } from "../src/lib/secret";
 
 /**
@@ -118,6 +120,46 @@ describe("a row the app cannot act on is refused at the write", () => {
     }
     expect(validateProviderRow({ ...draft, baseUrl: "https://api.example.com/v1" }).kind).toBe(
       "row",
+    );
+  });
+
+  test("plain http is only for this machine; every other host needs https", () => {
+    // Loopback in its three spellings, each with a port and a path.
+    for (const baseUrl of [
+      "http://127.0.0.1:8080/v1",
+      "http://localhost:11434/v1",
+      "http://[::1]:8080/v1",
+      "http://127.0.0.1",
+    ]) {
+      expect({ baseUrl, kind: validateProviderRow({ ...draft, baseUrl }).kind }).toEqual({
+        baseUrl,
+        kind: "row",
+      });
+    }
+    // A remote host must be https, whatever the port or path.
+    for (const baseUrl of [
+      "http://api.example.com/v1",
+      "http://192.168.1.9:8080/v1",
+      "http://localhost.evil.test/v1",
+    ]) {
+      expect(validateProviderRow({ ...draft, baseUrl })).toEqual({
+        kind: "refused",
+        sentence: PROVIDER_SENTENCES.insecureBaseUrl,
+      });
+    }
+    // The sentence names the rule: remote needs https, plain http is local only.
+    expect(PROVIDER_SENTENCES.insecureBaseUrl).toContain("remote provider needs https");
+    expect(PROVIDER_SENTENCES.insecureBaseUrl).toContain(
+      "plain http is only for a model on this machine",
+    );
+  });
+
+  test("the local tier's own loopback URL passes the rule", () => {
+    expect(baseUrlProblem(localBaseUrl(8080))).toBeNull();
+    expect(baseUrlProblem("http://127.0.0.1:8080/v1")).toBeNull();
+    expect(baseUrlProblem("https://api.example.com/v1")).toBeNull();
+    expect(baseUrlProblem("http://api.example.com/v1")).toBe(
+      PROVIDER_SENTENCES.insecureBaseUrl,
     );
   });
 

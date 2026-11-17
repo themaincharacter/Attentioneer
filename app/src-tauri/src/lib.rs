@@ -1,5 +1,6 @@
+use std::ffi::OsStr;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod bytes;
 mod cli;
@@ -154,18 +155,103 @@ fn create_marker_exclusive(path: String) -> Result<bool, String> {
     marker::create_exclusive(&path)
 }
 
-/// The home directory the app's config (and the key fallback) hangs off. One
-/// rule, one place: `config_path` and `secrets_path` must never disagree
-/// about where the app's own files live.
-pub(crate) fn home_dir() -> Result<String, String> {
-    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
-    home.map_err(|_| "home directory is not set".to_string())
+/// Which OS's file convention this build follows (story 15.9). Named rather
+/// than read at every call, so the per-OS answer is a value a test can check
+/// on any machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Platform {
+    Linux,
+    MacOs,
+    Windows,
+}
+
+/// The one sentence a machine with nowhere to keep app files gets — a refusal
+/// to say, never a panic.
+const NO_CONFIG_DIR: &str =
+    "the app cannot find its config directory: no HOME, XDG_CONFIG_HOME or APPDATA is set";
+
+/// THE APP'S OWN DIRECTORY, PER OS (story 15.9).
+///
+/// WHY NOT `~/.config` EVERYWHERE: the config and the key fallback are the
+/// APP's files, not this machine's Linux convention. The app ships builds for
+/// Linux, macOS and Windows from one repository, so each OS keeps app data
+/// where its people expect it: Linux stays under `$XDG_CONFIG_HOME` (else
+/// `$HOME/.config`), joined with `attentioneer`, so nothing already written
+/// moves; macOS uses
+/// `$HOME/Library/Application Support/attentioneer`; Windows uses
+/// `%APPDATA%\attentioneer`. ONE rule, one place: `config_path` and
+/// `secrets::secrets_path` must never disagree about where the app's files
+/// live.
+///
+/// THE DIRECTORY IS APP-SCOPED, NEVER PER-WORKSPACE: the provider rows, the
+/// selection and the keys belong to the app — every workspace, and every OS
+/// the app runs on, sees the same ones. A workspace folder holds the person's
+/// map and notes; it never holds a key.
+///
+/// An empty variable counts as unset (the XDG rule), and a machine with none
+/// of them gets ONE refusal sentence, never a panic.
+fn config_dir_for(
+    platform: Platform,
+    xdg_config_home: Option<&OsStr>,
+    home: Option<&OsStr>,
+    appdata: Option<&OsStr>,
+) -> Result<PathBuf, String> {
+    let under = |base: &OsStr, rest: &[&str]| {
+        let mut path = PathBuf::from(base);
+        for part in rest {
+            path.push(part);
+        }
+        path.push("attentioneer");
+        path
+    };
+    fn nonempty(value: Option<&OsStr>) -> Option<&OsStr> {
+        value.filter(|text| !text.is_empty())
+    }
+    match platform {
+        Platform::Linux => {
+            if let Some(xdg) = nonempty(xdg_config_home) {
+                return Ok(under(xdg, &[]));
+            }
+            nonempty(home)
+                .map(|home| under(home, &[".config"]))
+                .ok_or_else(|| NO_CONFIG_DIR.to_string())
+        }
+        Platform::MacOs => nonempty(home)
+            .map(|home| under(home, &["Library", "Application Support"]))
+            .ok_or_else(|| NO_CONFIG_DIR.to_string()),
+        Platform::Windows => nonempty(appdata)
+            .map(|appdata| under(appdata, &[]))
+            .ok_or_else(|| NO_CONFIG_DIR.to_string()),
+    }
+}
+
+/// The config directory this OS keeps the app's files in.
+pub(crate) fn config_dir() -> Result<PathBuf, String> {
+    let platform = if cfg!(target_os = "windows") {
+        Platform::Windows
+    } else if cfg!(target_os = "macos") {
+        Platform::MacOs
+    } else {
+        Platform::Linux
+    };
+    let xdg = std::env::var_os("XDG_CONFIG_HOME");
+    let home = std::env::var_os("HOME");
+    let appdata = std::env::var_os("APPDATA");
+    config_dir_for(
+        platform,
+        xdg.as_deref(),
+        home.as_deref(),
+        appdata.as_deref(),
+    )
 }
 
 /// The app-side config file (ADR-0002: the only app-side persistence).
 #[tauri::command]
 fn config_path() -> Result<String, String> {
-    Ok(format!("{}/.config/attentioneer/config.json", home_dir()?))
+    Ok(config_dir()?
+        .join("config.json")
+        .to_string_lossy()
+        .into_owned())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -225,4 +311,91 @@ pub fn run() {
                 .kill();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn os(text: &str) -> &OsStr {
+        OsStr::new(text)
+    }
+
+    /// The per-OS table (story 15.9), driven by the variables each platform
+    /// reads rather than by the machine the test happens to run on. Linux
+    /// stays exactly where it was; macOS and Windows get their own convention.
+    #[test]
+    fn the_config_directory_follows_the_os() {
+        let cases: [(Platform, Option<&str>, Option<&str>, Option<&str>, PathBuf); 5] = [
+            (
+                Platform::Linux,
+                Some("/xdg"),
+                Some("/home/ada"),
+                None,
+                PathBuf::from("/xdg").join("attentioneer"),
+            ),
+            (
+                Platform::Linux,
+                None,
+                Some("/home/ada"),
+                None,
+                PathBuf::from("/home/ada/.config").join("attentioneer"),
+            ),
+            // An empty variable is unset: `$XDG_CONFIG_HOME=""` is not a
+            // directory named nothing.
+            (
+                Platform::Linux,
+                Some(""),
+                Some("/home/ada"),
+                None,
+                PathBuf::from("/home/ada/.config").join("attentioneer"),
+            ),
+            // macOS ignores XDG_CONFIG_HOME: one convention per OS.
+            (
+                Platform::MacOs,
+                Some("/xdg"),
+                Some("/Users/ada"),
+                None,
+                PathBuf::from("/Users/ada/Library/Application Support").join("attentioneer"),
+            ),
+            // Windows reads APPDATA and not HOME, even when HOME is set.
+            (
+                Platform::Windows,
+                None,
+                Some("C:/Users/ada"),
+                Some("C:/Users/ada/AppData/Roaming"),
+                PathBuf::from("C:/Users/ada/AppData/Roaming").join("attentioneer"),
+            ),
+        ];
+        for (platform, xdg, home, appdata, expected) in cases {
+            let got = config_dir_for(platform, xdg.map(os), home.map(os), appdata.map(os));
+            assert_eq!(got, Ok(expected), "{platform:?}");
+        }
+    }
+
+    /// No variable at all is a sentence the person can act on, not a panic.
+    #[test]
+    fn a_machine_with_nowhere_to_put_app_files_gets_one_sentence() {
+        for platform in [Platform::Linux, Platform::MacOs, Platform::Windows] {
+            let refused = config_dir_for(platform, Some(os("")), Some(os("")), Some(os("")));
+            assert_eq!(refused, Err(NO_CONFIG_DIR.to_string()), "{platform:?}");
+        }
+        assert_eq!(
+            NO_CONFIG_DIR,
+            "the app cannot find its config directory: no HOME, XDG_CONFIG_HOME or APPDATA is set"
+        );
+    }
+
+    /// The config and the key store are two files in ONE app-scoped directory;
+    /// no workspace ever gets its own copy of either.
+    #[test]
+    fn the_config_and_the_key_store_share_one_app_scoped_directory() {
+        let dir = config_dir().expect("this test machine has a home directory");
+        assert_eq!(dir.file_name(), Some(os("attentioneer")));
+        assert_eq!(
+            PathBuf::from(config_path().unwrap()),
+            dir.join("config.json")
+        );
+        assert_eq!(secrets::secrets_path().unwrap(), dir.join("secrets.json"));
+    }
 }

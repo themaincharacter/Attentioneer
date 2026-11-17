@@ -209,12 +209,17 @@ fn check_account(account: &str) -> Result<(), String> {
 }
 
 /// The config directory's one secrets file (beside `config.json`).
+///
+/// THE KEY STORE IS APP-SCOPED, NEVER PER-WORKSPACE: this file belongs to the
+/// app, and every workspace and every OS the app runs on reads the same keys.
+/// A workspace folder is the person's map and notes; it never holds a key.
+/// One directory rule (`crate::config_dir`, story 15.9) answers where the
+/// file is: Linux `$XDG_CONFIG_HOME` (else `$HOME/.config`), joined with
+/// `attentioneer`; macOS `$HOME/Library/Application Support/attentioneer`;
+/// Windows `%APPDATA%\attentioneer`. On Linux that is exactly where this
+/// file has always been, so nothing already kept moves.
 pub fn secrets_path() -> Result<PathBuf, String> {
-    let home = crate::home_dir()?;
-    Ok(PathBuf::from(home)
-        .join(".config")
-        .join("attentioneer")
-        .join("secrets.json"))
+    Ok(crate::config_dir()?.join("secrets.json"))
 }
 
 fn store() -> Result<Secrets, String> {

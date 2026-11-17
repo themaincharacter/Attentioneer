@@ -4,11 +4,13 @@ import { canonicalJson, writeMachineFile } from "./serialize";
 import { createWriteQueue } from "./writeQueue";
 
 /**
- * The app's ONE config file — `~/.config/attentioneer/config.json`, whose
- * location the `config_path` command owns (ADR-0002: the only app-side
- * persistence). Two things live here today: the recent workspaces and the
- * turn's provider ROWS (id, name, base URL, models) plus the selected
- * providerId:modelId.
+ * The app's ONE config file, whose per-OS location the `config_path` command
+ * owns (ADR-0002: the only app-side persistence) — Linux
+ * `$XDG_CONFIG_HOME/attentioneer/config.json` (else `$HOME/.config`), macOS
+ * `~/Library/Application Support/attentioneer/config.json`, Windows
+ * `%APPDATA%\attentioneer\config.json`. Two things live here today: the
+ * recent workspaces and the turn's provider ROWS (id, name, base URL,
+ * models) plus the selected providerId:modelId.
  *
  * WHY A MERGE AND NOT A REWRITE: each feature owns a top-level key, so a
  * second writer must not delete the first. `saveAppConfig` reads the file,

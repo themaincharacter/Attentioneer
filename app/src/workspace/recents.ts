@@ -1,8 +1,9 @@
 import { loadAppConfig, saveAppConfig } from "../lib/appConfig";
 
 /**
- * Recent workspaces, newest first, in `~/.config/attentioneer/config.json`
- * (ADR-0002: the only app-side persistence).
+ * Recent workspaces, newest first, in the app's config file (ADR-0002: the
+ * only app-side persistence); the `config_path` command owns where that is
+ * on each OS.
  *
  * The file now has more than one key (the turn's provider row lives beside
  * these paths), so the read and the write go through `lib/appConfig.ts`: a
