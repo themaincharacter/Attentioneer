@@ -1,23 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { parseSidecarLine, type SidecarLine } from "./protocol";
 import {
-  parseSidecarLine,
-  type SidecarLine,
-  type TurnMessage,
-  type TurnProvider,
-} from "./protocol";
-import {
-  askTurnMessages,
-  askTurnPacket,
   buildTurnMessages,
   errorSentence,
+  runRoute,
+  runRoutePacket,
   stopTurn,
+  type CliTurnRunner,
   type PacketTurnAnswer,
   type TurnPort,
   type TurnResult,
+  type TurnRoute,
   type TurnStart,
   type TurnTransport,
 } from "./turn";
+import { cliRunArgs, cliWhereArgs } from "./cliBridge";
 import type { AskPacket } from "./packet";
 
 /**
@@ -134,6 +132,7 @@ export function createSidecarTransport(): TurnTransport {
  */
 export function createTurnPort(
   transport: TurnTransport = createSidecarTransport(),
+  cli: CliTurnRunner = hostCliRunner(),
 ): TurnPort {
   let active: number | null = null;
 
@@ -150,22 +149,31 @@ export function createTurnPort(
       : { kind: "refused", sentence: started.sentence };
   }
 
-  /** One turn over the shared transport, with the messages the caller built. */
-  async function run(
-    provider: TurnProvider,
-    messages: readonly TurnMessage[],
-  ): Promise<TurnResult> {
-    const started = await begin();
-    if (started.kind === "refused") {
-      return { kind: "error", sentence: started.sentence };
+  /**
+   * Whether anything can leave for THIS route: an endpoint needs the child up,
+   * a CLI needs its command to resolve. Both answers are one sentence.
+   */
+  async function start(route?: TurnRoute): Promise<TurnStart> {
+    if (route?.kind === "cli") {
+      const found = await cliWhereArgs(
+        route.spec.command,
+        route.spec.wellKnown ?? [],
+      );
+      return found.kind === "resolved"
+        ? { kind: "running" }
+        : { kind: "refused", sentence: found.sentence };
     }
-    const result = await askTurnMessages(transport, provider, messages, {
-      onStart: (id) => {
-        active = id;
-      },
+    return await begin();
+  }
+
+  /**
+   * One CLI turn: no sidecar, no pipe, no record — the host runs one argv and
+   * hands back the facts.
+   */
+  async function runCli(route: TurnRoute, question: string): Promise<TurnResult> {
+    return await runRoute(transport, route, buildTurnMessages(question), {
+      cli,
     });
-    active = null;
-    return result;
   }
 
   /**
@@ -174,10 +182,17 @@ export function createTurnPort(
    * ONE message crosses the pipe and at most one READ follow-up follows it.
    */
   async function runPacket(
-    provider: TurnProvider,
+    route: TurnRoute,
     packet: AskPacket,
     fetchBlock: (name: string) => Promise<string | null>,
   ): Promise<PacketTurnAnswer> {
+    // A CLI route starts nothing here: the host spawns the command for the one
+    // turn, and its own timeout is the kill. An endpoint route is story 3's.
+    if (route.kind === "cli") {
+      return await runRoutePacket(transport, route, packet, fetchBlock, {
+        cli,
+      });
+    }
     const started = await begin();
     if (started.kind === "refused") {
       return {
@@ -187,30 +202,40 @@ export function createTurnPort(
         missed: null,
       };
     }
-    const answer = await askTurnPacket(
-      transport,
-      provider,
-      packet,
-      fetchBlock,
-      {
-        onStart: (id) => {
-          active = id;
-        },
+    const answer = await runRoutePacket(transport, route, packet, fetchBlock, {
+      onStart: (id) => {
+        active = id;
       },
-    );
+    });
     active = null;
     return answer;
   }
 
   return {
-    start: begin,
-    ask: (provider, question) => run(provider, buildTurnMessages(question)),
+    start,
+    ask: (route, question) =>
+      route.kind === "cli" ? runCli(route, question) : runRoute(transport, route, buildTurnMessages(question), {
+        onStart: (id) => {
+          active = id;
+        },
+      }),
     sendPacket: runPacket,
     async stop() {
+      // A stop reaches the sidecar's turn; a CLI child is the host's and its
+      // stated timeout is what ends it (PROVISIONAL: no mid-turn CLI cancel).
       if (active === null) return;
       const id = active;
       active = null;
       await stopTurn(transport, id);
     },
   };
+}
+
+/**
+ * The host's CLI process layer, as the turn wants it: the spec's command and
+ * places, the already-built argv, and the turn's stated budget.
+ */
+function hostCliRunner(): CliTurnRunner {
+  return (spec, args, timeoutMs) =>
+    cliRunArgs(spec.command, spec.wellKnown ?? [], args, timeoutMs);
 }

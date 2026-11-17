@@ -9,18 +9,26 @@ import {
 } from "../lib/secret";
 import { loadTurnSettings, saveTurnSettings } from "../turn/provider";
 import {
+  cliSpecOf,
   formatProviderRef,
   modelsForMove,
+  validateCliProviderRow,
   validateProviderRow,
   withProvider,
   withSelection,
   withoutProvider,
   PROVIDER_SENTENCES,
+  type CliProviderRow,
+  type HttpProviderRow,
   type ModelRow,
   type ProviderDraft,
+  type ProviderKind,
   type ProviderRow,
   type TurnSettings,
 } from "../turn/providers";
+import { CLI_SPECS, type CliSpec } from "../turn/cliSpecs";
+import { resolutionSentence, type CliProbe } from "../turn/cli";
+import { probeSpec } from "../turn/cliBridge";
 
 /**
  * THE PROVIDERS PANEL (Epic 15 story 4) — the person's rows, where the key
@@ -71,6 +79,31 @@ export function ProvidersPanel({
   const [tools, setTools] = useState(false);
   const [vision, setVision] = useState(false);
 
+  // WHICH KIND IS BEING ADDED (story 5's CLI lives beside the endpoint form).
+  const [kind, setKind] = useState<ProviderKind>("http");
+
+  // THE CLI FORM'S FIELDS. Every argv is EDITOR TEXT split on spaces — a
+  // provisional convenience: the arrays are what the row stores, and a value
+  // containing a space is typed as its own line later, not quoted here.
+  const [command, setCommand] = useState("");
+  const [versionArgs, setVersionArgs] = useState("--version");
+  const [runArgs, setRunArgs] = useState("{prompt}");
+  const [authArgs, setAuthArgs] = useState("");
+  const [okPattern, setOkPattern] = useState("");
+
+  // THE PROBE READOUT: the typed command's before it is saved, and one per
+  // saved row after a check. A probe is facts the app shows, never a gate.
+  const [probe, setProbe] = useState<CliProbe | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [rowProbes, setRowProbes] = useState<Record<string, CliProbe>>({});
+
+  // A CLI row being edited has its own argv fields; ONE editor at a time.
+  const [editCommand, setEditCommand] = useState("");
+  const [editVersionArgs, setEditVersionArgs] = useState("");
+  const [editRunArgs, setEditRunArgs] = useState("");
+  const [editAuthArgs, setEditAuthArgs] = useState("");
+  const [editOkPattern, setEditOkPattern] = useState("");
+
   // Which row is being edited, and the key being set on which row. ONE at a
   // time: two open editors on one list would be two versions of the truth.
   const [editing, setEditing] = useState<string | null>(null);
@@ -116,15 +149,90 @@ export function ProvidersPanel({
     }
   }
 
-  async function addProvider(): Promise<void> {
-    if (settings === null || busy) return;
+  /**
+   * Write one new row. A first row also becomes the selection: a person
+   * adding one provider means the turn to be able to leave, and a selection
+   * naming nothing would make the ask say "nothing is configured" right
+   * after a save.
+   */
+  async function commit(row: ProviderRow): Promise<boolean> {
+    if (settings === null) return false;
+    const selected =
+      settings.providers.length === 0
+        ? withSelection(withProvider(settings, row), row.id, row.models[0].id)
+        : withProvider(settings, row);
+    return await write(selected);
+  }
+
+  /** The row the add form describes, or the one sentence it is refused with. */
+  function addDraft(): { kind: "refused"; sentence: string } | { kind: "row"; row: ProviderRow } {
+    if (settings === null) {
+      return { kind: "refused", sentence: PROVIDER_SENTENCES.noName };
+    }
+    const taken = settings.providers.map((provider) => provider.id);
+    if (kind === "cli") {
+      return validateCliProviderRow(
+        {
+          name,
+          command,
+          versionArgs: splitArgs(versionArgs),
+          runArgs: splitArgs(runArgs),
+          authArgs: splitArgs(authArgs),
+          okPattern,
+        },
+        taken,
+      );
+    }
     const draft: ProviderDraft = {
       name,
       baseUrl,
       models: [{ id: modelId, name: modelName, tools, vision }],
     };
-    const read = validateProviderRow(
-      draft,
+    return validateProviderRow(draft, taken);
+  }
+
+  async function addProvider(): Promise<void> {
+    if (settings === null || busy) return;
+    const read = addDraft();
+    if (read.kind === "refused") {
+      setSentence(read.sentence);
+      return;
+    }
+    setSentence(null);
+    if (!(await commit(read.row))) return;
+    setName("");
+    setBaseUrl("");
+    setModelId("");
+    setModelName("");
+    setTools(false);
+    setVision(false);
+    setCommand("");
+    setVersionArgs("--version");
+    setRunArgs("{prompt}");
+    setAuthArgs("");
+    setOkPattern("");
+    setProbe(null);
+  }
+
+  /**
+   * Add a SHIPPED spec as a row. The list is data (cliSpecs.ts), so the panel
+   * offers it by name and the SAME validator makes the row a typed command
+   * would make — there is no second path for a spec the app ships.
+   */
+  async function addShipped(spec: CliSpec): Promise<void> {
+    if (settings === null || busy) return;
+    const read = validateCliProviderRow(
+      {
+        id: spec.id,
+        name: spec.name,
+        command: spec.command,
+        versionArgs: spec.versionArgs,
+        runArgs: spec.run.args,
+        authArgs: spec.auth?.args ?? [],
+        okPattern: spec.auth?.okPattern ?? "",
+        wellKnown: spec.wellKnown ?? [],
+        notes: spec.notes,
+      },
       settings.providers.map((provider) => provider.id),
     );
     if (read.kind === "refused") {
@@ -132,46 +240,85 @@ export function ProvidersPanel({
       return;
     }
     setSentence(null);
-    // A first row also becomes the selection: a person adding one provider
-    // means the turn to be able to leave, and a selection naming nothing
-    // would make the ask say "nothing is configured" right after a save.
-    const selected =
-      settings.providers.length === 0
-        ? withSelection(
-            withProvider(settings, read.row),
-            read.row.id,
-            read.row.models[0].id,
-          )
-        : withProvider(settings, read.row);
-    if (!(await write(selected))) return;
-    setName("");
-    setBaseUrl("");
-    setModelId("");
-    setModelName("");
-    setTools(false);
-    setVision(false);
+    await commit(read.row);
+  }
+
+  /** The spec the add form describes right now (what "check" probes). */
+  function typedSpec(): CliSpec {
+    const spec: CliSpec = {
+      id: "typed",
+      name: name.trim() === "" ? command.trim() : name.trim(),
+      command: command.trim(),
+      versionArgs: splitArgs(versionArgs),
+      run: { args: splitArgs(runArgs), read: "stdout" },
+      notes: "",
+    };
+    const auth = splitArgs(authArgs);
+    if (auth.length > 0) {
+      spec.auth = { args: auth, okPattern: okPattern.trim() };
+    }
+    return spec;
+  }
+
+  /** Check the typed command: where it resolves, its version, its sign-in. */
+  async function checkTyped(): Promise<void> {
+    if (probing) return;
+    setProbing(true);
+    try {
+      setProbe(await probeSpec(typedSpec()));
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  /** Check a saved row the same way, by the same code. */
+  async function checkRow(row: CliProviderRow): Promise<void> {
+    if (probing) return;
+    setProbing(true);
+    try {
+      const probed = await probeSpec(cliSpecOf(row));
+      setRowProbes((current) => ({ ...current, [row.id]: probed }));
+    } finally {
+      setProbing(false);
+    }
   }
 
   async function saveEdit(row: ProviderRow): Promise<void> {
     if (settings === null || busy) return;
-    const draft: ProviderDraft = {
-      id: row.id,
-      name: editName,
-      baseUrl: editBaseUrl,
-      models: row.models.map((model) => ({
-        id: model.id,
-        name: model.name,
-        tools: model.capabilities.tools,
-        vision: model.capabilities.vision,
-        contextWindow: model.capabilities.contextWindow,
-      })),
-    };
-    const read = validateProviderRow(
-      draft,
-      settings.providers
-        .map((provider) => provider.id)
-        .filter((id) => id !== row.id),
-    );
+    const otherIds = settings.providers
+      .map((provider) => provider.id)
+      .filter((id) => id !== row.id);
+    let read;
+    if (row.kind === "cli") {
+      read = validateCliProviderRow(
+        {
+          id: row.id,
+          name: editName,
+          command: editCommand,
+          versionArgs: splitArgs(editVersionArgs),
+          runArgs: splitArgs(editRunArgs),
+          authArgs: splitArgs(editAuthArgs),
+          okPattern: editOkPattern,
+          wellKnown: row.wellKnown ?? [],
+          notes: row.notes,
+        },
+        otherIds,
+      );
+    } else {
+      const draft: ProviderDraft = {
+        id: row.id,
+        name: editName,
+        baseUrl: editBaseUrl,
+        models: row.models.map((model) => ({
+          id: model.id,
+          name: model.name,
+          tools: model.capabilities.tools,
+          vision: model.capabilities.vision,
+          contextWindow: model.capabilities.contextWindow,
+        })),
+      };
+      read = validateProviderRow(draft, otherIds);
+    }
     if (read.kind === "refused") {
       setSentence(read.sentence);
       return;
@@ -182,7 +329,10 @@ export function ProvidersPanel({
     }
   }
 
-  async function addModel(row: ProviderRow, model: ModelRow): Promise<void> {
+  async function addModel(
+    row: HttpProviderRow,
+    model: ModelRow,
+  ): Promise<void> {
     if (settings === null || busy) return;
     const draft: ProviderDraft = {
       id: row.id,
@@ -352,16 +502,71 @@ export function ProvidersPanel({
                     onChange={(e) => setEditName(e.target.value)}
                   />
                 </label>
-                <label className="providers-field">
-                  <span>base URL</span>
-                  <input
-                    type="text"
-                    value={editBaseUrl}
-                    spellCheck={false}
-                    autoComplete="off"
-                    onChange={(e) => setEditBaseUrl(e.target.value)}
-                  />
-                </label>
+                {provider.kind === "http" ? (
+                  <label className="providers-field">
+                    <span>base URL</span>
+                    <input
+                      type="text"
+                      value={editBaseUrl}
+                      spellCheck={false}
+                      autoComplete="off"
+                      onChange={(e) => setEditBaseUrl(e.target.value)}
+                    />
+                  </label>
+                ) : (
+                  <>
+                    <label className="providers-field">
+                      <span>command</span>
+                      <input
+                        type="text"
+                        value={editCommand}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditCommand(e.target.value)}
+                      />
+                    </label>
+                    <label className="providers-field">
+                      <span>version args</span>
+                      <input
+                        type="text"
+                        value={editVersionArgs}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditVersionArgs(e.target.value)}
+                      />
+                    </label>
+                    <label className="providers-field">
+                      <span>run args</span>
+                      <input
+                        type="text"
+                        value={editRunArgs}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditRunArgs(e.target.value)}
+                      />
+                    </label>
+                    <label className="providers-field">
+                      <span>sign-in args (empty: no probe)</span>
+                      <input
+                        type="text"
+                        value={editAuthArgs}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditAuthArgs(e.target.value)}
+                      />
+                    </label>
+                    <label className="providers-field">
+                      <span>sign-in pattern</span>
+                      <input
+                        type="text"
+                        value={editOkPattern}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditOkPattern(e.target.value)}
+                      />
+                    </label>
+                  </>
+                )}
                 <div className="providers-actions">
                   <button
                     type="button"
@@ -385,7 +590,14 @@ export function ProvidersPanel({
               </div>
             ) : (
               <div className="providers-row-facts">
-                <span className="providers-url">{provider.baseUrl}</span>
+                {provider.kind === "http" ? (
+                  <span className="providers-url">{provider.baseUrl}</span>
+                ) : (
+                  <span className="providers-url">
+                    {provider.command}
+                    {provider.notes === "" ? "" : " — " + provider.notes}
+                  </span>
+                )}
                 <ul className="providers-models">
                   {provider.models.map((model) => (
                     <li className="providers-model" key={model.id}>
@@ -408,11 +620,17 @@ export function ProvidersPanel({
               </div>
             )}
 
+            {provider.kind === "cli" && rowProbes[provider.id] !== undefined && (
+              <ProbeReadout probe={rowProbes[provider.id]} />
+            )}
+
             <div className="providers-actions">
-              <span className="providers-key-state">
-                {keys[provider.id] === true ? "a key is set" : "no key is set"}
-              </span>
-              {keyFor === provider.id ? (
+              {provider.kind === "http" && (
+                <>
+                  <span className="providers-key-state">
+                    {keys[provider.id] === true ? "a key is set" : "no key is set"}
+                  </span>
+                  {keyFor === provider.id ? (
                 <>
                   <input
                     className="providers-key-input"
@@ -452,7 +670,19 @@ export function ProvidersPanel({
                     setKeyDraft("");
                   }}
                 >
-                  set a key
+                    set a key
+                  </button>
+                )}
+                </>
+              )}
+              {provider.kind === "cli" && (
+                <button
+                  type="button"
+                  className="providers-check"
+                  disabled={probing}
+                  onClick={() => void checkRow(provider)}
+                >
+                  check
                 </button>
               )}
               <button
@@ -461,7 +691,16 @@ export function ProvidersPanel({
                 onClick={() => {
                   setEditing(provider.id);
                   setEditName(provider.name);
-                  setEditBaseUrl(provider.baseUrl);
+                  setEditBaseUrl(
+                    provider.kind === "http" ? provider.baseUrl : "",
+                  );
+                  if (provider.kind === "cli") {
+                    setEditCommand(provider.command);
+                    setEditVersionArgs(provider.versionArgs.join(" "));
+                    setEditRunArgs(provider.run.args.join(" "));
+                    setEditAuthArgs((provider.auth?.args ?? []).join(" "));
+                    setEditOkPattern(provider.auth?.okPattern ?? "");
+                  }
                   setSentence(null);
                 }}
               >
@@ -479,13 +718,31 @@ export function ProvidersPanel({
 
             {/* One more model on this row, refused if it shares an id with one
                 already there (two rows with one id would resolve two ways). */}
-            <AddModel onAdd={(model) => void addModel(provider, model)} />
+            {provider.kind === "http" && (
+              <AddModel onAdd={(model) => void addModel(provider, model)} />
+            )}
           </div>
         ))}
 
       {settings !== null && (
+        <>
         <div className="providers-add">
           <span className="providers-add-title">add a provider</span>
+          <label className="providers-field">
+            <span>kind</span>
+            <select
+              value={kind}
+              aria-label="the kind of provider"
+              onChange={(e) => {
+                setKind(e.target.value === "cli" ? "cli" : "http");
+                setProbe(null);
+                setSentence(null);
+              }}
+            >
+              <option value="http">an HTTP endpoint</option>
+              <option value="cli">a command (CLI)</option>
+            </select>
+          </label>
           <label className="providers-field">
             <span>name</span>
             <input
@@ -493,61 +750,131 @@ export function ProvidersPanel({
               value={name}
               spellCheck={false}
               autoComplete="off"
-              placeholder="Local llama"
+              placeholder={kind === "cli" ? "My script" : "Local llama"}
               onChange={(e) => setName(e.target.value)}
             />
           </label>
-          <label className="providers-field">
-            <span>base URL</span>
-            <input
-              type="text"
-              value={baseUrl}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder="http://127.0.0.1:8080/v1"
-              onChange={(e) => setBaseUrl(e.target.value)}
-            />
-          </label>
-          <div className="providers-add-model">
-            <label className="providers-field">
-              <span>model id</span>
-              <input
-                type="text"
-                value={modelId}
-                spellCheck={false}
-                autoComplete="off"
-                placeholder="qwen"
-                onChange={(e) => setModelId(e.target.value)}
-              />
-            </label>
-            <label className="providers-field">
-              <span>model name</span>
-              <input
-                type="text"
-                value={modelName}
-                spellCheck={false}
-                autoComplete="off"
-                placeholder="Qwen"
-                onChange={(e) => setModelName(e.target.value)}
-              />
-            </label>
-            <label className="providers-cap-toggle">
-              <input
-                type="checkbox"
-                checked={tools}
-                onChange={(e) => setTools(e.target.checked)}
-              />
-              <span>tools</span>
-            </label>
-            <label className="providers-cap-toggle">
-              <input
-                type="checkbox"
-                checked={vision}
-                onChange={(e) => setVision(e.target.checked)}
-              />
-              <span>vision</span>
-            </label>
-          </div>
+          {kind === "http" ? (
+            <>
+              <label className="providers-field">
+                <span>base URL</span>
+                <input
+                  type="text"
+                  value={baseUrl}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="http://127.0.0.1:8080/v1"
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                />
+              </label>
+              <div className="providers-add-model">
+                <label className="providers-field">
+                  <span>model id</span>
+                  <input
+                    type="text"
+                    value={modelId}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="qwen"
+                    onChange={(e) => setModelId(e.target.value)}
+                  />
+                </label>
+                <label className="providers-field">
+                  <span>model name</span>
+                  <input
+                    type="text"
+                    value={modelName}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="Qwen"
+                    onChange={(e) => setModelName(e.target.value)}
+                  />
+                </label>
+                <label className="providers-cap-toggle">
+                  <input
+                    type="checkbox"
+                    checked={tools}
+                    onChange={(e) => setTools(e.target.checked)}
+                  />
+                  <span>tools</span>
+                </label>
+                <label className="providers-cap-toggle">
+                  <input
+                    type="checkbox"
+                    checked={vision}
+                    onChange={(e) => setVision(e.target.checked)}
+                  />
+                  <span>vision</span>
+                </label>
+              </div>
+            </>
+          ) : (
+            <>
+              <label className="providers-field">
+                <span>command</span>
+                <input
+                  type="text"
+                  value={command}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="a path, or a name on PATH"
+                  onChange={(e) => setCommand(e.target.value)}
+                />
+              </label>
+              <label className="providers-field">
+                <span>version args</span>
+                <input
+                  type="text"
+                  value={versionArgs}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => setVersionArgs(e.target.value)}
+                />
+              </label>
+              <label className="providers-field">
+                <span>run args</span>
+                <input
+                  type="text"
+                  value={runArgs}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="{prompt}"
+                  onChange={(e) => setRunArgs(e.target.value)}
+                />
+              </label>
+              <label className="providers-field">
+                <span>sign-in args (empty: the probe does not apply)</span>
+                <input
+                  type="text"
+                  value={authArgs}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => setAuthArgs(e.target.value)}
+                />
+              </label>
+              <label className="providers-field">
+                <span>sign-in pattern</span>
+                <input
+                  type="text"
+                  value={okPattern}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => setOkPattern(e.target.value)}
+                />
+              </label>
+              <div className="providers-actions">
+                <button
+                  type="button"
+                  className="providers-check"
+                  disabled={probing || command.trim() === ""}
+                  onClick={() => void checkTyped()}
+                >
+                  check
+                </button>
+              </div>
+              {probe !== null && <ProbeReadout probe={probe} />}
+            </>
+          )}
           <button
             type="button"
             className="providers-add-save"
@@ -557,6 +884,33 @@ export function ProvidersPanel({
             add
           </button>
         </div>
+
+        {/* THE SHIPPED SPECS: data, offered by name. Adding one is the SAME
+            validator and the SAME row a typed command makes. */}
+        <div className="providers-shipped">
+          <span className="providers-add-title">
+            commands the app ships as data
+          </span>
+          {CLI_SPECS.filter(
+            (spec) =>
+              !settings.providers.some((provider) => provider.id === spec.id),
+          ).map((spec) => (
+            <div className="providers-shipped-row" key={spec.id}>
+              <span className="providers-shipped-name">{spec.name}</span>
+              <code className="providers-shipped-command">{spec.command}</code>
+              <span className="providers-shipped-notes">{spec.notes}</span>
+              <button
+                type="button"
+                className="providers-shipped-add"
+                disabled={busy}
+                onClick={() => void addShipped(spec)}
+              >
+                add
+              </button>
+            </div>
+          ))}
+        </div>
+        </>
       )}
 
       {settings !== null && settings.providers.length === 0 && (
@@ -635,4 +989,39 @@ function AddModel({ onAdd }: { onAdd: (model: ModelRow) => void }) {
       </button>
     </div>
   );
+}
+
+/**
+ * WHAT A PROBE SAID (Epic 15 story 5): where the command was FOUND (and which
+ * step found it — the app never makes a person guess), the version line, and
+ * the sign-in state or the plain words that this probe does not apply. Three
+ * lines, no verdicts, no gate: a probe is a reading, not a permission.
+ */
+function ProbeReadout({ probe }: { probe: CliProbe }) {
+  if (probe.kind === "refused") {
+    return (
+      <div className="providers-probe" role="status">
+        <div className="providers-probe-line">{probe.sentence}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="providers-probe" role="status">
+      <div className="providers-probe-line">
+        {resolutionSentence(probe.where)}
+      </div>
+      <div className="providers-probe-line">{probe.version.sentence}</div>
+      <div className="providers-probe-line">{probe.auth.sentence}</div>
+    </div>
+  );
+}
+
+/**
+ * The editor's text into an argv array: runs of whitespace separate entries.
+ * PROVISIONAL: an argument that must CONTAIN a space cannot be typed here yet
+ * — the row stores arrays, so a later editor can quote without the row shape
+ * changing, and the prompt itself never comes through this door.
+ */
+function splitArgs(text: string): string[] {
+  return text.trim() === "" ? [] : text.trim().split(/\s+/);
 }

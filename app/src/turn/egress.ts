@@ -1,9 +1,5 @@
-import {
-  providerFrom,
-  resolveSelection,
-  type TurnSettings,
-} from "./providers";
-import type { TurnPort } from "./turn";
+import { resolveSelection, type TurnSettings } from "./providers";
+import { routeOf, type TurnPort } from "./turn";
 import type { AskPacket } from "./packet";
 import type { TurnMessage } from "./protocol";
 
@@ -111,20 +107,22 @@ export async function sendPacketApp(
     return { kind: "unavailable", sentence: NO_PROVIDER_SENTENCE };
   }
 
-  const started = await deps.turn.start();
+  // The route is read from the row ONCE here; the port dispatches on it. The
+  // key is read now, for this provider only, and an endpoint route carries it
+  // — a CLI route has no use for one (and must not be handed one).
+  const apiKey = await deps.apiKey(resolved.provider.id);
+  const route = routeOf(resolved.provider, resolved.model, apiKey);
+  const started = await deps.turn.start(route);
   if (started.kind === "refused") {
-    return { kind: "unavailable", sentence: SIDECAR_UNAVAILABLE_SENTENCE };
+    // A route that cannot start is the same visible fallback: nothing left.
+    return {
+      kind: "unavailable",
+      sentence:
+        route.kind === "cli" ? started.sentence : SIDECAR_UNAVAILABLE_SENTENCE,
+    };
   }
 
-  // Read the key at SEND time, for this provider only. A keyless local
-  // endpoint is legitimate, so an empty answer is passed on rather than
-  // refused here.
-  const apiKey = await deps.apiKey(resolved.provider.id);
-  const turned = await deps.turn.sendPacket(
-    providerFrom(resolved.provider, resolved.model, apiKey),
-    packet,
-    deps.fetchBlock,
-  );
+  const turned = await deps.turn.sendPacket(route, packet, deps.fetchBlock);
   if (turned.result.kind === "answer") {
     return {
       kind: "answered",

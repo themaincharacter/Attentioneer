@@ -8,7 +8,6 @@ import {
 import { loadTurnSettings, saveTurnSettings } from "../turn/provider";
 import {
   modelsForMove,
-  providerFrom,
   resolveSelection,
   withSelection,
   formatProviderRef,
@@ -22,7 +21,7 @@ import {
   secretStatusWords,
   type SecretStore,
 } from "../lib/secret";
-import { TURN_SENTENCES, type TurnPort } from "../turn/turn";
+import { TURN_SENTENCES, routeOf, type TurnPort } from "../turn/turn";
 import type { TurnMessage } from "../turn/protocol";
 import { ASK_READ_MISSED } from "./contactRules";
 import { PacketSurface } from "./PacketSurface";
@@ -196,8 +195,10 @@ export function AskSidecarPanel({
       return;
     }
     // The key is read NOW, for this provider only, and handed straight to the
-    // request line. It is never put in state, rendered or logged.
+    // request line (a CLI route takes none). It is never put in state,
+    // rendered or logged.
     const apiKey = await readSecret(resolved.provider.id);
+    const route = routeOf(resolved.provider, resolved.model, apiKey);
 
     setSentence(null);
     setAnswer(null);
@@ -210,7 +211,7 @@ export function AskSidecarPanel({
     // context was built. A name the view did not carry answers null, so the
     // first answer stands and nothing outside the packet is ever read.
     const answered = await turn.sendPacket(
-      providerFrom(resolved.provider, resolved.model, apiKey),
+      route,
       packet,
       (blockName) =>
         workspacePath === ""

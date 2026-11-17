@@ -7,6 +7,11 @@ import {
   type TurnProvider,
 } from "./protocol";
 import { followUpMessages, type AskPacket } from "./packet";
+import { CLI_TURN_TIMEOUT_MS, buildCliArgs, cliAnswer } from "./cli";
+import type { CliFacts, CliRefusal } from "./cli";
+import type { CliSpec } from "./cliSpecs";
+import { cliSpecOf, providerFrom } from "./providers";
+import type { ModelRow, ProviderRow } from "./providers";
 
 /**
  * ONE TURN (Epic 15 story 1): a provider, a question, one answer.
@@ -68,6 +73,10 @@ export const TURN_SENTENCES = {
   noProvider: "a base URL and a model are needed before a turn can leave",
   /** Nothing typed yet (the panel's own guard, said in place). */
   noQuestion: "write a question first",
+  /** A CLI turn arrived without a process layer to run it (a wiring bug). */
+  noCliRunner: "the CLI could not be started, so the turn did not leave",
+  /** The process layer threw instead of reporting facts. */
+  cliFailed: "the CLI could not be run",
 } as const;
 
 /** The result of one turn: one answer, or one sentence. */
@@ -122,6 +131,131 @@ export function turnSentence(result: TurnResult): string {
 export function errorSentence(message: string): string {
   const line = oneLine(message);
   return line === "" ? "the turn failed without a reason" : line;
+}
+
+/* ------------------------------------------------------------------ *
+ * ONE DISPATCH: a turn runs over an HTTP endpoint or through a CLI spec.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Where one turn runs. Built from a resolved row, so every door above this
+ * line hands over the same value and the decision lives in one place.
+ */
+export type TurnRoute =
+  | { kind: "http"; provider: TurnProvider }
+  | { kind: "cli"; spec: CliSpec };
+
+/**
+ * The route a resolved row runs through. THE ONLY PLACE A ROW'S KIND IS READ:
+ * a CLI row becomes its spec, an endpoint row becomes the wire's provider, and
+ * everything downstream dispatches once on the route.
+ */
+export function routeOf(
+  provider: ProviderRow,
+  model: ModelRow,
+  apiKey: string,
+): TurnRoute {
+  return provider.kind === "cli"
+    ? { kind: "cli", spec: cliSpecOf(provider) }
+    : { kind: "http", provider: providerFrom(provider, model, apiKey) };
+}
+
+/** One already-built argv, run by the host's process layer (injected). */
+export type CliTurnRunner = (
+  spec: CliSpec,
+  args: readonly string[],
+  timeoutMs: number,
+) => Promise<CliFacts | CliRefusal>;
+
+export interface RouteOptions extends TurnOptions {
+  /** The CLI process layer; absent for transports that only speak HTTP. */
+  cli?: CliTurnRunner;
+}
+
+/**
+ * The ONE message a CLI is handed: the person's words. A CLI carries its own
+ * instruction and its own tools, so the app's fixed system message would be a
+ * second instruction arguing with the first — the packet or the question is
+ * what leaves.
+ */
+export function cliPromptOf(messages: readonly TurnMessage[]): string {
+  for (let at = messages.length - 1; at >= 0; at -= 1) {
+    if (messages[at].role === "user") return messages[at].content;
+  }
+  return messages.length === 0 ? "" : messages[messages.length - 1].content;
+}
+
+/** A CLI turn: one argv, then the answer or the one sentence. */
+async function runCliTurn(
+  spec: CliSpec,
+  messages: readonly TurnMessage[],
+  options: RouteOptions,
+): Promise<TurnResult> {
+  const runner = options.cli;
+  if (runner === undefined) {
+    return { kind: "error", sentence: TURN_SENTENCES.noCliRunner };
+  }
+  const args = buildCliArgs(spec.run.args, cliPromptOf(messages));
+  let facts: CliFacts | CliRefusal;
+  try {
+    facts = await runner(
+      spec,
+      args,
+      options.timeoutMs ?? CLI_TURN_TIMEOUT_MS,
+    );
+  } catch {
+    return { kind: "error", sentence: TURN_SENTENCES.cliFailed };
+  }
+  const outcome = cliAnswer(spec, facts);
+  if (outcome.kind === "answer") {
+    return { kind: "answer", text: outcome.text };
+  }
+  return outcome.kind === "timeout"
+    ? { kind: "timeout", sentence: outcome.sentence }
+    : { kind: "error", sentence: outcome.sentence };
+}
+
+/**
+ * ONE turn, over the route it names. The HTTP route is story 1's turn exactly
+ * — same request line, same parts, same stop. The CLI route never touches the
+ * sidecar: the prompt is one argv entry and the child is the host's.
+ */
+export async function runRoute(
+  transport: TurnTransport,
+  route: TurnRoute,
+  messages: readonly TurnMessage[],
+  options: RouteOptions = {},
+): Promise<TurnResult> {
+  if (route.kind === "http") {
+    return await askTurnMessages(transport, route.provider, messages, options);
+  }
+  return await runCliTurn(route.spec, messages, options);
+}
+
+/**
+ * ONE packet turn over a route. The HTTP route is story 3's turn unchanged.
+ * A CLI has no app-side pipe: the packet's own message is the prompt, its
+ * answer stands, and the READ follow-up is not performed — PROVISIONAL, said
+ * here so nobody believes a block was read.
+ */
+export async function runRoutePacket(
+  transport: TurnTransport,
+  route: TurnRoute,
+  packet: AskPacket,
+  fetchBlock: (name: string) => Promise<string | null>,
+  options: RouteOptions = {},
+): Promise<PacketTurnAnswer> {
+  if (route.kind === "http") {
+    return await askTurnPacket(
+      transport,
+      route.provider,
+      packet,
+      fetchBlock,
+      options,
+    );
+  }
+  const result = await runRoute(transport, route, packet.messages, options);
+  return { result, messages: [...packet.messages], read: null, missed: null };
 }
 
 /** Turn ids are local to this window and only need to be unique per session. */
@@ -340,14 +474,20 @@ export type TurnStart =
  * sidecar.
  */
 export interface TurnPort {
-  ask: (provider: TurnProvider, question: string) => Promise<TurnResult>;
+  /** One turn over its route: HTTP through the sidecar, CLI through the host. */
+  ask: (route: TurnRoute, question: string) => Promise<TurnResult>;
   /** The packet turn: its ONE message, then at most one READ follow-up. */
   sendPacket: (
-    provider: TurnProvider,
+    route: TurnRoute,
     packet: AskPacket,
     fetchBlock: (name: string) => Promise<string | null>,
   ) => Promise<PacketTurnAnswer>;
-  /** Start the child without asking (the app-sent Ask's egress check). */
-  start: () => Promise<TurnStart>;
+  /**
+   * Whether anything can leave, checked BEFORE a request is written: an HTTP
+   * route needs a live sidecar, a CLI route needs a command that resolves.
+   * The route is optional so a caller that only knows it must start the
+   * transport can still ask (a test's port, and story 1's shape).
+   */
+  start: (route?: TurnRoute) => Promise<TurnStart>;
   stop: () => Promise<void>;
 }

@@ -1,4 +1,6 @@
 import type { TurnProvider } from "./protocol";
+import { promptTemplateProblem } from "./cli";
+import { PROMPT_PLACEHOLDER, type CliSpec } from "./cliSpecs";
 
 /**
  * PROVIDER ROWS, MODEL ROWS AND THE ONE STRING A TURN CARRIES (Epic 15 story
@@ -28,8 +30,18 @@ import type { TurnProvider } from "./protocol";
  * as values. Nothing in this file knows about keys: a key is not a row field,
  * ever.
  *
+ * ONE ROW, TWO KINDS (Epic 15 story 5): an endpoint row keeps the shape story 4
+ * gave it (and an older config reads as one, because its absence of a `kind`
+ * is what an endpoint always meant); a CLI row carries a SPEC instead of a
+ * base URL — command, version argv, an optional sign-in probe and the run
+ * argv that carries one prompt. Both kinds still resolve through
+ * providerId:modelId; a CLI row's one model is named after the command it
+ * runs, so nothing above this file has to know which kind a turn runs in
+ * until `turn.ts` dispatches once.
+ *
  * PROVISIONAL: the field names, the capability set (tools, vision, an optional
- * contextWindow) and the refusal sentences. The row shape is this file's own.
+ * contextWindow), the CLI spec's fields and the refusal sentences. The row
+ * shape is this file's own.
  */
 
 /** What one model can do. An absent flag means "not claimed", i.e. false. */
@@ -52,17 +64,54 @@ export interface ModelRow {
   capabilities: ModelCapabilities;
 }
 
-/** One place a turn can run. There is deliberately NO key field. */
-export interface ProviderRow {
+/** Which tier a row runs in. */
+export type ProviderKind = "http" | "cli";
+
+/** What both kinds share: an identity and the models a move may pick. */
+interface ProviderRowBase {
   /** Stable id, derived from the name when the row was made and deduped. */
   id: string;
   /** The display name; the person may edit it afterwards. */
   name: string;
-  /** The endpoint's base URL (/chat/completions is the sidecar's business). */
-  baseUrl: string;
   /** The models this provider offers; a row with none cannot run a turn. */
   models: ModelRow[];
 }
+
+/** One HTTP endpoint. There is deliberately NO key field. */
+export interface HttpProviderRow extends ProviderRowBase {
+  kind: "http";
+  /** The endpoint's base URL (/chat/completions is the sidecar's business). */
+  baseUrl: string;
+}
+
+/**
+ * One external CLI, as the SPEC fields its spec carries (PROVISIONAL). A CLI
+ * row owns the same shape a shipped spec does, because a typed command and a
+ * shipped entry must take the same path through the app — the row is the
+ * person's copy of the spec, and nothing knows one from the other.
+ *
+ * The models list is the string contract's second half: a cli row has ONE
+ * model, named after the command it runs, so a turn still carries
+ * providerId:modelId.
+ */
+export interface CliProviderRow extends ProviderRowBase {
+  kind: "cli";
+  /** The binary: a bare name (PATH, then well-known) or a path as typed. */
+  command: string;
+  /** The argv that prints the version. */
+  versionArgs: string[];
+  /** The OPTIONAL sign-in probe; absent means the probe does not apply. */
+  auth?: { args: string[]; okPattern: string };
+  /** How one prompt runs; `{prompt}` stands in exactly one argument. */
+  run: { args: string[]; read: "stdout" };
+  /** Extra places to look, after PATH. */
+  wellKnown?: string[];
+  /** What this row claims, in the person's words. */
+  notes: string;
+}
+
+/** One place a turn can run: an endpoint or a CLI spec. */
+export type ProviderRow = HttpProviderRow | CliProviderRow;
 
 /**
  * The turn object the app config holds: the rows, and which one a turn
@@ -109,7 +158,7 @@ export type RowRead<T> = { kind: "row"; row: T } | Refusal;
 export const PROVIDER_SENTENCES = {
   /** Nothing resolves: the turn must not leave, and says exactly this. */
   nothing:
-    "nothing is configured: add a provider row with a base URL and a model first",
+    "nothing is configured: add a provider row — an endpoint, or a command — first",
   /** The row has no id, name or base URL (refused at the write). */
   noName: "a provider needs a name",
   noId: "a provider needs a name with a letter or a digit in it",
@@ -120,6 +169,13 @@ export const PROVIDER_SENTENCES = {
   modelNoName: "a model needs a name",
   duplicateModel: "two models on one provider share an id",
   duplicateId: "a provider with that id already exists",
+  /** The CLI kind's own refusals. */
+  cliNoCommand: "a CLI provider needs a command to run",
+  cliNoVersion: "a CLI provider needs the arguments that print its version",
+  cliNoPrompt:
+    "the run arguments need {prompt} — it is where the question goes",
+  cliManyPrompts: "only one run argument may carry {prompt}",
+  cliNoPattern: "a sign-in check needs a pattern to look for",
 } as const;
 
 function textOf(value: unknown): string {
@@ -220,17 +276,12 @@ export function parseModelRow(value: unknown): ModelRow | null {
   return { id, name, capabilities: parseCapabilities(value.capabilities) };
 }
 
-/** Read one stored provider row; null when it is not a row this app can act on. */
-export function parseProviderRow(value: unknown): ProviderRow | null {
-  if (!isRecord(value)) return null;
-  const id = textOf(value.id).trim();
-  const name = textOf(value.name).trim();
-  const baseUrl = textOf(value.baseUrl).trim();
-  if (id === "" || name === "" || baseUrl === "") return null;
+/** Read the models a stored row lists; drop what is broken or duplicated. */
+function readModelRows(value: unknown): ModelRow[] {
   const models: ModelRow[] = [];
   const seen = new Set<string>();
-  if (Array.isArray(value.models)) {
-    for (const candidate of value.models) {
+  if (Array.isArray(value)) {
+    for (const candidate of value) {
       const model = parseModelRow(candidate);
       // A duplicate id would resolve two ways; the first row stands.
       if (model === null || seen.has(model.id)) continue;
@@ -238,7 +289,71 @@ export function parseProviderRow(value: unknown): ProviderRow | null {
       models.push(model);
     }
   }
-  return { id, name, baseUrl, models };
+  return models;
+}
+
+/** A list of argv entries, trimmed and without blanks. */
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const entries: string[] = [];
+  for (const candidate of value) {
+    const text = textOf(candidate).trim();
+    if (text !== "") entries.push(text);
+  }
+  return entries;
+}
+
+/** Read one stored auth block; a malformed one reads as NO block. */
+function parseAuthBlock(
+  value: unknown,
+): { args: string[]; okPattern: string } | null {
+  if (!isRecord(value)) return null;
+  const args = stringList(value.args);
+  const okPattern = textOf(value.okPattern);
+  if (args.length === 0 || okPattern === "") return null;
+  return { args, okPattern };
+}
+
+/** Read one stored CLI row; null when it is not a row this app can act on. */
+function parseCliRow(value: Record<string, unknown>): CliProviderRow | null {
+  const id = textOf(value.id).trim();
+  const name = textOf(value.name).trim();
+  const command = textOf(value.command).trim();
+  if (id === "" || name === "" || command === "") return null;
+  const versionArgs = stringList(value.versionArgs);
+  const runArgs = isRecord(value.run) ? stringList(value.run.args) : [];
+  // A run template without exactly one {prompt} cannot carry a question.
+  if (runArgs.length === 0 || promptTemplateProblem(runArgs) !== null) {
+    return null;
+  }
+  const row: CliProviderRow = {
+    kind: "cli",
+    id,
+    name,
+    command,
+    versionArgs,
+    run: { args: runArgs, read: "stdout" },
+    notes: textOf(value.notes),
+    models: readModelRows(value.models),
+  };
+  const auth = parseAuthBlock(value.auth);
+  if (auth !== null) row.auth = auth;
+  const wellKnown = stringList(value.wellKnown);
+  if (wellKnown.length > 0) row.wellKnown = wellKnown;
+  return row;
+}
+
+/** Read one stored provider row; null when it is not a row this app can act on. */
+export function parseProviderRow(value: unknown): ProviderRow | null {
+  if (!isRecord(value)) return null;
+  // Rows written before the CLI kind existed carry no `kind`; they are
+  // endpoints, which is what they were.
+  if (value.kind === "cli") return parseCliRow(value);
+  const id = textOf(value.id).trim();
+  const name = textOf(value.name).trim();
+  const baseUrl = textOf(value.baseUrl).trim();
+  if (id === "" || name === "" || baseUrl === "") return null;
+  return { kind: "http", id, name, baseUrl, models: readModelRows(value.models) };
 }
 
 /**
@@ -266,21 +381,61 @@ export function readTurnSettings(value: unknown): TurnSettings {
   };
 }
 
-/** The shape the config file gets: rows and the selection, and nothing else. */
-export function storedTurnSettings(settings: TurnSettings): TurnSettings {
+/** What the config file holds: a selection and rows, field by field. */
+export interface StoredTurnSettings {
+  providerId: string;
+  modelId: string;
+  providers: Record<string, unknown>[];
+}
+
+/**
+ * The shape the config file gets: rows and the selection, and nothing else.
+ * Built field by field, so a stray property can never ride along. An HTTP row
+ * keeps the shape it has always had (no `kind` — its absence is what an older
+ * config reads, and an endpoint is the only kind that shape ever meant); a CLI
+ * row carries its spec's fields and says which kind it is.
+ */
+export function storedTurnSettings(settings: TurnSettings): StoredTurnSettings {
   return {
     providerId: settings.providerId,
     modelId: settings.modelId,
-    providers: settings.providers.map((provider) => ({
+    providers: settings.providers.map(storedProviderRow),
+  };
+}
+
+function storedProviderRow(provider: ProviderRow): Record<string, unknown> {
+  const models = provider.models.map((model) => ({
+    id: model.id,
+    name: model.name,
+    capabilities: storedCapabilities(model.capabilities),
+  }));
+  if (provider.kind === "cli") {
+    const stored: Record<string, unknown> = {
+      kind: "cli",
       id: provider.id,
       name: provider.name,
-      baseUrl: provider.baseUrl,
-      models: provider.models.map((model) => ({
-        id: model.id,
-        name: model.name,
-        capabilities: storedCapabilities(model.capabilities),
-      })),
-    })),
+      command: provider.command,
+      versionArgs: [...provider.versionArgs],
+      run: { args: [...provider.run.args], read: "stdout" },
+      notes: provider.notes,
+      models,
+    };
+    if (provider.auth !== undefined) {
+      stored.auth = {
+        args: [...provider.auth.args],
+        okPattern: provider.auth.okPattern,
+      };
+    }
+    if (provider.wellKnown !== undefined) {
+      stored.wellKnown = [...provider.wellKnown];
+    }
+    return stored;
+  }
+  return {
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    models,
   };
 }
 
@@ -358,7 +513,140 @@ export function validateProviderRow(
       capabilities: capabilitiesOf(candidate),
     });
   }
-  return { kind: "row", row: { id, name, baseUrl, models } };
+  return { kind: "row", row: { kind: "http", id, name, baseUrl, models } };
+}
+
+/* ------------------------------------------------------------------ *
+ * The CLI kind: a row is a spec, and the spec is data.
+ * ------------------------------------------------------------------ */
+
+/**
+ * One CLI being added or edited, as the form holds it (not yet a row). The
+ * args are argv arrays even here: the form splits text into entries, and the
+ * prompt is never one of them (it replaces `{prompt}` at run time).
+ */
+export interface CliProviderDraft {
+  /** Absent while adding: the id is derived from the name and deduped. */
+  id?: string;
+  name: string;
+  command: string;
+  versionArgs: readonly string[];
+  runArgs: readonly string[];
+  /** The sign-in probe's argv; empty means the probe does not apply. */
+  authArgs?: readonly string[];
+  okPattern?: string;
+  wellKnown?: readonly string[];
+  notes?: string;
+}
+
+/** The last segment of a command, without a Windows shim's extension. */
+export function commandStem(command: string): string {
+  const trimmed = command.trim().replace(/[\\/]+$/, "");
+  const segment = trimmed.split(/[\\/]/).pop() ?? "";
+  return segment.replace(/\.(exe|cmd|bat)$/i, "");
+}
+
+/**
+ * Turn a CLI draft into a row, or refuse with the one sentence the form shows.
+ * WHAT IS REQUIRED: a name (for the id), a command, the version argv (without
+ * it a probe would run a CLI with no arguments and wait for a prompt that
+ * never comes), and a run template carrying `{prompt}` exactly once. The
+ * sign-in probe is optional; when its argv is given it also needs a pattern,
+ * because a probe that cannot decide anything is worse than no probe.
+ */
+export function validateCliProviderRow(
+  draft: CliProviderDraft,
+  taken: readonly string[] = [],
+): RowRead<CliProviderRow> {
+  const name = draft.name.trim();
+  if (name === "") return refused(PROVIDER_SENTENCES.noName);
+
+  const id =
+    draft.id === undefined || draft.id.trim() === ""
+      ? uniqueProviderId(name, taken)
+      : draft.id.trim();
+  if (id === "") return refused(PROVIDER_SENTENCES.noId);
+  if (draft.id !== undefined && taken.includes(id)) {
+    return refused(PROVIDER_SENTENCES.duplicateId);
+  }
+
+  const command = draft.command.trim();
+  if (command === "") return refused(PROVIDER_SENTENCES.cliNoCommand);
+
+  const versionArgs = draft.versionArgs
+    .map((arg) => arg.trim())
+    .filter((arg) => arg !== "");
+  if (versionArgs.length === 0) {
+    return refused(PROVIDER_SENTENCES.cliNoVersion);
+  }
+
+  const runArgs = draft.runArgs
+    .map((arg) => arg.trim())
+    .filter((arg) => arg !== "");
+  const carrying = runArgs.filter((arg) =>
+    arg.includes(PROMPT_PLACEHOLDER),
+  ).length;
+  if (carrying === 0) return refused(PROVIDER_SENTENCES.cliNoPrompt);
+  if (carrying > 1) return refused(PROVIDER_SENTENCES.cliManyPrompts);
+
+  const authArgs = (draft.authArgs ?? [])
+    .map((arg) => arg.trim())
+    .filter((arg) => arg !== "");
+  const okPattern = (draft.okPattern ?? "").trim();
+  if (authArgs.length > 0 && okPattern === "") {
+    return refused(PROVIDER_SENTENCES.cliNoPattern);
+  }
+
+  // THE SECOND HALF OF THE CONTRACT: a cli row has ONE model, named after the
+  // command it runs. A turn still carries providerId:modelId, and the picker
+  // shows the command rather than inventing a model that does not exist.
+  const stem = commandStem(command);
+  const modelId = providerSlug(stem) === "" ? "cli" : providerSlug(stem);
+  const modelName = stem === "" ? name : stem;
+
+  const row: CliProviderRow = {
+    kind: "cli",
+    id,
+    name,
+    command,
+    versionArgs,
+    run: { args: runArgs, read: "stdout" },
+    notes: (draft.notes ?? "").trim(),
+    models: [
+      {
+        id: modelId,
+        name: modelName,
+        capabilities: { tools: false, vision: false },
+      },
+    ],
+  };
+  if (authArgs.length > 0) row.auth = { args: authArgs, okPattern };
+  const wellKnown = (draft.wellKnown ?? [])
+    .map((place) => place.trim())
+    .filter((place) => place !== "");
+  if (wellKnown.length > 0) row.wellKnown = wellKnown;
+  return { kind: "row", row };
+}
+
+/**
+ * The spec a stored CLI row stands for. The row IS the person's copy of a
+ * shipped spec, so probing and running take the same value either way — there
+ * is no second shape a typed command would have to be translated into.
+ */
+export function cliSpecOf(row: CliProviderRow): CliSpec {
+  const spec: CliSpec = {
+    id: row.id,
+    name: row.name,
+    command: row.command,
+    versionArgs: [...row.versionArgs],
+    run: { args: [...row.run.args], read: "stdout" },
+    notes: row.notes,
+  };
+  if (row.auth !== undefined) {
+    spec.auth = { args: [...row.auth.args], okPattern: row.auth.okPattern };
+  }
+  if (row.wellKnown !== undefined) spec.wellKnown = [...row.wellKnown];
+  return spec;
 }
 
 function capabilitiesOf(draft: ModelDraft): ModelCapabilities {
@@ -532,7 +820,7 @@ export function resolveSelection(settings: TurnSettings): Resolution {
  * what the person calls the endpoint).
  */
 export function providerFrom(
-  provider: ProviderRow,
+  provider: HttpProviderRow,
   model: ModelRow,
   apiKey: string,
 ): TurnProvider {

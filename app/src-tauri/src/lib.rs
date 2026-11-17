@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 mod bytes;
+mod cli;
 mod head;
 mod marker;
 mod meta;
@@ -197,7 +198,10 @@ pub fn run() {
             secrets::secret_delete,
             sidecar::sidecar_start,
             sidecar::sidecar_send,
-            sidecar::sidecar_status
+            sidecar::sidecar_status,
+            cli::cli_where,
+            cli::cli_probe,
+            cli::cli_run
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
