@@ -3861,19 +3861,27 @@ function App() {
             into the STORED reading (no re-read, no I/O), and a two-step
             inline remove that takes the line, the reading and the text file
             through the one write path. Open/closed is view state, never a
-            record: a reopened workspace shows every card small. */}
+            record: a reopened workspace shows every card small. STORY 16.8
+            adds the pull: the expanded card's one "read more" verb asks the
+            hook for more of the source under the stated budget, the answer is
+            drawn as a continuation of the reading, and it is VIEW STATE only —
+            nothing is written, nothing is re-stamped, and closing the card
+            forgets it. */}
         {level === "ground" && (
           <GroundLayer
             references={ground.references}
             readings={ground.readings}
             texts={ground.texts}
             notes={ground.notes}
+            pulled={ground.pulled}
             states={ground.states}
             onMove={ground.move}
             onRefresh={ground.refresh}
             onRepoint={ground.repoint}
             onRemove={ground.remove}
             onSetNote={ground.setNote}
+            onPull={ground.pull}
+            onDismissPull={ground.dismissPull}
             onLink={ground.link}
             workspacePath={workspace.path}
             interactionMode={gestureMode}

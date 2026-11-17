@@ -7,6 +7,11 @@ import {
 import type { GroundReference } from "../map/ground";
 import { NOTE_PREVIEW_LINES } from "../map/notes";
 import {
+  PULL_BUDGET_BYTES,
+  pullTruncationLine,
+  type PulledText,
+} from "../map/pull";
+import {
   previewText,
   readingFileName,
   readingStateWord,
@@ -104,6 +109,17 @@ import type { GroundAddResult } from "./useGround";
  * is gone is muted, says "missing" and does nothing — never removed, never
  * reported as malformed.
  *
+ * STORY 16.8 adds the PULL's one verb and its one block, and nothing else.
+ * On the EXPANDED card, "read more" asks `useGround.pull` for more of the
+ * card's source under the stated budget; what comes back is drawn BELOW the
+ * stored reading as a continuation (same type, one hairline — not a second
+ * card), with the one truncation line when the budget bit and a "dismiss" that
+ * forgets it. The pulled text is VIEW STATE and nothing here re-reads on open,
+ * watches or polls: the button is the only call site, and the layer holds no
+ * bridge. Closing the card (or opening another) dismisses the pull through the
+ * pure `pullToDismiss` rule, so reopening the workspace can never restore it.
+ * PROVISIONAL: the verb's placement, the block's typography and the dismissal.
+ *
  * THE ONE CROSS-MAP READ (amended ADR-0032) is this layer's, confined to
  * `map/conceptWords.ts`: the concept map's word index is read ONCE per ground
  * map open (read-only, no writer imported) so a word chip can be drawn dangling
@@ -131,6 +147,19 @@ export function deleteConfirmed(step: GroundDeleteStep): boolean {
   return step === "asking";
 }
 
+/**
+ * Which card's pull leaves view when the open card changes (story 16.8).
+ * PURE, so "closing the card clears the pulled text" is not the effect's only
+ * truth: the same slug staying open keeps its look (a re-render must not
+ * discard it), while closing or opening another card dismisses the old one.
+ */
+export function pullToDismiss(
+  previous: string | null,
+  next: string | null,
+): string | null {
+  return previous !== null && previous !== next ? previous : null;
+}
+
 interface GroundLayerProps {
   /** Every readable ground reference, in FILE ORDER. */
   references: readonly GroundReference[];
@@ -140,6 +169,12 @@ interface GroundLayerProps {
   texts: Readonly<Record<string, string>>;
   /** The person's notes, keyed by slug (a card with no note is absent). */
   notes?: Readonly<Record<string, string>>;
+  /**
+   * Each card's EPHEMERAL pull (story 16.8), keyed by slug. A look, not a
+   * record: it is dismissed when the card closes. Optional so a render test
+   * needs no hook; the app always passes `useGround.pulled`.
+   */
+  pulled?: Readonly<Record<string, PulledText>>;
   /** Each reference's computed reading state (never a record field). */
   states: Readonly<Record<string, ReadingState>>;
   /** Move one reference to its dropped point (one line, on release). */
@@ -155,6 +190,14 @@ interface GroundLayerProps {
    * write path; the app always passes `useGround.setNote`.
    */
   onSetNote?: (on: string, text: string) => Promise<GroundAddResult>;
+  /**
+   * Pull more of this card's source under the stated budget (story 16.8):
+   * READ-ONLY. The text goes to the hook's view state; nothing is written and
+   * nothing is re-stamped. Optional so a render test needs no hook.
+   */
+  onPull?: (on: string) => Promise<GroundAddResult>;
+  /** Forget one card's pulled text (view state only — nothing is written). */
+  onDismissPull?: (on: string) => void;
   /**
    * Draw one WORDLESS link from this card to another (story 16.5): released on
    * a card's body, it is one ordered pair and one write. Optional so a render
@@ -182,12 +225,15 @@ export function GroundLayer({
   readings,
   texts,
   notes = {},
+  pulled = {},
   states,
   onMove,
   onRefresh,
   onRepoint,
   onRemove,
   onSetNote,
+  onPull,
+  onDismissPull,
   onLink,
   workspacePath = "",
   interactionMode = "idle",
@@ -228,6 +274,18 @@ export function GroundLayer({
       setOpenOn(null);
     }
   }, [references, openOn]);
+
+  // STORY 16.8 — CLOSING THE CARD FORGETS THE LOOK. A pull is view state, so
+  // there is nothing to delete on disk; the pure rule names the card whose
+  // look leaves when the open card changes, and the hook drops that key. The
+  // ref is the PREVIOUS open card (this effect runs after each change).
+  const openRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = openRef.current;
+    openRef.current = openOn;
+    const stale = pullToDismiss(previous, openOn);
+    if (stale !== null) onDismissPull?.(stale);
+  }, [openOn, onDismissPull]);
 
   // A refused unlink's one sentence: the card is gone with its records, so the
   // sentence is shown where it stood (view state, cleared by a press or a
@@ -271,6 +329,7 @@ export function GroundLayer({
           reading={readingsBySlug.get(reference.on) ?? null}
           text={texts[reference.on]}
           note={notes[reference.on]}
+          pulled={pulled[reference.on]}
           state={states[reference.on] ?? (readingsBySlug.has(reference.on) ? "current" : "unread")}
           open={openOn === reference.on}
           onOpen={() => setOpenOn(reference.on)}
@@ -287,6 +346,8 @@ export function GroundLayer({
           onRepoint={onRepoint}
           onRemove={remove}
           onSetNote={onSetNote}
+          onPull={onPull}
+          onDismissPull={onDismissPull}
           onLink={onLink}
         />
       ))}
@@ -305,6 +366,44 @@ export function GroundLayer({
 }
 
 /**
+ * THE PULLED BLOCK (story 16.8): what the person asked to see more of, drawn
+ * as a CONTINUATION of the stored reading rather than a second card — same
+ * type and ink, one quiet hairline, no surface of its own. The truncation line
+ * is the only place the budget's number is spoken, and only when it bit; the
+ * dismiss verb forgets the look (view state — there is no file behind it).
+ *
+ * Its own component so a render test can pin the words without opening a
+ * card. PROVISIONAL: the block's look and the dismiss verb's placement.
+ */
+export function GroundPulled({
+  pulled,
+  onDismiss,
+  budget = PULL_BUDGET_BYTES,
+}: {
+  pulled: PulledText;
+  onDismiss?: () => void;
+  budget?: number;
+}) {
+  return (
+    <div className="ground-pulled">
+      <div className="ground-pulled-text">{pulled.text}</div>
+      {pulled.truncated && (
+        <div className="ground-pulled-note" role="status">
+          {pullTruncationLine(budget)}
+        </div>
+      )}
+      <button
+        type="button"
+        className="ground-pulled-dismiss"
+        onClick={onDismiss}
+      >
+        dismiss
+      </button>
+    </div>
+  );
+}
+
+/**
  * ONE reference's card. It owns its press handling because a drag is per-card
  * state; the layer only hands it records and the person's verbs.
  */
@@ -313,6 +412,7 @@ function GroundCard({
   reading,
   text,
   note,
+  pulled,
   state,
   open,
   onOpen,
@@ -329,12 +429,16 @@ function GroundCard({
   onRepoint,
   onRemove,
   onSetNote,
+  onPull,
+  onDismissPull,
   onLink,
 }: {
   reference: GroundReference;
   reading: Reading | null;
   text: string | undefined;
   note: string | undefined;
+  /** This card's ephemeral pull, when the person asked for more (16.8). */
+  pulled: PulledText | undefined;
   state: ReadingState;
   /** Is this card expanded? (The LAYER's view state — a chip can open a card.) */
   open: boolean;
@@ -357,6 +461,8 @@ function GroundCard({
   onRepoint: GroundLayerProps["onRepoint"];
   onRemove: (reference: GroundReference) => Promise<GroundAddResult>;
   onSetNote?: (on: string, text: string) => Promise<GroundAddResult>;
+  onPull?: (on: string) => Promise<GroundAddResult>;
+  onDismissPull?: (on: string) => void;
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
@@ -819,6 +925,16 @@ function GroundCard({
         {bodyText !== null && (
           <div className="ground-reading">{bodyText}</div>
         )}
+        {/* STORY 16.8 — the PULL, below the stored reading as a CONTINUATION
+            (same type, one hairline): what the person is looking at now,
+            never a second card and never a record. It is only ever drawn on
+            the OPEN card; closing the card drops it from view state. */}
+        {open && pulled !== undefined && (
+          <GroundPulled
+            pulled={pulled}
+            onDismiss={() => onDismissPull?.(reference.on)}
+          />
+        )}
       </div>
       <div className="ground-footer">
         {reading !== null && (
@@ -884,6 +1000,20 @@ function GroundCard({
                 {shownNote === null ? "add a note…" : "edit the note…"}
               </button>
             )
+          )}
+          {/* STORY 16.8 — the ONE pull verb, on the EXPANDED card only. It is
+              the button's press and nothing else: no read on open, no watcher,
+              no background read. It reprocesses an existing pull harmlessly
+              (the text is replaced in view state) and never writes. */}
+          {open && reading !== null && onPull !== undefined && (
+            <button
+              type="button"
+              className="ground-read-more"
+              disabled={busy}
+              onClick={() => void run(() => onPull(reference.on))}
+            >
+              read more
+            </button>
           )}
           {reading !== null && (
             <button

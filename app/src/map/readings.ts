@@ -451,6 +451,15 @@ function refusalCodeOf(error: unknown): HeadRefusalCode | null {
     : null;
 }
 
+/**
+ * The one sentence for a rejected head read. The pull (story 16.8) reuses it
+ * so a refusal is always the SAME vocabulary a take or a refresh answers with;
+ * nothing new is invented there.
+ */
+export function readingRefusalMessage(error: unknown): string {
+  return READING_REFUSALS[refusalCodeOf(error) ?? "io"];
+}
+
 /** What one successful read produced: the text to store and the file's size. */
 interface TakenText {
   text: string;
@@ -472,8 +481,7 @@ async function readHeadOrRefuse(
   try {
     head = await io.readTextHead(path, READING_MAX_LINES, READING_MAX_BYTES);
   } catch (error) {
-    const code = refusalCodeOf(error);
-    return { ok: false, message: READING_REFUSALS[code ?? "io"] };
+    return { ok: false, message: readingRefusalMessage(error) };
   }
   if (!head.exists) return { ok: false, message: READING_REFUSALS.absent };
   return { ok: true, taken: { text: head.head, bytes: head.size } };

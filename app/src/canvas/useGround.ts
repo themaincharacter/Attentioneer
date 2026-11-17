@@ -22,6 +22,7 @@ import {
   type GroundLinkIo,
 } from "../map/groundLinks";
 import {
+  READING_REFUSALS,
   loadReadings,
   loadReadingTexts,
   readingAbsolutePath,
@@ -43,6 +44,7 @@ import {
   saveNote,
   type NoteIo,
 } from "../map/notes";
+import { pullReading, type PulledText } from "../map/pull";
 
 /**
  * The ground map's loaded state and its one write path (story 16.1; story 16.2
@@ -96,9 +98,18 @@ import {
  *     never deleted; `setNote` only ever writes for a card the map still
  *     carries, and saving empty text removes the file rather than leaving an
  *     empty note.
+ *   - PULL (16.8): the person's one verb asks for MORE of a card's source,
+ *     under one stated budget, and the text is held HERE as view state
+ *     (`pulled`), NEVER written. It re-stamps nothing: the reading line, its
+ *     stored text, the note and the computed state word all stay exactly as
+ *     they were — refresh remains the only re-read that re-stamps. A pull is
+ *     dismissed by the person or when the card closes; a workspace change
+ *     forgets every pull. No read happens on open, in a watcher or in the
+ *     background: `pull` is only ever the card's press.
  *   - The whole read-modify-write runs through the app's one per-file
  *     discipline (`createWriteQueue`, ADR-0004/ADR-0018): one line at a time,
- *     never a whole-folder rewrite.
+ *     never a whole-folder rewrite. THE PULL IS NOT IN THAT SENTENCE: it is a
+ *     read, and the queue serializes writes, so a look never waits on a drop.
  *
  * PROVISIONAL: the state names, the form rule for new picks, the write order,
  * the sentences and the look (story 16.2's decisions, before an ADR).
@@ -130,6 +141,13 @@ export interface GroundView {
    * from the file's metadata (see `resolveReadingState`).
    */
   states: Readonly<Record<string, ReadingState>>;
+  /**
+   * Each card's EPHEMERAL pull, keyed by slug (story 16.8): the source text
+   * the person asked to see more of, under the stated budget. VIEW STATE ONLY —
+   * it is never written into a reading, a note or any record, and every write
+   * path below leaves it as it found it. Absent means "nothing pulled".
+   */
+  pulled: Readonly<Record<string, PulledText>>;
   /**
    * Each card's authored note, keyed by slug (story 16.6). A card with no note
    * is simply absent — no empty string, no placeholder.
@@ -195,6 +213,16 @@ export interface GroundView {
    * nothing and answers one sentence. The reading is never touched.
    */
   setNote: (on: string, text: string) => Promise<GroundAddResult>;
+  /**
+   * PULL one card's source (story 16.8), under the provisional budget, and
+   * hold it as view state. READ-ONLY: nothing on disk changes, the state word
+   * and the stored reading are untouched, and the text is forgotten when the
+   * card closes or the person dismisses it. A refusal clears any older pull
+   * and answers the existing sentence; the card shows it in place.
+   */
+  pull: (on: string) => Promise<GroundAddResult>;
+  /** Forget one card's pulled text. View state only — nothing is written. */
+  dismissPull: (on: string) => void;
 }
 
 /** The view without its verbs: what the load and every write render. */
@@ -208,6 +236,8 @@ type GroundLoaded = Omit<
   | "link"
   | "unlink"
   | "setNote"
+  | "pull"
+  | "dismissPull"
 >;
 
 const EMPTY: GroundLoaded = {
@@ -215,6 +245,7 @@ const EMPTY: GroundLoaded = {
   readings: [],
   texts: {},
   states: {},
+  pulled: {},
   notes: {},
   orphanNotes: [],
   links: [],
@@ -389,6 +420,9 @@ export function useGround(workspacePath: string): GroundView {
   // load's read of `map/notes/`; a note never rides the reading's refs.
   const notesRef = useRef<Record<string, string>>({});
   const orphanNotesRef = useRef<string[]>([]);
+  // Story 16.8: the person's pulls. VIEW STATE beside the open card, never a
+  // record and never part of a write; a workspace change forgets every pull.
+  const pulledRef = useRef<Record<string, PulledText>>({});
   // The ground map's wordless wiring (story 16.5): the whole truth is its one
   // file, so the sync mirror holds exactly what the load read.
   const linksRef = useRef<GroundLink[]>([]);
@@ -445,6 +479,10 @@ export function useGround(workspacePath: string): GroundView {
     readings: readingsRef.current,
     texts: textsRef.current,
     states: statesRef.current,
+    // Story 16.8: the pulled text is a LOOK, held until it is dismissed or the
+    // card closes. It rides this snapshot like the open card rides the layer:
+    // view state, never a record.
+    pulled: pulledRef.current,
     notes: notesRef.current,
     // ORPHAN NOTES ARE COMPUTED from the load's listing, never stored: a note
     // file the app itself never writes for a missing card (story 16.6).
@@ -465,6 +503,9 @@ export function useGround(workspacePath: string): GroundView {
   useEffect(() => {
     // A different workspace starts from its own map folder, never the last
     // one's state (and the write queue belongs to the person's moves in it).
+    // Story 16.8: a pull belongs to the workspace it was taken in — never
+    // carried across, and never written, so there is nothing to reload.
+    pulledRef.current = {};
     queueRef.current = createWriteQueue();
     if (workspacePath === "") {
       referencesRef.current = [];
@@ -730,6 +771,10 @@ export function useGround(workspacePath: string): GroundView {
           const notes = { ...notesRef.current };
           delete notes[on];
           notesRef.current = notes;
+          // A card that is gone cannot keep its look (story 16.8).
+          const pulled = { ...pulledRef.current };
+          delete pulled[on];
+          pulledRef.current = pulled;
           setState(snapshot());
           const refusal = removal.refusal ?? noteRefusal;
           outcome =
@@ -862,11 +907,72 @@ export function useGround(workspacePath: string): GroundView {
     [workspacePath],
   );
 
+  /**
+   * PULL (story 16.8): the person's one verb asks for MORE of this card's
+   * source, under the stated budget, and the answer is put in view state.
+   *
+   * WHY IT IS NOT QUEUED AND NOT WRITTEN: a pull is a READ — the queue exists
+   * to serialize writes, and the reading it re-reads is located by the line
+   * the map already holds. Nothing here calls a writer, touches `readings.txt`,
+   * the stored text, the note, the state word or the refresh stamp; the pulled
+   * text lives in `pulledRef` until the person dismisses it or the card
+   * closes. A refusal clears an older pull (so the card never shows a stale
+   * look under a new refusal) and answers the reader's existing sentence.
+   */
+  const pull = useCallback(
+    (on: string): Promise<GroundAddResult> => {
+      const reading = readingFor(readingsRef.current, on);
+      if (reading === null) {
+        // The verb is only drawn on a reading-bearing card; this guards a
+        // hand-driven call without inventing a sentence (the existing one).
+        return Promise.resolve({
+          ok: false,
+          message: READING_REFUSALS.absent,
+        });
+      }
+      return pullReading(workspacePath, reading)
+        .then((result): GroundAddResult => {
+          if (result.kind === "refused") {
+            const pulled = { ...pulledRef.current };
+            delete pulled[on];
+            pulledRef.current = pulled;
+            setState(snapshot());
+            return { ok: false, message: result.message };
+          }
+          const pulled = { ...pulledRef.current };
+          pulled[on] = { text: result.text, truncated: result.truncated };
+          pulledRef.current = pulled;
+          setState(snapshot());
+          return { ok: true };
+        })
+        .catch(
+          (): GroundAddResult => ({
+            ok: false,
+            message: READING_REFUSALS.io,
+          }),
+        );
+    },
+    [workspacePath],
+  );
+
+  /**
+   * DISMISS (story 16.8): forget one card's look. View state only — there is
+   * no file behind a pull, so this deletes a key and nothing else.
+   */
+  const dismissPull = useCallback((on: string): void => {
+    if (!(on in pulledRef.current)) return;
+    const pulled = { ...pulledRef.current };
+    delete pulled[on];
+    pulledRef.current = pulled;
+    setState(snapshot());
+  }, []);
+
   return {
     references: state.references,
     readings: state.readings,
     texts: state.texts,
     states: state.states,
+    pulled: state.pulled,
     notes: state.notes,
     orphanNotes: state.orphanNotes,
     links: state.links,
@@ -883,5 +989,7 @@ export function useGround(workspacePath: string): GroundView {
     link,
     unlink,
     setNote,
+    pull,
+    dismissPull,
   };
 }
