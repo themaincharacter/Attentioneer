@@ -13,6 +13,7 @@ import {
   formatProviderRef,
   modelsForMove,
   validateCliProviderRow,
+  validateLocalProviderRow,
   validateProviderRow,
   withProvider,
   withSelection,
@@ -20,6 +21,7 @@ import {
   PROVIDER_SENTENCES,
   type CliProviderRow,
   type HttpProviderRow,
+  type LocalProviderRow,
   type ModelRow,
   type ProviderDraft,
   type ProviderKind,
@@ -27,6 +29,13 @@ import {
   type TurnSettings,
 } from "../turn/providers";
 import { CLI_SPECS, type CliSpec } from "../turn/cliSpecs";
+import {
+  DEFAULT_LOCAL_IDLE_MINUTES,
+  LOCAL_SPECS,
+  type LocalSpec,
+} from "../turn/localSpecs";
+import { localSentence, type LocalStatus } from "../turn/local";
+import { localStatus, startLocal, stopLocal } from "../turn/localBridge";
 import { resolutionSentence, type CliProbe } from "../turn/cli";
 import { probeSpec } from "../turn/cliBridge";
 
@@ -55,6 +64,13 @@ import { probeSpec } from "../turn/cliBridge";
  * PROVISIONAL (ADR-0003's rendering seam): the layout, the field order and the
  * wording of the refusals.
  */
+/**
+ * The shipped llama.cpp preset the local form starts from (PROVISIONAL flags,
+ * localSpecs.ts): command, argv, readiness line and idle window. The model
+ * path is the person's, because this app downloads no model.
+ */
+const DEFAULT_LOCAL_SPEC: LocalSpec = LOCAL_SPECS[0];
+
 export function ProvidersPanel({
   onClose,
   onChanged,
@@ -79,8 +95,30 @@ export function ProvidersPanel({
   const [tools, setTools] = useState(false);
   const [vision, setVision] = useState(false);
 
-  // WHICH KIND IS BEING ADDED (story 5's CLI lives beside the endpoint form).
+  // WHICH KIND IS BEING ADDED (story 5's CLI and story 6's local runtime
+  // live beside the endpoint form).
   const [kind, setKind] = useState<ProviderKind>("http");
+
+  // THE LOCAL FORM'S FIELDS. The shipped llama.cpp preset fills command, args,
+  // readiness line and idle window; the person supplies the model path (this
+  // app downloads no model).The args stay EDITOR TEXT split on spaces, exactly
+  // like the CLI form: the arrays are what the row stores.
+  const [localCommand, setLocalCommand] = useState(DEFAULT_LOCAL_SPEC.command);
+  const [localModel, setLocalModel] = useState("");
+  const [localArgs, setLocalArgs] = useState(DEFAULT_LOCAL_SPEC.args.join(" "));
+  const [localReady, setLocalReady] = useState(
+    DEFAULT_LOCAL_SPEC.readyPattern ?? "",
+  );
+  const [localIdle, setLocalIdle] = useState(
+    String(DEFAULT_LOCAL_SPEC.idleMinutes),
+  );
+
+  // ONE RUNTIME, ONE CHILD: the panel shows what the host reports for the row
+  // that started it, and the sentence beside the row says running/stopped.
+  const [localStates, setLocalStates] = useState<
+    Record<string, LocalStatus | null>
+  >({});
+  const [localNotes, setLocalNotes] = useState<Record<string, string>>({});
 
   // THE CLI FORM'S FIELDS. Every argv is EDITOR TEXT split on spaces — a
   // provisional convenience: the arrays are what the row stores, and a value
@@ -103,6 +141,10 @@ export function ProvidersPanel({
   const [editRunArgs, setEditRunArgs] = useState("");
   const [editAuthArgs, setEditAuthArgs] = useState("");
   const [editOkPattern, setEditOkPattern] = useState("");
+  const [editModelPath, setEditModelPath] = useState("");
+  const [editLocalArgs, setEditLocalArgs] = useState("");
+  const [editReadyPattern, setEditReadyPattern] = useState("");
+  const [editIdleMinutes, setEditIdleMinutes] = useState("");
 
   // Which row is being edited, and the key being set on which row. ONE at a
   // time: two open editors on one list would be two versions of the truth.
@@ -121,10 +163,14 @@ export function ProvidersPanel({
       for (const provider of loaded.providers) {
         kept[provider.id] = await keyExists(provider.id);
       }
+      const running = await localStatus();
       if (!alive) return;
       setSettings(loaded);
       setStore(status);
       setKeys(kept);
+      if (running !== null) {
+        setLocalStates({ [running.tag]: running });
+      }
     })();
     return () => {
       alive = false;
@@ -170,6 +216,19 @@ export function ProvidersPanel({
       return { kind: "refused", sentence: PROVIDER_SENTENCES.noName };
     }
     const taken = settings.providers.map((provider) => provider.id);
+    if (kind === "local") {
+      return validateLocalProviderRow(
+        {
+          name,
+          command: localCommand,
+          model: localModel,
+          args: splitArgs(localArgs),
+          readyPattern: localReady,
+          idleMinutes: idleDraft(),
+        },
+        taken,
+      );
+    }
     if (kind === "cli") {
       return validateCliProviderRow(
         {
@@ -211,7 +270,65 @@ export function ProvidersPanel({
     setRunArgs("{prompt}");
     setAuthArgs("");
     setOkPattern("");
+    setLocalModel("");
     setProbe(null);
+  }
+
+  /** The local preset, back into the add form (the person then names a model). */
+  function useLocalPreset(spec: LocalSpec): void {
+    setKind("local");
+    setLocalCommand(spec.command);
+    setLocalArgs(spec.args.join(" "));
+    setLocalReady(spec.readyPattern ?? "");
+    setLocalIdle(String(spec.idleMinutes));
+    setSentence(null);
+  }
+
+  /** The idle field's minutes, or the shipped default when left blank. */
+  function idleDraft(): number {
+    const text = localIdle.trim();
+    return text === "" ? DEFAULT_LOCAL_IDLE_MINUTES : Number(text);
+  }
+
+  /** Check a local row: START its child and say the port it chose. */
+  async function checkLocal(row: LocalProviderRow): Promise<void> {
+    if (probing) return;
+    setProbing(true);
+    try {
+      const started = await startLocal(
+        row.id,
+        row.command,
+        row.args,
+        row.model,
+        row.readyPattern,
+        row.idleMinutes,
+      );
+      if (started.kind === "refused") {
+        setLocalStates((current) => ({ ...current, [row.id]: null }));
+        setLocalNotes((current) => ({
+          ...current,
+          [row.id]: started.sentence,
+        }));
+      } else {
+        setLocalStates((current) => ({
+          ...current,
+          [row.id]: started.status,
+        }));
+        setLocalNotes((current) => ({ ...current, [row.id]: "" }));
+      }
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  /** Stop the one local child (the idle rule would do it later anyway). */
+  async function stopLocalRow(row: LocalProviderRow): Promise<void> {
+    await stopLocal();
+    setLocalStates((current) => ({ ...current, [row.id]: null }));
+    setLocalNotes((current) => ({
+      ...current,
+      [row.id]: "the local runtime was stopped",
+    }));
   }
 
   /**
@@ -289,7 +406,24 @@ export function ProvidersPanel({
       .map((provider) => provider.id)
       .filter((id) => id !== row.id);
     let read;
-    if (row.kind === "cli") {
+    if (row.kind === "local") {
+      read = validateLocalProviderRow(
+        {
+          id: row.id,
+          name: editName,
+          command: editCommand,
+          model: editModelPath,
+          args: splitArgs(editLocalArgs),
+          readyPattern: editReadyPattern,
+          idleMinutes:
+            editIdleMinutes.trim() === ""
+              ? row.idleMinutes
+              : Number(editIdleMinutes),
+          notes: row.notes,
+        },
+        otherIds,
+      );
+    } else if (row.kind === "cli") {
       read = validateCliProviderRow(
         {
           id: row.id,
@@ -370,6 +504,9 @@ export function ProvidersPanel({
 
   async function removeProvider(row: ProviderRow): Promise<void> {
     if (settings === null || busy) return;
+    // A running local child belongs to its row: stopping it here means a
+    // removed row cannot leave a model server behind until the idle window.
+    if (row.kind === "local") await stopLocal();
     // THE KEY GOES WITH THE ROW. If the store refuses, the row STAYS: a key
     // left behind with no row naming it is exactly the kind of quiet leftover
     // this story refuses to create.
@@ -513,7 +650,7 @@ export function ProvidersPanel({
                       onChange={(e) => setEditBaseUrl(e.target.value)}
                     />
                   </label>
-                ) : (
+                ) : provider.kind === "cli" ? (
                   <>
                     <label className="providers-field">
                       <span>command</span>
@@ -566,6 +703,59 @@ export function ProvidersPanel({
                       />
                     </label>
                   </>
+                ) : (
+                  <>
+                    <label className="providers-field">
+                      <span>server command</span>
+                      <input
+                        type="text"
+                        value={editCommand}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditCommand(e.target.value)}
+                      />
+                    </label>
+                    <label className="providers-field">
+                      <span>model path</span>
+                      <input
+                        type="text"
+                        value={editModelPath}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditModelPath(e.target.value)}
+                      />
+                    </label>
+                    <label className="providers-field">
+                      <span>server args (with the placeholders)</span>
+                      <input
+                        type="text"
+                        value={editLocalArgs}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditLocalArgs(e.target.value)}
+                      />
+                    </label>
+                    <label className="providers-field">
+                      <span>ready line (empty: the port answering is enough)</span>
+                      <input
+                        type="text"
+                        value={editReadyPattern}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditReadyPattern(e.target.value)}
+                      />
+                    </label>
+                    <label className="providers-field">
+                      <span>idle minutes</span>
+                      <input
+                        type="text"
+                        value={editIdleMinutes}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditIdleMinutes(e.target.value)}
+                      />
+                    </label>
+                  </>
                 )}
                 <div className="providers-actions">
                   <button
@@ -592,10 +782,26 @@ export function ProvidersPanel({
               <div className="providers-row-facts">
                 {provider.kind === "http" ? (
                   <span className="providers-url">{provider.baseUrl}</span>
-                ) : (
+                ) : provider.kind === "cli" ? (
                   <span className="providers-url">
                     {provider.command}
                     {provider.notes === "" ? "" : " — " + provider.notes}
+                  </span>
+                ) : (
+                  <span className="providers-url">
+                    {provider.command} — {provider.model}
+                  </span>
+                )}
+                {provider.kind === "local" && (
+                  <span className="providers-model-id">
+                    {provider.args.join(" ")}
+                    {" · "}
+                    {provider.readyPattern === undefined
+                      ? "ready when the port answers"
+                      : "ready on: " + provider.readyPattern}
+                    {" · stops after "}
+                    {provider.idleMinutes}
+                    {" idle minutes"}
                   </span>
                 )}
                 <ul className="providers-models">
@@ -622,6 +828,21 @@ export function ProvidersPanel({
 
             {provider.kind === "cli" && rowProbes[provider.id] !== undefined && (
               <ProbeReadout probe={rowProbes[provider.id]} />
+            )}
+
+            {/* THE LOCAL RUNTIME'S OWN LINE: the port it chose, or stopped.
+                A failed start keeps the child's last line under it. */}
+            {provider.kind === "local" && (
+              <div className="providers-probe" role="status">
+                <div className="providers-probe-line">
+                  {localSentence(localStates[provider.id] ?? null)}
+                </div>
+                {(localNotes[provider.id] ?? "") !== "" && (
+                  <div className="providers-probe-line">
+                    {localNotes[provider.id]}
+                  </div>
+                )}
+              </div>
             )}
 
             <div className="providers-actions">
@@ -685,6 +906,25 @@ export function ProvidersPanel({
                   check
                 </button>
               )}
+              {provider.kind === "local" && (
+                <>
+                  <button
+                    type="button"
+                    className="providers-check"
+                    disabled={probing}
+                    onClick={() => void checkLocal(provider)}
+                  >
+                    check (start it)
+                  </button>
+                  <button
+                    type="button"
+                    className="providers-stop"
+                    onClick={() => void stopLocalRow(provider)}
+                  >
+                    stop
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="providers-edit-open"
@@ -700,6 +940,13 @@ export function ProvidersPanel({
                     setEditRunArgs(provider.run.args.join(" "));
                     setEditAuthArgs((provider.auth?.args ?? []).join(" "));
                     setEditOkPattern(provider.auth?.okPattern ?? "");
+                  }
+                  if (provider.kind === "local") {
+                    setEditCommand(provider.command);
+                    setEditModelPath(provider.model);
+                    setEditLocalArgs(provider.args.join(" "));
+                    setEditReadyPattern(provider.readyPattern ?? "");
+                    setEditIdleMinutes(String(provider.idleMinutes));
                   }
                   setSentence(null);
                 }}
@@ -734,13 +981,21 @@ export function ProvidersPanel({
               value={kind}
               aria-label="the kind of provider"
               onChange={(e) => {
-                setKind(e.target.value === "cli" ? "cli" : "http");
+                const next =
+                  e.target.value === "cli"
+                    ? "cli"
+                    : e.target.value === "local"
+                      ? "local"
+                      : "http";
+                setKind(next);
+                if (next === "local") useLocalPreset(DEFAULT_LOCAL_SPEC);
                 setProbe(null);
                 setSentence(null);
               }}
             >
               <option value="http">an HTTP endpoint</option>
               <option value="cli">a command (CLI)</option>
+              <option value="local">a model on this machine</option>
             </select>
           </label>
           <label className="providers-field">
@@ -750,7 +1005,13 @@ export function ProvidersPanel({
               value={name}
               spellCheck={false}
               autoComplete="off"
-              placeholder={kind === "cli" ? "My script" : "Local llama"}
+              placeholder={
+                kind === "cli"
+                  ? "My script"
+                  : kind === "local"
+                    ? "My local model"
+                    : "A hosted endpoint"
+              }
               onChange={(e) => setName(e.target.value)}
             />
           </label>
@@ -808,7 +1069,7 @@ export function ProvidersPanel({
                 </label>
               </div>
             </>
-          ) : (
+          ) : kind === "cli" ? (
             <>
               <label className="providers-field">
                 <span>command</span>
@@ -874,6 +1135,64 @@ export function ProvidersPanel({
               </div>
               {probe !== null && <ProbeReadout probe={probe} />}
             </>
+          ) : (
+            <>
+              <label className="providers-field">
+                <span>server command</span>
+                <input
+                  type="text"
+                  value={localCommand}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="llama-server"
+                  onChange={(e) => setLocalCommand(e.target.value)}
+                />
+              </label>
+              <label className="providers-field">
+                <span>model path (the file this machine has)</span>
+                <input
+                  type="text"
+                  value={localModel}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="/home/me/models/qwen.gguf"
+                  onChange={(e) => setLocalModel(e.target.value)}
+                />
+              </label>
+              <label className="providers-field">
+                <span>{"server args (with {port} and {key} as separate entries)"}</span>
+                <input
+                  type="text"
+                  value={localArgs}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="-m {model} --host 127.0.0.1 --port {port}"
+                  onChange={(e) => setLocalArgs(e.target.value)}
+                />
+              </label>
+              <label className="providers-field">
+                <span>ready line (empty: the port answering is enough)</span>
+                <input
+                  type="text"
+                  value={localReady}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="server is listening"
+                  onChange={(e) => setLocalReady(e.target.value)}
+                />
+              </label>
+              <label className="providers-field">
+                <span>idle minutes before it is stopped</span>
+                <input
+                  type="text"
+                  value={localIdle}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="10"
+                  onChange={(e) => setLocalIdle(e.target.value)}
+                />
+              </label>
+            </>
           )}
           <button
             type="button"
@@ -906,6 +1225,30 @@ export function ProvidersPanel({
                 onClick={() => void addShipped(spec)}
               >
                 add
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* THE SHIPPED LOCAL RUNTIMES: data too. A local row still needs the
+            person's model path (the app downloads no model), so this only
+            fills the form; adding it is the SAME validator a typed row uses. */}
+        <div className="providers-shipped">
+          <span className="providers-add-title">
+            local runtimes the app ships as data
+          </span>
+          {LOCAL_SPECS.map((spec) => (
+            <div className="providers-shipped-row" key={spec.id}>
+              <span className="providers-shipped-name">{spec.name}</span>
+              <code className="providers-shipped-command">{spec.command}</code>
+              <span className="providers-shipped-notes">{spec.notes}</span>
+              <button
+                type="button"
+                className="providers-shipped-add"
+                disabled={busy}
+                onClick={() => useLocalPreset(spec)}
+              >
+                use
               </button>
             </div>
           ))}

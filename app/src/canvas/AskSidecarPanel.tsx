@@ -195,9 +195,12 @@ export function AskSidecarPanel({
       return;
     }
     // The key is read NOW, for this provider only, and handed straight to the
-    // request line (a CLI route takes none). It is never put in state,
-    // rendered or logged.
-    const apiKey = await readSecret(resolved.provider.id);
+    // request line. A CLI takes none, and a local runtime's key is minted by
+    // the host per launch. It is never put in state, rendered or logged.
+    const apiKey =
+      resolved.provider.kind === "http"
+        ? await readSecret(resolved.provider.id)
+        : "";
     const route = routeOf(resolved.provider, resolved.model, apiKey);
 
     setSentence(null);

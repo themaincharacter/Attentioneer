@@ -110,7 +110,12 @@ export async function sendPacketApp(
   // The route is read from the row ONCE here; the port dispatches on it. The
   // key is read now, for this provider only, and an endpoint route carries it
   // — a CLI route has no use for one (and must not be handed one).
-  const apiKey = await deps.apiKey(resolved.provider.id);
+  // The endpoint is the only kind whose key lives in the store. A CLI takes
+  // none, and a local runtime's key is minted by the host for that launch.
+  const apiKey =
+    resolved.provider.kind === "http"
+      ? await deps.apiKey(resolved.provider.id)
+      : "";
   const route = routeOf(resolved.provider, resolved.model, apiKey);
   const started = await deps.turn.start(route);
   if (started.kind === "refused") {
@@ -118,7 +123,9 @@ export async function sendPacketApp(
     return {
       kind: "unavailable",
       sentence:
-        route.kind === "cli" ? started.sentence : SIDECAR_UNAVAILABLE_SENTENCE,
+        route.kind === "cli" || route.kind === "local"
+          ? started.sentence
+          : SIDECAR_UNAVAILABLE_SENTENCE,
     };
   }
 

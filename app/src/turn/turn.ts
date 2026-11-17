@@ -11,7 +11,7 @@ import { CLI_TURN_TIMEOUT_MS, buildCliArgs, cliAnswer } from "./cli";
 import type { CliFacts, CliRefusal } from "./cli";
 import type { CliSpec } from "./cliSpecs";
 import { cliSpecOf, providerFrom } from "./providers";
-import type { ModelRow, ProviderRow } from "./providers";
+import type { LocalProviderRow, ModelRow, ProviderRow } from "./providers";
 
 /**
  * ONE TURN (Epic 15 story 1): a provider, a question, one answer.
@@ -77,6 +77,8 @@ export const TURN_SENTENCES = {
   noCliRunner: "the CLI could not be started, so the turn did not leave",
   /** The process layer threw instead of reporting facts. */
   cliFailed: "the CLI could not be run",
+  /** A local turn arrived without the local runtime's process layer. */
+  noLocalRuntime: "the local runtime could not be started, so the turn did not leave",
 } as const;
 
 /** The result of one turn: one answer, or one sentence. */
@@ -143,7 +145,21 @@ export function errorSentence(message: string): string {
  */
 export type TurnRoute =
   | { kind: "http"; provider: TurnProvider }
-  | { kind: "cli"; spec: CliSpec };
+  | { kind: "cli"; spec: CliSpec }
+  | { kind: "local"; row: LocalProviderRow; model: ModelRow };
+
+/**
+ * What the local route needs before it can become an HTTP route: start the
+ * child (or reuse it, touching the idle timer) and hand back the base URL, the
+ * model id and the key that launch minted. Injected, so the pure turn rules
+ * are testable without a process.
+ */
+export type LocalEnsure = (
+  row: LocalProviderRow,
+  model: ModelRow,
+) => Promise<
+  { kind: "running"; provider: TurnProvider } | { kind: "refused"; sentence: string }
+>;
 
 /**
  * The route a resolved row runs through. THE ONLY PLACE A ROW'S KIND IS READ:
@@ -155,9 +171,13 @@ export function routeOf(
   model: ModelRow,
   apiKey: string,
 ): TurnRoute {
-  return provider.kind === "cli"
-    ? { kind: "cli", spec: cliSpecOf(provider) }
-    : { kind: "http", provider: providerFrom(provider, model, apiKey) };
+  if (provider.kind === "cli") return { kind: "cli", spec: cliSpecOf(provider) };
+  // A local row has no base URL until its child is running: the route carries
+  // the row and the model, and the port/key arrive when the runtime starts.
+  if (provider.kind === "local") {
+    return { kind: "local", row: provider, model };
+  }
+  return { kind: "http", provider: providerFrom(provider, model, apiKey) };
 }
 
 /** One already-built argv, run by the host's process layer (injected). */
@@ -170,6 +190,8 @@ export type CliTurnRunner = (
 export interface RouteOptions extends TurnOptions {
   /** The CLI process layer; absent for transports that only speak HTTP. */
   cli?: CliTurnRunner;
+  /** The local runtime's process layer; absent where none can be started. */
+  local?: LocalEnsure;
 }
 
 /**
@@ -229,7 +251,36 @@ export async function runRoute(
   if (route.kind === "http") {
     return await askTurnMessages(transport, route.provider, messages, options);
   }
+  if (route.kind === "local") {
+    const started = await ensureLocal(route.row, route.model, options);
+    if (started.kind === "refused") {
+      return { kind: "error", sentence: started.sentence };
+    }
+    // The local server is OpenAI-compatible on loopback: the turn is the SAME
+    // HTTP turn as story 1, through the SAME sidecar pipe, with the port the
+    // app chose and the key it minted as that provider's base URL and key.
+    return await askTurnMessages(transport, started.provider, messages, options);
+  }
   return await runCliTurn(route.spec, messages, options);
+}
+
+/**
+ * Start (or reuse) the local child behind a route. A missing process layer is
+ * a wiring bug said out loud; the runtime's own refusal is its sentence.
+ */
+async function ensureLocal(
+  row: LocalProviderRow,
+  model: ModelRow,
+  options: RouteOptions,
+): Promise<{ kind: "running"; provider: TurnProvider } | { kind: "refused"; sentence: string }> {
+  if (options.local === undefined) {
+    return { kind: "refused", sentence: TURN_SENTENCES.noLocalRuntime };
+  }
+  try {
+    return await options.local(row, model);
+  } catch {
+    return { kind: "refused", sentence: TURN_SENTENCES.noLocalRuntime };
+  }
 }
 
 /**
@@ -253,6 +304,18 @@ export async function runRoutePacket(
       fetchBlock,
       options,
     );
+  }
+  if (route.kind === "local") {
+    const started = await ensureLocal(route.row, route.model, options);
+    if (started.kind === "refused") {
+      return {
+        result: { kind: "error", sentence: started.sentence },
+        messages: [...packet.messages],
+        read: null,
+        missed: null,
+      };
+    }
+    return await askTurnPacket(transport, started.provider, packet, fetchBlock, options);
   }
   const result = await runRoute(transport, route, packet.messages, options);
   return { result, messages: [...packet.messages], read: null, missed: null };

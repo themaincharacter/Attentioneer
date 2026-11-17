@@ -1,6 +1,8 @@
 import type { TurnProvider } from "./protocol";
 import { promptTemplateProblem } from "./cli";
 import { PROMPT_PLACEHOLDER, type CliSpec } from "./cliSpecs";
+import { localArgsProblem, modelStem } from "./local";
+import { DEFAULT_LOCAL_IDLE_MINUTES } from "./localSpecs";
 
 /**
  * PROVIDER ROWS, MODEL ROWS AND THE ONE STRING A TURN CARRIES (Epic 15 story
@@ -64,8 +66,8 @@ export interface ModelRow {
   capabilities: ModelCapabilities;
 }
 
-/** Which tier a row runs in. */
-export type ProviderKind = "http" | "cli";
+/** Which tier a row runs in: an endpoint, a CLI, a model on this machine. */
+export type ProviderKind = "http" | "cli" | "local";
 
 /** What both kinds share: an identity and the models a move may pick. */
 interface ProviderRowBase {
@@ -110,8 +112,32 @@ export interface CliProviderRow extends ProviderRowBase {
   notes: string;
 }
 
-/** One place a turn can run: an endpoint or a CLI spec. */
-export type ProviderRow = HttpProviderRow | CliProviderRow;
+/**
+ * One model that runs on THIS machine (Epic 15 story 6). The row is the
+ * command, the model path, and the argv with its placeholders; the port and
+ * the key are NOT fields, because the app chooses them per launch and holds
+ * the key in memory only. The one model row beneath it is the id the turn
+ * sends over HTTP — named after the model file, like a CLI row is named after
+ * its command, so the string contract still resolves.
+ */
+export interface LocalProviderRow extends ProviderRowBase {
+  kind: "local";
+  /** The server binary: a bare name (PATH) or a path as typed. */
+  command: string;
+  /** The model path handed to {model}; it may contain spaces. */
+  model: string;
+  /** The argv, with {port}, {key} and {model} each in one entry. */
+  args: string[];
+  /** The OPTIONAL line that means the server is ready. */
+  readyPattern?: string;
+  /** Minutes with no turn before the child is killed. */
+  idleMinutes: number;
+  /** What this row claims, in the person's words. */
+  notes: string;
+}
+
+/** One place a turn can run: an endpoint, a CLI spec, or a local server. */
+export type ProviderRow = HttpProviderRow | CliProviderRow | LocalProviderRow;
 
 /**
  * The turn object the app config holds: the rows, and which one a turn
@@ -176,6 +202,11 @@ export const PROVIDER_SENTENCES = {
     "the run arguments need {prompt} — it is where the question goes",
   cliManyPrompts: "only one run argument may carry {prompt}",
   cliNoPattern: "a sign-in check needs a pattern to look for",
+  /** The local kind's own refusals (the argv's are local.ts's sentences). */
+  localNoCommand: "a local provider needs a server command to run",
+  localNoModel: "a local provider needs the model file to hand to its command",
+  localNoArgs: "a local provider needs the arguments that start its server",
+  localIdle: "a local provider's idle window must be at least one minute",
 } as const;
 
 function textOf(value: unknown): string {
@@ -343,12 +374,45 @@ function parseCliRow(value: Record<string, unknown>): CliProviderRow | null {
   return row;
 }
 
+/** Read one stored local row; null when it is not a row this app can act on. */
+function parseLocalRow(value: Record<string, unknown>): LocalProviderRow | null {
+  const id = textOf(value.id).trim();
+  const name = textOf(value.name).trim();
+  const command = textOf(value.command).trim();
+  const model = textOf(value.model).trim();
+  if (id === "" || name === "" || command === "" || model === "") return null;
+  const args = stringList(value.args);
+  // An argv the app could not substitute would start a server on the wrong
+  // port (or no port): dropped at the read, never guessed at.
+  if (args.length === 0 || localArgsProblem(args) !== null) return null;
+  const stated = value.idleMinutes;
+  const idleMinutes =
+    typeof stated === "number" && Number.isFinite(stated) && stated >= 1
+      ? Math.floor(stated)
+      : DEFAULT_LOCAL_IDLE_MINUTES;
+  const row: LocalProviderRow = {
+    kind: "local",
+    id,
+    name,
+    command,
+    model,
+    args,
+    idleMinutes,
+    notes: textOf(value.notes),
+    models: readModelRows(value.models),
+  };
+  const readyPattern = textOf(value.readyPattern);
+  if (readyPattern !== "") row.readyPattern = readyPattern;
+  return row;
+}
+
 /** Read one stored provider row; null when it is not a row this app can act on. */
 export function parseProviderRow(value: unknown): ProviderRow | null {
   if (!isRecord(value)) return null;
   // Rows written before the CLI kind existed carry no `kind`; they are
   // endpoints, which is what they were.
   if (value.kind === "cli") return parseCliRow(value);
+  if (value.kind === "local") return parseLocalRow(value);
   const id = textOf(value.id).trim();
   const name = textOf(value.name).trim();
   const baseUrl = textOf(value.baseUrl).trim();
@@ -409,6 +473,23 @@ function storedProviderRow(provider: ProviderRow): Record<string, unknown> {
     name: model.name,
     capabilities: storedCapabilities(model.capabilities),
   }));
+  if (provider.kind === "local") {
+    const stored: Record<string, unknown> = {
+      kind: "local",
+      id: provider.id,
+      name: provider.name,
+      command: provider.command,
+      model: provider.model,
+      args: [...provider.args],
+      idleMinutes: provider.idleMinutes,
+      notes: provider.notes,
+      models,
+    };
+    if (provider.readyPattern !== undefined) {
+      stored.readyPattern = provider.readyPattern;
+    }
+    return stored;
+  }
   if (provider.kind === "cli") {
     const stored: Record<string, unknown> = {
       kind: "cli",
@@ -625,6 +706,90 @@ export function validateCliProviderRow(
     .map((place) => place.trim())
     .filter((place) => place !== "");
   if (wellKnown.length > 0) row.wellKnown = wellKnown;
+  return { kind: "row", row };
+}
+
+/**
+ * One local server being added or edited, as the form holds it (not yet a
+ * row). The args are an argv array even here: the form splits its text into
+ * entries, and the placeholders stay inside them.
+ */
+export interface LocalProviderDraft {
+  /** Absent while adding: the id is derived from the name and deduped. */
+  id?: string;
+  name: string;
+  command: string;
+  model: string;
+  args: readonly string[];
+  readyPattern?: string;
+  idleMinutes?: number;
+  notes?: string;
+}
+
+/**
+ * Turn a local draft into a row, or refuse with the one sentence the form
+ * shows. WHAT IS REQUIRED: a name (for the id), a command, the model file's
+ * path, and an argv the host can substitute — exactly one {port}, at most one
+ * {key} and {model}, and no placeholder the app does not know. The idle
+ * window defaults to the shipped default and never drops below one minute.
+ */
+export function validateLocalProviderRow(
+  draft: LocalProviderDraft,
+  taken: readonly string[] = [],
+): RowRead<LocalProviderRow> {
+  const name = draft.name.trim();
+  if (name === "") return refused(PROVIDER_SENTENCES.noName);
+
+  const id =
+    draft.id === undefined || draft.id.trim() === ""
+      ? uniqueProviderId(name, taken)
+      : draft.id.trim();
+  if (id === "") return refused(PROVIDER_SENTENCES.noId);
+  if (draft.id !== undefined && taken.includes(id)) {
+    return refused(PROVIDER_SENTENCES.duplicateId);
+  }
+
+  const command = draft.command.trim();
+  if (command === "") return refused(PROVIDER_SENTENCES.localNoCommand);
+
+  const model = draft.model.trim();
+  if (model === "") return refused(PROVIDER_SENTENCES.localNoModel);
+
+  const args = draft.args.map((arg) => arg.trim()).filter((arg) => arg !== "");
+  if (args.length === 0) return refused(PROVIDER_SENTENCES.localNoArgs);
+  const problem = localArgsProblem(args);
+  if (problem !== null) return refused(problem);
+
+  const stated = draft.idleMinutes ?? DEFAULT_LOCAL_IDLE_MINUTES;
+  if (!Number.isFinite(stated) || stated < 1) {
+    return refused(PROVIDER_SENTENCES.localIdle);
+  }
+
+  // THE SECOND HALF OF THE CONTRACT: a local row has ONE model row, named
+  // after the model file, so a turn still carries providerId:modelId.
+  const stem = modelStem(model);
+  const modelId = providerSlug(stem) === "" ? "local" : providerSlug(stem);
+  const modelName = stem === "" ? name : stem;
+
+  const row: LocalProviderRow = {
+    kind: "local",
+    id,
+    name,
+    command,
+    model,
+    args,
+    idleMinutes: Math.floor(stated),
+    notes: (draft.notes ?? "").trim(),
+    models: [
+      {
+        id: modelId,
+        name: modelName,
+        capabilities: { tools: false, vision: false },
+      },
+    ],
+  };
+  const readyPattern = (draft.readyPattern ?? "").trim();
+  if (readyPattern !== "") row.readyPattern = readyPattern;
   return { kind: "row", row };
 }
 

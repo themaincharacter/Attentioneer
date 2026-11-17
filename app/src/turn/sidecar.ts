@@ -16,7 +16,10 @@ import {
   type TurnTransport,
 } from "./turn";
 import { cliRunArgs, cliWhereArgs } from "./cliBridge";
+import { startLocal } from "./localBridge";
+import { localBaseUrl } from "./local";
 import type { AskPacket } from "./packet";
+import type { LocalProviderRow, ModelRow } from "./providers";
 
 /**
  * THE WINDOW'S SIDE OF THE SIDECAR (Epic 15 story 1; ADR-0034).
@@ -137,6 +140,41 @@ export function createTurnPort(
   let active: number | null = null;
 
   /**
+   * The local runtime's process layer, as the turn wants it: start (or reuse)
+   * the child for this row and turn its launch facts into the SAME provider
+   * shape the HTTP tier has always used. The key exists in this object for the
+   * one request line and nowhere else.
+   */
+  async function ensureLocal(
+    row: LocalProviderRow,
+    model: ModelRow,
+  ): Promise<
+    { kind: "running"; provider: { baseUrl: string; model: string; apiKey: string } } | { kind: "refused"; sentence: string }
+  > {
+    const started = await startLocal(
+      row.id,
+      row.command,
+      row.args,
+      row.model,
+      row.readyPattern,
+      row.idleMinutes,
+    );
+    if (started.kind === "refused") return started;
+    const port = started.status.port;
+    const key = started.status.key;
+    if (port === null || key === null) {
+      return {
+        kind: "refused",
+        sentence: "the local runtime started without reporting its port",
+      };
+    }
+    return {
+      kind: "running",
+      provider: { baseUrl: localBaseUrl(port), model: model.id, apiKey: key },
+    };
+  }
+
+  /**
    * Start the child and say whether anything can leave. A refusal is one
    * sentence (Rust worded it), never a thrown error: the app-sent Ask uses
    * this to fall back to the clipboard BEFORE anything leaves — a sidecar that
@@ -162,6 +200,17 @@ export function createTurnPort(
       return found.kind === "resolved"
         ? { kind: "running" }
         : { kind: "refused", sentence: found.sentence };
+    }
+    // A local route starts its child FIRST (and touches the idle timer); the
+    // HTTP pipe is then the ordinary one.
+    if (route?.kind === "local") {
+      const local = await ensureLocal(route.row, route.model);
+      if (local.kind === "refused") {
+        return { kind: "refused", sentence: local.sentence };
+      }
+      // Both children must be up before a local turn can leave: the model
+      // server on loopback, and the sidecar that makes the HTTP call.
+      return await begin();
     }
     return await begin();
   }
@@ -193,6 +242,32 @@ export function createTurnPort(
         cli,
       });
     }
+    if (route.kind === "local") {
+      const local = await ensureLocal(route.row, route.model);
+      if (local.kind === "refused") {
+        return {
+          result: { kind: "error", sentence: local.sentence },
+          messages: [...packet.messages],
+          read: null,
+          missed: null,
+        };
+      }
+      const child = await begin();
+      if (child.kind === "refused") {
+        return {
+          result: { kind: "error", sentence: child.sentence },
+          messages: [...packet.messages],
+          read: null,
+          missed: null,
+        };
+      }
+      return await runRoutePacket(transport, route, packet, fetchBlock, {
+        onStart: (id) => {
+          active = id;
+        },
+        local: ensureLocal,
+      });
+    }
     const started = await begin();
     if (started.kind === "refused") {
       return {
@@ -213,12 +288,27 @@ export function createTurnPort(
 
   return {
     start,
-    ask: (route, question) =>
-      route.kind === "cli" ? runCli(route, question) : runRoute(transport, route, buildTurnMessages(question), {
+    ask: async (route, question) => {
+      if (route.kind === "cli") return await runCli(route, question);
+      if (route.kind === "local") {
+        // The HTTP pipe must be up for the turn, and the local child too.
+        const child = await begin();
+        if (child.kind === "refused") {
+          return { kind: "error", sentence: child.sentence };
+        }
+        return await runRoute(transport, route, buildTurnMessages(question), {
+          onStart: (id) => {
+            active = id;
+          },
+          local: ensureLocal,
+        });
+      }
+      return await runRoute(transport, route, buildTurnMessages(question), {
         onStart: (id) => {
           active = id;
         },
-      }),
+      });
+    },
     sendPacket: runPacket,
     async stop() {
       // A stop reaches the sidecar's turn; a CLI child is the host's and its

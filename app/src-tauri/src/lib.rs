@@ -4,6 +4,7 @@ use std::path::Path;
 mod bytes;
 mod cli;
 mod head;
+mod local_runtime;
 mod marker;
 mod meta;
 mod paths;
@@ -177,6 +178,9 @@ pub fn run() {
         // hook below kills it earlier so the process list is clean the moment
         // the window closes.
         .manage(sidecar::SidecarState::default())
+        // Story 15.6: the local runtime's child is ALSO the host's. One
+        // managed state per long-lived child, and both are killed on exit.
+        .manage(local_runtime::LocalRuntimeState::default())
         .invoke_handler(tauri::generate_handler![
             read_text_file,
             write_text_file,
@@ -201,7 +205,10 @@ pub fn run() {
             sidecar::sidecar_status,
             cli::cli_where,
             cli::cli_probe,
-            cli::cli_run
+            cli::cli_run,
+            local_runtime::local_start,
+            local_runtime::local_status,
+            local_runtime::local_stop
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -212,6 +219,9 @@ pub fn run() {
         ) {
             use tauri::Manager;
             app_handle.state::<sidecar::SidecarState>().kill();
+            app_handle
+                .state::<local_runtime::LocalRuntimeState>()
+                .kill();
         }
     });
 }
