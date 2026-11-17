@@ -77,6 +77,13 @@ export const READING_MAX_LINES = 64;
 /** ...or 8 KiB, whichever comes first (PROVISIONAL, not a rule). */
 export const READING_MAX_BYTES = 8 * 1024;
 
+/**
+ * How many lines of the stored reading a SMALL card shows (story 16.3).
+ * PROVISIONAL (ADR-0003's rendering seam): the crop is a look, not a rule —
+ * the stored text keeps every line it took; only the card's face is cut.
+ */
+export const READING_PREVIEW_LINES = 6;
+
 /** One reading: the file the person picked and when its head was taken. */
 export interface Reading {
   /** The ground reference's slug — the key the two files join on. */
@@ -489,6 +496,19 @@ export function withReading(
   return [...next, reading];
 }
 
+/**
+ * REMOVE one reading's line (story 16.3): the slug's line leaves, in file
+ * order, and every other line — and every malformed line, which the caller
+ * hands back to the writer untouched — stays byte-identical. PURE: the caller
+ * writes the file (the delete's order lives in `useGround`).
+ */
+export function withReadingRemoved(
+  readings: readonly Reading[],
+  on: string,
+): Reading[] {
+  return readings.filter((reading) => reading.on !== on);
+}
+
 /** The reading for one slug, when the file has one (the layer's join). */
 export function readingFor(
   readings: readonly Reading[],
@@ -529,4 +549,27 @@ export async function loadReadingTexts(
 export function readingFileName(from: string): string {
   const parts = from.split(/[\\/]/).filter((part) => part !== "");
   return parts.length > 0 ? parts[parts.length - 1] : from;
+}
+
+/**
+ * The SMALL card's preview (story 16.3): the stored reading's first
+ * `maxLines` lines, with ONE trailing ellipsis when the text holds more.
+ * PURE, so the crop is not the DOM's only truth (the CSS clamps beside it as
+ * a visual guard for a line that wraps).
+ *
+ * Only the FACE is cropped: the stored text is untouched, and the expanded
+ * card renders every line the map holds. A trailing newline is not a line, so
+ * a six-line file asks for no ellipsis; `""` previews as nothing. PROVISIONAL
+ * (ADR-0003's rendering seam): the line count is a look, not a rule.
+ */
+export function previewText(
+  text: string,
+  maxLines: number = READING_PREVIEW_LINES,
+): string {
+  if (maxLines <= 0) return "";
+  const lines = text.split(/\r?\n/);
+  // The final empty piece of a trailing newline is a terminator, not a line.
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  const crop = lines.slice(0, maxLines).join("\n");
+  return lines.length > maxLines ? `${crop}…` : crop;
 }

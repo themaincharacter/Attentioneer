@@ -56,11 +56,12 @@ const reading: Reading = {
   taken: "2026-11-16T12:00:00.000Z",
 };
 
-/** The story-2 write verbs are inert in a render test (no DOM, no disk). */
+/** The story-2/3 write verbs are inert in a render test (no DOM, no disk). */
 const inertVerbs = {
   onMove: async () => ({ ok: true as const }),
   onRefresh: async () => ({ ok: true as const }),
   onRepoint: async () => ({ ok: true as const }),
+  onRemove: async () => ({ ok: true as const }),
 };
 
 describe("the ground map's own content, and only its own", () => {

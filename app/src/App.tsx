@@ -3840,7 +3840,12 @@ function App() {
             leaving this map: a drag moves it (one x|y write on release), the
             state word is COMPUTED at load from the file's metadata, and the
             two re-reads (refresh, point at another file) are the person's
-            alone — the app never re-reads a file behind their back. */}
+            alone — the app never re-reads a file behind their back. STORY 16.3
+            makes each reference a fixed CARD: a cropped preview that expands
+            into the STORED reading (no re-read, no I/O), and a two-step
+            inline remove that takes the line, the reading and the text file
+            through the one write path. Open/closed is view state, never a
+            record: a reopened workspace shows every card small. */}
         {level === "ground" && (
           <GroundLayer
             references={ground.references}
@@ -3850,6 +3855,7 @@ function App() {
             onMove={ground.move}
             onRefresh={ground.refresh}
             onRepoint={ground.repoint}
+            onRemove={ground.remove}
             interactionMode={gestureMode}
             zoom={camera.zoom}
           />

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fileMeta, type FileMetaAnswer } from "../lib/fs";
+import { fileMeta, removeFile, type FileMetaAnswer } from "../lib/fs";
 import { createWriteQueue } from "../lib/writeQueue";
 import {
   addGroundReference,
   loadGround,
   moveGroundReference,
   saveGround,
+  withGroundRemoved,
   type GroundReference,
 } from "../map/ground";
 import {
@@ -13,11 +14,13 @@ import {
   loadReadingTexts,
   readingAbsolutePath,
   readingFor,
+  readingTextPath,
   refreshReading,
   resolveReadingState,
   saveReadings,
   takeReading,
   withReading,
+  withReadingRemoved,
   type Reading,
   type ReadingState,
 } from "../map/readings";
@@ -50,6 +53,10 @@ import {
  *     the line's form/value (the file did not move); re-pointing takes a new
  *     pick and its location rule. A refusal keeps the old reading and shows the
  *     sentence; nothing is written.
+ *   - REMOVE (16.3): the card, its reading and its kept text leave together,
+ *     in the fixed order below (the reference first, so a crash cannot leave a
+ *     reference pointing at a reading whose text file is gone). A refused
+ *     unlink answers one sentence and repairs nothing on its own.
  *   - The whole read-modify-write runs through the app's one per-file
  *     discipline (`createWriteQueue`, ADR-0004/ADR-0018): one line at a time,
  *     never a whole-folder rewrite.
@@ -61,7 +68,16 @@ import {
 /** What one person move said: done, or the sentence the layer shows. */
 export type GroundAddResult =
   | { ok: true }
-  | { ok: false; message: string };
+  | {
+      ok: false;
+      message: string;
+      /**
+       * The records were removed but a later piece refused (the unlink): the
+       * card is already gone, so the layer shows the sentence where it stood
+       * instead of on a card that no longer exists.
+       */
+      recordsRemoved?: boolean;
+    };
 
 /** Everything the ground layer renders, loaded from the map folder. */
 export interface GroundView {
@@ -94,9 +110,18 @@ export interface GroundView {
   refresh: (on: string) => Promise<GroundAddResult>;
   /** Point this reference at another file and take its head (one write). */
   repoint: (on: string, from: string) => Promise<GroundAddResult>;
+  /**
+   * Remove one reference, its reading and its kept text (story 16.3): the
+   * `ground.txt` line, the `readings.txt` line, then `map/readings/<slug>.md`,
+   * in that order. A refused unlink answers one sentence and repairs nothing.
+   */
+  remove: (on: string) => Promise<GroundAddResult>;
 }
 
-const EMPTY: Omit<GroundView, "create" | "move" | "refresh" | "repoint"> = {
+const EMPTY: Omit<
+  GroundView,
+  "create" | "move" | "refresh" | "repoint" | "remove"
+> = {
   references: [],
   readings: [],
   texts: {},
@@ -105,6 +130,73 @@ const EMPTY: Omit<GroundView, "create" | "move" | "refresh" | "repoint"> = {
   malformedReadings: [],
   loaded: false,
 };
+
+/** The bridges the delete needs; the app passes lib/fs, a test a fake. */
+export interface GroundRemovalIo {
+  saveGround: typeof saveGround;
+  saveReadings: typeof saveReadings;
+  removeFile: (path: string) => Promise<void>;
+}
+
+/** The real bridges, bound once so this module stays importable in tests. */
+const GROUND_REMOVAL_IO: GroundRemovalIo = {
+  saveGround,
+  saveReadings,
+  removeFile,
+};
+
+/** What a delete left behind: the two files' next lines, and its sentence. */
+export interface GroundRemoval {
+  references: GroundReference[];
+  readings: Reading[];
+  /**
+   * null when every piece went. A REFUSED UNLINK answers one sentence: the
+   * two lines are already gone (the order above) and the text file is left
+   * exactly as it is — no partial silent repair, no second attempt.
+   */
+  refusal: string | null;
+}
+
+/** The one sentence a refused unlink answers (PROVISIONAL wording). */
+export const GROUND_REMOVAL_REFUSAL =
+  "the reference and its reading were removed, but its text file could not be removed.";
+
+/**
+ * The delete's ONE sequence (story 16.3), pure apart from the bridges it is
+ * handed:
+ *
+ *   1. the reference's `ground.txt` line leaves FIRST, so a crash can never
+ *      leave a reference pointing at a reading whose text file is gone;
+ *   2. its `readings.txt` line leaves second;
+ *   3. `map/readings/<slug>.md` is unlinked last.
+ *
+ * Malformed lines in either file are handed back to the writers unchanged
+ * (ADR-0009: preserved, never silently dropped), and other references are
+ * untouched. An absent text file is not a refusal — the bridge treats a
+ * missing path as a quiet no-op — while a refused unlink answers one sentence
+ * and leaves everything else exactly as it now is.
+ */
+export async function removeGroundRecords(
+  workspacePath: string,
+  on: string,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+  malformedGround: readonly string[],
+  malformedReadings: readonly string[],
+  io: GroundRemovalIo = GROUND_REMOVAL_IO,
+): Promise<GroundRemoval> {
+  const nextReferences = withGroundRemoved(references, on);
+  await io.saveGround(workspacePath, nextReferences, malformedGround);
+  const nextReadings = withReadingRemoved(readings, on);
+  await io.saveReadings(workspacePath, nextReadings, malformedReadings);
+  let refusal: string | null = null;
+  try {
+    await io.removeFile(readingTextPath(workspacePath, on));
+  } catch {
+    refusal = GROUND_REMOVAL_REFUSAL;
+  }
+  return { references: nextReferences, readings: nextReadings, refusal };
+}
 
 /**
  * The states of every reference, from the readings and their metadata (story
@@ -147,7 +239,9 @@ async function metasOf(
 
 export function useGround(workspacePath: string): GroundView {
   const [state, setState] =
-    useState<Omit<GroundView, "create" | "move" | "refresh" | "repoint">>(EMPTY);
+    useState<
+      Omit<GroundView, "create" | "move" | "refresh" | "repoint" | "remove">
+    >(EMPTY);
   // Synchronous mirrors: the queued write must never read a stale list.
   const referencesRef = useRef<GroundReference[]>([]);
   const readingsRef = useRef<Reading[]>([]);
@@ -441,6 +535,63 @@ export function useGround(workspacePath: string): GroundView {
     [workspacePath, writtenReading],
   );
 
+  /**
+   * REMOVE: the reference's line, its reading's line, then its text file — the
+   * ONE order (story 16.3), through the same queue as every other write. A
+   * refused unlink answers one sentence after the lines have gone; nothing is
+   * retried or repaired here.
+   */
+  const remove = useCallback(
+    (on: string): Promise<GroundAddResult> => {
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const removal = await removeGroundRecords(
+            workspacePath,
+            on,
+            referencesRef.current,
+            readingsRef.current,
+            malformedGroundRef.current,
+            malformedReadingsRef.current,
+          );
+          referencesRef.current = removal.references;
+          readingsRef.current = removal.readings;
+          const texts = { ...textsRef.current };
+          delete texts[on];
+          textsRef.current = texts;
+          const states = { ...statesRef.current };
+          delete states[on];
+          statesRef.current = states;
+          setState({
+            references: removal.references,
+            readings: removal.readings,
+            texts,
+            states,
+            malformedGround: malformedGroundRef.current,
+            malformedReadings: malformedReadingsRef.current,
+            loaded: true,
+          });
+          outcome =
+            removal.refusal === null
+              ? { ok: true }
+              : {
+                  ok: false,
+                  message: removal.refusal,
+                  recordsRemoved: true,
+                };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
   return {
     references: state.references,
     readings: state.readings,
@@ -453,5 +604,6 @@ export function useGround(workspacePath: string): GroundView {
     move,
     refresh,
     repoint,
+    remove,
   };
 }

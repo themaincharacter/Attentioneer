@@ -184,6 +184,20 @@ export function addGroundReference(
 }
 
 /**
+ * REMOVE one reference's line (story 16.3): the slug's line leaves and every
+ * other line — and every malformed line, which the caller hands back to the
+ * writer untouched — stays byte-identical. PURE: the caller writes the file,
+ * and the delete's fixed order (ground line, readings line, text file) lives
+ * in `useGround`. No tombstone and no undo (the history story owns that).
+ */
+export function withGroundRemoved(
+  references: readonly GroundReference[],
+  on: string,
+): GroundReference[] {
+  return references.filter((reference) => reference.on !== on);
+}
+
+/**
  * MOVE one reference to a new point (story 16.2 decision 6): the card is
  * dropped, and the app rewrites this ONE line through the write queue. PURE —
  * the caller writes the file, so a drag's commit is one write and a test can

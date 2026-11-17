@@ -345,6 +345,20 @@ export const CONTENT_CLASSES = [
   "ground-refresh",
   "ground-repoint",
   "ground-problem",
+  // Story 16.3: the card's cropped/scrollable body, its meta footer, the
+  // inline two-step delete (its ask, its two verbs) and the refused unlink's
+  // one sentence shown where the card stood. All content, for the same
+  // belt-and-braces reason: a press on any of them never pans the plane,
+  // creates anything or starts a gesture.
+  "ground-body",
+  "ground-footer",
+  "ground-remove",
+  "ground-confirm",
+  "ground-confirm-question",
+  "ground-confirm-actions",
+  "ground-confirm-remove",
+  "ground-confirm-cancel",
+  "ground-removal-problem",
   "ground-bubble",
   "ground-bubble-name",
   "ground-bubble-file",

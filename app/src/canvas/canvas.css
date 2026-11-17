@@ -5194,17 +5194,59 @@ body {
   pointer-events: none;
 }
 
+/* STORY 16.3 — the reference is a CARD: a quiet surface, a title, a muted
+   cropped body and a meta footer, FIXED in size (the body crops and scrolls;
+   the card never stretches with its content). Copied in SHAPE from Slashspace's
+   node cards, not in dimensions (its widths are chat cards on a multi-column
+   canvas). PROVISIONAL: the 300x200 / 520x420 sizes and the six-line crop are
+   ADR-0003's rendering seam — meant to be reshaped by play, not a design
+   system. The reference is content, never empty paper: a press on it must not
+   read as a plane creation (the gate's content list carries its classes). */
 .ground-reference {
   position: absolute;
-  /* The reference is content, never empty paper: a press on it must not read
-     as a plane creation (the gate's content list carries its classes). */
   pointer-events: auto;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  max-width: 340px;
+  gap: 6px;
+  width: 300px;
+  /* Tall enough for the title, the six-line preview, the footer AND the verbs
+     row (which keeps its space while quiet, so hover never shifts the body). */
+  height: 220px;
+  padding: 11px 13px 10px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid rgba(141, 136, 124, 0.22);
+  border-radius: 8px;
+  box-shadow: 0 1px 5px rgba(40, 35, 25, 0.06);
   user-select: none;
   animation: fade-in 180ms ease-out;
+  /* A drag moves the card: the grab cursor says the press can, and the live
+     frame is quiet (no shadow, no scale) — one write follows the release. */
+  cursor: grab;
+}
+
+/* The EXPANDED face: the same card, larger and still fixed. Only the body
+   scrolls — the stored reading, never a re-read. It sits above its neighbours
+   while it is open (view state; nothing is written). */
+.ground-reference.expanded {
+  z-index: 6;
+  width: 520px;
+  height: 420px;
+  padding: 14px 16px 12px;
+}
+
+/* The one cropped/scrolling region. SMALL: six lines, cut by the pure
+   `previewText` helper and clamped here for a line that wraps. EXPANDED: the
+   stored reading at its full length, scrolled. */
+.ground-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ground-reference.expanded .ground-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* The person's words: the concept map's word scale, same ink and weight. */
@@ -5214,17 +5256,56 @@ body {
   letter-spacing: -0.01em;
   color: #1e2126;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* The file's opening lines, read at add time and kept in the map folder. A
    quiet body size, line breaks verbatim: this is what the file said, not a
-   summary of it. */
+   summary of it. On the SMALL face it is cropped to the preview's six lines
+   (with an ellipsis); the expanded face shows every stored line and scrolls. */
 .ground-reading {
   font-size: 12.5px;
   line-height: 1.5;
   color: #6f6a5f;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.ground-body .ground-reading {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+}
+
+.ground-reference.expanded .ground-body .ground-reading {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+/* The meta footer: the file's NAME and, when it is not current, the state
+   word — one quiet line at the bottom of the card (story 16.3's shape). */
+.ground-footer {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 15px;
+}
+
+.ground-footer .ground-handle {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ground-footer .ground-state {
+  /* The state word takes what it needs; the file name yields first (it is the
+     attribution, the state is the claim). */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* The handle's display: the file NAME only. The full path stays a record and
@@ -5235,12 +5316,6 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* A drag moves the card: the grab cursor says the press can, and the live
-   frame is quiet (no shadow, no scale) — one write follows the release. */
-.ground-reference {
-  cursor: grab;
 }
 
 .ground-reference.dragging {
@@ -5283,7 +5358,14 @@ body {
   opacity: 1;
 }
 
-.ground-actions button {
+/* An open card keeps its verbs visible: the expanded face is where a person
+   acts on a reading, and hunting for a hover would be the only hidden step. */
+.ground-reference.expanded .ground-actions {
+  opacity: 1;
+}
+
+.ground-actions button,
+.ground-confirm-actions button {
   padding: 0;
   border: none;
   background: none;
@@ -5293,13 +5375,53 @@ body {
   cursor: pointer;
 }
 
-.ground-actions button:hover {
+.ground-actions button:hover,
+.ground-confirm-actions button:hover {
   color: #1e2126;
 }
 
-.ground-actions button:disabled {
+.ground-actions button:disabled,
+.ground-confirm-actions button:disabled {
   color: #c9c3b6;
   cursor: default;
+}
+
+/* The delete's TWO-STEP, inline on the card (story 16.3): the first press on
+   "remove" replaces the verbs with this ask, and the second press removes.
+   Any other press or Esc backs out. The words say what actually goes — the
+   reference AND its reading. There is no undo until the history story. */
+.ground-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(141, 136, 124, 0.16);
+}
+
+.ground-confirm-question {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #6f6a5f;
+}
+
+.ground-confirm-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* A refused unlink's one sentence, shown where the card stood (the card left
+   with its records). View state only: nothing is written, nothing is retried. */
+.ground-removal-problem {
+  position: absolute;
+  z-index: 7;
+  max-width: 300px;
+  padding: 3px 6px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid rgba(141, 136, 124, 0.22);
+  border-radius: 5px;
+  pointer-events: auto;
+  cursor: pointer;
+  animation: fade-in 140ms ease-out;
 }
 
 /* The creation bubble: world-anchored at the double-clicked point and
