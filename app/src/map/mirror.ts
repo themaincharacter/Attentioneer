@@ -1,0 +1,249 @@
+import { writeTextFile } from "../lib/fs";
+import { canonicalText } from "../lib/serialize";
+import type { GroundReference } from "./ground";
+import { serializeGroundLinkLine, type GroundLink } from "./groundLinks";
+import {
+  readingFileName,
+  type Reading,
+  type ReadingState,
+} from "./readings";
+
+/**
+ * THE MIRROR (story 16.9): a human-readable index of the ground map, written
+ * beside the map at the workspace root.
+ *
+ *   MAP.md   the whole ground map, rewritten whole on every ground write
+ *
+ * WHY IT EXISTS: the records are line-oriented and honest, but a person (or
+ * another agent) should be able to read the board without parsing JSONL. The
+ * mirror is the legible face of the same records — Slashspace's generated
+ * Context.md, with our honesty rule added: it also says what is UNKNOWN (a
+ * card whose file is missing, an orphan link, an unreadable record line)
+ * instead of dropping the line that cannot be placed.
+ *
+ * WHY IT IS DERIVED: the records in map/ are the only truth. This file is
+ * regenerated wholesale on every ground write, never authored, and a hand edit
+ * is overwritten without ceremony. Deleting it is safe: the next move writes
+ * it again — the app never writes it on open, because opening is a look.
+ *
+ * WHY IT IS REPRODUCIBLE: the same records must produce the same bytes, so a
+ * person can diff it and an agent can trust it. That rules out a clock, a
+ * "generated at" line and every count or total: the list is the summary. Order
+ * comes from the records (their file order) or from a fixed sort (links by
+ * slug pair, unknown notes by slug), never from anything ambient.
+ *
+ * ONLY THE GROUND MAP IS DESCRIBED. The concept map gets its own mirror later
+ * if it earns one (the epic's separate-maps rule); nothing here reads or
+ * names a concept record.
+ *
+ * NO FULL PATHS: a mirror may be shared with another agent or pasted into a
+ * message, so a card names its reading's FILE NAME only (readingFileName).
+ *
+ * PROVISIONAL (the story's artifact, before an ADR settles it): the MAP.md
+ * name and location, the block layout, the section order, the preview length
+ * and the exact state sentences.
+ */
+
+/** The mirror's file name at the workspace root (PROVISIONAL). */
+export const MIRROR_FILE = "MAP.md";
+
+/** Where the mirror lives: workspace root, beside the map folder. */
+export function mirrorPath(workspacePath: string): string {
+  return workspacePath + "/" + MIRROR_FILE;
+}
+
+/**
+ * How much of a reading's or a note's first line a block carries. PROVISIONAL
+ * (not a rule): the line is a preview — the full text lives in the record and
+ * the card's own surface.
+ */
+export const MIRROR_PREVIEW_CHARS = 120;
+
+/**
+ * The ONE sentence a mirror write failure answers. It rides the ground notices
+ * group and never fails the move that caused it (rule 3): the records are
+ * already written when the mirror is queued, so the person's move stands.
+ */
+export const MIRROR_WRITE_REFUSAL =
+  "the map changed, but MAP.md could not be written.";
+
+/**
+ * The loaded ground view the mirror renders — exactly the fields the index
+ * speaks for, and no verb. Taking the shape as a parameter keeps the render
+ * PURE: same view, same bytes, no disk and no React.
+ */
+export interface MirrorView {
+  references: readonly GroundReference[];
+  readings: readonly Reading[];
+  texts: Readonly<Record<string, string>>;
+  states: Readonly<Record<string, ReadingState>>;
+  notes: Readonly<Record<string, string>>;
+  orphanNotes: readonly string[];
+  links: readonly GroundLink[];
+  orphanLinks: readonly GroundLink[];
+  malformedGround: readonly string[];
+  malformedReadings: readonly string[];
+  malformedLinks: readonly string[];
+}
+
+/** The fixed first lines: what this file is, and that the records are truth. */
+const HEADER = [
+  "# MAP.md — the ground map, written out",
+  "",
+  "This file is generated from the map's records. The records are the truth;",
+  "this is a mirror. It is rewritten whole on every move, and a hand edit is",
+  "overwritten. Deleting it is safe: the next move writes it again.",
+  "",
+];
+
+/**
+ * The state words. current says NOTHING (a quiet file needs no line); the
+ * other four say their one sentence, because a stale, absent or unreadable
+ * file is content the person must see. PROVISIONAL wording.
+ */
+const STATE_SENTENCES: Record<ReadingState, string | null> = {
+  current: null,
+  changed: "changed since this reading was taken",
+  missing: "the file is missing",
+  unreadable: "the file cannot be read",
+  unread: "no reading has been taken",
+};
+
+/** One line's text, flattened for the markdown block (no embedded breaks). */
+function flat(text: string): string {
+  return text.replace(/[\r\n]+/g, " ").trimEnd();
+}
+
+/** The first line of a text, cropped to the provisional preview length. */
+function previewLine(text: string): string {
+  const first = flat(text.split(/\r?\n/, 1)[0] ?? "");
+  if (first.length <= MIRROR_PREVIEW_CHARS) return first;
+  return first.slice(0, MIRROR_PREVIEW_CHARS).trimEnd() + "…";
+}
+
+/** The links' deterministic order: by the slugs they were recorded with. */
+function sortedLinks(links: readonly GroundLink[]): GroundLink[] {
+  return [...links].sort((a, b) => {
+    if (a.from !== b.from) return a.from < b.from ? -1 : 1;
+    if (a.to !== b.to) return a.to < b.to ? -1 : 1;
+    return 0;
+  });
+}
+
+/**
+ * THE RENDER, pure: the loaded ground view in, the mirror's exact bytes out.
+ * Same view -> same bytes. Every section is present in a fixed order; an empty
+ * section says "none yet." rather than vanishing, so the file's shape does not
+ * flicker with the map's contents.
+ */
+export function renderMirror(view: MirrorView): string {
+  const nameOf = new Map(
+    view.references.map((reference) => [reference.on, reference.name]),
+  );
+  const readingOf = new Map(
+    view.readings.map((reading) => [reading.on, reading]),
+  );
+  const lines: string[] = [...HEADER];
+
+  lines.push("## References", "");
+  if (view.references.length === 0) lines.push("none yet.", "");
+  for (const reference of view.references) {
+    const reading = readingOf.get(reference.on) ?? null;
+    const state =
+      view.states[reference.on] ?? (reading === null ? "unread" : "unreadable");
+    lines.push("### " + flat(reference.name));
+    // The file's NAME only: the mirror may be shared, and a full path is the
+    // person's machine and folder. The reading's record keeps the path.
+    if (reading !== null) {
+      lines.push("file: " + readingFileName(reading.from));
+    }
+    const sentence = STATE_SENTENCES[state];
+    if (sentence !== null) lines.push("state: " + sentence);
+    const text = view.texts[reference.on];
+    if (text !== undefined) lines.push("reading: " + previewLine(text));
+    const note = view.notes[reference.on];
+    if (note !== undefined) lines.push("note: " + previewLine(note));
+    lines.push("");
+  }
+
+  lines.push("## Links", "");
+  const links = sortedLinks(view.links);
+  if (links.length === 0) {
+    lines.push("none yet.", "");
+  }
+  for (const link of links) {
+    // The direction AS RECORDED, in the person's names; a link carries no
+    // meaning, so the mirror adds none.
+    const from = nameOf.get(link.from) ?? link.from;
+    const to = nameOf.get(link.to) ?? link.to;
+    lines.push(from + " → " + to);
+  }
+  if (links.length > 0) lines.push("");
+
+  // WHAT IS UNKNOWN: every kept-but-unplaceable thing, reproduced as it is and
+  // marked unreadable. Nothing is dropped to make the index look tidy.
+  const unknown: string[] = [];
+  for (const line of view.malformedGround) {
+    unknown.push("unreadable line in ground.txt: " + flat(line));
+  }
+  for (const line of view.malformedReadings) {
+    unknown.push("unreadable line in readings.txt: " + flat(line));
+  }
+  for (const line of view.malformedLinks) {
+    unknown.push("unreadable line in ground-links.txt: " + flat(line));
+  }
+  for (const link of view.orphanLinks) {
+    unknown.push(
+      "unreadable link, a card is not on the map: " +
+        serializeGroundLinkLine(link),
+    );
+  }
+  for (const slug of [...view.orphanNotes].sort()) {
+    unknown.push("unreadable note, no card is on the map: " + slug + ".md");
+  }
+  lines.push("## What is unknown", "");
+  if (unknown.length === 0) lines.push("nothing is unknown.", "");
+  else lines.push(...unknown, "");
+
+  return canonicalText(lines.join("\n"));
+}
+
+/** The bridges the mirror needs; the app passes lib/fs, a test a fake. */
+export interface MirrorIo {
+  writeTextFile(path: string, content: string): Promise<void>;
+}
+
+/** The real bridges, bound once so the module stays importable in tests. */
+export const MIRROR_IO: MirrorIo = { writeTextFile };
+
+/** Write the mirror WHOLE (the one file this family rewrites, not appends). */
+export async function writeMirror(
+  workspacePath: string,
+  text: string,
+  io: MirrorIo = MIRROR_IO,
+): Promise<void> {
+  await io.writeTextFile(mirrorPath(workspacePath), text);
+}
+
+/**
+ * ONE queued mirror write, ready for the per-file queue: render from the
+ * CALLER's latest view, write, and answer the notice. It never rejects — a
+ * mirror failure is one sentence in the ground notices group, never a failed
+ * move (rule 3). The render is inside the try as well: a bug in the derived
+ * face must not take the person's record write with it.
+ */
+export function mirrorWriteTask(
+  workspacePath: string,
+  text: () => string,
+  report: (notice: string | null) => void,
+  io: MirrorIo = MIRROR_IO,
+): () => Promise<void> {
+  return async () => {
+    try {
+      await writeMirror(workspacePath, text(), io);
+      report(null);
+    } catch {
+      report(MIRROR_WRITE_REFUSAL);
+    }
+  };
+}

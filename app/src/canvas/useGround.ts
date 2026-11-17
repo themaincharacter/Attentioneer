@@ -44,6 +44,11 @@ import {
   saveNote,
   type NoteIo,
 } from "../map/notes";
+import {
+  mirrorWriteTask,
+  renderMirror,
+  type MirrorView,
+} from "../map/mirror";
 import { pullReading, type PulledText } from "../map/pull";
 
 /**
@@ -106,10 +111,19 @@ import { pullReading, type PulledText } from "../map/pull";
  *     dismissed by the person or when the card closes; a workspace change
  *     forgets every pull. No read happens on open, in a watcher or in the
  *     background: `pull` is only ever the card's press.
+ *   - THE MIRROR (16.9): every write above queues ONE whole rewrite of
+ *     `MAP.md` at the workspace root, through this same queue and AFTER the
+ *     records that caused it — so a reader never sees a half-updated index.
+ *     It is DERIVED and disposable: the records are the truth, a failed
+ *     mirror never fails the move (one sentence in the ground notices group),
+ *     and opening writes nothing, so deleting the file is safe — the next move
+ *     brings it back byte-identically.
  *   - The whole read-modify-write runs through the app's one per-file
  *     discipline (`createWriteQueue`, ADR-0004/ADR-0018): one line at a time,
- *     never a whole-folder rewrite. THE PULL IS NOT IN THAT SENTENCE: it is a
- *     read, and the queue serializes writes, so a look never waits on a drop.
+ *     never a whole-folder rewrite. THE PULL AND THE MIRROR ARE NOT IN THAT
+ *     SENTENCE: a pull is a read, and the mirror is one whole-file rewrite of a
+ *     derived file, not a record family's line. The queue still serializes the
+ *     mirror's write, so a look never waits on a drop.
  *
  * PROVISIONAL: the state names, the form rule for new picks, the write order,
  * the sentences and the look (story 16.2's decisions, before an ADR).
@@ -175,6 +189,12 @@ export interface GroundView {
   malformedReadings: readonly string[];
   /** Unreadable `map/ground-links.txt` lines, preserved and surfaced. */
   malformedLinks: readonly string[];
+  /**
+   * The one sentence a failed mirror write answers (story 16.9), or null. The
+   * mirror is DERIVED: its failure never fails the person's move, and the
+   * sentence clears itself on the next mirror that lands.
+   */
+  mirrorNotice: string | null;
   /** The map folder's ground records have been read once. */
   loaded: boolean;
   /** Add one reference from a picked text file (the one create write). */
@@ -253,6 +273,7 @@ const EMPTY: GroundLoaded = {
   malformedGround: [],
   malformedReadings: [],
   malformedLinks: [],
+  mirrorNotice: null,
   loaded: false,
 };
 
@@ -427,6 +448,9 @@ export function useGround(workspacePath: string): GroundView {
   // file, so the sync mirror holds exactly what the load read.
   const linksRef = useRef<GroundLink[]>([]);
   const malformedLinksRef = useRef<string[]>([]);
+  // Story 16.9: the mirror's one failure sentence. A notice, not a record —
+  // and it never gates the move that queued the mirror.
+  const mirrorNoticeRef = useRef<string | null>(null);
   // One queue for the ground family's files: an add's ground line must land
   // after its own readings line, never under a stale one; the link and the
   // cascade share it so no link write can land under a stale list.
@@ -497,8 +521,56 @@ export function useGround(workspacePath: string): GroundView {
     malformedGround: malformedGroundRef.current,
     malformedReadings: malformedReadingsRef.current,
     malformedLinks: malformedLinksRef.current,
+    mirrorNotice: mirrorNoticeRef.current,
     loaded: true,
   });
+
+  /**
+   * THE MIRROR'S VIEW (story 16.9): the same computed view the layer renders,
+   * narrowed to what the index speaks for. Orphans are recomputed here exactly
+   * as `snapshot` recomputes them, so the mirror cannot disagree with the
+   * records about what is unknown.
+   */
+  const mirrorView = (): MirrorView => ({
+    references: referencesRef.current,
+    readings: readingsRef.current,
+    texts: textsRef.current,
+    states: statesRef.current,
+    notes: notesRef.current,
+    orphanNotes: orphanNotesRef.current,
+    links: linksRef.current,
+    orphanLinks: orphanGroundLinks(
+      linksRef.current,
+      referencesRef.current.map((reference) => reference.on),
+    ),
+    malformedGround: malformedGroundRef.current,
+    malformedReadings: malformedReadingsRef.current,
+    malformedLinks: malformedLinksRef.current,
+  });
+
+  /**
+   * QUEUE THE MIRROR (story 16.9), after the write that caused it. It goes
+   * through the ground family's own queue, so a reader never sees a half-updated
+   * index and a later move's mirror can never land under an older one. It is
+   * NEVER awaited by the write path: a mirror failure is one sentence in the
+   * notices group, and the person's move (already written) stands.
+   *
+   * The render is deferred into the task, so it reads the refs at the moment
+   * the queue runs — after every earlier write has moved them.
+   */
+  const queueMirror = (): void => {
+    void queueRef.current.push(
+      mirrorWriteTask(
+        workspacePath,
+        () => renderMirror(mirrorView()),
+        (notice) => {
+          if (notice === mirrorNoticeRef.current) return;
+          mirrorNoticeRef.current = notice;
+          setState(snapshot());
+        },
+      ),
+    );
+  };
 
   useEffect(() => {
     // A different workspace starts from its own map folder, never the last
@@ -506,6 +578,7 @@ export function useGround(workspacePath: string): GroundView {
     // Story 16.8: a pull belongs to the workspace it was taken in — never
     // carried across, and never written, so there is nothing to reload.
     pulledRef.current = {};
+    mirrorNoticeRef.current = null;
     queueRef.current = createWriteQueue();
     if (workspacePath === "") {
       referencesRef.current = [];
@@ -583,6 +656,7 @@ export function useGround(workspacePath: string): GroundView {
           statesRef.current = states;
           setState(snapshot());
           outcome = { ok: true };
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -607,6 +681,7 @@ export function useGround(workspacePath: string): GroundView {
           referencesRef.current = next;
           setState(snapshot());
           outcome = { ok: true };
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -669,6 +744,7 @@ export function useGround(workspacePath: string): GroundView {
           statesRef.current = states;
           setState(snapshot());
           outcome = { ok: true };
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -711,6 +787,7 @@ export function useGround(workspacePath: string): GroundView {
           statesRef.current = states;
           setState(snapshot());
           outcome = { ok: true };
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -785,6 +862,9 @@ export function useGround(workspacePath: string): GroundView {
                   message: refusal,
                   recordsRemoved: true,
                 };
+          // The card's files (and the cascade) have moved: the mirror follows
+          // in the same queue, whether or not a later unlink refused.
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -825,6 +905,7 @@ export function useGround(workspacePath: string): GroundView {
           linksRef.current = next;
           setState(snapshot());
           outcome = { ok: true };
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -853,6 +934,7 @@ export function useGround(workspacePath: string): GroundView {
           linksRef.current = next;
           setState(snapshot());
           outcome = { ok: true };
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -897,6 +979,7 @@ export function useGround(workspacePath: string): GroundView {
           notesRef.current = notes;
           setState(snapshot());
           outcome = { ok: true };
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -980,6 +1063,7 @@ export function useGround(workspacePath: string): GroundView {
     malformedGround: state.malformedGround,
     malformedReadings: state.malformedReadings,
     malformedLinks: state.malformedLinks,
+    mirrorNotice: state.mirrorNotice,
     loaded: state.loaded,
     create,
     move,

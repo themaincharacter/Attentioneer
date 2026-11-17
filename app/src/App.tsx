@@ -4613,6 +4613,7 @@ function App() {
         malformedGroundLinks={ground.malformedLinks}
         orphanGroundLinks={ground.orphanLinks}
         orphanGroundNotes={ground.orphanNotes}
+        mirrorNotice={ground.mirrorNotice}
         malformedQuantities={malformedQuantities}
         duplicateQuantities={duplicateQuantities}
         orphanQuantities={orphanQuantities}
@@ -4690,6 +4691,7 @@ function MarkNotices({
   malformedGroundLinks,
   orphanGroundLinks,
   orphanGroundNotes,
+  mirrorNotice,
   malformedQuantities,
   duplicateQuantities,
   orphanQuantities,
@@ -4776,6 +4778,12 @@ function MarkNotices({
    * kept exactly where they are, never adopted into a card and never deleted.
    */
   orphanGroundNotes: readonly string[];
+  /**
+   * The mirror's one failure sentence (story 16.9), or null. The mirror is
+   * DERIVED, so its failure is a notice and never a failed move; it rides the
+   * ground group only, because the mirror speaks for no other map.
+   */
+  mirrorNotice: string | null;
   /** Quantities (Epic 8 story 1): unreadable lines, duplicates, lost/out-of-play words. */
   malformedQuantities: readonly string[];
   duplicateQuantities: readonly Quantity[];
@@ -4832,7 +4840,8 @@ function MarkNotices({
       malformedReadings.length > 0 ||
       malformedGroundLinks.length > 0 ||
       orphanGroundLinks.length > 0 ||
-      orphanGroundNotes.length > 0);
+      orphanGroundNotes.length > 0 ||
+      mirrorNotice !== null);
   // The running game's groups, with the empty families dropped; a group with
   // nothing left is dropped too, so no bare heading ever renders (the dynamics
   // group survives when it is only carrying quantity lines).
@@ -5100,6 +5109,12 @@ function MarkNotices({
                   unreadable line in map/ground-links.txt: {line}
                 </div>
               ))}
+              {/* STORY 16.9, the mirror's one failure surface: the map itself
+                  was written, so the move stands — this is the derived index
+                  saying it could not follow. It clears when a mirror lands. */}
+              {mirrorNotice !== null && (
+                <div className="mark-notice">{mirrorNotice}</div>
+              )}
             </>
           )}
         </div>
