@@ -385,6 +385,14 @@ export const CONTENT_CLASSES = [
   "ground-bubble-pick",
   "ground-bubble-add",
   "ground-bubble-cancel",
+  // Story 16.6: the card's NOTE (its face, its edit and done verbs and its
+  // textarea). They live inside the card, which is already content; listed
+  // anyway for the same belt-and-braces reason — a press on the note or in its
+  // editor must never fall through to the plane's pan, creation or a gesture.
+  "ground-note",
+  "ground-note-edit",
+  "ground-note-done",
+  "ground-note-editor",
   // Epic 10 story 3's ghost: the ONLY ghost element inside the plane is the
   // opened preview's faint diamond at the target. It is read-only by
   // construction (pointer-events: none), and it exists only inside the

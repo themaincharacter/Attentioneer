@@ -3867,11 +3867,13 @@ function App() {
             references={ground.references}
             readings={ground.readings}
             texts={ground.texts}
+            notes={ground.notes}
             states={ground.states}
             onMove={ground.move}
             onRefresh={ground.refresh}
             onRepoint={ground.repoint}
             onRemove={ground.remove}
+            onSetNote={ground.setNote}
             onLink={ground.link}
             interactionMode={gestureMode}
             zoom={camera.zoom}
@@ -4601,6 +4603,7 @@ function App() {
         malformedReadings={ground.malformedReadings}
         malformedGroundLinks={ground.malformedLinks}
         orphanGroundLinks={ground.orphanLinks}
+        orphanGroundNotes={ground.orphanNotes}
         malformedQuantities={malformedQuantities}
         duplicateQuantities={duplicateQuantities}
         orphanQuantities={orphanQuantities}
@@ -4677,6 +4680,7 @@ function MarkNotices({
   malformedReadings,
   malformedGroundLinks,
   orphanGroundLinks,
+  orphanGroundNotes,
   malformedQuantities,
   duplicateQuantities,
   orphanQuantities,
@@ -4758,6 +4762,11 @@ function MarkNotices({
    */
   malformedGroundLinks: readonly string[];
   orphanGroundLinks: readonly { from: string; to: string }[];
+  /**
+   * Note files with no card (story 16.6), reported under the ground group only:
+   * kept exactly where they are, never adopted into a card and never deleted.
+   */
+  orphanGroundNotes: readonly string[];
   /** Quantities (Epic 8 story 1): unreadable lines, duplicates, lost/out-of-play words. */
   malformedQuantities: readonly string[];
   duplicateQuantities: readonly Quantity[];
@@ -4813,7 +4822,8 @@ function MarkNotices({
     (malformedGround.length > 0 ||
       malformedReadings.length > 0 ||
       malformedGroundLinks.length > 0 ||
-      orphanGroundLinks.length > 0);
+      orphanGroundLinks.length > 0 ||
+      orphanGroundNotes.length > 0);
   // The running game's groups, with the empty families dropped; a group with
   // nothing left is dropped too, so no bare heading ever renders (the dynamics
   // group survives when it is only carrying quantity lines).
@@ -5047,6 +5057,17 @@ function MarkNotices({
                   key={`malformed-readings-${index}`}
                 >
                   unreadable line in map/readings.txt: {line}
+                </div>
+              ))}
+              {/* STORY 16.6, the note's honesty surface: a file whose slug has
+                  no card is KEPT and named here — never adopted, never deleted,
+                  and never drawn (an orphan has no card to sit on). */}
+              {orphanGroundNotes.map((slug) => (
+                <div
+                  className="mark-notice"
+                  key={`orphan-ground-note-${slug}`}
+                >
+                  a note for “{slug}” has no card — kept in map/notes/{slug}.md
                 </div>
               ))}
               {/* STORY 16.5, the links' two honesty surfaces: a record line the

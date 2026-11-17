@@ -36,6 +36,13 @@ import {
   type Reading,
   type ReadingState,
 } from "../map/readings";
+import {
+  NOTE_IO,
+  loadNotes,
+  removeNote,
+  saveNote,
+  type NoteIo,
+} from "../map/notes";
 
 /**
  * The ground map's loaded state and its one write path (story 16.1; story 16.2
@@ -67,8 +74,10 @@ import {
  *     sentence; nothing is written.
  *   - REMOVE (16.3): the card, its reading and its kept text leave together,
  *     in the fixed order below (the reference first, so a crash cannot leave a
- *     reference pointing at a reading whose text file is gone). A refused
- *     unlink answers one sentence and repairs nothing on its own.
+ *     reference pointing at a reading whose text file is gone). STORY 16.6
+ *     adds the note file to that ONE pass, after the reading's text and before
+ *     the links' cascade: a card's own files go together. A refused unlink
+ *     answers one sentence and repairs nothing on its own.
  *   - LINK / UNLINK (16.5): the ground map's WORDLESS wiring lives in
  *     `map/ground-links.txt` and loads with the workspace beside the other two
  *     files. A draw is ONE write (the ordered pair is the identity, so drawing
@@ -80,6 +89,13 @@ import {
  *     never manufactures an orphan of its own. Orphans and malformed lines in
  *     the link file are PRESERVED and surfaced in the ground notices group
  *     (ADR-0009), exactly like the other two files' unreadable lines.
+ *   - NOTE (16.6): the person's own words live in `map/notes/<slug>.md`,
+ *     ONE read per card that has a file. A note is never loaded into, or
+ *     joined with, the reading: the two families share only the slug. An
+ *     orphan note file (a slug with no card) is REPORTED, never adopted and
+ *     never deleted; `setNote` only ever writes for a card the map still
+ *     carries, and saving empty text removes the file rather than leaving an
+ *     empty note.
  *   - The whole read-modify-write runs through the app's one per-file
  *     discipline (`createWriteQueue`, ADR-0004/ADR-0018): one line at a time,
  *     never a whole-folder rewrite.
@@ -114,6 +130,16 @@ export interface GroundView {
    * from the file's metadata (see `resolveReadingState`).
    */
   states: Readonly<Record<string, ReadingState>>;
+  /**
+   * Each card's authored note, keyed by slug (story 16.6). A card with no note
+   * is simply absent — no empty string, no placeholder.
+   */
+  notes: Readonly<Record<string, string>>;
+  /**
+   * Note files whose slug has no card (story 16.6): kept exactly where they
+   * are and named in the ground notices group, never adopted, never deleted.
+   */
+  orphanNotes: readonly string[];
   /**
    * Every readable ground link, in FILE ORDER (story 16.5). A link is an
    * ordered pair of slugs and nothing else: no word, no meaning.
@@ -162,12 +188,26 @@ export interface GroundView {
   link: (from: string, to: string) => Promise<GroundAddResult>;
   /** Remove one exact ordered pair; the two cards stay. */
   unlink: (from: string, to: string) => Promise<GroundAddResult>;
+  /**
+   * Save one card's note (story 16.6): the text lands in
+   * `map/notes/<slug>.md` VERBATIM, or the file is removed when the text is
+   * empty. ONE write, through the same queue; a refused over-cap note writes
+   * nothing and answers one sentence. The reading is never touched.
+   */
+  setNote: (on: string, text: string) => Promise<GroundAddResult>;
 }
 
 /** The view without its verbs: what the load and every write render. */
 type GroundLoaded = Omit<
   GroundView,
-  "create" | "move" | "refresh" | "repoint" | "remove" | "link" | "unlink"
+  | "create"
+  | "move"
+  | "refresh"
+  | "repoint"
+  | "remove"
+  | "link"
+  | "unlink"
+  | "setNote"
 >;
 
 const EMPTY: GroundLoaded = {
@@ -175,6 +215,8 @@ const EMPTY: GroundLoaded = {
   readings: [],
   texts: {},
   states: {},
+  notes: {},
+  orphanNotes: [],
   links: [],
   orphanLinks: [],
   malformedGround: [],
@@ -270,6 +312,31 @@ export async function removeGroundLinksNaming(
   return next;
 }
 
+/** The one sentence a refused note unlink answers (PROVISIONAL wording). */
+export const GROUND_NOTE_REMOVAL_REFUSAL =
+  "the card and its reading were removed, but its note file could not be removed.";
+
+/**
+ * THE DELETE CASCADE's note step (story 16.6): after the reference's own
+ * removal (and its reading's text file), its note file leaves in the same
+ * queued pass. A missing note is a quiet no-op; a refused unlink answers one
+ * sentence and repairs nothing — the card is already gone, exactly like the
+ * reading text's refusal. Never a second write path, never a whole-folder
+ * rewrite. PURE apart from that one bridge.
+ */
+export async function removeGroundNote(
+  workspacePath: string,
+  on: string,
+  io: NoteIo = NOTE_IO,
+): Promise<string | null> {
+  try {
+    await removeNote(workspacePath, on, io);
+    return null;
+  } catch {
+    return GROUND_NOTE_REMOVAL_REFUSAL;
+  }
+}
+
 /**
  * The states of every reference, from the readings and their metadata (story
  * 16.2). Pure apart from the answers it is handed: one reading per slug, its
@@ -318,6 +385,10 @@ export function useGround(workspacePath: string): GroundView {
   const malformedReadingsRef = useRef<string[]>([]);
   const textsRef = useRef<Record<string, string>>({});
   const statesRef = useRef<Record<string, ReadingState>>({});
+  // Story 16.6: the person's notes and the reportable orphans. Both are the
+  // load's read of `map/notes/`; a note never rides the reading's refs.
+  const notesRef = useRef<Record<string, string>>({});
+  const orphanNotesRef = useRef<string[]>([]);
   // The ground map's wordless wiring (story 16.5): the whole truth is its one
   // file, so the sync mirror holds exactly what the load read.
   const linksRef = useRef<GroundLink[]>([]);
@@ -334,12 +405,13 @@ export function useGround(workspacePath: string): GroundView {
       loadReadings(workspacePath),
       loadGroundLinks(workspacePath),
     ]);
-    const [texts, metas] = await Promise.all([
-      loadReadingTexts(
-        workspacePath,
-        ground.references.map((reference) => reference.on),
-      ),
+    const slugs = ground.references.map((reference) => reference.on);
+    const [texts, metas, loadedNotes] = await Promise.all([
+      loadReadingTexts(workspacePath, slugs),
       metasOf(workspacePath, readings.readings),
+      // Story 16.6: ONE folder listing, then one read per card that has a
+      // note. Orphans are computed from the same listing and never read.
+      loadNotes(workspacePath, slugs),
     ]);
     const states = statesOf(
       ground.references,
@@ -358,6 +430,8 @@ export function useGround(workspacePath: string): GroundView {
     linksRef.current = groundLinks.links;
     textsRef.current = texts;
     statesRef.current = states;
+    notesRef.current = loadedNotes.notes;
+    orphanNotesRef.current = loadedNotes.orphans;
     setState(snapshot());
   }, [workspacePath]);
 
@@ -371,6 +445,10 @@ export function useGround(workspacePath: string): GroundView {
     readings: readingsRef.current,
     texts: textsRef.current,
     states: statesRef.current,
+    notes: notesRef.current,
+    // ORPHAN NOTES ARE COMPUTED from the load's listing, never stored: a note
+    // file the app itself never writes for a missing card (story 16.6).
+    orphanNotes: orphanNotesRef.current,
     links: linksRef.current,
     // Recomputed on every write (story 16.5): a cascade can leave the file
     // with fewer links but never with one the app itself orphaned.
@@ -397,6 +475,8 @@ export function useGround(workspacePath: string): GroundView {
       linksRef.current = [];
       textsRef.current = {};
       statesRef.current = {};
+      notesRef.current = {};
+      orphanNotesRef.current = [];
       setState(EMPTY);
       return;
     }
@@ -626,6 +706,11 @@ export function useGround(workspacePath: string): GroundView {
           );
           referencesRef.current = removal.references;
           readingsRef.current = removal.readings;
+          // STORY 16.6: the note file goes AFTER the reading's text (a card's
+          // own files together) and BEFORE the links' cascade below. A refused
+          // unlink is one sentence; the card is already gone, so nothing here
+          // is retried or repaired.
+          const noteRefusal = await removeGroundNote(workspacePath, on);
           // THE CASCADE (story 16.5): AFTER the reference's own removal (the
           // existing card-delete order above is untouched) and in the same
           // queued pass, every link that NAMES this slug leaves the link file —
@@ -642,13 +727,17 @@ export function useGround(workspacePath: string): GroundView {
           const states = { ...statesRef.current };
           delete states[on];
           statesRef.current = states;
+          const notes = { ...notesRef.current };
+          delete notes[on];
+          notesRef.current = notes;
           setState(snapshot());
+          const refusal = removal.refusal ?? noteRefusal;
           outcome =
-            removal.refusal === null
+            refusal === null
               ? { ok: true }
               : {
                   ok: false,
-                  message: removal.refusal,
+                  message: refusal,
                   recordsRemoved: true,
                 };
         })
@@ -729,11 +818,57 @@ export function useGround(workspacePath: string): GroundView {
     [workspacePath],
   );
 
+  /**
+   * SET NOTE (story 16.6): save the person's own words for a card the map
+   * still carries. ONE write through the same queue — `saveNote` writes the
+   * text verbatim, or removes the file when the person emptied it. An
+   * over-cap note refuses with one sentence and writes nothing. The reading's
+   * files are never read or written here: the note is a separate file, and the
+   * split is the story's whole point. A slug the map no longer carries refuses
+   * rather than manufacturing an orphan.
+   */
+  const setNote = useCallback(
+    (on: string, text: string): Promise<GroundAddResult> => {
+      if (!referencesRef.current.some((reference) => reference.on === on)) {
+        return Promise.resolve({
+          ok: false,
+          message: "there is no card to hold that note.",
+        });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const saved = await saveNote(workspacePath, on, text);
+          if (saved.kind === "refused") {
+            outcome = { ok: false, message: saved.message };
+            return;
+          }
+          const notes = { ...notesRef.current };
+          if (saved.kind === "removed") delete notes[on];
+          else notes[on] = saved.text;
+          notesRef.current = notes;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
   return {
     references: state.references,
     readings: state.readings,
     texts: state.texts,
     states: state.states,
+    notes: state.notes,
+    orphanNotes: state.orphanNotes,
     links: state.links,
     orphanLinks: state.orphanLinks,
     malformedGround: state.malformedGround,
@@ -747,5 +882,6 @@ export function useGround(workspacePath: string): GroundView {
     remove,
     link,
     unlink,
+    setNote,
   };
 }

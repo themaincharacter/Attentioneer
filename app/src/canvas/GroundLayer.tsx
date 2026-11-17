@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { GroundReference } from "../map/ground";
+import { NOTE_PREVIEW_LINES } from "../map/notes";
 import {
   previewText,
   readingFileName,
@@ -65,6 +66,18 @@ import type { GroundAddResult } from "./useGround";
  * handle is handled before that rule because it is a button that starts its
  * own gesture. There is no label, no count and no nudge here either.
  *
+ * STORY 16.6 gives the card a NOTE — the person's own words, in a file BESIDE
+ * the reading and never mixed into it. The small face shows a crop of the note
+ * (the first `NOTE_PREVIEW_LINES` lines, cut by the same PURE `previewText`
+ * helper) above the reading crop; the expanded face shows the whole note above
+ * the whole reading. An edit verb on the expanded card turns the note into a
+ * textarea IN PLACE: Enter inserts a newline, the done verb or a press away
+ * saves, and Esc abandons the edit and restores the stored note. The layer
+ * still holds no bridge and does no I/O: saving is the `onSetNote` prop
+ * (`useGround.setNote`), and an abandoned edit writes nothing at all.
+ * PROVISIONAL: the crop, the edit's verbs and the note's face (the story's
+ * record shape is provisional too).
+ *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
  */
@@ -92,6 +105,8 @@ interface GroundLayerProps {
   readings: readonly Reading[];
   /** The reading texts, keyed by slug (a missing text is absent). */
   texts: Readonly<Record<string, string>>;
+  /** The person's notes, keyed by slug (a card with no note is absent). */
+  notes?: Readonly<Record<string, string>>;
   /** Each reference's computed reading state (never a record field). */
   states: Readonly<Record<string, ReadingState>>;
   /** Move one reference to its dropped point (one line, on release). */
@@ -102,6 +117,11 @@ interface GroundLayerProps {
   onRepoint: (on: string, from: string) => Promise<GroundAddResult>;
   /** Remove this reference, its reading and its kept text (story 16.3). */
   onRemove: (on: string) => Promise<GroundAddResult>;
+  /**
+   * Save this card's note (story 16.6). Optional so a render test needs no
+   * write path; the app always passes `useGround.setNote`.
+   */
+  onSetNote?: (on: string, text: string) => Promise<GroundAddResult>;
   /**
    * Draw one WORDLESS link from this card to another (story 16.5): released on
    * a card's body, it is one ordered pair and one write. Optional so a render
@@ -121,11 +141,13 @@ export function GroundLayer({
   references,
   readings,
   texts,
+  notes = {},
   states,
   onMove,
   onRefresh,
   onRepoint,
   onRemove,
+  onSetNote,
   onLink,
   interactionMode = "idle",
   zoom = 1,
@@ -160,6 +182,7 @@ export function GroundLayer({
           reference={reference}
           reading={readingsBySlug.get(reference.on) ?? null}
           text={texts[reference.on]}
+          note={notes[reference.on]}
           state={states[reference.on] ?? (readingsBySlug.has(reference.on) ? "current" : "unread")}
           interactionMode={interactionMode}
           zoom={zoom}
@@ -167,6 +190,7 @@ export function GroundLayer({
           onRefresh={onRefresh}
           onRepoint={onRepoint}
           onRemove={remove}
+          onSetNote={onSetNote}
           onLink={onLink}
         />
       ))}
@@ -192,6 +216,7 @@ function GroundCard({
   reference,
   reading,
   text,
+  note,
   state,
   interactionMode,
   zoom,
@@ -199,11 +224,13 @@ function GroundCard({
   onRefresh,
   onRepoint,
   onRemove,
+  onSetNote,
   onLink,
 }: {
   reference: GroundReference;
   reading: Reading | null;
   text: string | undefined;
+  note: string | undefined;
   state: ReadingState;
   interactionMode: GestureMode;
   zoom: number;
@@ -211,6 +238,7 @@ function GroundCard({
   onRefresh: GroundLayerProps["onRefresh"];
   onRepoint: GroundLayerProps["onRepoint"];
   onRemove: (reference: GroundReference) => Promise<GroundAddResult>;
+  onSetNote?: (on: string, text: string) => Promise<GroundAddResult>;
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
@@ -223,6 +251,18 @@ function GroundCard({
   // neither is a record, and a reopened workspace mounts this card closed.
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<GroundDeleteStep>("idle");
+  // STORY 16.6 — the note's edit is VIEW state, like open/closed: nothing is
+  // written until a save, and Esc leaves the stored note exactly as it was.
+  // The refs mirror the draft so the press-away and Esc listeners (registered
+  // once per open) read the CURRENT draft, not the one from their render.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const editingRef = useRef(false);
+  const draftRef = useRef("");
+  const storedNoteRef = useRef(note ?? "");
+  // The stored note is the prop the load handed in; keep the comparison fresh
+  // so "done" with an unchanged draft writes nothing at all.
+  storedNoteRef.current = note ?? "";
 
   // Raw listener: d3-zoom stops mousedown at the plane (stopImmediatePropagation),
   // so React's synthetic onMouseDown never fires under it. This raw listener is
@@ -275,8 +315,11 @@ function GroundCard({
       }
 
       // The affordances are ordinary buttons: their own click handlers own the
-      // press, and a press on one is never the start of a card drag.
+      // press, and a press on one is never the start of a card drag. The note's
+      // textarea is the same kind of surface: a press in it edits text, never
+      // starts a drag (story 16.6).
       if ((e.target as HTMLElement).closest("button")) return;
+      if ((e.target as HTMLElement).closest("textarea, input")) return;
       // While a gesture is armed every plane press stands still — the card's
       // drag included (ADR-0016's gate).
       if (isGestureArmed(interactionMode)) return;
@@ -330,11 +373,22 @@ function GroundCard({
     function onPressAway(e: MouseEvent) {
       const el = cardRef.current;
       if (el !== null && e.target instanceof Node && el.contains(e.target)) return;
+      // Story 16.6: a press away is the note editor's SAVE (the story's rule —
+      // click away or the done verb saves). Fire-and-forget: the write goes
+      // through the app's queue, and a refusal shows its one sentence on the
+      // card. An abandoned edit (Esc) never reaches here.
+      if (editingRef.current) void saveNoteDraft();
       setStep("idle");
       setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
+      // Esc abandons the edit FIRST: it restores the stored note and leaves the
+      // card open, so the person can keep looking at what was there.
+      if (editingRef.current) {
+        cancelNoteEdit();
+        return;
+      }
       if (step === "asking") {
         setStep("idle");
         return;
@@ -365,6 +419,10 @@ function GroundCard({
   const x = dragPos ? dragPos.x : reference.x;
   const y = dragPos ? dragPos.y : reference.y;
   const shownText = text === undefined || text === "" ? null : text;
+  // Story 16.6: the note is the person's own text, never joined with the
+  // reading. The small face crops it with the SAME pure helper; the expanded
+  // face shows every line the file holds.
+  const shownNote = note === undefined || note === "" ? null : note;
   // The small face is CROPPED by the pure helper; the expanded face is the
   // stored text itself, untouched. Neither path reads anything.
   const bodyText =
@@ -377,6 +435,47 @@ function GroundCard({
     const result = await action();
     setBusy(false);
     if (!result.ok) setProblem(result.message);
+  }
+
+  /** Enter the note editor in place, seeded with the stored note (or empty). */
+  function beginNoteEdit() {
+    if (onSetNote === undefined || busy) return;
+    draftRef.current = storedNoteRef.current;
+    setDraft(draftRef.current);
+    editingRef.current = true;
+    setEditing(true);
+    setProblem(null);
+  }
+
+  /** ESC ABANDONS: the stored note is untouched, and no file is written. */
+  function cancelNoteEdit() {
+    editingRef.current = false;
+    setEditing(false);
+    setDraft("");
+  }
+
+  /**
+   * SAVE the draft (the done verb or a press away). An unchanged draft writes
+   * nothing. A refusal wrote nothing either, so the draft is put back in the
+   * editor with the one sentence — never silently discarded.
+   */
+  async function saveNoteDraft() {
+    if (!editingRef.current || onSetNote === undefined) return;
+    const text = draftRef.current;
+    editingRef.current = false;
+    setEditing(false);
+    if (text === storedNoteRef.current || busy) return;
+    setBusy(true);
+    setProblem(null);
+    const result = await onSetNote(reference.on, text);
+    setBusy(false);
+    if (!result.ok) {
+      setProblem(result.message);
+      draftRef.current = text;
+      setDraft(text);
+      editingRef.current = true;
+      setEditing(true);
+    }
   }
 
   async function repoint() {
@@ -422,6 +521,30 @@ function GroundCard({
       />
       <div className="ground-name">{reference.name}</div>
       <div className="ground-body" ref={bodyRef}>
+        {/* STORY 16.6: the note sits ABOVE the reading, in the person's own
+            voice. Small: a two-line crop cut by `previewText`. Expanded: the
+            whole note. Editing: a textarea in its place, Enter a newline. */}
+        {editing ? (
+          <textarea
+            className="ground-note-editor"
+            value={draft}
+            autoFocus
+            onChange={(e) => {
+              draftRef.current = e.target.value;
+              setDraft(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "Escape") return;
+              e.preventDefault();
+              e.stopPropagation();
+              cancelNoteEdit();
+            }}
+          />
+        ) : shownNote !== null ? (
+          <div className="ground-note">
+            {open ? shownNote : previewText(shownNote, NOTE_PREVIEW_LINES)}
+          </div>
+        ) : null}
         {bodyText !== null && (
           <div className="ground-reading">{bodyText}</div>
         )}
@@ -467,6 +590,30 @@ function GroundCard({
         </div>
       ) : (
         <div className="ground-actions">
+          {/* STORY 16.6: the note's edit verb lives on the EXPANDED card. The
+              done verb only exists while editing; Esc and a press away are the
+              other exits (Esc abandons, a press away saves). */}
+          {open && onSetNote !== undefined && (
+            editing ? (
+              <button
+                type="button"
+                className="ground-note-done"
+                disabled={busy}
+                onClick={() => void saveNoteDraft()}
+              >
+                done
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="ground-note-edit"
+                disabled={busy}
+                onClick={beginNoteEdit}
+              >
+                {shownNote === null ? "add a note…" : "edit the note…"}
+              </button>
+            )
+          )}
           {reading !== null && (
             <button
               type="button"
