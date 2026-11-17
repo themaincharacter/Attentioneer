@@ -18,6 +18,15 @@ import type { CliSpec } from "./cliSpecs";
 import { cliSpecOf, providerFrom } from "./providers";
 import type { LocalProviderRow, ModelRow, ProviderRow } from "./providers";
 import { STEP_LIMIT_SENTENCE, turnSteps, type StepBudget } from "./steps";
+import { PROPOSAL_FENCE, readProposal, type ProposalRead } from "./proposal";
+
+/**
+ * The proposal seam is re-exported here so the contact flows (which must never
+ * spell a gate word, by their own source scan) can name the type and the
+ * predicate without importing the block scanner directly.
+ */
+export type { ProposalRead } from "./proposal";
+export { isProposal } from "./proposal";
 
 /**
  * ONE TURN (Epic 15 story 1): a provider, a question, one answer.
@@ -59,11 +68,19 @@ export const TURN_TIMEOUT_MS = 60_000;
 
 /**
  * The fixed instruction. It is deliberately short and says what did NOT come:
- * no map, no previews, no references. PROVISIONAL wording; story 3 replaces
- * the hand-written question with the packet.
+ * no map, no previews, no references. STORY 8 adds the one reply shape: a
+ * proposing answer ends with ONE tagged block carrying the agent's body, which
+ * the turn scans after completion and hands to the existing ghost intake. The
+ * shape is the intake's own body (move/target/params/rationale), never a second
+ * ghost format. PROVISIONAL wording; story 3 replaced the hand-written
+ * question with the packet.
  */
 export const SYSTEM_MESSAGE =
-  "You are answering one question a person asked about one reference on their attention map. No map content was sent with the question — answer from what you know, and say plainly when you do not know.";
+  "You are answering one question a person asked about one reference on their attention map. No map content was sent with the question — answer from what you know, and say plainly when you do not know. " +
+  "If your answer would propose ONE small edit to the map, end it with exactly one fenced code block whose language tag is " +
+  PROPOSAL_FENCE +
+  ". The block carries one JSON object with the keys move (its family and verb), target (its kind and that kind's own fields, such as a slug), params (one value for each field the move authors) and rationale (the prose why). " +
+  "Write one block at most; a second is ignored. If nothing should change, write no block and answer in prose.";
 
 /** The sentences the panel shows when the answer is not an answer. */
 export const TURN_SENTENCES = {
@@ -550,6 +567,13 @@ export interface PacketTurnAnswer {
   missed: string | null;
   /** The sentence the ceiling said when it bit, or null when it never did. */
   reached: string | null;
+  /**
+   * THE PROPOSAL THE ANSWER CARRIED (Epic 15 story 8): the one tagged block,
+   * parsed. Absent or `none` on a turn that never settled an answer. A body is
+   * handed to the EXISTING ghost intake by the surface; this module only reads
+   * the fence and says the one sentence when there is nothing usable in it.
+   */
+  proposal?: ProposalRead;
 }
 
 /** A packet turn's options: the ordinary turn's, plus the ceiling it asks. */
@@ -593,23 +617,38 @@ export async function askTurnPacket(
   let missed: string | null = null;
   let reached: string | null = null;
   let exchanges = 1;
+  // The answer is final whenever this settles: read its ONE proposal block
+  // HERE, after completion and before any surface sees the text. The scanner
+  // is pure and the ghost's own grammar still holds the door; an error or a
+  // stopped turn carries no proposal.
+  const done = (): PacketTurnAnswer => ({
+    result,
+    messages,
+    read,
+    missed,
+    reached,
+    proposal:
+      result.kind === "answer"
+        ? readProposal(result.text)
+        : { kind: "none" },
+  });
   for (;;) {
     if (result.kind !== "answer") {
-      return { result, messages, read, missed, reached };
+      return done();
     }
     const name = readNameIn(result.text);
     if (name === null) {
-      return { result, messages, read, missed, reached };
+      return done();
     }
     if (!packet.retrievable.includes(name)) {
       missed = name;
-      return { result, messages, read, missed, reached };
+      return done();
     }
     // The ceiling bites: the model asked to read again and this turn has
     // spent its budget. Say so; never fetch, never stop silently.
     if (exchanges >= budget.steps) {
       reached = STEP_LIMIT_SENTENCE;
-      return { result, messages, read, missed, reached };
+      return done();
     }
     let text: string | null;
     try {
@@ -619,7 +658,7 @@ export async function askTurnPacket(
     }
     if (text === null || text === "") {
       missed = name;
-      return { result, messages, read, missed, reached };
+      return done();
     }
     messages = followUpMessages(messages, name, text);
     exchanges += 1;

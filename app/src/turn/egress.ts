@@ -1,5 +1,6 @@
 import { resolveSelection, type TurnSettings } from "./providers";
 import { routeOf, type TurnPort } from "./turn";
+import type { ProposalRead } from "./turn";
 import type { AskPacket } from "./packet";
 import type { TurnMessage } from "./protocol";
 
@@ -61,6 +62,8 @@ export type PacketSend =
       read: string | null;
       /** A name the model asked for that the packet did not carry, or null. */
       missed: string | null;
+      /** The proposal block the answer carried, read after it completed. */
+      ghost: ProposalRead;
     }
   | { kind: "unavailable"; sentence: string }
   | {
@@ -137,6 +140,7 @@ export async function sendPacketApp(
       messages: turned.messages,
       read: turned.read,
       missed: turned.missed,
+      ghost: turned.proposal ?? { kind: "none" },
     };
   }
   return {

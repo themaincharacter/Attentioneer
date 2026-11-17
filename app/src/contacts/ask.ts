@@ -14,6 +14,7 @@ import {
   type AskPacketReach,
 } from "../turn/packet";
 import type { TurnMessage } from "../turn/protocol";
+import type { ProposalRead } from "../turn/turn";
 import { resolveWithin, type Canonicalize } from "./boundary";
 import {
   contactAdmitsChange,
@@ -276,6 +277,8 @@ export type AskAppSend =
       read: string | null;
       /** A name the model asked for that the packet did not carry, or null. */
       missed: string | null;
+      /** The proposal block the answer carried, read after it completed. */
+      ghost?: ProposalRead;
     }
   | { kind: "unavailable"; sentence: string }
   | {
@@ -397,6 +400,12 @@ export type AskSendResult =
       read?: string | null;
       /** A name the model asked for that the packet did not carry, or null. */
       missed?: string | null;
+      /**
+       * The proposal block the answer carried (Epic 15 story 8), read after the
+       * turn completed. A usable proposal is the ghost path's, not a PRISM's:
+       * the app hands its body to the existing ghost intake and logs nothing.
+       */
+      ghost?: ProposalRead;
     };
 
 /**
@@ -489,6 +498,7 @@ export async function sendAsk(
       sentMessages: turned.messages,
       read: turned.read,
       missed: turned.missed,
+      ghost: turned.ghost,
     };
   }
 

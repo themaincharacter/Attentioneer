@@ -31,6 +31,22 @@ interface GhostPanelProps {
   onAsk: (target: GhostTarget) => void;
   /** File a pasted/imported model reply (the intake). */
   onPropose: (raw: string) => void;
+  /**
+   * THE TURN (Epic 15 story 8): the app carries this frozen packet to the
+   * provider the rows name, and the answer's ONE proposal block is filed
+   * through the SAME intake the paste uses. PROVISIONAL: the panel offers one
+   * send verb and shows the answer as it came back; the provider rows and
+   * their keys live in the shared providers panel.
+   */
+  onSend?: () => void;
+  /** The provider:model a send would carry, or null when nothing resolves. */
+  providerRef?: string | null;
+  /** A send is running (the verb waits). */
+  sending?: boolean;
+  /** The answer as it came back, when one did (text only, never written). */
+  answer?: string | null;
+  /** The turn's one sentence: no provider, the parse's refusal, a stop. */
+  turnNote?: string | null;
   /** Esc, the ×, a level switch. */
   onClose: () => void;
 }
@@ -69,6 +85,11 @@ export function GhostPanel({
   onIncludeCard,
   onAsk,
   onPropose,
+  onSend,
+  providerRef = null,
+  sending = false,
+  answer = null,
+  turnNote = null,
   onClose,
 }: GhostPanelProps) {
   const [pick, setPick] = useState("");
@@ -167,6 +188,36 @@ export function GhostPanel({
               {packet.freeze.hash.slice(0, 12)}
             </span>
           </div>
+          {/* THE TURN (Epic 15 story 8): the app carries the frozen packet and
+              files the answer's one proposal block through the SAME intake the
+              paste below uses. The answer is shown here as text; a usable
+              proposal arrives as a ghost row, and nothing is written until the
+              person accepts it. */}
+          <div className="ghost-turn">
+            <span className="ghost-turn-ref">
+              {providerRef === null ? "no provider selected" : providerRef}
+            </span>
+            {onSend !== undefined && (
+              <button
+                type="button"
+                className="ghost-send"
+                disabled={sending}
+                title="send this packet to the model the app carries"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSend();
+                }}
+              >
+                send
+              </button>
+            )}
+          </div>
+          {answer !== null && <pre className="ghost-answer">{answer}</pre>}
+          {turnNote !== null && (
+            <div className="ghost-issue" role="status">
+              {turnNote}
+            </div>
+          )}
         </>
       )}
 

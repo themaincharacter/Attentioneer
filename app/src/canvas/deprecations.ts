@@ -122,12 +122,14 @@ export const EDIT_SET_DOOR_HIDDEN: boolean = true;
 export const COIN_LOOP_DOOR_HIDDEN: boolean = true;
 
 /**
- * DEPRECATED (hidden 2026-11-16 per user review): the dynamics section offered
- * "ask…" — the ghost's ask surface (Epic 10 story 3). The review asked for the
- * row's clutter to go; the ask panel, the packets and the held proposals all
- * stay — delete in the deprecated sweep.
+ * RESTORED (Epic 15 story 8): the dynamics section offers "ask…" again — the
+ * ghost's ask surface. It was hidden in the 2026-11-16 review because asking
+ * meant carrying a packet out by hand and pasting a reply back; the turn now
+ * carries the packet itself and files the answer's one proposal through the
+ * existing intake, so the door is the story's by-hand check. The other six
+ * doors stay hidden; this one is a deliberate, named exception, not a sweep.
  */
-export const ASK_DOOR_HIDDEN: boolean = true;
+export const ASK_DOOR_HIDDEN: boolean = false;
 
 /**
  * DEPRECATED (hidden 2026-11-16 per user review): the dynamics section hosted

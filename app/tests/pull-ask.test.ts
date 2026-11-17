@@ -410,12 +410,17 @@ describe("the trigger rule: the ask is the only way in (source-scanned)", () => 
         });
       }
       expect(html).toContain('class="level-draw');
+      // The ghost's ask is offered again at dynamics (Epic 15 story 8); it is
+      // not the pull's door and does not widen it.
+      expect({ level, askOffered: html.includes('class="level-ask"') }).toEqual({
+        level,
+        askOffered: level === "dynamics",
+      });
       // Nothing else from the row is offered there either.
       for (const door of [
         'class="level-veil"',
         'class="level-edit"',
         'class="level-loop"',
-        'class="level-ask"',
         'class="level-compare"',
         'class="scenario-chooser"',
       ]) {

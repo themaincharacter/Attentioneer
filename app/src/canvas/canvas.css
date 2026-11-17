@@ -4105,6 +4105,37 @@ body {
   color: #b5ad9e;
 }
 
+/* THE GHOST'S TURN (Epic 15 story 8): the one send verb and the answer. */
+.ghost-turn {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 10.5px;
+  color: #8d887c;
+}
+
+.ghost-turn-ref {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ghost-answer {
+  margin: 0;
+  max-height: 30vh;
+  overflow: auto;
+  padding: 5px 7px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: #4c4a44;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid #eee9df;
+  border-radius: 6px;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
 .ghost-actions {
   display: flex;
   gap: 6px;
@@ -4117,6 +4148,7 @@ body {
 .ghost-commit,
 .ghost-drop,
 .ghost-ask-go,
+.ghost-send,
 .ghost-propose {
   padding: 2px 8px;
   font: inherit;
@@ -4137,6 +4169,7 @@ body {
 .ghost-commit:hover,
 .ghost-drop:hover,
 .ghost-ask-go:hover,
+.ghost-send:hover,
 .ghost-propose:hover {
   color: #1e2126;
   border-color: #b5ad9e;
@@ -4148,6 +4181,7 @@ body {
 .ghost-commit:focus-visible,
 .ghost-drop:focus-visible,
 .ghost-ask-go:focus-visible,
+.ghost-send:focus-visible,
 .ghost-propose:focus-visible {
   outline: 1.5px solid #6b675e;
   outline-offset: 1px;
@@ -4158,6 +4192,7 @@ body {
 .ghost-reject:disabled,
 .ghost-commit:disabled,
 .ghost-ask-go:disabled,
+.ghost-send:disabled,
 .ghost-propose:disabled {
   opacity: 0.45;
   cursor: default;

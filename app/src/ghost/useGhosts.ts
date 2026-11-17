@@ -21,6 +21,7 @@ import {
   createGhostSession,
   type GhostAcceptResult,
   type GhostContext,
+  type IntakeResult,
 } from "./session";
 
 /**
@@ -86,9 +87,14 @@ export interface GhostUiHandle {
   /**
    * File a pasted/imported model reply (the intake), with the frozen packet's
    * hash when the reply answers an ask (provenance only; never written to a
-   * record and never enforced).
+   * record and never enforced). The result is handed back so a caller (the
+   * turn's proposal path) can show the intake's own sentence or the second
+   * block's; null when the session is not open or an act is already running.
    */
-  intake(raw: string, packetHash?: string | null): Promise<void>;
+  intake(
+    raw: string,
+    packetHash?: string | null,
+  ): Promise<IntakeResult | null>;
   /** Open one ghost (at most one is open), or none. */
   open(id: string | null): void;
   /** Close the opened ghost quietly. */
@@ -195,8 +201,11 @@ export function useGhosts(options: GhostUiOptions): GhostUiHandle {
   );
 
   const intake = useCallback(
-    async (raw: string, packetHash?: string | null) => {
-      if (deps === null || busy) return;
+    async (
+      raw: string,
+      packetHash?: string | null,
+    ): Promise<IntakeResult | null> => {
+      if (deps === null || busy) return null;
       setBusy(true);
       try {
         const report = await intakeReply(deps, state, raw, packetHash);
@@ -204,6 +213,7 @@ export function useGhosts(options: GhostUiOptions): GhostUiHandle {
         // A paste's refusal is the ask surface's line; the opened ghost's own
         // reading is untouched by it.
         setIntakeIssues(report.result.issues);
+        return report.result;
       } finally {
         setBusy(false);
       }

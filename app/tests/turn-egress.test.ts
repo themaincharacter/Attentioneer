@@ -519,6 +519,7 @@ describe("the fallback is stated, not silent, and is not an Ask failure", () => 
       messages: [...packet.messages],
       read: null,
       missed: null,
+      ghost: { kind: "none" },
     });
 
     const failed = await sendPacketApp(packet, {

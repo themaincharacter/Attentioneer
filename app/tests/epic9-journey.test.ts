@@ -1353,11 +1353,16 @@ describe("the closing note: nothing is delegated", () => {
     // The taxonomy never became a kind: the mark's one flavor is "open".
     expect(sourceOf("map/marks.ts")).not.toMatch(/"unknown"|"bracketed"|"delegated"/);
     expect(sourceOf("map/marks.ts")).toContain("anonymous");
-    // No assistant surface exists either (the rule waits for the agent era).
+    // No assistant surface exists except the ONE named turn seam (the agent
+    // era arrived with Epic 15: `turn/proposal.ts` reads an answer's block and
+    // hands it to the existing ghost intake; no other path may claim it).
     for (const entry of SOURCES) {
-      expect({ path: entry.path, assistant: /assistant|proposal/i.test(entry.path) }).toEqual({
+      expect({
         path: entry.path,
-        assistant: false,
+        assistant: /assistant|proposal/i.test(entry.path),
+      }).toEqual({
+        path: entry.path,
+        assistant: entry.path === "turn/proposal.ts",
       });
     }
     // The orientation still states the value (a doc line, not a carrier).

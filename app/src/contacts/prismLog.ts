@@ -7,6 +7,7 @@ import {
 import { copyText } from "../lib/clipboard";
 import { openOutward } from "../canvas/outward";
 import { pointersPath } from "../map/pointers";
+import { isProposal } from "../turn/turn";
 import {
   loadLatestPrism,
   mintPrismId,
@@ -274,6 +275,11 @@ export async function sendAskOut(
     askContactDeps(request.workspacePath, sendApp),
   );
   if (sent.kind !== "sent" || sent.answer === undefined) return sent;
+  // A USABLE PROPOSAL IS NOT AN ASK'S RESPONSE (Epic 15 story 8): it is the
+  // ghost path's, filed through the existing intake and accepted only by the
+  // person. Logging it as a PRISM too would leave a record of the exchange on
+  // disk, so the answer stands as the proposal and nothing is appended here.
+  if (isProposal(sent.ghost)) return sent;
   const answer = sent.answer;
   return enqueue(async () => {
     const intake = await intakeAskResponse(

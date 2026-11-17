@@ -64,8 +64,11 @@ import { createTurnPort } from "./turn/sidecar";
 import { loadTurnSettings } from "./turn/provider";
 import {
   formatProviderRef,
+  PROVIDER_SENTENCES,
   resolveSelection,
 } from "./turn/providers";
+import { TURN_SENTENCES, routeOf } from "./turn/turn";
+import { readProposal } from "./turn/proposal";
 import { readSecret, secretStatus, secretStatusWords } from "./lib/secret";
 import { ProvidersPanel } from "./canvas/ProvidersPanel";
 import { NO_PROVIDER_SENTENCE, sendPacketApp } from "./turn/egress";
@@ -787,6 +790,13 @@ function App() {
   // like the control's other actions; closed by Esc, its ×, or a level switch
   // (never by a press away: it can hold typed prose).
   const [ghostPanelOpen, setGhostPanelOpen] = useState(false);
+  // THE GHOST'S TURN (Epic 15 story 8): the answer as it came back, the one
+  // sentence beside it, and whether the app is carrying the frozen packet.
+  // All view state: the turn writes no record, and a usable proposal becomes a
+  // ghost row through the EXISTING intake.
+  const [ghostSending, setGhostSending] = useState(false);
+  const [ghostAnswer, setGhostAnswer] = useState<string | null>(null);
+  const [ghostTurnNote, setGhostTurnNote] = useState<string | null>(null);
   // A workspace that resumed in dynamics with no set prompts the selector once.
   const autoPromptedRef = useRef<string | null>(null);
 
@@ -2104,7 +2114,7 @@ function App() {
         },
         askSendApp,
       )
-        .then((result) => {
+        .then(async (result) => {
           setAskBusy(false);
           setAskAppRunning(false);
           if (result.kind === "refused") {
@@ -2131,6 +2141,27 @@ function App() {
           }
           if (result.response !== undefined) setAskResponse(result.response);
           if (result.prism !== undefined) setAskPrism(result.prism);
+          // THE ANSWER MAY PROPOSE AN EDIT (Epic 15 story 8): the turn read the
+          // ONE block after the answer completed. A usable body goes to the
+          // SAME ghost intake a paste uses — nothing is applied, and the
+          // grammar's own words stand for a wrong game, target or move. A block
+          // that is not a proposal says its one sentence and the answer stands.
+          if (result.ghost !== undefined) {
+            const read = result.ghost;
+            if (read.kind === "invalid") {
+              setAskSentNote(read.sentence);
+            } else if (read.kind === "proposal") {
+              const intake = await ghosts.intake(read.body, null);
+              if (intake !== null && !intake.ok) {
+                const said = intake.issues
+                  .map((entry) => entry.message)
+                  .join("; ");
+                setAskSentNote(said === "" ? null : said);
+              } else if (read.sentence !== null) {
+                setAskSentNote(read.sentence);
+              }
+            }
+          }
         })
         .catch(() => {
           setAskBusy(false);
@@ -2138,7 +2169,7 @@ function App() {
           setAskNote(ASK_SEND_FAILED);
         });
     },
-    [askAt, workspace, askSendApp],
+    [askAt, workspace, askSendApp, ghosts],
   );
 
   /** Stop the app-sent turn (the sidecar's cancel); its own line settles it. */
@@ -2278,8 +2309,13 @@ function App() {
   /** Open the ask surface (the level control's door), closing the behind. */
   const openGhostPanel = useCallback(() => {
     cancelPendingGestures();
+    // The panel's one provider line is the SAME reading the ground Ask uses;
+    // a row edited elsewhere is seen here the moment the panel opens.
+    refreshProviderFacts();
+    setGhostAnswer(null);
+    setGhostTurnNote(null);
     setGhostPanelOpen(true);
-  }, [cancelPendingGestures]);
+  }, [cancelPendingGestures, refreshProviderFacts]);
 
   /** Close the ask surface quietly (Esc, its ×, a level switch). */
   const closeGhostPanel = useCallback(() => setGhostPanelOpen(false), []);
@@ -2310,6 +2346,10 @@ function App() {
   /** The ask: freeze a packet for one target. It writes nothing. */
   const askForGhost = useCallback(
     (target: GhostTarget) => {
+      // A new ask is a new question: the previous answer and its one sentence
+      // belong to the old packet, so they go with it.
+      setGhostAnswer(null);
+      setGhostTurnNote(null);
       void ghostRequest.ask(target);
     },
     [ghostRequest],
@@ -2326,6 +2366,75 @@ function App() {
     },
     [ghosts, ghostRequest.packet],
   );
+
+  /**
+   * THE GHOST'S TURN (Epic 15 story 8): carry the frozen packet to the model
+   * the rows name, read the ONE proposal block after the answer completes, and
+   * hand its body to the EXISTING intake — the same door the paste uses, with
+   * the same grammar, run state and refusal. The turn itself writes nothing;
+   * an answer with no usable block stands as text and one sentence says why.
+   *
+   * Nothing is applied here. A filed proposal is a ghost row the person opens
+   * and accepts through the existing accept; a rejected one is deleted and the
+   * workspace returns to its bytes.
+   */
+  const sendGhostPacket = useCallback(async () => {
+    const packet = ghostRequest.packet;
+    if (packet === null || ghostSending) return;
+    setGhostSending(true);
+    setGhostAnswer(null);
+    setGhostTurnNote(null);
+    try {
+      const settings = await loadTurnSettings();
+      const resolved = resolveSelection(settings);
+      if (resolved.kind !== "resolved") {
+        setGhostTurnNote(PROVIDER_SENTENCES.nothing);
+        return;
+      }
+      // The key is read for this provider only, at send time; a CLI or a local
+      // runtime carries its own. It never enters state, a field or a sentence.
+      const apiKey =
+        resolved.provider.kind === "http"
+          ? await readSecret(resolved.provider.id)
+          : "";
+      const route = routeOf(resolved.provider, resolved.model, apiKey);
+      const started = await turnPort.start(route);
+      if (started.kind === "refused") {
+        setGhostTurnNote(started.sentence);
+        return;
+      }
+      const result = await turnPort.ask(route, packet.freeze.bytes);
+      if (result.kind !== "answer") {
+        setGhostTurnNote(result.sentence);
+        return;
+      }
+      setGhostAnswer(result.text);
+      const read = readProposal(result.text);
+      if (read.kind === "none") return;
+      if (read.kind === "invalid") {
+        setGhostTurnNote(read.sentence);
+        return;
+      }
+      const intake = await ghosts.intake(read.body, packet.freeze.hash);
+      if (intake === null) return;
+      if (!intake.ok) {
+        // The grammar's own words: an unregistered move, a refused target kind,
+        // the wrong game, a moved pin — never reworded here.
+        const said = intake.issues.map((entry) => entry.message).join("; ");
+        setGhostTurnNote(said === "" ? null : said);
+        return;
+      }
+      // The first block became a ghost; a second was ignored, said in one
+      // sentence beside it.
+      if (read.sentence !== null) setGhostTurnNote(read.sentence);
+    } catch {
+      // A pipe that broke before the answer, or a session that closed under
+      // the intake: the turn's own sentence, never a new one.
+      setGhostTurnNote(TURN_SENTENCES.unreachable);
+    } finally {
+      setGhostSending(false);
+    }
+  }, [ghostRequest.packet, ghostSending, ghosts]);
 
   /**
    * Begin the reshape over the opened ghost: the five fields open with the
@@ -4734,6 +4843,11 @@ function App() {
           onIncludeCard={ghostRequest.setIncludeCard}
           onAsk={askForGhost}
           onPropose={proposeGhost}
+          onSend={() => void sendGhostPacket()}
+          providerRef={askProviderRef}
+          sending={ghostSending}
+          answer={ghostAnswer}
+          turnNote={ghostTurnNote}
           onClose={closeGhostPanel}
         />
       )}

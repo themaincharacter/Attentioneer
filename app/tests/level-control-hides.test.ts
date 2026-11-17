@@ -86,20 +86,22 @@ const HIDDEN_MARKS: ReadonlyArray<[string, string, boolean]> = [
   ["the veil's door", 'class="level-veil"', VEIL_DOOR_HIDDEN],
   ["edit the playing set", 'class="level-edit"', EDIT_SET_DOOR_HIDDEN],
   ["coin a loop", 'class="level-loop"', COIN_LOOP_DOOR_HIDDEN],
-  ["ask…", 'class="level-ask"', ASK_DOOR_HIDDEN],
   ["the scenario chooser", 'class="scenario-chooser"', SCENARIO_CHOOSER_HIDDEN],
   ["compare…", 'class="level-compare"', COMPARE_DOOR_HIDDEN],
 ];
 
-describe("the review's clutter: seven doors hidden, nothing deleted", () => {
-  test("the seven top-menu flags are on", () => {
+describe("the review's clutter: six doors hidden, the ghost ask restored", () => {
+  test("the six top-menu flags are on; the ask door is offered again", () => {
     expect(PULL_DOOR_HIDDEN).toBe(true);
     expect(VEIL_DOOR_HIDDEN).toBe(true);
     expect(EDIT_SET_DOOR_HIDDEN).toBe(true);
     expect(COIN_LOOP_DOOR_HIDDEN).toBe(true);
-    expect(ASK_DOOR_HIDDEN).toBe(true);
     expect(SCENARIO_CHOOSER_HIDDEN).toBe(true);
     expect(COMPARE_DOOR_HIDDEN).toBe(true);
+    // The ghost's ask is the one deliberate exception (Epic 15 story 8): the
+    // turn carries the packet now, so the door is the by-hand check.
+    expect(ASK_DOOR_HIDDEN).toBe(false);
+    expect(offered(ASK_DOOR_HIDDEN)).toBe(true);
     // Read the way the control reads them: hidden now, offered on a flip-back.
     for (const [, , flag] of HIDDEN_MARKS) {
       expect(offered(flag)).toBe(false);
@@ -117,11 +119,15 @@ describe("the review's clutter: seven doors hidden, nothing deleted", () => {
           offered: false,
         });
       }
+      // The ghost's ask is the one offered exception, at dynamics only.
+      expect({ level, offered: html.includes('class="level-ask"') }).toEqual({
+        level,
+        offered: level === "dynamics",
+      });
       // The titles and labels would be text in the chrome, so they are gone too.
       for (const label of [
         "edit the playing set",
         "coin a loop",
-        "ask…",
         "compare…",
         "veil",
         "where am I thin…",
@@ -157,7 +163,8 @@ describe("the review's clutter: seven doors hidden, nothing deleted", () => {
       // door). They are offered at concept only — a language game is the
       // concept map's content — so the dynamics and ground rows are unchanged.
       expect(html.match(/<button/g) ?? []).toHaveLength(
-        LEVELS.length + 1 + (level === "concept" ? 2 : 0),
+        LEVELS.length + 1 + (level === "concept" ? 2 : 0) +
+          (level === "dynamics" ? 1 : 0),
       );
     }
   });
