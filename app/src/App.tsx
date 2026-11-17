@@ -4614,6 +4614,8 @@ function App() {
         orphanGroundLinks={ground.orphanLinks}
         orphanGroundNotes={ground.orphanNotes}
         mirrorNotice={ground.mirrorNotice}
+        malformedHistory={ground.malformedHistory}
+        historyNotice={ground.historyNotice}
         malformedQuantities={malformedQuantities}
         duplicateQuantities={duplicateQuantities}
         orphanQuantities={orphanQuantities}
@@ -4692,6 +4694,8 @@ function MarkNotices({
   orphanGroundLinks,
   orphanGroundNotes,
   mirrorNotice,
+  malformedHistory,
+  historyNotice,
   malformedQuantities,
   duplicateQuantities,
   orphanQuantities,
@@ -4784,6 +4788,15 @@ function MarkNotices({
    * ground group only, because the mirror speaks for no other map.
    */
   mirrorNotice: string | null;
+  /**
+   * The ground map's HISTORY (story 16.10): unreadable lines in
+   * `map/ground-history.jsonl`, preserved verbatim and named here, and the one
+   * sentence a failed append answers. The history is a RECORD of authored
+   * moves, so neither is a count, a meter or a nudge — the strip says only
+   * that a line could not be read or that the log could not follow the move.
+   */
+  malformedHistory: readonly string[];
+  historyNotice: string | null;
   /** Quantities (Epic 8 story 1): unreadable lines, duplicates, lost/out-of-play words. */
   malformedQuantities: readonly string[];
   duplicateQuantities: readonly Quantity[];
@@ -4841,7 +4854,9 @@ function MarkNotices({
       malformedGroundLinks.length > 0 ||
       orphanGroundLinks.length > 0 ||
       orphanGroundNotes.length > 0 ||
-      mirrorNotice !== null);
+      mirrorNotice !== null ||
+      malformedHistory.length > 0 ||
+      historyNotice !== null);
   // The running game's groups, with the empty families dropped; a group with
   // nothing left is dropped too, so no bare heading ever renders (the dynamics
   // group survives when it is only carrying quantity lines).
@@ -5114,6 +5129,21 @@ function MarkNotices({
                   saying it could not follow. It clears when a mirror lands. */}
               {mirrorNotice !== null && (
                 <div className="mark-notice">{mirrorNotice}</div>
+              )}
+              {/* STORY 16.10, the history's two honesty surfaces: a line the
+                  app keeps but cannot read (never dropped, never repaired),
+                  and the one sentence a failed append answers — the move
+                  itself already landed, because the records are the truth. */}
+              {malformedHistory.map((line, index) => (
+                <div
+                  className="mark-notice"
+                  key={`malformed-ground-history-${index}`}
+                >
+                  unreadable line in map/ground-history.jsonl: {line}
+                </div>
+              ))}
+              {historyNotice !== null && (
+                <div className="mark-notice">{historyNotice}</div>
               )}
             </>
           )}

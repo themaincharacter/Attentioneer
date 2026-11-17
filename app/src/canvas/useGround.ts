@@ -2,6 +2,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fileMeta, removeFile, type FileMetaAnswer } from "../lib/fs";
 import { createWriteQueue } from "../lib/writeQueue";
 import {
+  cardAddEvent,
+  cardMoveEvent,
+  cardRemovalEvents,
+  historyWriteTask,
+  linkAddEvent,
+  linkRemoveEvent,
+  noteRemoveEvent,
+  noteSetEvent,
+  readHistory,
+  readingRefreshEvent,
+  readingRepointEvent,
+  readingTakeEvent,
+  type HistoryEvent,
+} from "../map/history";
+import {
   addGroundReference,
   loadGround,
   moveGroundReference,
@@ -26,6 +41,7 @@ import {
   loadReadings,
   loadReadingTexts,
   readingAbsolutePath,
+  readingFileName,
   readingFor,
   readingTextPath,
   refreshReading,
@@ -118,12 +134,25 @@ import { pullReading, type PulledText } from "../map/pull";
  *     mirror never fails the move (one sentence in the ground notices group),
  *     and opening writes nothing, so deleting the file is safe — the next move
  *     brings it back byte-identically.
+ *   - THE HISTORY (16.10): every AUTHORED write above also appends one line
+ *     per move to `map/ground-history.jsonl`, through this same queue and
+ *     AFTER the record write it describes. Looking around writes nothing: no
+ *     line for opening or closing a card, expanding, pulling, hovering,
+ *     focusing, panning or typing a draft — the panel and the camera are not
+ *     the map. The lines carry no content: a slug, a point, a storage form, a
+ *     byte count, a file's NAME where the move needs one — never a note's
+ *     words and never a reading. The file is only ever ADDED TO (the earlier
+ *     bytes are a prefix that never changes), and its first appearance gets
+ *     one baseline line so a later replay knows where the board began. A
+ *     malformed line is preserved and reported in the ground notices group; a
+ *     failed append is one sentence and NEVER undoes the move.
  *   - The whole read-modify-write runs through the app's one per-file
  *     discipline (`createWriteQueue`, ADR-0004/ADR-0018): one line at a time,
- *     never a whole-folder rewrite. THE PULL AND THE MIRROR ARE NOT IN THAT
- *     SENTENCE: a pull is a read, and the mirror is one whole-file rewrite of a
- *     derived file, not a record family's line. The queue still serializes the
- *     mirror's write, so a look never waits on a drop.
+ *     never a whole-folder rewrite. THE PULL, THE MIRROR AND THE HISTORY ARE
+ *     NOT IN THAT SENTENCE: a pull is a read, the mirror is one whole-file
+ *     rewrite of a derived file, and the history only ever adds after earlier
+ *     bytes. The queue still serializes the mirror's and the history's writes,
+ *     so a look never waits on a drop.
  *
  * PROVISIONAL: the state names, the form rule for new picks, the write order,
  * the sentences and the look (story 16.2's decisions, before an ADR).
@@ -195,6 +224,19 @@ export interface GroundView {
    * sentence clears itself on the next mirror that lands.
    */
   mirrorNotice: string | null;
+  /**
+   * The one sentence a failed HISTORY append answers (story 16.10), or null.
+   * A history failure is a notice and never a failed move: the records were
+   * written first, the move stands, and the log says it could not follow. The
+   * sentence clears itself on the next append that lands.
+   */
+  historyNotice: string | null;
+  /**
+   * Unreadable `map/ground-history.jsonl` lines (story 16.10), preserved
+   * verbatim in the file and surfaced in the ground notices group — never
+   * dropped and never repaired into an event.
+   */
+  malformedHistory: readonly string[];
   /** The map folder's ground records have been read once. */
   loaded: boolean;
   /** Add one reference from a picked text file (the one create write). */
@@ -274,6 +316,8 @@ const EMPTY: GroundLoaded = {
   malformedReadings: [],
   malformedLinks: [],
   mirrorNotice: null,
+  historyNotice: null,
+  malformedHistory: [],
   loaded: false,
 };
 
@@ -451,6 +495,10 @@ export function useGround(workspacePath: string): GroundView {
   // Story 16.9: the mirror's one failure sentence. A notice, not a record —
   // and it never gates the move that queued the mirror.
   const mirrorNoticeRef = useRef<string | null>(null);
+  // Story 16.10: the history's one failure sentence, and the raw lines the
+  // loader kept but could not read. Neither is a record: the file holds those.
+  const historyNoticeRef = useRef<string | null>(null);
+  const malformedHistoryRef = useRef<string[]>([]);
   // One queue for the ground family's files: an add's ground line must land
   // after its own readings line, never under a stale one; the link and the
   // cascade share it so no link write can land under a stale list.
@@ -458,10 +506,13 @@ export function useGround(workspacePath: string): GroundView {
 
   const reload = useCallback(async () => {
     if (workspacePath === "") return;
-    const [ground, readings, groundLinks] = await Promise.all([
+    const [ground, readings, groundLinks, history] = await Promise.all([
       loadGround(workspacePath),
       loadReadings(workspacePath),
       loadGroundLinks(workspacePath),
+      // Story 16.10: a READ only — opening is a look, so a missing history is
+      // not created here, and its malformed lines are reported, not repaired.
+      readHistory(workspacePath),
     ]);
     const slugs = ground.references.map((reference) => reference.on);
     const [texts, metas, loadedNotes] = await Promise.all([
@@ -485,6 +536,7 @@ export function useGround(workspacePath: string): GroundView {
     malformedGroundRef.current = ground.malformed;
     malformedReadingsRef.current = readings.malformed;
     malformedLinksRef.current = groundLinks.malformed;
+    malformedHistoryRef.current = history.malformed;
     linksRef.current = groundLinks.links;
     textsRef.current = texts;
     statesRef.current = states;
@@ -522,6 +574,9 @@ export function useGround(workspacePath: string): GroundView {
     malformedReadings: malformedReadingsRef.current,
     malformedLinks: malformedLinksRef.current,
     mirrorNotice: mirrorNoticeRef.current,
+    // Story 16.10: the history's failure sentence and the kept raw lines.
+    historyNotice: historyNoticeRef.current,
+    malformedHistory: malformedHistoryRef.current,
     loaded: true,
   });
 
@@ -572,6 +627,27 @@ export function useGround(workspacePath: string): GroundView {
     );
   };
 
+  /**
+   * QUEUE THE HISTORY (story 16.10), after the write that caused it. It goes
+   * through the ground family's own queue, so a later move's line can never
+   * land under an older one, and the append reads the file at the moment the
+   * queue runs — after every earlier write has settled. It is NEVER awaited by
+   * the write path: a history failure is one sentence in the notices group,
+   * and the person's move (already written) stands.
+   *
+   * The events are taken inside the task so their timestamps describe the
+   * moment the line lands; the closures hold only the move's own facts.
+   */
+  const queueHistory = (events: () => readonly HistoryEvent[]): void => {
+    void queueRef.current.push(
+      historyWriteTask(workspacePath, events, (notice) => {
+        if (notice === historyNoticeRef.current) return;
+        historyNoticeRef.current = notice;
+        setState(snapshot());
+      }),
+    );
+  };
+
   useEffect(() => {
     // A different workspace starts from its own map folder, never the last
     // one's state (and the write queue belongs to the person's moves in it).
@@ -579,6 +655,7 @@ export function useGround(workspacePath: string): GroundView {
     // carried across, and never written, so there is nothing to reload.
     pulledRef.current = {};
     mirrorNoticeRef.current = null;
+    historyNoticeRef.current = null;
     queueRef.current = createWriteQueue();
     if (workspacePath === "") {
       referencesRef.current = [];
@@ -591,6 +668,7 @@ export function useGround(workspacePath: string): GroundView {
       statesRef.current = {};
       notesRef.current = {};
       orphanNotesRef.current = [];
+      malformedHistoryRef.current = [];
       setState(EMPTY);
       return;
     }
@@ -656,6 +734,25 @@ export function useGround(workspacePath: string): GroundView {
           statesRef.current = states;
           setState(snapshot());
           outcome = { ok: true };
+          // Story 16.10: the card appeared and its source was read — one
+          // authored move, two lines, no content (the form and size only).
+          queueHistory(() => {
+            const at = Date.now();
+            return [
+              cardAddEvent(
+                at,
+                addition.reference.on,
+                addition.reference.x,
+                addition.reference.y,
+              ),
+              readingTakeEvent(
+                at,
+                addition.reference.on,
+                taken.reading.form,
+                taken.reading.bytes ?? null,
+              ),
+            ];
+          });
           queueMirror();
         })
         .then(() => outcome)
@@ -681,6 +778,16 @@ export function useGround(workspacePath: string): GroundView {
           referencesRef.current = next;
           setState(snapshot());
           outcome = { ok: true };
+          // Story 16.10: one drop, one line — the point it landed on.
+          const placed = next.find((reference) => reference.on === on);
+          queueHistory(() => [
+            cardMoveEvent(
+              Date.now(),
+              on,
+              placed?.x ?? Math.round(x),
+              placed?.y ?? Math.round(y),
+            ),
+          ]);
           queueMirror();
         })
         .then(() => outcome)
@@ -744,6 +851,15 @@ export function useGround(workspacePath: string): GroundView {
           statesRef.current = states;
           setState(snapshot());
           outcome = { ok: true };
+          // Story 16.10: a re-read of the SAME file — form and size, no text.
+          queueHistory(() => [
+            readingRefreshEvent(
+              Date.now(),
+              on,
+              taken.reading.form,
+              taken.reading.bytes ?? null,
+            ),
+          ]);
           queueMirror();
         })
         .then(() => outcome)
@@ -787,6 +903,16 @@ export function useGround(workspacePath: string): GroundView {
           statesRef.current = states;
           setState(snapshot());
           outcome = { ok: true };
+          // Story 16.10: the card now reads ANOTHER file. Only the new
+          // target's NAME is logged — a full path is the person's machine.
+          queueHistory(() => [
+            readingRepointEvent(
+              Date.now(),
+              on,
+              taken.reading.form,
+              readingFileName(taken.reading.from),
+            ),
+          ]);
           queueMirror();
         })
         .then(() => outcome)
@@ -833,6 +959,11 @@ export function useGround(workspacePath: string): GroundView {
           // existing card-delete order above is untouched) and in the same
           // queued pass, every link that NAMES this slug leaves the link file —
           // in BOTH directions, so the app never manufactures an orphan.
+          // Story 16.10 remembers exactly which links this pass takes, so their
+          // passing can be logged as its own lines.
+          const cascaded = linksRef.current.filter(
+            (link) => link.from === on || link.to === on,
+          );
           linksRef.current = await removeGroundLinksNaming(
             workspacePath,
             on,
@@ -862,6 +993,10 @@ export function useGround(workspacePath: string): GroundView {
                   message: refusal,
                   recordsRemoved: true,
                 };
+          // Story 16.10: the removal itself, then one line per link the
+          // cascade took — links are their own records, so their passing is
+          // its own move, and the count is in the lines, never in the UI.
+          queueHistory(() => cardRemovalEvents(Date.now(), on, cascaded));
           // The card's files (and the cascade) have moved: the mirror follows
           // in the same queue, whether or not a later unlink refused.
           queueMirror();
@@ -905,6 +1040,8 @@ export function useGround(workspacePath: string): GroundView {
           linksRef.current = next;
           setState(snapshot());
           outcome = { ok: true };
+          // Story 16.10: one drawn pair, one line — the direction as drawn.
+          queueHistory(() => [linkAddEvent(Date.now(), from, to)]);
           queueMirror();
         })
         .then(() => outcome)
@@ -934,6 +1071,8 @@ export function useGround(workspacePath: string): GroundView {
           linksRef.current = next;
           setState(snapshot());
           outcome = { ok: true };
+          // Story 16.10: one removed pair, one line; the cards stay.
+          queueHistory(() => [linkRemoveEvent(Date.now(), from, to)]);
           queueMirror();
         })
         .then(() => outcome)
@@ -979,6 +1118,14 @@ export function useGround(workspacePath: string): GroundView {
           notesRef.current = notes;
           setState(snapshot());
           outcome = { ok: true };
+          // Story 16.10: the note changed — THAT it changed, never a word of
+          // it. The person's text lives in map/notes/<slug>.md and stays there.
+          const emptied = saved.kind === "removed";
+          queueHistory(() => [
+            emptied
+              ? noteRemoveEvent(Date.now(), on)
+              : noteSetEvent(Date.now(), on),
+          ]);
           queueMirror();
         })
         .then(() => outcome)
@@ -1064,6 +1211,8 @@ export function useGround(workspacePath: string): GroundView {
     malformedReadings: state.malformedReadings,
     malformedLinks: state.malformedLinks,
     mirrorNotice: state.mirrorNotice,
+    historyNotice: state.historyNotice,
+    malformedHistory: state.malformedHistory,
     loaded: state.loaded,
     create,
     move,
