@@ -176,7 +176,11 @@ describe("the new workspace scaffold gains the Level 2 orientation", () => {
     expect(md).toContain("`map/distances.jsonl`");
     expect(md).toContain("`map/marks.jsonl`");
     expect(md).toContain("`notes/` — working notes from before the map");
-    expect(md).toContain("`ontology/` arrives in later efforts.");
+    // ADR-0033 amends the layout line in place: `ontology/` is the generated
+    // export area now — rebuildable, never hand-edited, safe to delete.
+    expect(md).toContain("`ontology/` — one generated Markdown file per language game");
+    expect(md).toContain("Rebuildable, never hand-edited, and safe to delete");
+    expect(md).not.toContain("arrives in later efforts");
     // The shelf section (ADR-0010) is untouched.
     expect(md).toContain("`shelf_x`");
     expect(md).toContain("word's centre");

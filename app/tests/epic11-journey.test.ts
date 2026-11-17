@@ -894,10 +894,20 @@ describe("the anti-pattern absence: no merge, average, reconcile, warn, compare,
     "canvas/zoomBands.ts",
   ];
 
+  /**
+   * ADR-0033's ontology artifact must SAY that it is not merged — the sentence
+   * is part of the artifact's fixed honesty block (research note §5.4), the
+   * refusal of the machinery this scan forbids. It is one template string in a
+   * renderer and nothing else, so the scan subtracts exactly that sentence and
+   * stays strict about every other use of the word.
+   */
+  const ARTIFACT_REFUSAL =
+    /Not merged: a word shared with another game keeps its own sense there; contradictions are kept, not resolved./g;
+
   test("the machinery's unambiguous names have no code path anywhere in the app", () => {
     const dead = ["merge", "average", "warn", "unify", "agreement", "interpolat"];
     for (const entry of SOURCES) {
-      const code = codeOf(entry.source);
+      const code = codeOf(entry.source).replace(ARTIFACT_REFUSAL, " ");
       for (const word of dead) {
         expect({ path: entry.path, word, found: new RegExp("\\b" + word, "i").test(code) }).toEqual({
           path: entry.path,

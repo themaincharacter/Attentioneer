@@ -81,6 +81,7 @@ import {
   type SubmitProblem,
 } from "./canvas/languageGameRules";
 import type { GameShape, LanguageGame } from "./map/languageGames";
+import { syncOntology, type OntologySnapshot } from "./ontology/sync";
 import {
   DEFAULT_DRAW_TOOL,
   DEFAULT_PEN_COLOR,
@@ -552,6 +553,14 @@ function App() {
   // measured word boxes, so wires can attach to the word's edges.
   const [livePos, setLivePos] = useState<Record<string, Point>>({});
   const [boxes, setBoxes] = useState<Record<string, Box>>({});
+  // The ontology export's one surface (PROVISIONAL, added 2026-11-16 per
+  // ADR-0033): the quiet clauses for files the app found in `ontology/` that it
+  // did not write. It never says anything about the games themselves.
+  const [ontologyNotices, setOntologyNotices] = useState<string[]>([]);
+  // One ontology rebuild at a time, in the order the map changed (the family's
+  // in-order queue idiom): a burst of writes must land newest-last, never as an
+  // older snapshot's file reappearing under a newer one.
+  const ontologyWriteRef = useRef<Promise<void>>(Promise.resolve());
   // The bare lack whose name field is open (double-clicked ring), if any.
   const [growAt, setGrowAt] = useState<Point | null>(null);
   // The plane point where the double-click creation menu is open, if any.
@@ -1333,6 +1342,68 @@ function App() {
         })),
     [refs, posOf, boxOf],
   );
+
+  /**
+   * THE ONTOLOGY EXPORT's words (PROVISIONAL, added 2026-11-16 per ADR-0033
+   * and the research note's story 1): the map's coined words as the derivation
+   * needs them — the person's name, the RECORD's stored corner (never a live
+   * drag) and the MEASURED box, so a word counts where the map draws it. The
+   * stored x is also the shelf's hiding reading (canvas/shelfRules.ts), which
+   * the derivation applies: the artifact lists no word the map does not show.
+   */
+  const ontologyWords = useMemo(
+    () =>
+      refs
+        .filter(
+          (word): word is Reference & { slug: string } => word.slug !== null,
+        )
+        .map((word) => ({
+          slug: word.slug,
+          name: word.name,
+          pos: { x: word.x, y: word.y },
+          box: boxes[word.slug] ?? DEFAULT_BOX,
+        })),
+    [refs, boxes],
+  );
+
+  /**
+   * Rebuild every game's ontology file after any map write that can change a
+   * game's content, and once on open (ADR-0033, the research note's §5.3): a
+   * game created or deleted, a word added, moved, renamed or deleted, a wire
+   * coined, re-coined or deleted — each of those changes one of `refs`,
+   * `distances` or `languageGames` here. There is no watcher, no timer and no
+   * cache: the records are the trigger, the snapshot is the input, and the sync
+   * writes only when the bytes changed.
+   *
+   * The write is best-effort: a folder the filesystem refuses is not worth
+   * interrupting the map for, and the next change tries again. What the sync
+   * declined to sweep is handed to the notices strip, never dropped.
+   */
+  useEffect(() => {
+    const path = workspace?.path;
+    if (!loaded || !path) return;
+    const snapshot: OntologySnapshot = {
+      words: ontologyWords,
+      wires: distances,
+      games: languageGames,
+      shelfX,
+    };
+    ontologyWriteRef.current = ontologyWriteRef.current
+      .catch(() => undefined)
+      .then(() => syncOntology(path, { snapshot }))
+      .then((result) => {
+        // Only the files the sync left alone are surfaced; the written ones
+        // are the artifact working as designed, and a game's own export says
+        // nothing about the map.
+        setOntologyNotices((current) =>
+          current.length === result.notices.length &&
+          current.every((line, index) => line === result.notices[index])
+            ? current
+            : result.notices,
+        );
+      })
+      .catch(() => undefined);
+  }, [loaded, workspace?.path, ontologyWords, distances, languageGames, shelfX]);
 
   /**
    * The veil whose cover is LIFTED right now (Epic 9 story 2): the look-under's
@@ -4410,6 +4481,7 @@ function App() {
         malformedVeils={malformedVeils}
         malformedSketches={malformedSketches}
         malformedGames={malformedLanguageGames}
+        ontologyNotices={ontologyNotices}
         malformedAssumptions={malformedAssumptions}
         duplicateAssumptions={duplicateAssumptions}
         orphanAssumptions={orphanAssumptions}
@@ -4481,6 +4553,7 @@ function MarkNotices({
   malformedVeils,
   malformedSketches,
   malformedGames,
+  ontologyNotices,
   malformedAssumptions,
   duplicateAssumptions,
   orphanAssumptions,
@@ -4534,6 +4607,14 @@ function MarkNotices({
    * veils' and the ink's reading).
    */
   malformedGames: readonly string[];
+  /**
+   * Files the ontology export found in `ontology/` that it did not write
+   * (PROVISIONAL, added 2026-11-16 per ADR-0033): the sync leaves every one of
+   * them where it is — the format marker decides what may be swept — and names
+   * it here. They ride the language-games family because a game's export is the
+   * game's own; no family table changed.
+   */
+  ontologyNotices: readonly string[];
   malformedAssumptions: readonly string[];
   /** Hand-edited duplicate keys: preserved, never deduped (story 4). */
   duplicateAssumptions: readonly Assumption[];
@@ -4568,7 +4649,7 @@ function MarkNotices({
     loops: malformedLoops.length > 0 || orphanLoops.length > 0,
     veils: malformedVeils.length > 0,
     sketches: malformedSketches.length > 0,
-    games: malformedGames.length > 0,
+    games: malformedGames.length > 0 || ontologyNotices.length > 0,
     assumptions:
       malformedAssumptions.length > 0 ||
       duplicateAssumptions.length > 0 ||
@@ -4706,6 +4787,11 @@ function MarkNotices({
             {malformedGames.map((line, index) => (
               <div className="mark-notice" key={`malformed-game-${index}`}>
                 unreadable line in map/language-games.jsonl: {line}
+              </div>
+            ))}
+            {ontologyNotices.map((line, index) => (
+              <div className="mark-notice" key={`ontology-${index}`}>
+                {line}
               </div>
             ))}
           </>
