@@ -9,12 +9,10 @@ import { declareAsk } from "../contacts/ask";
 import { assembleAskPacket } from "../turn/packet";
 import type { AskContext } from "../turn/context";
 import type { TurnMessage } from "../turn/protocol";
+import { PacketSurface } from "./PacketSurface";
 import {
   ASK_ATTACH_LABEL,
   ASK_ATTACH_PLACEHOLDER,
-  ASK_BYTES_CLOSE,
-  ASK_BYTES_LABEL,
-  ASK_BYTES_OPEN,
   ASK_CONTEXT_READING,
   ASK_COPY,
   ASK_HANDOFF,
@@ -34,9 +32,7 @@ import {
   ASK_SHOW_LOG,
   ASK_STOP,
   ASK_TITLE,
-  askReadWords,
   declarationWords,
-  packetDeclarationWords,
   responseWords,
   transportWord,
 } from "./contactRules";
@@ -129,27 +125,6 @@ function rowKey(pointer: Pointer): string {
   return pointer.form + "\u0000" + pointer.value;
 }
 
-/** ONE message, verbatim: its role as a label, its bytes as they left. */
-function AskMessage({ message }: { message: TurnMessage }) {
-  return (
-    <div className="ask-message" data-role={message.role}>
-      <div className="ask-message-role">{message.role}</div>
-      <pre className="ask-message-text">{message.content}</pre>
-    </div>
-  );
-}
-
-/** The readback's block: every message, verbatim, in the order it left. */
-function AskBytes({ messages }: { messages: readonly TurnMessage[] }) {
-  return (
-    <div className="ask-bytes" role="group" aria-label={ASK_BYTES_LABEL}>
-      {messages.map((message, index) => (
-        <AskMessage key={index} message={message} />
-      ))}
-    </div>
-  );
-}
-
 /**
  * THE ASK PANEL (Epic 12 story 3, PROVISIONAL and deliberately plain) — the
  * question out, the response back, the keep kept separate.
@@ -168,8 +143,10 @@ function AskBytes({ messages }: { messages: readonly TurnMessage[] }) {
  * total — derived from the same block bytes the send carries, so the line
  * cannot drift. The one verb beside it opens those exact bytes, message by
  * message, BEFORE the send; after the send the same verb opens what left,
- * followed by the follow-up's message when the model named one block. The send
- * waits until the previews are here.
+ * followed by the follow-up's message when the model named one block. Both are
+ * the SHARED PacketSurface (story 3b), the same piece the ground card's ask…
+ * renders, so the two entry points cannot say different things about the same
+ * bytes. The send waits until the previews are here.
  *
  * THE CLIPBOARD ROUTE (the stated fallback, and the only route when no
  * provider is configured) is UNCHANGED: it carries the question plus the
@@ -228,7 +205,6 @@ export function AskPanel({
   });
   const [raw, setRaw] = useState("");
   const [attach, setAttach] = useState("");
-  const [showBytes, setShowBytes] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -359,9 +335,10 @@ export function AskPanel({
               from the same bytes their send carries. */}
           {appRoute ? (
             packet !== null ? (
-              <div className="ask-declaration">
-                {packetDeclarationWords(packet.declaration)}
-              </div>
+              <PacketSurface
+                declaration={packet.declaration}
+                messages={packet.messages}
+              />
             ) : (
               <div className="ask-context" role="status">
                 {ASK_CONTEXT_READING}
@@ -371,25 +348,6 @@ export function AskPanel({
             <div className="ask-declaration">
               {declarationWords(declareAsk(question, included()))}
             </div>
-          )}
-
-          {/* THE READBACK, before the send: the exact bytes, message by
-              message. Nothing else in the panel says what leaves. */}
-          {packet !== null && (
-            <>
-              <button
-                type="button"
-                className="ask-bytes-open"
-                title={ASK_BYTES_OPEN}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowBytes((shown) => !shown);
-                }}
-              >
-                {showBytes ? ASK_BYTES_CLOSE : ASK_BYTES_OPEN}
-              </button>
-              {showBytes && <AskBytes messages={packet.messages} />}
-            </>
           )}
 
           {/* The stated fallback's one sentence (no provider, or no sidecar).
@@ -465,23 +423,7 @@ export function AskPanel({
       {session !== null && (
         <>
           {sent !== null ? (
-            <>
-              <button
-                type="button"
-                className="ask-bytes-open"
-                title={ASK_BYTES_OPEN}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowBytes((shown) => !shown);
-                }}
-              >
-                {showBytes ? ASK_BYTES_CLOSE : ASK_BYTES_OPEN}
-              </button>
-              {showBytes && <AskBytes messages={sent.messages} />}
-              {sent.read !== null && (
-                <div className="ask-read">{askReadWords(sent.read)}</div>
-              )}
-            </>
+            <PacketSurface messages={sent.messages} read={sent.read} />
           ) : (
             <pre className="ask-packet">{session.ask.packet}</pre>
           )}

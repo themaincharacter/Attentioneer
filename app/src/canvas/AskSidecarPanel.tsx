@@ -1,4 +1,10 @@
 import { useEffect, useState } from "react";
+import { assembleCardPacket } from "../turn/packet";
+import {
+  cardAskContext,
+  fetchAskBlock,
+  type AskCardFacts,
+} from "../turn/context";
 import {
   loadProviderConfig,
   providerFrom,
@@ -6,22 +12,41 @@ import {
   rememberedApiKey,
   saveProviderConfig,
 } from "../turn/provider";
-import {
-  TURN_SENTENCES,
-  type TurnPort,
-  type TurnResult,
-} from "../turn/turn";
+import { TURN_SENTENCES, type TurnPort } from "../turn/turn";
+import type { TurnMessage } from "../turn/protocol";
+import { ASK_READ_MISSED } from "./contactRules";
+import { PacketSurface } from "./PacketSurface";
 
 /**
- * THE ASK PANEL (Epic 15 story 1) — the first turn the app makes by itself,
- * anchored on the card it was opened from.
+ * THE CARD'S ASK PANEL (Epic 15 story 1; story 3b gives it the packet) — the
+ * app's first turn of its own, anchored on the ground card it was opened from.
  *
  * WHAT IT SHOWS: the card's NAME (so it is obvious what the question is
  * about), the three provider facts (base URL, model, key), the question box,
- * send, stop while a turn runs, and the answer below. Nothing else comes from
- * the map: the request carries the question and a fixed instruction, and story
- * 3 is what adds a packet. It shows no counters, no token meters and no cost —
- * one answer is the whole of it.
+ * the DECLARATION of what will go, the verb that opens the exact bytes, send,
+ * stop while a turn runs, and the answer below. No counters, no token meters
+ * and no cost — one answer is the whole of it.
+ *
+ * THE SAME PACKET, ONE BLOCK (story 3b). The card's ask used to send the bare
+ * hand-written question; the Ask Move had the packet, and one entry point must
+ * not be poorer than the other. So this panel assembles the SAME honest packet
+ * (turn/packet.ts's assembleCardPacket) around ONE anchored block: the card's
+ * coined name, its state sentence when the reading is not current, its bounded
+ * reading and note crops, the fixed instruction offering ONE `READ: <name>` of
+ * that card, and the bound in words. The card's LINKS are never handed in:
+ * a link is wordless wiring, and reading it as context would give it a meaning
+ * the epic explicitly defers. The declaration and the exact-bytes readback are
+ * the SHARED PacketSurface, the same piece the Ask Move renders — two copies
+ * would drift, and then the honesty surface would be worth only the more
+ * careful one.
+ *
+ * ONE RETRIEVAL, NO RECORD. If the model's answer asks for the card's block by
+ * its exact heading, the app fetches that block's fuller text ONCE (the pull
+ * reader, its existing budget) and sends exactly one follow-up. A name the
+ * packet did not carry, or a failed read, gets no follow-up: the first answer
+ * stands, and the panel says so in one sentence. A card ask is NOT a Move: it
+ * writes no PRISM, no history line and no mirror rewrite — this panel has no
+ * record path at all.
  *
  * WHAT IT WRITES: the base URL and the model go into the app's config file
  * (the `config_path` command owns the location) so a provider is configured
@@ -30,24 +55,26 @@ import {
  * story is still to come). Nothing here logs a line, a provider or a key.
  *
  * WHAT IT KEEPS: nothing on the map. The answer is view state of this panel; a
- * close (or a quit) forgets it, and the card is exactly as it was. A turn is
- * not a move — no record, no history line, no mirror rewrite.
+ * close (or a quit) forgets it, and the card is exactly as it was.
  *
  * The port is a PROP (`TurnPort`) rather than an import of the Tauri bridge,
  * in the house idiom: the app passes the real sidecar, and a render test passes
  * a script. The panel never spawns, pipes or kills anything itself.
  *
- * PROVISIONAL (ADR-0003's rendering seam): the panel's shape, the field order
- * and the sentence wording.
+ * PROVISIONAL (ADR-0003's rendering seam): the panel's shape, the field order,
+ * the sentence wording and the declaration/readback placement.
  */
 export function AskSidecarPanel({
-  name,
+  card,
+  workspacePath,
   turn,
   onClose,
 }: {
-  /** The anchored card's name — the only map content shown (and not sent). */
-  name: string;
-  /** The app's turn port: ask one question, stop the running one. */
+  /** The anchored card's already-loaded facts (the one block that rides). */
+  card: AskCardFacts;
+  /** The workspace root, for the ONE follow-up's read (a reader, never a writer). */
+  workspacePath: string;
+  /** The app's turn port: send the packet, stop the running turn. */
   turn: TurnPort;
   /** Close the panel (view state; nothing is written by closing). */
   onClose: () => void;
@@ -63,6 +90,9 @@ export function AskSidecarPanel({
   const [stopping, setStopping] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
   const [sentence, setSentence] = useState<string | null>(null);
+  const [read, setRead] = useState<string | null>(null);
+  const [missed, setMissed] = useState<string | null>(null);
+  const [sent, setSent] = useState<readonly TurnMessage[] | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -75,6 +105,16 @@ export function AskSidecarPanel({
       alive = false;
     };
   }, []);
+
+  // The card's context is the app's ALREADY-LOADED state: no read, no reach
+  // and no link. The packet is assembled purely from it, so the declaration
+  // and the bytes that leave are the same composition.
+  const context = cardAskContext(card);
+  const packet = assembleCardPacket({
+    question,
+    card: context.card,
+    retrievable: context.retrievable,
+  });
 
   async function send(): Promise<void> {
     if (running) return;
@@ -100,18 +140,33 @@ export function AskSidecarPanel({
     }
     setSentence(null);
     setAnswer(null);
+    setRead(null);
+    setMissed(null);
+    setSent(null);
     setRunning(true);
     setStopping(false);
-    const result: TurnResult = await turn.ask(
+    // ONE retrieval: the card's own block, from the source recorded when the
+    // context was built. A name the view did not carry answers null, so the
+    // first answer stands and nothing outside the packet is ever read.
+    const answered = await turn.sendPacket(
       providerFrom({ baseUrl: base, model: chosen }, apiKey),
-      asked,
+      packet,
+      (blockName) =>
+        workspacePath === ""
+          ? Promise.resolve(null)
+          : fetchAskBlock(workspacePath, blockName, context),
     );
     setRunning(false);
     setStopping(false);
-    if (result.kind === "answer") {
-      setAnswer(result.text);
+    setRead(answered.read);
+    setMissed(answered.missed);
+    // Every byte that left, including the ONE follow-up when it happened: the
+    // readback must be able to show what went out, not only what was composed.
+    setSent(answered.messages);
+    if (answered.result.kind === "answer") {
+      setAnswer(answered.result.text);
     } else {
-      setSentence(result.sentence);
+      setSentence(answered.result.sentence);
     }
   }
 
@@ -133,7 +188,7 @@ export function AskSidecarPanel({
       aria-label="ask about this reference"
     >
       <div className="ground-ask-head">
-        <span className="ground-ask-title">ask about “{name}”</span>
+        <span className="ground-ask-title">ask about “{card.name}”</span>
         <button
           type="button"
           className="ground-ask-close"
@@ -191,6 +246,20 @@ export function AskSidecarPanel({
         onChange={(e) => setQuestion(e.target.value)}
       />
 
+      {/* THE DECLARATION AND THE READBACK, the shared piece: before the send
+          every block with its exact size, the total, and the exact bytes; after
+          it, the messages that actually left (the follow-up included). The
+          card's crops are already loaded, so the declaration is ready on the
+          first render — nothing is read to declare it. */}
+      {sent === null ? (
+        <PacketSurface
+          declaration={packet.declaration}
+          messages={packet.messages}
+        />
+      ) : (
+        <PacketSurface messages={sent} read={read} />
+      )}
+
       <div className="ground-ask-actions">
         <button
           type="button"
@@ -213,6 +282,11 @@ export function AskSidecarPanel({
       </div>
 
       {answer !== null && <div className="ground-ask-answer">{answer}</div>}
+      {missed !== null && (
+        <div className="ground-ask-problem" role="status">
+          {ASK_READ_MISSED}
+        </div>
+      )}
       {sentence !== null && (
         <div className="ground-ask-problem" role="status">
           {sentence}

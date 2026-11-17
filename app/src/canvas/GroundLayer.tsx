@@ -360,6 +360,7 @@ export function GroundLayer({
           onDismissPull={onDismissPull}
           onLink={onLink}
           onAsk={onAsk}
+          workspacePath={workspacePath}
         />
       ))}
       {refusal !== null && (
@@ -444,6 +445,7 @@ function GroundCard({
   onDismissPull,
   onLink,
   onAsk,
+  workspacePath,
 }: {
   reference: GroundReference;
   reading: Reading | null;
@@ -478,6 +480,8 @@ function GroundCard({
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
   /** The app's turn port for the expanded card's `ask…` verb (story 15.1). */
   onAsk?: TurnPort;
+  /** The workspace root, for the card ask's ONE follow-up read (story 3b). */
+  workspacePath?: string;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -1110,13 +1114,22 @@ function GroundCard({
           onClose={() => setPanel(null)}
         />
       )}
-      {/* STORY 15.1 — the ask panel, beside the card it is anchored on. It
-          shows the card's name and NOTHING else from the map; the request is
-          the question plus a fixed instruction. View state only: closing it
-          leaves the card exactly as it was. */}
+      {/* STORY 15.1 / 3b — the card's ask panel, beside the card it is
+          anchored on. It shows the card's name, and its turn carries the SAME
+          packet the Ask Move carries, anchored on ONE block: this card. The
+          card's LINKS never ride — a link is wordless wiring, not context.
+          View state only: closing it leaves the card exactly as it was, and a
+          card ask writes no record (it is not a Move). */}
       {open && asking && onAsk !== undefined && (
         <AskSidecarPanel
-          name={reference.name}
+          card={{
+            name: reference.name,
+            state,
+            reading,
+            readingText: text ?? null,
+            note: note ?? null,
+          }}
+          workspacePath={workspacePath ?? ""}
           turn={onAsk}
           onClose={() => setAsking(false)}
         />

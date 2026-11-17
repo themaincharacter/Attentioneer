@@ -32,6 +32,13 @@ import type { TurnMessage } from "./protocol";
  * The sizes belong to the person's pre-send declaration, which is a fact this
  * module returns alongside the bytes, never inside them.
  *
+ * THE CARD'S ASK USES THE SAME ASSEMBLER (story 3b). The ground card's ask…
+ * sends the same packet with ONE anchored block — the card — and no reaches:
+ * its links are wordless wiring and must not become context, so they are
+ * never handed in here. One entry point is not poorer than the other, and the
+ * two cannot drift because they share this module's block renderer, its
+ * instruction and its bound.
+ *
  * PURE BY CONSTRUCTION: no fs import, no reader, no writer, no clock and no
  * randomness. The app reads the previews (turn/context.ts) and the pure
  * assembler below only arranges what it is handed, so bun can pin the exact
@@ -89,6 +96,21 @@ export interface AskPacketReach {
   value: string;
   /** The target's bounded head preview, or null (a url is named, not read). */
   preview: string | null;
+}
+
+/**
+ * What the CARD's pure assembler is handed (Epic 15 story 3b). The card's ask
+ * is the same packet with ONE anchored block: the card. No reaches ride (the
+ * card's links are wordless wiring, never context), and the fixed instruction
+ * offers the ONE read of that card's own block.
+ */
+export interface CardPacketInput {
+  /** The person's authored question, verbatim. */
+  question: string;
+  /** The anchored card's name, state and bounded previews. */
+  card: AskPacketCard;
+  /** The block names whose fuller text the app can fetch (the card, or none). */
+  retrievable?: readonly string[];
 }
 
 /** What the pure assembler is handed. It reads nothing; every byte is here. */
@@ -251,7 +273,28 @@ function blocksOf(input: AskPacketInput): AskPacketBlock[] {
  * same bytes, no reader and no writer anywhere in this file.
  */
 export function assembleAskPacket(input: AskPacketInput): AskPacket {
-  const blocks = blocksOf(input);
+  return assemblePacket(input.question, input.card, input.reaches, input.retrievable);
+}
+
+/**
+ * ASSEMBLE the CARD's packet (Epic 15 story 3b): the SAME assembler, the SAME
+ * card block renderer, the SAME instruction and bound — but ONE anchored block
+ * and no reaches. The card's links never ride and are never read: a link is
+ * wordless wiring, and giving it meaning here would spend a meaning the epic
+ * defers. ONE retrieval: the card's own block, on its exact heading name.
+ */
+export function assembleCardPacket(input: CardPacketInput): AskPacket {
+  return assemblePacket(input.question, input.card, [], input.retrievable);
+}
+
+/** The one assembler both entry points use, so their bytes cannot drift. */
+function assemblePacket(
+  question: string,
+  card: AskPacketCard,
+  reaches: readonly AskPacketReach[],
+  asked: readonly string[] | undefined,
+): AskPacket {
+  const blocks = blocksOf({ question, card, reaches, retrievable: asked });
   const text = [ASK_PACKET_TITLE, ...blocks.map((block) => block.text)].join(
     "\n\n",
   );
@@ -266,12 +309,12 @@ export function assembleAskPacket(input: AskPacketInput): AskPacket {
   // The READ set: only a block that actually rode, and only where the app can
   // read a target at all. A url is named in the packet but never fetched, so it
   // is never a retrieval either.
-  const readable = new Set<string>([input.card.name]);
-  for (const reach of input.reaches) {
+  const readable = new Set<string>([card.name]);
+  for (const reach of reaches) {
     if (reach.form !== "url") readable.add(askReachName(reach.form, reach.value));
   }
-  const retrievable = [...new Set(input.retrievable ?? [])].filter(
-    (name) => readable.has(name),
+  const retrievable = [...new Set(asked ?? [])].filter((name) =>
+    readable.has(name),
   );
   return {
     blocks,

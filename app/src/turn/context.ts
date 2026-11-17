@@ -226,6 +226,22 @@ function reachSource(
 }
 
 /**
+ * THE CARD'S OWN CONTEXT (Epic 15 story 3b): the anchored card's block and the
+ * one source a single READ may fetch, both from the app's ALREADY-LOADED state.
+ * No IO, no reach and no link: the card's links are wordless wiring, not
+ * context, so this function is handed none and reads none.
+ */
+export function cardAskContext(card: AskCardFacts): AskContext {
+  const source = cardSource(card);
+  return {
+    card: askCardOf(card),
+    reaches: [],
+    retrievable: source === null ? [] : [source.name],
+    sources: source === null ? [] : [source],
+  };
+}
+
+/**
  * READ the packet's previews: the card's crops from the app's state, and one
  * bounded head per INCLUDED reach (the boundary applies; a refusal is simply
  * no preview). Total over its inputs and never throwing: a target that cannot
@@ -236,9 +252,8 @@ export async function readAskContext(
   input: AskContextInput,
   deps: AskContextDeps = ASK_CONTEXT_DEPS,
 ): Promise<AskContext> {
-  const sources: AskRetrievalSource[] = [];
-  const source = cardSource(input.card);
-  if (source !== null) sources.push(source);
+  const card = cardAskContext(input.card);
+  const sources: AskRetrievalSource[] = [...card.sources];
 
   const reaches: AskPacketReach[] = [];
   for (const pointer of input.included) {
@@ -249,7 +264,7 @@ export async function readAskContext(
     if (reach !== null) sources.push(reach);
   }
   return {
-    card: askCardOf(input.card),
+    card: card.card,
     reaches,
     retrievable: sources.map((entry) => entry.name),
     sources,
