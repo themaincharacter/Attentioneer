@@ -7,7 +7,7 @@ import {
   type Reading,
   type ReadingState,
 } from "../map/readings";
-import { pickTextFile } from "../workspace/dialogs";
+import { pickReadingFile } from "../workspace/dialogs";
 import {
   beginGroundDrag,
   dropGroundDrag,
@@ -325,7 +325,7 @@ function GroundCard({
 
   async function repoint() {
     if (busy) return;
-    const picked = await pickTextFile("point at a file");
+    const picked = await pickReadingFile("point at a file");
     if (picked === null) return;
     await run(() => onRepoint(reference.on, picked));
   }

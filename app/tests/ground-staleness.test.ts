@@ -200,6 +200,16 @@ function recordingIo(log: string[]): ReadingIo {
         return null;
       }
     },
+    readFileBytes: async (path) => {
+      try {
+        return { kind: "bytes", bytes: new Uint8Array(readFileSync(path)) };
+      } catch {
+        return { kind: "refused", code: "cannot-reach" as const };
+      }
+    },
+    pdfText: async () => {
+      throw new Error("this fake reads no PDFs");
+    },
     readTextHead: async (path, maxLines, maxBytes): Promise<TextHead> => {
       let bytes: Buffer;
       try {

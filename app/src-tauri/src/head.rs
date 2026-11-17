@@ -253,7 +253,10 @@ pub fn read(path: &str, max_lines: usize, max_bytes: usize) -> Result<TextHead, 
 /// as regular files while reading may block or answer with kernel data.
 /// Refused by name, before anything is opened. A convention guard, like the
 /// reach itself: it keeps a glimpse from blocking, it does not sandbox reads.
-fn is_pseudo_path(path: &str) -> bool {
+///
+/// Shared with the byte read (story 16.4, `bytes.rs`): ONE guard, so the two
+/// reads can never drift apart on which roots are special.
+pub(crate) fn is_pseudo_path(path: &str) -> bool {
     // Only an absolute path can name a pseudo root; a workspace file that
     // happens to sit in a directory called "dev/" is an ordinary file.
     if !path.starts_with('/') {

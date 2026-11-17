@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+mod bytes;
 mod head;
 mod marker;
 mod meta;
@@ -111,6 +112,22 @@ fn canonicalize_path(path: String) -> Result<String, paths::PathRefusal> {
     paths::canonicalize(&path)
 }
 
+/// One file's WHOLE bytes for the ground map's one document extractor (story
+/// 16.4, ADR-0035): pdf.js reads a PDF's text on device, so the bridge hands it
+/// the document and nothing else. READ-ONLY BY CONSTRUCTION and hard-capped
+/// (PROVISIONAL 96 MiB); the implementation, the guard shared with `head.rs`
+/// and its tests live in `bytes.rs`. The answer travels as RAW BYTES
+/// (`tauri::ipc::Response`): a `Vec<u8>` serialized as JSON would be an array
+/// of millions of numbers, and the webview would spend more memory parsing the
+/// envelope than holding the file.
+#[tauri::command]
+fn read_file_bytes(
+    path: String,
+    max_bytes: usize,
+) -> Result<tauri::ipc::Response, bytes::BytesRefusal> {
+    bytes::read(&path, max_bytes).map(tauri::ipc::Response::new)
+}
+
 /// One file's identity facts for the ground map's staleness reading (story
 /// 16.2): whether the path names a regular file, its size and its modified
 /// time. READ-ONLY BY CONSTRUCTION and it opens nothing — `fs::metadata` stats
@@ -159,6 +176,7 @@ pub fn run() {
             canonicalize_path,
             create_marker_exclusive,
             file_meta,
+            read_file_bytes,
             config_path
         ])
         .run(tauri::generate_context!())

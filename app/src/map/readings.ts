@@ -1,14 +1,24 @@
 import {
   createDirAll,
   fileMeta,
+  readFileBytes,
   readTextFile,
   readTextHead,
   writeTextFile,
+  type FileBytesAnswer,
   type FileMetaAnswer,
   type HeadRefusalCode,
   type TextHead,
 } from "../lib/fs";
+import { clipHead } from "../lib/headBounds";
 import { canonicalText } from "../lib/serialize";
+import {
+  EXTRACT_NO_TEXT,
+  extractKindFor,
+  extractPdf,
+  type PdfText,
+} from "./extract";
+import { pdfText } from "./pdf";
 import type { PointerForm } from "./pointers";
 import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
 
@@ -16,7 +26,7 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * The GROUND map's readings (story 16.1, made honest by story 16.2): the text
  * the person's pointed-at file opened with, kept beside the map.
  *
- *   map/readings.txt         on: <slug> | form: path | from: <path> | taken: <ISO-8601> | bytes: <n>
+ *   map/readings.txt         on: <slug> | form: path | from: <path> | taken: <ISO-8601> | bytes: <n> | extract: text|pdf
  *   map/readings/<slug>.md   the text as read, bytes verbatim
  *
  * A reading is NOT a Pointer (ADR-0017): a pointer is a reach the person keeps
@@ -43,6 +53,15 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * absolute and left exactly as it is — there is no migration pass. `url` is
  * not a reading form in this story: a link is not reachable without a network.
  *
+ * STORY 16.4 ADDS THE SECOND EXTRACTOR (ADR-0035): a pick whose NAME ends in
+ * `.pdf` is read on device by pdf.js (`extract.ts` + `pdf.ts`), and its text
+ * lands HERE, in the same store and under the same provisional cap as a text
+ * file's. The line records WHICH extractor produced it (`extract: text|pdf`);
+ * a line without the field is a text reading — it is read as `text` and is
+ * NEVER rewritten on load (no migration pass). A PDF with no text layer is one
+ * honest sentence and no reading at all: an empty reading is never pretended.
+ * The PDF itself is never copied into the workspace; only its text is kept.
+ *
  * THE CAP IS STILL PROVISIONAL: the first 64 lines or 8 KiB, whichever comes
  * first (a hypothesis, not a rule).
  *
@@ -59,8 +78,8 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  *
  * PROVISIONAL (the story's record shapes, before an ADR settles them): the
  * `readings.txt` name, the line shape and its key order, the `path`/`at`
- * form rule for NEW picks, the `bytes` field, the 64/8 KiB cap, the ISO
- * timestamp and the state names.
+ * form rule for NEW picks, the `bytes` field, the `extract` field, the 64/8
+ * KiB cap, the ISO timestamp and the state names.
  */
 
 /**
@@ -84,6 +103,12 @@ export const READING_MAX_BYTES = 8 * 1024;
  */
 export const READING_PREVIEW_LINES = 6;
 
+/**
+ * Which extractor produced a reading (story 16.4, ADR-0035 decision 4).
+ * PROVISIONAL: the two names; absence on a legacy line means `text`.
+ */
+export type ReadingExtract = "text" | "pdf";
+
 /** One reading: the file the person picked and when its head was taken. */
 export interface Reading {
   /** The ground reference's slug — the key the two files join on. */
@@ -103,6 +128,12 @@ export interface Reading {
    * load. A null/undefined `bytes` means the size comparison is skipped.
    */
   bytes?: number | null;
+  /**
+   * WHICH extractor produced this text (story 16.4): a text file's head, or a
+   * PDF's text read on device. ABSENT on a legacy line, which means `text` —
+   * and a legacy line is never rewritten to add it.
+   */
+  extract?: ReadingExtract;
 }
 
 /** A read of `map/readings.txt`: what parsed and what is kept but unreadable. */
@@ -123,6 +154,16 @@ export interface ReadingIo {
   createDirAll(path: string): Promise<void>;
   /** Story 16.2's metadata stat; a refusal is a value, never a throw. */
   fileMeta(path: string): Promise<FileMetaAnswer>;
+  /**
+   * Story 16.4's whole-file byte read, for the one PDF extractor (ADR-0035);
+   * a refusal is a value, never a throw.
+   */
+  readFileBytes(path: string): Promise<FileBytesAnswer>;
+  /**
+   * Story 16.4's INJECTED extractor. The real one is pdf.js (`pdf.ts`); a test
+   * passes a fake, so no test ever loads the library.
+   */
+  pdfText: PdfText;
 }
 
 /** The real bridges, bound once so the module stays importable in bun tests. */
@@ -132,6 +173,8 @@ export const READING_IO: ReadingIo = {
   writeTextFile,
   createDirAll,
   fileMeta,
+  readFileBytes,
+  pdfText,
 };
 
 /** The reading lines file: `<workspace>/map/readings.txt`. */
@@ -155,36 +198,51 @@ export function readingTextPath(
 /**
  * The line shape. `from` is greedy so a path may contain the separator; only
  * the ` | form: ... ` head and the ` | taken: ...` tail are structural.
- * `bytes` is OPTIONAL on read (a story-1 line has none): a missing tail is
- * unknown size, never a guess and never a rewrite.
+ * `bytes` and `extract` are OPTIONAL on read (a story-1 line has neither):
+ * a missing tail is unknown size and a TEXT reading, never a guess and never a
+ * rewrite. The writer emits them in this order, the reader needs that order.
  */
 const READING_LINE =
-  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?$/;
+  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf))?$/;
 
 /** Parse one line; anything out of shape is `null` (kept and reported). */
 export function parseReadingLine(line: string): Reading | null {
   const match = READING_LINE.exec(line);
   if (!match) return null;
-  const [, on, form, from, taken, bytes] = match;
+  const [, on, form, from, taken, bytes, extract] = match;
   if (on === "" || from === "" || taken === "") return null;
   // The vocabulary is provisional: a form the app does not know yet is
   // preserved and surfaced, never guessed into `path`.
   if (!READING_FORMS.includes(form as PointerForm)) return null;
   const reading: Reading = { on, form: form as PointerForm, from, taken };
   if (bytes !== undefined) reading.bytes = Number(bytes);
+  // Absent means TEXT (a story-1 line), and it stays absent: a load never
+  // writes the field in. A hand edit that says `text` is preserved as written.
+  if (extract !== undefined) reading.extract = extract as ReadingExtract;
   return reading;
 }
 
 /**
- * One reading as its canonical line (no trailing newline). `bytes` is written
- * only when known: a legacy line is left without one until a refresh stamps it.
+ * One reading as its canonical line (no trailing newline). `bytes` and
+ * `extract` are written only when known: a legacy line is left without one
+ * until the person's own take or refresh stamps it.
  */
 export function serializeReadingLine(reading: Reading): string {
   const size =
     reading.bytes === null || reading.bytes === undefined
       ? ""
       : ` | bytes: ${reading.bytes}`;
-  return `on: ${reading.on} | form: ${reading.form} | from: ${reading.from} | taken: ${reading.taken}${size}`;
+  const extract =
+    reading.extract === undefined ? "" : ` | extract: ${reading.extract}`;
+  return `on: ${reading.on} | form: ${reading.form} | from: ${reading.from} | taken: ${reading.taken}${size}${extract}`;
+}
+
+/**
+ * The extractor a reading was produced by (story 16.4): a line without the
+ * field is a TEXT reading — that absence is the legacy rule, not a guess.
+ */
+export function readingExtract(reading: Reading): ReadingExtract {
+  return reading.extract ?? "text";
 }
 
 /** Read the file's bytes: LF/BOM/CRLF tolerated, unreadable lines kept. */
@@ -393,11 +451,23 @@ function refusalCodeOf(error: unknown): HeadRefusalCode | null {
     : null;
 }
 
+/** What one successful read produced: the text to store and the file's size. */
+interface TakenText {
+  text: string;
+  /** The source file's size when it was taken, or null when unknown. */
+  bytes: number | null;
+}
+
+/** One take's read: the text, or the one sentence the person sees. */
+type TakeRead =
+  | { ok: true; taken: TakenText }
+  | { ok: false; message: string };
+
 /** Read one path's head under the provisional cap, or answer its sentence. */
 async function readHeadOrRefuse(
   path: string,
   io: ReadingIo,
-): Promise<{ ok: true; head: TextHead } | { ok: false; message: string }> {
+): Promise<TakeRead> {
   let head: TextHead;
   try {
     head = await io.readTextHead(path, READING_MAX_LINES, READING_MAX_BYTES);
@@ -406,37 +476,73 @@ async function readHeadOrRefuse(
     return { ok: false, message: READING_REFUSALS[code ?? "io"] };
   }
   if (!head.exists) return { ok: false, message: READING_REFUSALS.absent };
-  return { ok: true, head };
+  return { ok: true, taken: { text: head.head, bytes: head.size } };
 }
 
 /**
- * Store one reading's head: the text file first (VERBATIM — it is the file's
- * opening lines as read, not a record the writer tidies), and only after a
- * successful read. The caller writes the LINE last, so a crash can leave an
- * orphan text but never a reading line whose text is absent.
+ * Read a PDF's text ON DEVICE (story 16.4, ADR-0035), or answer its sentence.
+ *
+ * The extractor's own outcomes map to the map's vocabulary here: a `none` (a
+ * page set with no text layer) is the refusal sentence "that PDF has no text to
+ * read.", and it writes NOTHING — the reference is never created half-formed.
+ * The size is the DOCUMENT's size, taken with the metadata stat the map already
+ * owns, so a PDF reading can go stale the same honest way a text reading does.
  */
-async function storeHead(
+async function readPdfOrRefuse(
+  path: string,
+  io: ReadingIo,
+): Promise<TakeRead> {
+  const outcome = await extractPdf(path, io.pdfText, {
+    readFileBytes: io.readFileBytes,
+  });
+  if (outcome.kind === "refused") {
+    return { ok: false, message: outcome.message };
+  }
+  if (outcome.kind === "none") {
+    return { ok: false, message: EXTRACT_NO_TEXT };
+  }
+  const meta = await io.fileMeta(path);
+  const bytes = meta.kind === "facts" && meta.is_file ? meta.len : null;
+  return { ok: true, taken: { text: outcome.text, bytes } };
+}
+
+/**
+ * Store one reading's text: the text file first (VERBATIM for a text file — it
+ * is the opening lines as read, not a record the writer tidies), and only
+ * after a successful read. The caller writes the LINE last, so a crash can
+ * leave an orphan text but never a reading line whose text is absent.
+ *
+ * A PDF's text passes the SAME provisional cap (64 lines / 8 KiB) before it is
+ * stored: the extractor returns the whole document's text, and the cap is the
+ * reading's, not the format's (ADR-0035 decision 5).
+ */
+async function storeReading(
   workspacePath: string,
   on: string,
   form: PointerForm,
   from: string,
-  head: TextHead,
-  taken: string,
+  taken: TakenText,
+  extract: ReadingExtract | undefined,
+  when: string,
   io: ReadingIo,
 ): Promise<TakeReadingResult> {
+  const text =
+    extract === "pdf"
+      ? clipHead(taken.text, READING_MAX_LINES, READING_MAX_BYTES).head
+      : taken.text;
   await io.createDirAll(readingsDir(workspacePath));
-  await io.writeTextFile(readingTextPath(workspacePath, on), head.head);
-  return {
-    kind: "taken",
-    reading: { on, form, from, taken, bytes: head.size },
-    text: head.head,
-  };
+  await io.writeTextFile(readingTextPath(workspacePath, on), text);
+  const reading: Reading = { on, form, from, taken: when, bytes: taken.bytes };
+  // Absent stays absent: a legacy line (or a refresh of one) keeps no field.
+  if (extract !== undefined) reading.extract = extract;
+  return { kind: "taken", reading, text };
 }
 
 /**
- * Take ONE reading: ask the bridge for the head (bounded by the provisional
- * cap), refuse with a sentence if it cannot be read, otherwise write the head's
- * text beside the map under the reference's slug.
+ * Take ONE reading, BY THE PICK'S KIND (story 16.4): a pick whose name says
+ * `.pdf` goes through the PDF extractor, everything else through the head read
+ * as before. The pick's NAME decides — the bytes are never sniffed (ADR-0035
+ * decision 4).
  *
  * The form and value follow the pick's LOCATION (story 16.2 decision 3), not an
  * authored choice; a refusal writes nothing at all, so an add can never leave a
@@ -450,19 +556,35 @@ export async function takeReading(
   io: ReadingIo = READING_IO,
   taken: string = new Date().toISOString(),
 ): Promise<TakeReadingResult> {
-  const read = await readHeadOrRefuse(picked, io);
+  const extract = extractKindFor(picked);
+  const read =
+    extract === "pdf"
+      ? await readPdfOrRefuse(picked, io)
+      : await readHeadOrRefuse(picked, io);
   if (!read.ok) return { kind: "refused", message: read.message };
   const { form, from } = readingFormFor(workspacePath, picked);
-  return await storeHead(workspacePath, on, form, from, read.head, taken, io);
+  return await storeReading(
+    workspacePath,
+    on,
+    form,
+    from,
+    read.taken,
+    extract,
+    taken,
+    io,
+  );
 }
 
 /**
  * REFRESH one reading (story 16.2 decision 4): re-read the same file under the
  * same cap and stamp a new `taken`/`bytes`. The form and value are KEPT
  * exactly as the line has them — the file did not move, and a legacy absolute
- * `path` is not migrated by a refresh. The text file is rewritten first; the
- * caller rewrites the line. A refusal keeps the old reading and answers one
- * sentence (nothing is written).
+ * `path` is not migrated by a refresh. So is the EXTRACTOR (story 16.4): a PDF
+ * reading is re-extracted, a text reading re-headed, and a line without the
+ * field stays without it.
+ *
+ * The text file is rewritten first; the caller rewrites the line. A refusal
+ * keeps the old reading and answers one sentence (nothing is written).
  */
 export async function refreshReading(
   workspacePath: string,
@@ -471,14 +593,19 @@ export async function refreshReading(
   taken: string = new Date().toISOString(),
 ): Promise<TakeReadingResult> {
   const path = readingAbsolutePath(workspacePath, reading);
-  const read = await readHeadOrRefuse(path, io);
+  const read =
+    readingExtract(reading) === "pdf"
+      ? await readPdfOrRefuse(path, io)
+      : await readHeadOrRefuse(path, io);
   if (!read.ok) return { kind: "refused", message: read.message };
-  return await storeHead(
+  return await storeReading(
     workspacePath,
     reading.on,
     reading.form,
     reading.from,
-    read.head,
+    read.taken,
+    // The line's own field, verbatim: a refresh is a re-read, not a migration.
+    reading.extract,
     taken,
     io,
   );

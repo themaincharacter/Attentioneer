@@ -169,3 +169,72 @@ export async function fileMeta(path: string): Promise<FileMetaAnswer> {
     return { kind: "refused" };
   }
 }
+
+/**
+ * The whole-file byte read's typed refusals (story 16.4, ADR-0035). ONE
+ * vocabulary for the document bridge, kebab-case as the Rust side spells it:
+ * `too-large` (past the cap), `not-a-file`, `cannot-reach` (absent or
+ * dangling), `escaped` (the pseudo-filesystem guard: /proc, /sys, /dev) and
+ * `io` (the OS's own error).
+ */
+export type BytesRefusalCode =
+  | "too-large"
+  | "not-a-file"
+  | "cannot-reach"
+  | "escaped"
+  | "io";
+
+/**
+ * A byte read's answer: the file's bytes, or a typed refusal as a VALUE. Like
+ * `fileMeta`, this never rejects: a document that cannot be read is one quiet
+ * sentence the bubble or the card shows, not an exception the plane catches.
+ */
+export type FileBytesAnswer =
+  | { kind: "bytes"; bytes: Uint8Array }
+  | { kind: "refused"; code: BytesRefusalCode };
+
+/**
+ * How many bytes one document read may ask for (story 16.4). PROVISIONAL: the
+ * story's 96 MiB hypothesis, mirroring the Rust hard cap — the bridge takes the
+ * smaller of the two, and nothing larger is ever read into the webview.
+ */
+export const READ_MAX_BYTES = 96 * 1024 * 1024;
+
+/** The bridge's typed code, when the rejection carries one. */
+function bytesCodeOf(error: unknown): BytesRefusalCode | null {
+  if (error === null || typeof error !== "object") return null;
+  const code = (error as { code?: unknown }).code;
+  return code === "too-large" ||
+    code === "not-a-file" ||
+    code === "cannot-reach" ||
+    code === "escaped" ||
+    code === "io"
+    ? code
+    : null;
+}
+
+/**
+ * Read one file's WHOLE bytes (story 16.4's `read_file_bytes`) for the one
+ * document extractor. Read-only by construction: the Rust command has no
+ * writer, no temp file and no copy — the original stays where the person put
+ * it. The command answers RAW bytes (an `ArrayBuffer`, not a JSON array of
+ * numbers), so the one decode here is a view, not a copy. Every refusal is the
+ * typed VALUE above, never a throw.
+ */
+export async function readFileBytes(path: string): Promise<FileBytesAnswer> {
+  try {
+    const raw = await invoke<ArrayBuffer | Uint8Array | number[]>(
+      "read_file_bytes",
+      { path, maxBytes: READ_MAX_BYTES },
+    );
+    const bytes =
+      raw instanceof Uint8Array
+        ? raw
+        : raw instanceof ArrayBuffer
+          ? new Uint8Array(raw)
+          : new Uint8Array(raw);
+    return { kind: "bytes", bytes };
+  } catch (error) {
+    return { kind: "refused", code: bytesCodeOf(error) ?? "io" };
+  }
+}

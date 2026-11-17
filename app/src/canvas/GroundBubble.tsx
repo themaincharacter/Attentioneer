@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { readingFileName } from "../map/readings";
-import { pickTextFile } from "../workspace/dialogs";
+import { pickReadingFile } from "../workspace/dialogs";
 import { usePlane } from "./CanvasPlane";
 import type { GroundAddResult } from "./useGround";
 import { counterScale } from "./veilRules";
 
 /**
  * The ground map's creation affordance (story 16.1): double-click empty paper,
- * type a name, pick a text file — done.
+ * type a name, pick a file — done. (Story 16.4: that file may be a PDF, read on
+ * device; the pick's name decides which extractor runs.)
  *
  * This is NOT the concept map's word bubble and NOT a `CreationKind`
  * (`wordCreationOffered` stays concept-only): the noun is the ground map's
@@ -19,9 +20,10 @@ import { counterScale } from "./veilRules";
  * The order is the story's order: a name is asked for FIRST, then the picker.
  * Once both are there, the pick IS the commit (the check's "type a name, pick
  * a file, its lines appear"); the add button stays for the other order. A
- * refused file — absent, binary, unreadable — shows ONE quiet sentence and
- * writes nothing: the reference is not created half-formed. Esc, cancel or a
- * press outside drops the draft; nothing was written.
+ * refused file — absent, binary, unreadable, too large, or a PDF with no text
+ * layer (story 16.4) — shows ONE quiet sentence and writes nothing: the
+ * reference is not created half-formed. Esc, cancel or a press outside drops
+ * the draft; nothing was written.
  *
  * It hangs in WORLD space at the double-clicked point and counter-scales
  * against the camera (the naming popup's idiom), and its classes are on the
@@ -120,7 +122,7 @@ export function GroundBubble({ x, y, onAdd, onClose }: GroundBubbleProps) {
     setProblem(null);
     let picked: string | null = null;
     try {
-      picked = await pickTextFile("pick a text file");
+      picked = await pickReadingFile("pick a file");
     } finally {
       pickingRef.current = false;
     }

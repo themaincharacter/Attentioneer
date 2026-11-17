@@ -166,7 +166,7 @@ describe("the ground map's own creation affordance", () => {
     const bubbleCode = BUBBLE
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
-    expect(bubbleCode).toContain("pickTextFile");
+    expect(bubbleCode).toContain("pickReadingFile");
     expect(bubbleCode).not.toContain("wordCreationOffered");
     expect(bubbleCode).not.toContain("CreationKind");
     expect(BUBBLE).toContain("reference");

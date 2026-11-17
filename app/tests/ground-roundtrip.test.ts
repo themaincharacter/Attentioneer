@@ -111,6 +111,16 @@ const readingIo: ReadingIo = {
       };
     }
   },
+  readFileBytes: async (path) => {
+    try {
+      return { kind: "bytes", bytes: new Uint8Array(readFileSync(path)) };
+    } catch {
+      return { kind: "refused", code: "cannot-reach" as const };
+    }
+  },
+  pdfText: async () => {
+    throw new Error("this fake reads no PDFs");
+  },
   readTextHead: async (path, maxLines, maxBytes): Promise<TextHead> => {
     let bytes: Buffer;
     try {
@@ -323,6 +333,8 @@ describe("taking a reading: the head verbatim, or one sentence", () => {
       from: source,
       taken: "2026-11-16T12:00:00.000Z",
       bytes: text.length,
+      // Story 16.4: a new reading RECORDS which extractor produced it.
+      extract: "text",
     });
     // The cap is the story's provisional 64 lines / 8 KiB (a hypothesis, not a
     // rule): a longer file is cut at the 64th line's newline.
