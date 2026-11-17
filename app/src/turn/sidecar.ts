@@ -9,13 +9,14 @@ import {
   stopTurn,
   type CliTurnRunner,
   type PacketTurnAnswer,
+  type TurnOptions,
   type TurnPort,
   type TurnResult,
   type TurnRoute,
   type TurnStart,
   type TurnTransport,
 } from "./turn";
-import { cliRunArgs, cliWhereArgs } from "./cliBridge";
+import { cliCancelArgs, cliRunArgs, cliWhereArgs } from "./cliBridge";
 import { startLocal } from "./localBridge";
 import { localBaseUrl } from "./local";
 import type { AskPacket } from "./packet";
@@ -37,6 +38,11 @@ import type { LocalProviderRow, ModelRow } from "./providers";
  * The API key crosses this module exactly once per turn, inside the request
  * line it is handed, and it is never logged: no `console` call in this file
  * takes a line or a provider.
+ *
+ * A STOP REACHES BOTH PLACES A TURN CAN RUN (story 7): the sidecar's fetch is
+ * aborted, and a CLI child is killed by the token the turn minted for it. The
+ * port remembers one token at a time and clears it after use, so a second
+ * press can never kill a later turn's child.
  *
  * PROVISIONAL: the event's name (mirrored in `sidecar.rs`) and the status
  * shape. A compiled sidecar binary is a later story.
@@ -138,6 +144,8 @@ export function createTurnPort(
   cli: CliTurnRunner = hostCliRunner(),
 ): TurnPort {
   let active: number | null = null;
+  /** The CLI child a stop can kill: its token, never its PID or path. */
+  let activeCli: string | null = null;
 
   /**
    * The local runtime's process layer, as the turn wants it: start (or reuse)
@@ -219,10 +227,29 @@ export function createTurnPort(
    * One CLI turn: no sidecar, no pipe, no record — the host runs one argv and
    * hands back the facts.
    */
-  async function runCli(route: TurnRoute, question: string): Promise<TurnResult> {
-    return await runRoute(transport, route, buildTurnMessages(question), {
-      cli,
-    });
+  async function runCli(
+    route: TurnRoute,
+    question: string,
+    options: TurnOptions = {},
+  ): Promise<TurnResult> {
+    const result = await runRoute(
+      transport,
+      route,
+      buildTurnMessages(question),
+      {
+        ...options,
+        cli,
+        // The token exists before the child does, so a stop that lands during
+        // the spawn still names the child that is about to run.
+        onCliStart: (runId) => {
+          activeCli = runId;
+        },
+      },
+    );
+    // The child has answered (or failed); its token must not be aimed at a
+    // later turn's child. A stop that arrives after this finds nothing.
+    activeCli = null;
+    return result;
   }
 
   /**
@@ -234,13 +261,21 @@ export function createTurnPort(
     route: TurnRoute,
     packet: AskPacket,
     fetchBlock: (name: string) => Promise<string | null>,
+    options: TurnOptions = {},
   ): Promise<PacketTurnAnswer> {
     // A CLI route starts nothing here: the host spawns the command for the one
-    // turn, and its own timeout is the kill. An endpoint route is story 3's.
+    // turn, and a stop kills that child by its token. An endpoint route is
+    // story 3's.
     if (route.kind === "cli") {
-      return await runRoutePacket(transport, route, packet, fetchBlock, {
+      const answer = await runRoutePacket(transport, route, packet, fetchBlock, {
+        ...options,
         cli,
+        onCliStart: (runId) => {
+          activeCli = runId;
+        },
       });
+      activeCli = null;
+      return answer;
     }
     if (route.kind === "local") {
       const local = await ensureLocal(route.row, route.model);
@@ -250,6 +285,7 @@ export function createTurnPort(
           messages: [...packet.messages],
           read: null,
           missed: null,
+          reached: null,
         };
       }
       const child = await begin();
@@ -259,9 +295,11 @@ export function createTurnPort(
           messages: [...packet.messages],
           read: null,
           missed: null,
+          reached: null,
         };
       }
       return await runRoutePacket(transport, route, packet, fetchBlock, {
+        ...options,
         onStart: (id) => {
           active = id;
         },
@@ -275,9 +313,11 @@ export function createTurnPort(
         messages: [...packet.messages],
         read: null,
         missed: null,
+        reached: null,
       };
     }
     const answer = await runRoutePacket(transport, route, packet, fetchBlock, {
+      ...options,
       onStart: (id) => {
         active = id;
       },
@@ -288,8 +328,8 @@ export function createTurnPort(
 
   return {
     start,
-    ask: async (route, question) => {
-      if (route.kind === "cli") return await runCli(route, question);
+    ask: async (route, question, options?: TurnOptions) => {
+      if (route.kind === "cli") return await runCli(route, question, options);
       if (route.kind === "local") {
         // The HTTP pipe must be up for the turn, and the local child too.
         const child = await begin();
@@ -297,6 +337,7 @@ export function createTurnPort(
           return { kind: "error", sentence: child.sentence };
         }
         return await runRoute(transport, route, buildTurnMessages(question), {
+          ...options,
           onStart: (id) => {
             active = id;
           },
@@ -304,6 +345,7 @@ export function createTurnPort(
         });
       }
       return await runRoute(transport, route, buildTurnMessages(question), {
+        ...options,
         onStart: (id) => {
           active = id;
         },
@@ -311,8 +353,13 @@ export function createTurnPort(
     },
     sendPacket: runPacket,
     async stop() {
-      // A stop reaches the sidecar's turn; a CLI child is the host's and its
-      // stated timeout is what ends it (PROVISIONAL: no mid-turn CLI cancel).
+      // A stop reaches BOTH places a turn can be running: the sidecar's fetch
+      // (its AbortController answers cancelled) and a CLI child (the host
+      // kills it by token). One is usually null; both are cleared, so a
+      // second press cannot kill a later turn's child by a stale token.
+      const cliRun = activeCli;
+      activeCli = null;
+      if (cliRun !== null) await cliCancelArgs(cliRun);
       if (active === null) return;
       const id = active;
       active = null;
@@ -326,6 +373,6 @@ export function createTurnPort(
  * places, the already-built argv, and the turn's stated budget.
  */
 function hostCliRunner(): CliTurnRunner {
-  return (spec, args, timeoutMs) =>
-    cliRunArgs(spec.command, spec.wellKnown ?? [], args, timeoutMs);
+  return (spec, args, timeoutMs, runId) =>
+    cliRunArgs(spec.command, spec.wellKnown ?? [], args, timeoutMs, runId);
 }

@@ -349,6 +349,15 @@ describe("a run's facts become one answer or one sentence", () => {
     });
   });
 
+  test("a stop is its own outcome, never a timeout", () => {
+    expect(
+      cliAnswer(spec(), ran({ cancelled: true, timedOut: false, code: null })),
+    ).toEqual({
+      kind: "cancelled",
+      sentence: "the turn was stopped",
+    });
+  });
+
   test("an empty answer is said plainly", () => {
     const outcome = cliAnswer(spec(), ran({ stdout: "  \n\n" }));
     expect(outcome.kind).toBe("error");
@@ -369,6 +378,27 @@ const unusedTransport: TurnTransport = {
 };
 
 describe("one dispatch on the route's kind", () => {
+  test("a CLI turn is handed a stop token, and a stopped run says so", async () => {
+    let token = "";
+    const result = await runRoute(
+      unusedTransport,
+      { kind: "cli", spec: spec() },
+      [{ role: "user", content: "q" }],
+      {
+        cli: async (_spec, _args, _timeoutMs, runId) => {
+          token = runId;
+          return ran({ cancelled: true, timedOut: false, code: null });
+        },
+      },
+    );
+    // The token exists before the child and names it for a later stop.
+    expect(token).not.toBe("");
+    expect(result).toEqual({
+      kind: "cancelled",
+      sentence: "the turn was stopped",
+    });
+  });
+
   test("a CLI route runs the spec's argv and returns its stdout", async () => {
     const seen: string[][] = [];
     const result = await runRoute(

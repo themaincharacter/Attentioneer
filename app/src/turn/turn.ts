@@ -7,11 +7,17 @@ import {
   type TurnProvider,
 } from "./protocol";
 import { followUpMessages, type AskPacket } from "./packet";
-import { CLI_TURN_TIMEOUT_MS, buildCliArgs, cliAnswer } from "./cli";
+import {
+  CLI_TURN_TIMEOUT_MS,
+  STOPPED_SENTENCE,
+  buildCliArgs,
+  cliAnswer,
+} from "./cli";
 import type { CliFacts, CliRefusal } from "./cli";
 import type { CliSpec } from "./cliSpecs";
 import { cliSpecOf, providerFrom } from "./providers";
 import type { LocalProviderRow, ModelRow, ProviderRow } from "./providers";
+import { STEP_LIMIT_SENTENCE, turnSteps, type StepBudget } from "./steps";
 
 /**
  * ONE TURN (Epic 15 story 1): a provider, a question, one answer.
@@ -62,7 +68,7 @@ export const SYSTEM_MESSAGE =
 /** The sentences the panel shows when the answer is not an answer. */
 export const TURN_SENTENCES = {
   /** The person pressed stop (or the sidecar answered `cancelled`). */
-  cancelled: "the turn was stopped",
+  cancelled: STOPPED_SENTENCE,
   /** The awaited answer never arrived inside the budget. */
   timeout: "the provider did not answer in time",
   /** The window could not hand the line to the sidecar at all. */
@@ -81,12 +87,20 @@ export const TURN_SENTENCES = {
   noLocalRuntime: "the local runtime could not be started, so the turn did not leave",
 } as const;
 
-/** The result of one turn: one answer, or one sentence. */
+/**
+ * The result of one turn: one answer, or one sentence.
+ *
+ * A STOPPED OR BROKEN TURN MAY CARRY WHAT ARRIVED (story 7): `partial` is the
+ * text the person already saw streaming, kept so a stop never erases words
+ * they read. It is present only when there were words, and its result kind
+ * still says the turn did not finish — the panel must never present it as a
+ * complete answer.
+ */
 export type TurnResult =
   | { kind: "answer"; text: string }
-  | { kind: "error"; sentence: string }
-  | { kind: "cancelled"; sentence: string }
-  | { kind: "timeout"; sentence: string };
+  | { kind: "error"; sentence: string; partial?: string }
+  | { kind: "cancelled"; sentence: string; partial?: string }
+  | { kind: "timeout"; sentence: string; partial?: string };
 
 /**
  * What the panel and the port need from a transport: write one line, and be
@@ -180,11 +194,16 @@ export function routeOf(
   return { kind: "http", provider: providerFrom(provider, model, apiKey) };
 }
 
-/** One already-built argv, run by the host's process layer (injected). */
+/**
+ * One already-built argv, run by the host's process layer (injected). The
+ * run id is the token a stop names: the host registers the child under it
+ * before it spawns, so one token reaches one child and no other.
+ */
 export type CliTurnRunner = (
   spec: CliSpec,
   args: readonly string[],
   timeoutMs: number,
+  runId: string,
 ) => Promise<CliFacts | CliRefusal>;
 
 export interface RouteOptions extends TurnOptions {
@@ -192,6 +211,12 @@ export interface RouteOptions extends TurnOptions {
   cli?: CliTurnRunner;
   /** The local runtime's process layer; absent where none can be started. */
   local?: LocalEnsure;
+  /**
+   * Called with the token one CLI child is run under, BEFORE it starts: the
+   * port keeps the token so stop can kill that exact child. The token is the
+   * app's, not the child's, so no PID or path crosses this seam.
+   */
+  onCliStart?: (runId: string) => void;
 }
 
 /**
@@ -207,6 +232,13 @@ export function cliPromptOf(messages: readonly TurnMessage[]): string {
   return messages.length === 0 ? "" : messages[messages.length - 1].content;
 }
 
+/** The token one CLI child runs under. Window-local and unique per run. */
+let nextCliRun = 1;
+
+function cliRunToken(): string {
+  return "cli-run-" + String(nextCliRun++);
+}
+
 /** A CLI turn: one argv, then the answer or the one sentence. */
 async function runCliTurn(
   spec: CliSpec,
@@ -218,12 +250,17 @@ async function runCliTurn(
     return { kind: "error", sentence: TURN_SENTENCES.noCliRunner };
   }
   const args = buildCliArgs(spec.run.args, cliPromptOf(messages));
+  // The token is handed over BEFORE the child starts: a stop between the
+  // click and the spawn must still name the child that is about to exist.
+  const runId = cliRunToken();
+  options.onCliStart?.(runId);
   let facts: CliFacts | CliRefusal;
   try {
     facts = await runner(
       spec,
       args,
       options.timeoutMs ?? CLI_TURN_TIMEOUT_MS,
+      runId,
     );
   } catch {
     return { kind: "error", sentence: TURN_SENTENCES.cliFailed };
@@ -231,6 +268,11 @@ async function runCliTurn(
   const outcome = cliAnswer(spec, facts);
   if (outcome.kind === "answer") {
     return { kind: "answer", text: outcome.text };
+  }
+  // A stopped child is its own outcome, never folded into a timeout or an
+  // error: the panel says "stopped", because that is what happened.
+  if (outcome.kind === "cancelled") {
+    return { kind: "cancelled", sentence: outcome.sentence };
   }
   return outcome.kind === "timeout"
     ? { kind: "timeout", sentence: outcome.sentence }
@@ -296,13 +338,16 @@ export async function runRoutePacket(
   fetchBlock: (name: string) => Promise<string | null>,
   options: RouteOptions = {},
 ): Promise<PacketTurnAnswer> {
+  // THE ONE CEILING, asked here because only this level knows BOTH the route
+  // and whether the packet offered the model a block it may ask for in full.
+  const budget = turnSteps(route, packet.retrievable.length > 0);
   if (route.kind === "http") {
     return await askTurnPacket(
       transport,
       route.provider,
       packet,
       fetchBlock,
-      options,
+      { ...options, budget },
     );
   }
   if (route.kind === "local") {
@@ -313,12 +358,22 @@ export async function runRoutePacket(
         messages: [...packet.messages],
         read: null,
         missed: null,
+        reached: null,
       };
     }
-    return await askTurnPacket(transport, started.provider, packet, fetchBlock, options);
+    return await askTurnPacket(transport, started.provider, packet, fetchBlock, {
+      ...options,
+      budget,
+    });
   }
   const result = await runRoute(transport, route, packet.messages, options);
-  return { result, messages: [...packet.messages], read: null, missed: null };
+  return {
+    result,
+    messages: [...packet.messages],
+    read: null,
+    missed: null,
+    reached: null,
+  };
 }
 
 /** Turn ids are local to this window and only need to be unique per session. */
@@ -329,6 +384,12 @@ export interface TurnOptions {
   timeoutMs?: number;
   /** Called with the id before the request leaves (the port uses it to stop). */
   onStart?: (id: number) => void;
+  /**
+   * Called with the text accumulated SO FAR on every part. This is what lets
+   * a panel show the answer arriving instead of waiting for the block; it is
+   * a view of the same text the result settles with, never a second copy.
+   */
+  onPart?: (text: string) => void;
 }
 
 /**
@@ -389,9 +450,18 @@ export async function askTurnMessages(
     settle(answer);
   };
 
+  // What arrived, when there is something to keep. A stopped or broken turn
+  // carries the words the person already saw; a finished one is an answer.
+  const partialOf = (): { partial?: string } =>
+    text === "" ? {} : { partial: text };
+
   unsubscribe = transport.subscribe(id, (line) => {
     if (line.kind === "part" && line.part === "text") {
       text += line.text;
+      // Show it arriving: the panel renders this accumulation while the turn
+      // is still open. The same `text` settles the result, so the view and the
+      // outcome can never disagree about what came back.
+      options.onPart?.(text);
       return;
     }
     if (line.kind === "done") {
@@ -403,11 +473,21 @@ export async function askTurnMessages(
       return;
     }
     if (line.kind === "error") {
-      finish({ kind: "error", sentence: errorSentence(line.message) });
+      // A mid-stream error keeps what arrived; the sentence still says the
+      // turn did not finish, so the partial is never read as the answer.
+      finish({
+        kind: "error",
+        sentence: errorSentence(line.message),
+        ...partialOf(),
+      });
       return;
     }
     if (line.kind === "cancelled") {
-      finish({ kind: "cancelled", sentence: TURN_SENTENCES.cancelled });
+      finish({
+        kind: "cancelled",
+        sentence: TURN_SENTENCES.cancelled,
+        ...partialOf(),
+      });
     }
   });
 
@@ -416,7 +496,11 @@ export async function askTurnMessages(
     // source: the panel must not leave a provider call running behind a turn
     // it already gave up on. Settling first also means a `cancelled` that
     // races back cannot turn "it was too slow" into "it was stopped".
-    finish({ kind: "timeout", sentence: TURN_SENTENCES.timeout });
+    finish({
+      kind: "timeout",
+      sentence: TURN_SENTENCES.timeout,
+      ...partialOf(),
+    });
     void transport.send(stopLine(id)).catch(() => {
       // A pipe that is already gone is the same timeout, said once.
     });
@@ -464,56 +548,84 @@ export interface PacketTurnAnswer {
   read: string | null;
   /** A name asked for that this view did not carry (the first answer stands). */
   missed: string | null;
+  /** The sentence the ceiling said when it bit, or null when it never did. */
+  reached: string | null;
+}
+
+/** A packet turn's options: the ordinary turn's, plus the ceiling it asks. */
+export interface PacketTurnOptions extends TurnOptions {
+  /**
+   * The ceiling, from turnSteps. runRoutePacket computes it from the route and
+   * the packet; a direct caller may pass one, and when it does not, the
+   * default is the SAME pure function's answer for an HTTP ask — never a
+   * second number written here.
+   */
+  budget?: StepBudget;
 }
 
 /**
- * Ask ONE packet turn, then at most ONE follow-up for the single block the
- * model named. The packet's messages are sent verbatim; a READ of a block the
- * packet carried is fetched once (the injected reader) and appended as ONE
- * more user message; anything else settles the first answer as the answer.
- * There is no second READ, no second fetch and no retry anywhere here.
+ * Ask ONE packet turn, then the follow-ups its ceiling allows for the single
+ * block the model named. The packet's messages are sent verbatim; a READ of a
+ * block the packet carried is fetched once (the injected reader) and appended
+ * as ONE more user message; anything else settles the first answer as the
+ * answer. There is no retry anywhere here.
+ *
+ * THE CEILING IS ASKED HERE, not assumed: an HTTP ask with one readable block
+ * gets two exchanges, a plain ask one, and a CLI turn never reaches this
+ * function (its route dispatches once). When the model asks to read past the
+ * ceiling the loop does NOT fetch: the answer stands, and the answer's
+ * reached field says STEP_LIMIT_SENTENCE in words. No counter is kept, shown
+ * or returned beyond the local exchanges that asks the budget.
  */
 export async function askTurnPacket(
   transport: TurnTransport,
   provider: TurnProvider,
   packet: AskPacket,
   fetchBlock: (name: string) => Promise<string | null>,
-  options: TurnOptions = {},
+  options: PacketTurnOptions = {},
 ): Promise<PacketTurnAnswer> {
-  const first = await askTurnMessages(
-    transport,
-    provider,
-    packet.messages,
-    options,
-  );
-  const messages: TurnMessage[] = [...packet.messages];
-  if (first.kind !== "answer") {
-    return { result: first, messages, read: null, missed: null };
+  const budget =
+    options.budget ??
+    turnSteps({ kind: "http" }, packet.retrievable.length > 0);
+  let messages: TurnMessage[] = [...packet.messages];
+  let result = await askTurnMessages(transport, provider, messages, options);
+  let read: string | null = null;
+  let missed: string | null = null;
+  let reached: string | null = null;
+  let exchanges = 1;
+  for (;;) {
+    if (result.kind !== "answer") {
+      return { result, messages, read, missed, reached };
+    }
+    const name = readNameIn(result.text);
+    if (name === null) {
+      return { result, messages, read, missed, reached };
+    }
+    if (!packet.retrievable.includes(name)) {
+      missed = name;
+      return { result, messages, read, missed, reached };
+    }
+    // The ceiling bites: the model asked to read again and this turn has
+    // spent its budget. Say so; never fetch, never stop silently.
+    if (exchanges >= budget.steps) {
+      reached = STEP_LIMIT_SENTENCE;
+      return { result, messages, read, missed, reached };
+    }
+    let text: string | null;
+    try {
+      text = await fetchBlock(name);
+    } catch {
+      text = null;
+    }
+    if (text === null || text === "") {
+      missed = name;
+      return { result, messages, read, missed, reached };
+    }
+    messages = followUpMessages(messages, name, text);
+    exchanges += 1;
+    result = await askTurnMessages(transport, provider, messages, options);
+    read = name;
   }
-  const name = readNameIn(first.text);
-  if (name === null) {
-    return { result: first, messages, read: null, missed: null };
-  }
-  if (!packet.retrievable.includes(name)) {
-    return { result: first, messages, read: null, missed: name };
-  }
-  let text: string | null;
-  try {
-    text = await fetchBlock(name);
-  } catch {
-    text = null;
-  }
-  if (text === null || text === "") {
-    return { result: first, messages, read: null, missed: name };
-  }
-  const followUp = followUpMessages(packet.messages, name, text);
-  const second = await askTurnMessages(
-    transport,
-    provider,
-    followUp,
-    options,
-  );
-  return { result: second, messages: followUp, read: name, missed: null };
 }
 
 /** Ask the sidecar to stop one turn; its `cancelled` line settles `askTurn`. */
@@ -538,12 +650,21 @@ export type TurnStart =
  */
 export interface TurnPort {
   /** One turn over its route: HTTP through the sidecar, CLI through the host. */
-  ask: (route: TurnRoute, question: string) => Promise<TurnResult>;
-  /** The packet turn: its ONE message, then at most one READ follow-up. */
+  ask: (
+    route: TurnRoute,
+    question: string,
+    options?: TurnOptions,
+  ) => Promise<TurnResult>;
+  /**
+   * The packet turn: its ONE message, then the READ follow-up the ceiling
+   * allows. The options carry the onPart view (so a panel streams) and never a
+   * ceiling of their own: the route and the packet decide that, in one place.
+   */
   sendPacket: (
     route: TurnRoute,
     packet: AskPacket,
     fetchBlock: (name: string) => Promise<string | null>,
+    options?: TurnOptions,
   ) => Promise<PacketTurnAnswer>;
   /**
    * Whether anything can leave, checked BEFORE a request is written: an HTTP

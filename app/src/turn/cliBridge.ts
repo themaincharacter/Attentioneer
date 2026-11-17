@@ -38,6 +38,8 @@ interface HostCliFacts {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  /** Killed on purpose by a stop; absent on an older host. */
+  cancelled?: boolean;
 }
 
 /** What the host reports about a resolution; mirrors `cli.rs`. */
@@ -54,6 +56,7 @@ function asFacts(facts: HostCliFacts): CliFacts {
     stdout: facts.stdout,
     stderr: facts.stderr,
     timedOut: facts.timedOut === true,
+    cancelled: facts.cancelled === true,
   };
 }
 
@@ -66,6 +69,7 @@ export async function cliRunArgs(
   wellKnown: readonly string[],
   args: readonly string[],
   timeoutMs: number,
+  runId?: string,
 ): Promise<CliFacts | CliRefusal> {
   try {
     const facts = await invoke<HostCliFacts>("cli_run", {
@@ -73,10 +77,25 @@ export async function cliRunArgs(
       wellKnown: [...wellKnown],
       args: [...args],
       timeoutMs,
+      runId,
     });
     return asFacts(facts);
   } catch (error) {
     return { kind: "refused", sentence: errorSentence(String(error)) };
+  }
+}
+
+/**
+ * Kill the one CLI child running under this token (the turn's stop). The host
+ * sets the child's stop flag and kills it; false means there was nothing left
+ * to stop — the child finished between the click and the call. Either way the
+ * turn's own line settles the panel, so a false is not an error.
+ */
+export async function cliCancelArgs(runId: string): Promise<boolean> {
+  try {
+    return await invoke<boolean>("cli_cancel", { runId });
+  } catch {
+    return false;
   }
 }
 

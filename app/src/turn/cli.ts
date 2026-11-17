@@ -40,6 +40,9 @@ export interface CliWhere {
 /** A refusal is a sentence, never an exception. */
 export type CliRefusal = { kind: "refused"; sentence: string };
 
+/** The ONE sentence a stopped turn says, wherever it ran. */
+export const STOPPED_SENTENCE = "the turn was stopped";
+
 /** What running one CLI argv produced, as the host reports it. */
 export interface CliFacts {
   /** The resolved program the host actually ran. */
@@ -52,6 +55,11 @@ export interface CliFacts {
   stderr: string;
   /** The child was killed because the stated budget ran out. */
   timedOut: boolean;
+  /**
+   * The child was killed because the person pressed stop. A cancelled run is
+   * NOT a timeout: it was ended on purpose, and the turn says it was stopped.
+   */
+  cancelled?: boolean;
 }
 
 /** How long one turn's CLI child may run before it is killed. */
@@ -350,7 +358,8 @@ export async function probeCli(
 export type CliOutcome =
   | { kind: "answer"; text: string }
   | { kind: "error"; sentence: string }
-  | { kind: "timeout"; sentence: string };
+  | { kind: "timeout"; sentence: string }
+  | { kind: "cancelled"; sentence: string };
 
 /**
  * The answer, or ONE sentence. A non-zero exit is the sentence plus the FIRST
@@ -365,6 +374,11 @@ export function cliAnswer(
     return { kind: "error", sentence: (facts as CliRefusal).sentence };
   }
   const run = facts as CliFacts;
+  // A stop is its own outcome, checked before the timeout: the child was
+  // KILLED on purpose, so "did not answer in time" would be a false sentence.
+  if (run.cancelled === true) {
+    return { kind: "cancelled", sentence: STOPPED_SENTENCE };
+  }
   if (run.timedOut) {
     return {
       kind: "timeout",

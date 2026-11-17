@@ -39,6 +39,13 @@ import { ProvidersPanel } from "./ProvidersPanel";
  * below. No counters, no token meters and no cost — one answer is the whole
  * of it.
  *
+ * THE ANSWER ARRIVES (story 7). The turn's parts render as they come, so the
+ * person reads the words instead of waiting for a block. A stop keeps what
+ * already arrived and MARKS it stopped (and a broken stream marks it broken):
+ * a partial is never dressed as a complete answer. When the turn's one
+ * ceiling bites — the reading limit — the panel says so in a sentence. There
+ * is still no meter anywhere: the limit is a sentence, not a progress bar.
+ *
  * WHY THE PROVIDER IS A SELECTION AND NOT THREE FIELDS: the rows own the base
  * URL and the models (turn/providers.ts); the turn carries providerId:modelId
  * and the app re-derives the rest. The person edits rows in ONE panel (the
@@ -99,9 +106,19 @@ export function AskSidecarPanel({
   const [running, setRunning] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
+  /**
+   * How the answer above should be read: arriving, whole, stopped, or broken
+   * off. A stopped or broken partial is NEVER presented as complete — that is
+   * the whole point of keeping the state beside the text.
+   */
+  const [answerState, setAnswerState] = useState<
+    "streaming" | "complete" | "stopped" | "incomplete"
+  >("complete");
   const [sentence, setSentence] = useState<string | null>(null);
   const [read, setRead] = useState<string | null>(null);
   const [missed, setMissed] = useState<string | null>(null);
+  /** The ceiling's sentence, when this turn reached it (never a meter). */
+  const [reached, setReached] = useState<string | null>(null);
   const [sent, setSent] = useState<readonly TurnMessage[] | null>(null);
 
   /** Re-read the rows, the store and whether a key is kept (never its value). */
@@ -205,8 +222,10 @@ export function AskSidecarPanel({
 
     setSentence(null);
     setAnswer(null);
+    setAnswerState("streaming");
     setRead(null);
     setMissed(null);
+    setReached(null);
     setSent(null);
     setRunning(true);
     setStopping(false);
@@ -220,17 +239,37 @@ export function AskSidecarPanel({
         workspacePath === ""
           ? Promise.resolve(null)
           : fetchAskBlock(workspacePath, blockName, context),
+      {
+        // Show the answer arriving: the same accumulation the result settles
+        // with, so the view can never say more or less than what came back.
+        onPart: (text) => {
+          setAnswer(text);
+          setAnswerState("streaming");
+        },
+      },
     );
     setRunning(false);
     setStopping(false);
     setRead(answered.read);
     setMissed(answered.missed);
+    setReached(answered.reached);
     // Every byte that left, including the ONE follow-up when it happened: the
     // readback must be able to show what went out, not only what was composed.
     setSent(answered.messages);
     if (answered.result.kind === "answer") {
       setAnswer(answered.result.text);
+      setAnswerState("complete");
     } else {
+      // A stop or a break keeps the words already read, MARKED for what they
+      // are: a partial answer, never a complete one.
+      setAnswer(answered.result.partial ?? null);
+      setAnswerState(
+        answered.result.kind === "cancelled"
+          ? "stopped"
+          : answered.result.partial !== undefined
+            ? "incomplete"
+            : "complete",
+      );
       setSentence(answered.result.sentence);
     }
   }
@@ -384,7 +423,29 @@ export function AskSidecarPanel({
         )}
       </div>
 
-      {answer !== null && <div className="ground-ask-answer">{answer}</div>}
+      {answer !== null && (
+        <div
+          className="ground-ask-answer"
+          data-state={answerState}
+          aria-live="polite"
+        >
+          {answer}
+          {answerState === "stopped" && (
+            <span className="ground-ask-answer-mark"> — stopped mid-answer</span>
+          )}
+          {answerState === "incomplete" && (
+            <span className="ground-ask-answer-mark">
+              {" "}
+              — the answer broke off
+            </span>
+          )}
+        </div>
+      )}
+      {reached !== null && (
+        <div className="ground-ask-problem" role="status">
+          {reached}
+        </div>
+      )}
       {missed !== null && (
         <div className="ground-ask-problem" role="status">
           {ASK_READ_MISSED}

@@ -6219,6 +6219,18 @@ body {
   border-top: 1px solid rgba(141, 136, 124, 0.16);
 }
 
+/* A stopped or broken partial is quieter than a whole answer, and says so
+   inside the text — it is never presented as complete. */
+.ground-ask-answer[data-state="stopped"],
+.ground-ask-answer[data-state="incomplete"] {
+  color: #6b665c;
+}
+
+.ground-ask-answer-mark {
+  color: #8d8779;
+  font-style: italic;
+}
+
 /* One sentence, in place, when the turn did not produce an answer. */
 .ground-ask-problem {
   font-size: 11.5px;

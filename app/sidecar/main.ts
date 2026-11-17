@@ -13,9 +13,20 @@
  * exactly one `fetch`, and is not stored by this process. Nothing is written
  * to disk here at all — the sidecar never opens a workspace file and never
  * reads a config file, so it has no grant on the map folder (ADR-0034
- * decision 4). The OS-keychain story is still to come (story 4, and its ADR is
- * still to be written); until then the window holds the key in its own memory
- * for the session and passes it per turn.
+ * decision 4). Until story 4's keychain owns the key, the window holds it for
+ * the session and passes it per turn.
+ *
+ * STREAMING (story 7). The POST asks for `stream: true` and this process
+ * forwards each provider delta as its own `part` line, in order, then `done`.
+ * Three things make that safe rather than hopeful:
+ *   - A provider that ignores `stream: true` and answers with one JSON body
+ *     still works: when the response is not an event stream, the body is read
+ *     once and its one answer becomes one part.
+ *   - A malformed event is SKIPPED, never fatal: a provider's bad line must
+ *     not take the answer it already sent with it.
+ *   - A stop aborts the fetch (AbortController), so the reader lets go rather
+ *     than finishing a stream nobody is reading. Whatever parts already left
+ *     stay left; the window keeps them and marks the turn stopped.
  *
  * The wire's types and its strict readers/builders live in
  * `app/src/turn/protocol.ts` — the SAME file the window imports, so the two
@@ -63,8 +74,8 @@ function endpointOf(baseUrl: string): string {
 }
 
 /**
- * The ONE part story 1 reads from a non-streaming chat completion: the first
- * choice's message content. Anything else is "no text", not a guess.
+ * The ONE part a non-streaming chat completion carries: the first choice's
+ * message content. Anything else is "no text", not a guess.
  */
 function answerText(payload: unknown): string | null {
   if (typeof payload !== "object" || payload === null) return null;
@@ -76,6 +87,180 @@ function answerText(payload: unknown): string | null {
   if (typeof message !== "object" || message === null) return null;
   const content = (message as { content?: unknown }).content;
   return typeof content === "string" && content.trim() !== "" ? content : null;
+}
+
+/**
+ * The delta in one streamed chunk: `choices[0].delta.content`. A provider
+ * that sent its final message inside the event stream instead (`message`)
+ * still yields a part; the delta wins when both are present, because it is the
+ * one that arrives once.
+ */
+function deltaText(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const choices = (payload as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || choices.length === 0) return null;
+  const first: unknown = choices[0];
+  if (typeof first !== "object" || first === null) return null;
+  const delta = (first as { delta?: unknown }).delta;
+  if (typeof delta === "object" && delta !== null) {
+    const content = (delta as { content?: unknown }).content;
+    if (typeof content === "string") return content;
+  }
+  const message = (first as { message?: unknown }).message;
+  if (typeof message === "object" && message !== null) {
+    const content = (message as { content?: unknown }).content;
+    if (typeof content === "string" && content !== "") return content;
+  }
+  return null;
+}
+
+/** The provider's own error sentence inside a chunk, or null. */
+function providerError(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const error = (payload as { error?: unknown }).error;
+  if (typeof error === "string" && error.trim() !== "") return error;
+  if (typeof error === "object" && error !== null) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim() !== "") return message;
+  }
+  return null;
+}
+
+/** Does this body look like server-sent events rather than one JSON body? */
+function looksLikeSse(text: string): boolean {
+  return /(^|\n)\s*data:/.test(text);
+}
+
+/**
+ * Incremental SSE reader: feed it lines, and it emits one part per delta.
+ *
+ * Only `data:` lines matter; `event:`, `id:`, `retry:` and comments are not
+ * this reader's business. An event is dispatched on a blank line (or by
+ * `flush` at the end of the body), and `data: [DONE]` ends the stream. A
+ * payload that is not JSON is SKIPPED: one bad event must not take the answer
+ * with it. An `error` in a payload is the provider's own sentence, kept for
+ * the one error line.
+ */
+class SseSink {
+  private data: string[] = [];
+  private ended = false;
+  private failure: string | null = null;
+
+  constructor(private readonly emit: (text: string) => void) {}
+
+  /** The stream's own end sentinel was seen. */
+  get done(): boolean {
+    return this.ended;
+  }
+
+  /** The provider's error sentence, or null. */
+  get error(): string | null {
+    return this.failure;
+  }
+
+  /** Nothing more will be read: the sentinel or an error settled it. */
+  get finished(): boolean {
+    return this.ended || this.failure !== null;
+  }
+
+  line(raw: string): void {
+    const line = raw.replace(/\r$/, "");
+    if (line === "") {
+      this.dispatch();
+      return;
+    }
+    // A comment is the provider keeping the pipe warm; it says nothing.
+    if (line.startsWith(":")) return;
+    if (!line.startsWith("data:")) return;
+    // SSE drops ONE leading space after the colon; anything else is payload.
+    this.data.push(line.slice(5).replace(/^ /, ""));
+  }
+
+  flush(): void {
+    this.dispatch();
+  }
+
+  private dispatch(): void {
+    if (this.finished) {
+      this.data = [];
+      return;
+    }
+    if (this.data.length === 0) return;
+    const payload = this.data.join("\n");
+    this.data = [];
+    if (payload.trim() === "[DONE]") {
+      this.ended = true;
+      return;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(payload);
+    } catch {
+      // A malformed event is skipped; the answer already sent stands.
+      return;
+    }
+    const failure = providerError(value);
+    if (failure !== null) {
+      this.failure = failure;
+      return;
+    }
+    const text = deltaText(value);
+    if (text !== null && text !== "") this.emit(text);
+  }
+}
+
+/** What one streamed (or buffered) body settled as. */
+type BodyOutcome =
+  | { kind: "done" }
+  | { kind: "error"; message: string }
+  | { kind: "quiet" };
+
+/**
+ * Read one event stream to its end, emitting a part per delta. A stop makes
+ * the read reject, and that rejection is QUIET: the stop handler already
+ * answered `cancelled`, and a second line would be a second outcome. Anything
+ * else that breaks the read is one error, with the parts already sent kept.
+ */
+async function streamBody(
+  id: number,
+  response: Response,
+  emit: (text: string) => void,
+): Promise<BodyOutcome> {
+  const body = response.body;
+  if (body === null) {
+    return { kind: "error", message: "the provider answered with no body" };
+  }
+  const sink = new SseSink(emit);
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (!sink.finished) {
+      const read = await reader.read();
+      if (read.done) break;
+      buffer += decoder.decode(read.value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        sink.line(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+        if (sink.finished) break;
+      }
+    }
+    if (!sink.finished) {
+      // A last line or event without its blank line is still one.
+      buffer += decoder.decode();
+      if (buffer !== "") sink.line(buffer);
+      sink.flush();
+    }
+  } catch {
+    if (stopped.has(id)) return { kind: "quiet" };
+    return { kind: "error", message: "the provider's answer broke off" };
+  }
+  if (sink.finished) void reader.cancel().catch(() => {});
+  if (stopped.has(id)) return { kind: "quiet" };
+  if (sink.error !== null) return { kind: "error", message: sink.error };
+  return { kind: "done" };
 }
 
 /**
@@ -101,11 +286,12 @@ async function runTurn(request: TurnRequest): Promise<void> {
           "content-type": "application/json",
           authorization: `Bearer ${request.provider.apiKey}`,
         },
-        // stream:false — story 1 buys one answer, not deltas (story 7 streams).
+        // stream:true — the answer arrives as deltas (story 7). A provider
+        // that ignores this answers one JSON body, handled below.
         body: JSON.stringify({
           model: request.provider.model,
           messages: request.messages,
-          stream: false,
+          stream: true,
         }),
         signal: controller.signal,
       });
@@ -125,15 +311,64 @@ async function runTurn(request: TurnRequest): Promise<void> {
       return;
     }
 
-    let payload: unknown;
+    const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+    let emitted = 0;
+    const emit = (text: string): void => {
+      emitted += 1;
+      say(partLine(id, text));
+    };
+
+    if (contentType.includes("text/event-stream")) {
+      const outcome = await streamBody(id, response, emit);
+      if (outcome.kind === "quiet") return;
+      if (outcome.kind === "error") {
+        fail(outcome.message);
+        return;
+      }
+      if (emitted === 0) {
+        fail("the provider answered with no text");
+        return;
+      }
+      say(doneLine(id));
+      return;
+    }
+
+    // NOT AN EVENT STREAM: a provider that ignored `stream: true`, or one
+    // that streams without saying so. One body, read once.
+    let body: string;
     try {
-      payload = await response.json();
+      body = await response.text();
     } catch {
-      if (!stopped.has(id)) fail("the provider answered with something that is not JSON");
+      if (stopped.has(id)) return;
+      fail("the provider's answer broke off");
       return;
     }
     if (stopped.has(id)) return;
 
+    if (looksLikeSse(body)) {
+      const sink = new SseSink(emit);
+      for (const line of body.split("\n")) sink.line(line);
+      sink.flush();
+      if (stopped.has(id)) return;
+      if (sink.error !== null) {
+        fail(sink.error);
+        return;
+      }
+      if (emitted === 0) {
+        fail("the provider answered with no text");
+        return;
+      }
+      say(doneLine(id));
+      return;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      fail("the provider answered with something that is not JSON");
+      return;
+    }
     const text = answerText(payload);
     if (text === null) {
       fail("the provider answered with no text");

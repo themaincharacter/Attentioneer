@@ -254,13 +254,15 @@ describe("one turn, one answer", () => {
     });
     expect(result).toEqual({ kind: "answer", text: "4" });
 
-    // The provider saw ONE non-streaming POST to the base URL's completion
-    // path, with the bearer key, and exactly the two messages (no map).
+    // The provider saw ONE POST to the base URL's completion path, asking for
+    // a stream (story 7), with the bearer key, and exactly the two messages
+    // (no map). The stub ignores streaming and answers one JSON body, which is
+    // the fallback this test has always exercised.
     expect(requests).toBe(before + 1);
     expect(lastRequest?.url).toBe(`${BASE_URL}/chat/completions`);
     expect(lastRequest?.authorization).toBe(`Bearer ${KEY}`);
     expect(lastRequest?.contentType).toContain("application/json");
-    expect(lastRequest?.body.stream).toBe(false);
+    expect(lastRequest?.body.stream).toBe(true);
     expect(lastRequest?.body.model).toBe("stub-model");
     expect(lastRequest?.body.messages).toHaveLength(2);
     expect(lastRequest?.body.messages?.[1]).toEqual({

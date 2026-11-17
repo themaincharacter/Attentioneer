@@ -206,6 +206,7 @@ pub fn run() {
             cli::cli_where,
             cli::cli_probe,
             cli::cli_run,
+            cli::cli_cancel,
             local_runtime::local_start,
             local_runtime::local_status,
             local_runtime::local_stop

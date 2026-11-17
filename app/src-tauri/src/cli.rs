@@ -23,9 +23,12 @@
 //! PROVISIONAL: the probe budget, the run budget, the output cap and the
 //! well-known lists.
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -39,6 +42,55 @@ pub const DEFAULT_RUN_TIMEOUT: Duration = Duration::from_secs(120);
 /// The most stdout or stderr this bridge keeps, each; the rest is drained and
 /// dropped. A CLI that prints a book should not become the window's memory.
 pub const OUTPUT_CAP: usize = 256 * 1024;
+
+/// The children a stop can still reach, by the token the window minted.
+///
+/// WHY A TOKEN AND NOT A PID: the window never sees or names a process. It
+/// mints an opaque run id for the turn before the child exists and hands the
+/// same id to `cli_run` and later to `cli_cancel`; only this module maps that
+/// id to the running child, so a stop can kill exactly one child and no other.
+fn running_children() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    static RUNNING: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+    RUNNING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Register a child's stop flag BEFORE it spawns, so a click during the spawn
+/// still lands on the child that is about to exist.
+fn register_child(token: &str) -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    if let Ok(mut map) = running_children().lock() {
+        map.insert(token.to_string(), flag.clone());
+    }
+    flag
+}
+
+/// The run is over (answered, failed or killed): its token stops naming it.
+fn forget_child(token: &str) {
+    if let Ok(mut map) = running_children().lock() {
+        map.remove(token);
+    }
+}
+
+/// Set one child's stop flag; true when a child was there to stop. False is
+/// not an error — the child may have finished between the click and the call.
+pub fn cancel_child(token: &str) -> bool {
+    if let Ok(map) = running_children().lock() {
+        if let Some(flag) = map.get(token) {
+            flag.store(true, Ordering::SeqCst);
+            return true;
+        }
+    }
+    false
+}
+
+/// Is this token's child still running? (The test's window into the registry.)
+#[cfg(test)]
+fn child_registered(token: &str) -> bool {
+    running_children()
+        .lock()
+        .map(|map| map.contains_key(token))
+        .unwrap_or(false)
+}
 
 /// Where a command was found, and which step found it.
 #[derive(Clone, Debug, Serialize)]
@@ -60,6 +112,8 @@ pub struct CliFacts {
     pub stdout: String,
     pub stderr: String,
     pub timed_out: bool,
+    /// The child was killed because a stop named it — not a timeout.
+    pub cancelled: bool,
 }
 
 /// Does the text name a path rather than a bare command?
@@ -268,7 +322,20 @@ fn read_capped<R: Read>(stream: Option<R>) -> (String, bool) {
 }
 
 /// Spawn, wait at most `timeout`, and kill the child when the budget runs out.
+/// (The tests drive this door; the turn itself passes a stop flag.)
+#[cfg(test)]
 fn run_resolved(where_: &CliWhere, args: &[String], timeout: Duration) -> Result<CliFacts, String> {
+    run_resolved_cancellable(where_, args, timeout, None)
+}
+
+/// The same run, with a stop flag: when it is set the child is KILLED at once
+/// and the facts say `cancelled`, never `timed_out`.
+fn run_resolved_cancellable(
+    where_: &CliWhere,
+    args: &[String],
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+) -> Result<CliFacts, String> {
     let path = PathBuf::from(&where_.path);
     let (program, prefix) = shim_target(&path, cfg!(windows));
 
@@ -305,10 +372,19 @@ fn run_resolved(where_: &CliWhere, args: &[String], timeout: Duration) -> Result
 
     let deadline = Instant::now() + timeout;
     let mut timed_out = false;
+    let mut cancelled = false;
     let code = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status.code(),
             Ok(None) => {
+                // A stop outranks the budget: somebody wants this child gone
+                // now, so it is killed and the facts say why.
+                if cancel.map(|flag| flag.load(Ordering::SeqCst)).unwrap_or(false) {
+                    cancelled = true;
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
                 if Instant::now() >= deadline {
                     // The budget ran out: the child is KILLED, not left running
                     // behind a turn that already gave up on it.
@@ -355,6 +431,7 @@ fn run_resolved(where_: &CliWhere, args: &[String], timeout: Duration) -> Result
         stdout,
         stderr,
         timed_out,
+        cancelled,
     })
 }
 
@@ -365,8 +442,19 @@ pub fn run_command(
     args: &[String],
     timeout: Duration,
 ) -> Result<CliFacts, String> {
+    run_command_cancellable(command, extra_well_known, args, timeout, None)
+}
+
+/// Resolve, then run, with a stop flag reaching the child.
+fn run_command_cancellable(
+    command: &str,
+    extra_well_known: &[String],
+    args: &[String],
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+) -> Result<CliFacts, String> {
     let found = resolve(command, extra_well_known)?;
-    run_resolved(&found, args, timeout)
+    run_resolved_cancellable(&found, args, timeout, cancel)
 }
 
 /// Where a command resolves, without running anything.
@@ -391,17 +479,39 @@ pub fn cli_probe(
 }
 
 /// One turn through a CLI: one argv, the stated budget, killed at the end.
+///
+/// `run_id` is the turn's stop token. The child is registered under it before
+/// it spawns and forgotten however the run ends, so a later stop can never hit
+/// a finished run's token by accident.
 #[tauri::command]
 pub fn cli_run(
     command: String,
     well_known: Option<Vec<String>>,
     args: Vec<String>,
     timeout_ms: Option<u64>,
+    run_id: Option<String>,
 ) -> Result<CliFacts, String> {
     let timeout = timeout_ms
         .map(Duration::from_millis)
         .unwrap_or(DEFAULT_RUN_TIMEOUT);
-    run_command(&command, &well_known.unwrap_or_default(), &args, timeout)
+    let cancel = run_id.as_deref().map(register_child);
+    let outcome = run_command_cancellable(
+        &command,
+        &well_known.unwrap_or_default(),
+        &args,
+        timeout,
+        cancel.as_deref(),
+    );
+    if let Some(token) = run_id.as_deref() {
+        forget_child(token);
+    }
+    outcome
+}
+
+/// Kill the one CLI child running under this token (story 7's stop).
+#[tauri::command]
+pub fn cli_cancel(run_id: String) -> Result<bool, String> {
+    Ok(cancel_child(&run_id))
 }
 
 #[cfg(test)]
@@ -589,5 +699,41 @@ printf 'count=[%s]
         assert!(facts.timed_out);
         assert_eq!(facts.code, None);
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    /// A stop kills a REAL child: a temp script that sleeps 30 seconds is gone
+    /// promptly, the facts say `cancelled` (not a timeout), and its token is
+    /// forgotten. This is the story's "prove stop kills a CLI child" proof.
+    #[cfg(unix)]
+    #[test]
+    fn a_stop_kills_the_child() {
+        let dir = temp_dir("stop");
+        let script = write_script(&dir, "thinking", "#!/bin/sh\nsleep 30\n");
+        let token = format!("stop-{}", std::process::id());
+        let path = script.display().to_string();
+        let started = Instant::now();
+        let worker = {
+            let token = token.clone();
+            std::thread::spawn(move || {
+                cli_run(path, None, Vec::new(), Some(30_000), Some(token))
+            })
+        };
+        // The child registers before it spawns: wait for that so the stop names
+        // a child that exists rather than racing the spawn.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !child_registered(&token) {
+            assert!(Instant::now() < deadline, "the child never registered");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(cancel_child(&token), "the stop reached the child");
+        let facts = worker
+            .join()
+            .expect("the run returns")
+            .expect("it runs");
+        assert!(facts.cancelled, "it was stopped, not timed out");
+        assert!(!facts.timed_out);
+        assert_eq!(facts.code, None);
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(!child_registered(&token), "the token is forgotten");
     }
 }
