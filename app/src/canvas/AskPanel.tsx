@@ -5,6 +5,7 @@ import type {
   AskTransport,
   InFlightAsk,
 } from "../contacts/ask";
+import { declareAsk } from "../contacts/ask";
 import {
   ASK_ATTACH_LABEL,
   ASK_ATTACH_PLACEHOLDER,
@@ -22,8 +23,11 @@ import {
   ASK_QUESTION_LABEL,
   ASK_QUESTION_PLACEHOLDER,
   ASK_RIDES,
+  ASK_SEND,
   ASK_SHOW_LOG,
+  ASK_STOP,
   ASK_TITLE,
+  declarationWords,
   responseWords,
   transportWord,
 } from "./contactRules";
@@ -36,7 +40,7 @@ import {
  * would not take the page).
  */
 export interface AskSessionView {
-  /** The question that left (the packet is what was copied). */
+  /** The question that left (the packet is what the transport carried). */
   ask: InFlightAsk;
   /** The wrapped response once it came back, else null. */
   response: AskResponse | null;
@@ -59,12 +63,22 @@ interface AskPanelProps {
   busy: boolean;
   /** A quiet sentence for a refusal (null otherwise). */
   note: string | null;
-  /** Send the question out by copy or by the OS handoff. */
+  /**
+   * The stated fallback's one sentence (no provider, or a sidecar that cannot
+   * start), or null while the app can carry the packet. When it is set the
+   * clipboard path is the visible way out; a fallback is not an Ask failure.
+   */
+  fallback: string | null;
+  /** The app is carrying the packet right now (the stop verb stands beside it). */
+  running: boolean;
+  /** Send the question out: the app, or the clipboard/handoff fallback. */
   onSend: (
     question: string,
     included: Pointer[],
     transport: AskTransport,
   ) => void;
+  /** Stop the app-sent turn (the sidecar's cancel). */
+  onStop: () => void;
   /** Log the pasted response (size + decode at intake). */
   onIntake: (raw: string, attachmentPath: string) => void;
   /** Close the Ask unanswered: nothing came back. */
@@ -88,18 +102,26 @@ function rowKey(pointer: Pointer): string {
  *
  * COMPOSING: the person's question prose, the reach it rides (the row the panel
  * opened from, or none), and the INCLUSION SET — which of the word's reaches
- * ride along. The packet the app copies carries the prose and the included
- * CITATIONS only: the app never reads a target to compose a question, so the
- * inclusion is a set of handles, never their content. Two ways out: copy (the
- * clipboard) and — when the ride is a url — the OS handoff. The words say
- * "copied" and "handed", never "opened".
+ * ride along. The packet carries the prose and the included CITATIONS only:
+ * the app never reads a target to compose a question, so the inclusion is a set
+ * of handles, never their content. The words say "sent", "copied" and
+ * "handed", never "opened".
+ *
+ * COMPOSING, BEFORE ANYTHING LEAVES: the DECLARATION line names what will go —
+ * the question's size, each included citation and its size, the packet's total.
+ * It is derived from the same bytes the send carries, and the send is the
+ * person's press; there is no send verb before it. The app carries the packet
+ * (Epic 15 story 2); when no provider is configured — or the sidecar cannot
+ * start — the panel says so in ONE sentence and the clipboard path becomes
+ * visible. Falling back is stated, and a fallback is not a failure of the Ask.
  *
  * IN FLIGHT: the packet stays visible (what left), and the paste field is
- * where the response comes back — the ghost intake's sibling. "log it" wraps
- * the pasted text at intake (exact byte size + decode status) and appends the
- * ONE PRISM; the panel then holds the response as content and its "the log"
+ * where a clipboard response comes back — the ghost intake's sibling. "log it"
+ * wraps the pasted text at intake (exact byte size + decode status) and appends
+ * the ONE PRISM; the panel then holds the response as content and its "the log"
  * opens the Move's own PRISM window (record != visible: on demand, never a
- * gallery). "nothing came back" closes the question with the no-response
+ * gallery). An app-sent answer arrives in place, with the stop verb while the
+ * turn runs. "nothing came back" closes the question with the no-response
  * outcome. An optional attached file rides the response, and the
  * workspace-boundary rule applies to it at intake.
  *
@@ -123,7 +145,10 @@ export function AskPanel({
   kept,
   busy,
   note,
+  fallback,
+  running,
   onSend,
+  onStop,
   onIntake,
   onAbandon,
   onKeep,
@@ -239,31 +264,78 @@ export function AskPanel({
             )}
           </div>
 
+          {/* THE DECLARATION, before anything leaves: the inclusion set and its
+              sizes, derived from the same packet the send carries. */}
+          <div className="ask-declaration">
+            {declarationWords(declareAsk(question, included()))}
+          </div>
+
+          {/* The stated fallback's one sentence (no provider, or no sidecar).
+              A fallback is not a failure of the Ask: the clipboard is simply
+              the way out, and the panel says so before the person uses it. */}
+          {fallback !== null && (
+            <div className="ask-fallback" role="status">
+              {fallback}
+            </div>
+          )}
+
           <div className="ask-transports">
-            <button
-              type="button"
-              className="ask-copy"
-              disabled={busy}
-              title={ASK_COPY}
-              onClick={(e) => {
-                e.stopPropagation();
-                send("copy");
-              }}
-            >
-              copy
-            </button>
-            <button
-              type="button"
-              className="ask-handoff"
-              disabled={busy || !handoffable}
-              title={ASK_HANDOFF}
-              onClick={(e) => {
-                e.stopPropagation();
-                send("handoff");
-              }}
-            >
-              hand off
-            </button>
+            {fallback === null && (
+              <button
+                type="button"
+                className="ask-send"
+                disabled={busy || running}
+                title={ASK_SEND}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  send("app");
+                }}
+              >
+                send
+              </button>
+            )}
+            {running && (
+              <button
+                type="button"
+                className="ask-stop"
+                disabled={busy}
+                title={ASK_STOP}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStop();
+                }}
+              >
+                {ASK_STOP}
+              </button>
+            )}
+            {fallback !== null && (
+              <>
+                <button
+                  type="button"
+                  className="ask-copy"
+                  disabled={busy}
+                  title={ASK_COPY}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    send("copy");
+                  }}
+                >
+                  copy
+                </button>
+                <button
+                  type="button"
+                  className="ask-handoff"
+                  disabled={busy || !handoffable}
+                  title={ASK_HANDOFF}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    send("handoff");
+                  }}
+                >
+                  hand off
+                </button>
+              </>
+            )}
           </div>
         </>
       )}

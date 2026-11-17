@@ -20,12 +20,17 @@ import {
  * out, one response back, and the keep kept separate.
  *
  * THE MOVE, IN THREE MOMENTS:
- *   1. SEND (egress) — the person's authored question leaves by COPY (to the
- *      clipboard) or by OS HANDOFF. The app composes the PACKET — the prose
- *      plus the CITATIONS of the reaches the person chose to include, never
- *      their content: the app never pre-reads a target to compose a question
- *      (ADR-0029 rule 3). Nothing is appended here: a question that never
- *      leaves is not a Move.
+ *   1. SEND (egress) — the person's authored question leaves by the APP
+ *      (through the sidecar turn, Epic 15 story 2) or, when no provider is
+ *      configured, by COPY (the clipboard) or by OS HANDOFF. Both routes carry
+ *      the SAME PACKET — the prose plus the CITATIONS of the reaches the person
+ *      chose to include, never their content: the app never pre-reads a target
+ *      to compose a question (ADR-0029 rule 3). The declaration of that packet
+ *      (the inclusion set and its sizes) is shown by the panel BEFORE the
+ *      person's press. Nothing is appended by a question that never leaves: a
+ *      question in flight is not a Move. An app-sent answer, when it comes
+ *      back, is handed to the app's wiring, which runs the SAME intake below
+ *      in the PRISM file's queue (one wrap, one PRISM).
  *   2. INTAKE — the response comes back by PASTE (the ghost intake's sibling):
  *      the app WRAPS the pasted text, declares its exact byte size and its
  *      decode status AT INTAKE (ADR-0029 rule 5: a lossy text is said, never
@@ -67,17 +72,24 @@ import {
  * inclusion keys, the size + decode, the boundary refusal and the one append
  * without a window, a clipboard or an OS opener.
  *
- * Provisional: the packet's wording and shape; the two transports; the
+ * Provisional: the packet's wording and shape; the three transports and the
+ * declaration's wording (Epic 15 story 2); the
  * decode-from-text rule (the pasted text is the only evidence the app has — a
  * U+FFFD in it is the honest sign something upstream replaced bytes); the
  * attachment field (a UI nicety, not a record field); the response being held
  * in the panel/window rather than in a module's memory.
  */
 
-/** How the question leaves the app, in the panel's order. */
-export const ASK_TRANSPORTS = ["copy", "handoff"] as const;
+/**
+ * How the question leaves the app, in the panel's order: the app itself (the
+ * provider's turn), then the two visible fallbacks — the clipboard and the OS
+ * handoff of the reach's url. The app-sent route is the default; the clipboard
+ * is shown when no provider is configured (or the sidecar cannot start), never
+ * silently (Epic 15 story 2).
+ */
+export const ASK_TRANSPORTS = ["app", "copy", "handoff"] as const;
 
-/** A transport: the clipboard, or the OS handoff of the reach's url. */
+/** A transport: the app's turn, the clipboard, or the OS handoff of a url. */
 export type AskTransport = (typeof ASK_TRANSPORTS)[number];
 
 /** One reach, as the person cites it (the pointer's authored form + value). */
@@ -92,6 +104,50 @@ export interface AskAttachment {
   value: string;
 }
 
+/**
+ * THE DECLARATION (Epic 15 story 2): what the packet will carry, said BEFORE
+ * anything leaves — the question's exact byte size, each included citation
+ * with its own size, and the packet's total. It is derived from the SAME bytes
+ * the send carries (`declareAsk` calls `askPacket`), so the line cannot drift
+ * from the packet; it is a reading of structure, never a read of a target.
+ * PROVISIONAL: the line's wording lives in the panel's rules.
+ */
+export interface AskDeclarationCitation {
+  form: PointerForm;
+  value: string;
+  /** The citation line's exact UTF-8 byte size. */
+  size: number;
+}
+
+export interface AskDeclaration {
+  /** The person's question's exact byte size. */
+  questionSize: number;
+  /** The included citations, in the person's order (never their content). */
+  citations: AskDeclarationCitation[];
+  /** The whole packet's exact byte size (the bytes the transport carries). */
+  packetSize: number;
+}
+
+/**
+ * Declare one packet: the question's size, each included citation's size and
+ * the packet's total. The packet is built by `askPacket` here, so this line is
+ * the transport's own bytes — no second composition can disagree with it.
+ */
+export function declareAsk(
+  question: string,
+  included: readonly AskPointer[],
+): AskDeclaration {
+  return {
+    questionSize: utf8ByteLength(question),
+    citations: included.map((pointer) => ({
+      form: pointer.form,
+      value: pointer.value,
+      size: utf8ByteLength("- " + pointer.form + " " + pointer.value),
+    })),
+    packetSize: utf8ByteLength(askPacket(question, included)),
+  };
+}
+
 /** The table's refusal is the sentence the surface shows. */
 export const REFUSED_TARGET = "this contact does not ride this reach.";
 
@@ -103,6 +159,14 @@ export const NO_QUESTION = "ask needs a question.";
 
 /** The clipboard copy failed: the question never left, so it is not a Move. */
 export const COPY_FAILED = "the question could not be copied, so nothing left.";
+
+/**
+ * The app-sent route is not wired (no provider bridge). This is the STATED
+ * fallback, never a silent one: nothing left, so nothing is logged, and the
+ * panel offers the clipboard.
+ */
+export const NO_APP_ROUTE =
+  "no provider is configured, so the question goes by clipboard — use copy below.";
 
 /** A handoff needs a url to hand off. */
 export const HANDOFF_NEEDS_URL =
@@ -180,10 +244,26 @@ export function askPacket(
   return question + "\n\nincluded:\n" + lines.join("\n");
 }
 
+/**
+ * What the app-sent route reports: one answer, the stated fallback (nothing
+ * left) or one failed-turn sentence. The sender is injected so this flow never
+ * imports Tauri, a sidecar or a provider row — the app wires the turn,
+ * `turn/egress.ts` owns it, and bun asserts the route with a script.
+ */
+export type AskAppSend =
+  | { kind: "answered"; text: string }
+  | { kind: "unavailable"; sentence: string }
+  | { kind: "failed"; sentence: string };
+
 /** The Ask's bridge surface (injected; see the module doc). */
 export interface AskContactDeps {
   /** Copy the packet to the clipboard; false when the copy failed. */
   copy: (text: string) => Promise<boolean>;
+  /**
+   * Send the packet by the app's own turn (Epic 15 story 2). Absent means the
+   * app-sent route is not wired: the send falls back, stated.
+   */
+  sendApp?: (packet: string) => Promise<AskAppSend>;
   /** Hand one url to the OS (the app passes the opener plugin's openUrl). */
   handOff: (url: string) => Promise<void>;
   /** The boundary's realpath (the app passes the Rust command's bridge). */
@@ -226,7 +306,7 @@ export interface InFlightAsk {
   included: string[] | null;
   /** The person's authored question, verbatim (ephemeral). */
   question: string;
-  /** The packet that left, verbatim (ephemeral; this is what was copied). */
+  /** The packet that left, verbatim (ephemeral; what the transport carried). */
   packet: string;
   /** How it left. */
   transport: AskTransport;
@@ -236,20 +316,49 @@ export interface InFlightAsk {
 export type AskSendResult =
   | { kind: "refused"; reason: string }
   | {
+      /**
+       * The stated fallback: nothing left, so nothing is logged. The panel says
+       * the reason in one sentence and offers the clipboard path (Epic 15
+       * story 2 — a fallback is not an Ask failure).
+       */
+      kind: "fallback";
+      reason: string;
+    }
+  | {
       kind: "sent";
       ask: InFlightAsk;
       /** A quiet sentence for a transport that half-worked (else null). */
       note: string | null;
+      /**
+       * The app-sent answer — CONTENT, handed back to the app's wiring. It is
+       * NOT logged here: the queued intake (`contacts/prismLog.ts`) wraps it
+       * and appends the ONE PRISM with the same function a paste uses, so the
+       * network wait never holds the PRISM file's write queue.
+       */
+      answer?: string;
+      /** The wrap + PRISM the app's queued intake produced (with `answer`). */
+      response?: AskResponse;
+      prism?: Prism;
     };
 
 /**
- * SEND one question out, without writing anything. The table answers first
- * (fail-closed); the question must have prose; a handoff needs a url inside
- * the opener's surfaces. Copy is the packet's carrier in BOTH transports — a
- * url handoff carries no question on its own, so the packet is copied first and
- * the url is handed off after it. A failed copy means the question never left:
- * not a Move. A failed handoff leaves the question on the clipboard: the Move
- * is live, and the note says the OS would not take the page.
+ * SEND one question out. The table answers first (fail-closed); the question
+ * must have prose; a handoff needs a url inside the opener's surfaces.
+ *
+ * THE APP-SENT ROUTE (Epic 15 story 2): the packet goes to the injected sender
+ * — ONE user message, the SAME bytes the clipboard would carry. Nothing is
+ * written here: an answer is CONTENT handed back, and the app's queued intake
+ * wraps it with the same function a paste uses. The network wait never holds
+ * the PRISM file's write queue.
+ *   - no provider (or no sidecar): the stated fallback, nothing logged;
+ *   - a failed turn: the question is held in flight with one sentence, nothing
+ *     logged here — the person pastes, or ends it, and exactly one PRISM lands.
+ *
+ * THE CLIPBOARD ROUTES: copy is the packet's carrier in both — a url handoff
+ * carries no question on its own, so the packet is copied first and the url is
+ * handed off after it. A failed copy means the question never left: not a Move.
+ * A failed handoff leaves the question on the clipboard: the Move is live, and
+ * the note says the OS would not take the page.
  */
 export async function sendAsk(
   request: AskRequest,
@@ -285,6 +394,34 @@ export async function sendAsk(
   }
 
   const packet = askPacket(request.question, request.included);
+
+  // THE APP-SENT ROUTE: the packet goes to the app's own turn. A provider that
+  // is not there, or a sidecar that cannot start, is the STATED FALLBACK — the
+  // question never left, so it is not a Move and nothing is logged. An answer
+  // comes back through the SAME intake as a paste.
+  if (request.transport === "app") {
+    const send = deps.sendApp;
+    if (send === undefined) return { kind: "fallback", reason: NO_APP_ROUTE };
+    let turned: AskAppSend;
+    try {
+      turned = await send(packet);
+    } catch {
+      return { kind: "fallback", reason: NO_APP_ROUTE };
+    }
+    if (turned.kind === "unavailable") {
+      return { kind: "fallback", reason: turned.sentence };
+    }
+    const ask = inFlight(request, packet, "app");
+    if (turned.kind === "failed") {
+      // It may have left and produced no answer: one sentence, no record yet.
+      // The panel keeps the question in flight so a paste can still log ONE.
+      return { kind: "sent", ask, note: turned.sentence };
+    }
+    // An answer is CONTENT handed back; the app's queued intake is the one
+    // step that wraps it and appends the PRISM, so this route never writes.
+    return { kind: "sent", ask, note: null, answer: turned.text };
+  }
+
   const copied = await deps.copy(packet);
   if (!copied) return { kind: "refused", reason: COPY_FAILED };
 
@@ -296,16 +433,28 @@ export async function sendAsk(
       note = HANDOFF_FAILED_NOTE;
     }
   }
-  const ask: InFlightAsk = {
+  return {
+    kind: "sent",
+    ask: inFlight(request, packet, request.transport),
+    note,
+  };
+}
+
+/** The in-flight Ask for one sent packet (the Move's ephemeral half). */
+function inFlight(
+  request: AskRequest,
+  packet: string,
+  transport: AskTransport,
+): InFlightAsk {
+  return {
     on: request.on,
     workspacePath: request.workspacePath,
     pointer: request.pointer,
     included: inclusionKeys(request.on, request.included),
     question: request.question,
     packet,
-    transport: request.transport,
+    transport,
   };
-  return { kind: "sent", ask, note };
 }
 
 /** What intake/abandon did: the ONE PRISM appended, or a refusal (no Move). */

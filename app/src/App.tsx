@@ -61,6 +61,12 @@ import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
 import { GroundLayer } from "./canvas/GroundLayer";
 import { createTurnPort } from "./turn/sidecar";
+import {
+  hasProvider,
+  loadProviderConfig,
+  rememberedApiKey,
+} from "./turn/provider";
+import { NO_PROVIDER_SENTENCE, sendPacketApp } from "./turn/egress";
 import { GroundWires } from "./canvas/GroundWires";
 import { GroundBubble } from "./canvas/GroundBubble";
 import { useGround } from "./canvas/useGround";
@@ -740,6 +746,11 @@ function App() {
   const [askNote, setAskNote] = useState<string | null>(null);
   const [askKept, setAskKept] = useState(false);
   const [askBusy, setAskBusy] = useState(false);
+  // The app-sent route's own two reads (Epic 15 story 2): the stated fallback
+  // sentence (no provider, or a sidecar that cannot start) and whether the turn
+  // is running now (the panel's stop verb). A fallback is not an Ask failure.
+  const [askFallback, setAskFallback] = useState<string | null>(null);
+  const [askAppRunning, setAskAppRunning] = useState(false);
   // The ghost's ask surface (Epic 10 story 3): the one panel where the person
   // asks for a packet or hands a model's reply back. It sits outside `.plane`
   // like the control's other actions; closed by Esc, its ×, or a level switch
@@ -1851,6 +1862,8 @@ function App() {
     setAskSentNote(null);
     setAskNote(null);
     setAskKept(false);
+    setAskFallback(null);
+    setAskAppRunning(false);
   }, []);
 
   /**
@@ -1871,6 +1884,17 @@ function App() {
         ride:
           ride === null ? null : { form: ride.form, value: ride.value },
       });
+      // Is there a provider to carry the packet? The app-sent route is the
+      // default; with none configured the panel says so in one sentence and
+      // the clipboard is the visible fallback (never a silent one).
+      void loadProviderConfig()
+        .then((stored) => {
+          if (!hasProvider(stored)) setAskFallback(NO_PROVIDER_SENTENCE);
+        })
+        .catch(() => {
+          // An unreadable config is the same honest nothing: the fallback.
+          setAskFallback(NO_PROVIDER_SENTENCE);
+        });
     },
     [pointerAt, cancelPendingGestures, resetAsk],
   );
@@ -1886,11 +1910,28 @@ function App() {
   }, [resetAsk]);
 
   /**
-   * SEND the question out (Epic 12 story 3): by copy (the clipboard) or by the
-   * OS handoff when it rides a url. Nothing is appended — the Move completes
-   * when the response comes back (or the person ends the ask). The inclusion
-   * set is the reaches whose CITATIONS ride in the packet; their content never
-   * does (the app pre-reads nothing to compose a question).
+   * The app-sent sender the Ask flow uses (Epic 15 story 2): the provider row
+   * and the session's key are read at send time, and the turn port carries the
+   * packet. `turn/egress.ts` decides the three outcomes; this wiring owns only
+   * where the provider facts come from.
+   */
+  const askSendApp = useCallback(
+    (packet: string) =>
+      sendPacketApp(packet, {
+        loadProvider: loadProviderConfig,
+        apiKey: rememberedApiKey,
+        turn: turnPort,
+      }),
+    [],
+  );
+
+  /**
+   * SEND the question out (Epic 12 story 3; app-sent by default in Epic 15
+   * story 2). The app carries the packet through the sidecar; with no provider
+   * (or no sidecar) the flow answers the stated fallback and nothing is
+   * appended. A failed turn keeps the question in flight with one sentence, so
+   * a paste can still log exactly ONE PRISM. The inclusion set is the reaches
+   * whose CITATIONS ride in the packet; their content never does.
    */
   const askSend = useCallback(
     (question: string, included: Pointer[], transport: AskTransport) => {
@@ -1902,34 +1943,55 @@ function App() {
       }
       setAskBusy(true);
       setAskNote(null);
-      void sendAskOut({
-        on: at.on,
-        contact: "ask",
-        pointer: at.ride,
-        included: included.map((pointer) => ({
-          form: pointer.form,
-          value: pointer.value,
-        })),
-        question,
-        transport,
-        workspacePath: workspace.path,
-      })
+      if (transport === "app") setAskAppRunning(true);
+      void sendAskOut(
+        {
+          on: at.on,
+          contact: "ask",
+          pointer: at.ride,
+          included: included.map((pointer) => ({
+            form: pointer.form,
+            value: pointer.value,
+          })),
+          question,
+          transport,
+          workspacePath: workspace.path,
+        },
+        askSendApp,
+      )
         .then((result) => {
           setAskBusy(false);
+          setAskAppRunning(false);
           if (result.kind === "refused") {
             setAskNote(result.reason);
             return;
           }
+          if (result.kind === "fallback") {
+            // Nothing left: say so, and let the panel show the clipboard path.
+            setAskFallback(result.reason);
+            return;
+          }
+          setAskFallback(null);
           setAskSession(result.ask);
           setAskSentNote(result.note);
+          if (result.response !== undefined) setAskResponse(result.response);
+          if (result.prism !== undefined) setAskPrism(result.prism);
         })
         .catch(() => {
           setAskBusy(false);
+          setAskAppRunning(false);
           setAskNote(ASK_SEND_FAILED);
         });
     },
-    [askAt, workspace],
+    [askAt, workspace, askSendApp],
   );
+
+  /** Stop the app-sent turn (the sidecar's cancel); its own line settles it. */
+  const askStop = useCallback(() => {
+    void turnPort.stop().catch(() => {
+      // Best effort: the turn's line, or its budget, settles the panel.
+    });
+  }, []);
 
   /**
    * INTAKE the pasted response (Epic 12 story 3): the app WRAPS the text — its
@@ -4359,13 +4421,16 @@ function App() {
         />
       )}
 
-      {/* THE ASK PANEL (Epic 12 story 3): the question out by copy or OS
-          handoff, the response back by paste intake (the ghost intake's
-          sibling: size + decode at intake), the inclusion set logged as the
-          reaches' natural keys — never their bytes. The response is CONTENT,
-          ephemeral here until the person KEEPS it (the existing Finding move,
-          a separate act that never extends the PRISM). Outside `.plane`, held
-          prose is never thrown away by a press; Esc / its × close it. */}
+      {/* THE ASK PANEL (Epic 12 story 3; app-sent in Epic 15 story 2): the
+          declaration of what will go, the send the APP carries through the
+          sidecar, the answer in place (with its stop verb), and — with no
+          provider configured — one sentence and the clipboard fallback. The
+          response is still wrapped by the SAME intake (size + decode) and the
+          SAME ONE PRISM is appended, the inclusion set as the reaches' natural
+          keys — never their bytes. The response is CONTENT, ephemeral here
+          until the person KEEPS it (the existing Finding move, a separate act
+          that never extends the PRISM). Outside `.plane`, held prose is never
+          thrown away by a press; Esc / its × close it. */}
       {level === "ground" && askAt && (
         <AskPanel
           name={nameOf(askAt.on)}
@@ -4379,7 +4444,10 @@ function App() {
           kept={askKept}
           busy={askBusy}
           note={askNote}
+          fallback={askFallback}
+          running={askAppRunning}
           onSend={askSend}
+          onStop={askStop}
           onIntake={askIntake}
           onAbandon={askAbandon}
           onKeep={askKeep}

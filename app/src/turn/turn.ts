@@ -75,11 +75,25 @@ export interface TurnTransport {
   subscribe: (id: number, handler: (line: SidecarLine) => void) => () => void;
 }
 
-/** The two messages every story-1 turn sends. */
+/** The two messages every hand-written turn sends (story 1). */
 export function buildTurnMessages(question: string): TurnMessage[] {
   return [
     { role: "system", content: SYSTEM_MESSAGE },
     { role: "user", content: question.trim() },
+  ];
+}
+
+/**
+ * The PACKET Ask's two messages (Epic 15 story 2): the same fixed instruction,
+ * and the packet the Ask composed — the SAME bytes the clipboard route carries.
+ * The packet is passed VERBATIM: no trim, no normalization, so the transport
+ * can never edit the person's words or the citations the declaration named.
+ * PROVISIONAL wording (the instruction is story 1's).
+ */
+export function buildPacketMessages(packet: string): TurnMessage[] {
+  return [
+    { role: "system", content: SYSTEM_MESSAGE },
+    { role: "user", content: packet },
   ];
 }
 
@@ -123,6 +137,25 @@ export async function askTurn(
   transport: TurnTransport,
   provider: TurnProvider,
   question: string,
+  options: TurnOptions = {},
+): Promise<TurnResult> {
+  return askTurnMessages(
+    transport,
+    provider,
+    buildTurnMessages(question),
+    options,
+  );
+}
+
+/**
+ * The same turn, with the messages the caller built — the packet Ask's door
+ * (story 2). Everything below is the story-1 turn unchanged: one request, one
+ * answer, one stop.
+ */
+export async function askTurnMessages(
+  transport: TurnTransport,
+  provider: TurnProvider,
+  messages: readonly TurnMessage[],
   options: TurnOptions = {},
 ): Promise<TurnResult> {
   const timeoutMs = options.timeoutMs ?? TURN_TIMEOUT_MS;
@@ -181,7 +214,7 @@ export async function askTurn(
   }, timeoutMs);
 
   try {
-    await transport.send(requestLine(id, provider, buildTurnMessages(question)));
+    await transport.send(requestLine(id, provider, messages));
   } catch {
     finish({ kind: "error", sentence: TURN_SENTENCES.unreachable });
   }
@@ -197,11 +230,23 @@ export async function stopTurn(
   await transport.send(stopLine(id));
 }
 
+/** Whether a turn can leave: a live child, or the one sentence why not. */
+export type TurnStart =
+  | { kind: "running" }
+  | { kind: "refused"; sentence: string };
+
 /**
- * The whole of what the app needs from a turn: ask, and stop. The panel takes
- * this as a prop, so a render test never needs a live sidecar.
+ * The whole of what the app needs from a turn: ask, the packet Ask (the same
+ * envelope, a caller-built message), start (so the app-sent Ask can tell "no
+ * provider / no sidecar" from "the turn failed" BEFORE anything leaves), and
+ * stop. The panels take this as a prop, so a render test never needs a live
+ * sidecar.
  */
 export interface TurnPort {
   ask: (provider: TurnProvider, question: string) => Promise<TurnResult>;
+  /** The same turn, with the packet as the ONE user message, verbatim. */
+  sendPacket: (provider: TurnProvider, packet: string) => Promise<TurnResult>;
+  /** Start the child without asking (the app-sent Ask's egress check). */
+  start: () => Promise<TurnStart>;
   stop: () => Promise<void>;
 }

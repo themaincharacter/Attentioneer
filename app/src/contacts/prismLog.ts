@@ -39,6 +39,7 @@ import {
   intakeAskResponse,
   sendAsk,
   type AskAbandonResult,
+  type AskAppSend,
   type AskAttachment,
   type AskContactDeps,
   type AskIntakeResult,
@@ -230,11 +231,20 @@ export function runEgressMove(
   );
 }
 
-/** The Ask's bridges: the clipboard, the handoff door and the PRISM file. */
-export function askContactDeps(workspacePath: string): AskContactDeps {
+/**
+ * The Ask's bridges: the app-sent sender (when the app wires one), the
+ * clipboard, the handoff door and the PRISM file. The sender is passed in
+ * because the turn's provider, key and sidecar belong to the app, not to the
+ * contact path (Epic 15 story 2).
+ */
+export function askContactDeps(
+  workspacePath: string,
+  sendApp?: (packet: string) => Promise<AskAppSend>,
+): AskContactDeps {
   const prisms = prismsPath(workspacePath);
   return {
     copy: copyText,
+    sendApp,
     handOff: handOffUrl,
     canonicalize: canonicalizePath,
     readPrismsText: () => readTextFile(prisms),
@@ -244,12 +254,36 @@ export function askContactDeps(workspacePath: string): AskContactDeps {
 }
 
 /**
- * SEND one Ask's question out (Epic 12 story 3). Nothing is appended: the Move
- * completes when the response comes back (or the person ends the ask). False
- * from the copy bridge means the question never left — no Move.
+ * SEND one Ask's question out (Epic 12 story 3; the app-sent route added by
+ * Epic 15 story 2). The clipboard routes append nothing: the Move completes
+ * when the response comes back (or the person ends the ask).
+ *
+ * THE APP-SENT ANSWER is the exception, and the queue is why it is split: the
+ * turn may take a minute, so the network wait runs OUTSIDE the PRISM file's
+ * queue and only the intake (wrap + ONE append) is enqueued — with the SAME
+ * `intakeAskResponse` a paste uses. A failed turn or a stated fallback writes
+ * nothing; a failed intake says its one sentence and leaves the file alone.
  */
-export function sendAskOut(request: AskRequest): Promise<AskSendResult> {
-  return sendAsk(request, askContactDeps(request.workspacePath));
+export async function sendAskOut(
+  request: AskRequest,
+  sendApp?: (packet: string) => Promise<AskAppSend>,
+): Promise<AskSendResult> {
+  const sent = await sendAsk(
+    request,
+    askContactDeps(request.workspacePath, sendApp),
+  );
+  if (sent.kind !== "sent" || sent.answer === undefined) return sent;
+  const answer = sent.answer;
+  return enqueue(async () => {
+    const intake = await intakeAskResponse(
+      sent.ask,
+      answer,
+      null,
+      askContactDeps(request.workspacePath),
+    );
+    if (intake.kind === "refused") return { ...sent, note: intake.reason };
+    return { ...sent, response: intake.response, prism: intake.prism };
+  });
 }
 
 /**

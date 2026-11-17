@@ -1,12 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { parseSidecarLine, type SidecarLine, type TurnProvider } from "./protocol";
 import {
-  askTurn,
+  parseSidecarLine,
+  type SidecarLine,
+  type TurnMessage,
+  type TurnProvider,
+} from "./protocol";
+import {
+  askTurnMessages,
+  buildPacketMessages,
+  buildTurnMessages,
   errorSentence,
   stopTurn,
   type TurnPort,
   type TurnResult,
+  type TurnStart,
   type TurnTransport,
 } from "./turn";
 
@@ -126,20 +134,42 @@ export function createTurnPort(
   transport: TurnTransport = createSidecarTransport(),
 ): TurnPort {
   let active: number | null = null;
+
+  /**
+   * Start the child and say whether anything can leave. A refusal is one
+   * sentence (Rust worded it), never a thrown error: the app-sent Ask uses
+   * this to fall back to the clipboard BEFORE anything leaves — a sidecar that
+   * cannot start is not an Ask that failed.
+   */
+  async function begin(): Promise<TurnStart> {
+    const started = await startSidecar();
+    return started.kind === "running"
+      ? { kind: "running" }
+      : { kind: "refused", sentence: started.sentence };
+  }
+
+  /** One turn over the shared transport, with the messages the caller built. */
+  async function run(
+    provider: TurnProvider,
+    messages: readonly TurnMessage[],
+  ): Promise<TurnResult> {
+    const started = await begin();
+    if (started.kind === "refused") {
+      return { kind: "error", sentence: started.sentence };
+    }
+    const result = await askTurnMessages(transport, provider, messages, {
+      onStart: (id) => {
+        active = id;
+      },
+    });
+    active = null;
+    return result;
+  }
+
   return {
-    async ask(provider: TurnProvider, question: string): Promise<TurnResult> {
-      const started = await startSidecar();
-      if (started.kind === "refused") {
-        return { kind: "error", sentence: started.sentence };
-      }
-      const result = await askTurn(transport, provider, question, {
-        onStart: (id) => {
-          active = id;
-        },
-      });
-      active = null;
-      return result;
-    },
+    start: begin,
+    ask: (provider, question) => run(provider, buildTurnMessages(question)),
+    sendPacket: (provider, packet) => run(provider, buildPacketMessages(packet)),
     async stop() {
       if (active === null) return;
       const id = active;

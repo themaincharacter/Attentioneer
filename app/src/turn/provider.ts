@@ -37,6 +37,17 @@ export interface StoredProvider {
 export const EMPTY_PROVIDER: StoredProvider = { baseUrl: "", model: "" };
 
 /**
+ * IS A PROVIDER CONFIGURED? (Epic 15 story 2.) The app-sent Ask leaves only
+ * when a base URL and a model are both present; anything less is the stated
+ * clipboard fallback, not an Ask failure. The KEY is not part of this test:
+ * a local or keyless endpoint may legitimately have none, and a key that is
+ * wrong fails one turn with one sentence — it does not change the transport.
+ */
+export function hasProvider(stored: StoredProvider): boolean {
+  return stored.baseUrl.trim() !== "" && stored.model.trim() !== "";
+}
+
+/**
  * The session's key. Module memory — not React state, not storage — so it
  * survives closing and reopening the panel in the same session and vanishes
  * with the process. Nothing exports the value except `rememberedApiKey`, and

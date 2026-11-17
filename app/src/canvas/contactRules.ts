@@ -1,5 +1,8 @@
-import type { AskTransport } from "../contacts/ask";
-import type { AskResponse } from "../contacts/ask";
+import type {
+  AskDeclaration,
+  AskResponse,
+  AskTransport,
+} from "../contacts/ask";
 import { decodeWords } from "./prismRules";
 
 /**
@@ -12,13 +15,15 @@ import { decodeWords } from "./prismRules";
  *     write, and one quiet "make". No gate, no approval, no proposal: the
  *     person's press is the whole of it.
  *   - ASK's panel: the question, the reaches that ride (the inclusion set),
- *     the two ways out (copy / hand off), then the response's paste, its
+ *     the DECLARATION of what will go (the citations and their exact sizes,
+ *     shown before anything leaves), the app's send, the stated clipboard
+ *     fallback, then the response (in place by itself, or pasted), its
  *     size + decode line, and the keep — a separate act (a Finding).
  *
- * THE WORD IS THE HONESTY. The transports say "copied" and "handed", never
- * "opened": the app knows it handed the address over, not what the OS did
- * with it. The same rule the open-os log keeps. The response's line says the
- * EXACT byte size and the decode status, never a rounded unit.
+ * THE WORD IS THE HONESTY. The transports say "sent", "copied" and "handed",
+ * never "opened": the app knows it handed the address over, not what the OS
+ * did with it. The same rule the open-os log keeps. The response's line says
+ * the EXACT byte size and the decode status, never a rounded unit.
  *
  * Provisional: every sentence here (the panel's look is provisional too).
  */
@@ -61,9 +66,17 @@ export const ASK_NO_REACH = "no reach";
 export const ASK_INCLUDED_LABEL = "included reaches";
 export const ASK_NOTHING_INCLUDED = "no reach rides along";
 
-/** The two ways out. */
+/**
+ * The ways out, in the panel's order: the app carries the packet itself; the
+ * clipboard and the OS handoff are the STATED fallback (never silent).
+ */
+export const ASK_SEND = "send (the app carries it)";
+export const ASK_STOP = "stop";
 export const ASK_COPY = "copy the question";
 export const ASK_HANDOFF = "hand off the page";
+
+/** The line that names what will go, before anything leaves (PROVISIONAL). */
+export const ASK_DECLARATION_LABEL = "will go: ";
 
 /** The response's paste. */
 export const ASK_PASTE_LABEL = "the response (paste it)";
@@ -94,8 +107,9 @@ export const ASK_SEND_FAILED = "the question did not leave";
 /** The panel's note when the Move is waiting on a write. */
 export const ASK_BUSY = "…";
 
-/** How each transport reads (copied / handed — never "opened"). */
+/** How each transport reads (sent / copied / handed — never "opened"). */
 export const TRANSPORT_WORDS: Readonly<Record<AskTransport, string>> = {
+  app: "sent — the app carried the packet and the answer came back here",
   copy: "copied — the question is on the clipboard",
   handoff: "handed to the OS — the question is on the clipboard",
 };
@@ -103,6 +117,43 @@ export const TRANSPORT_WORDS: Readonly<Record<AskTransport, string>> = {
 /** The transport's quiet sentence. */
 export function transportWord(transport: AskTransport): string {
   return TRANSPORT_WORDS[transport];
+}
+
+/**
+ * THE DECLARATION, in one line: the question's exact size, each included
+ * citation with its own size, and the packet's total. Derived from the same
+ * bytes the send carries; the app reads no target to write it (PROVISIONAL
+ * wording).
+ */
+export function declarationWords(declaration: AskDeclaration): string {
+  const parts: string[] = [
+    "your question (" + declaration.questionSize + " bytes)",
+  ];
+  if (declaration.citations.length === 0) {
+    parts.push("no citation");
+  } else {
+    parts.push(
+      "the citations " +
+        declaration.citations
+          .map(
+            (citation) =>
+              citation.form +
+              " " +
+              citation.value +
+              " (" +
+              citation.size +
+              " bytes)",
+          )
+          .join(", "),
+    );
+  }
+  return (
+    ASK_DECLARATION_LABEL +
+    parts.join(" \u00b7 ") +
+    " \u00b7 " +
+    declaration.packetSize +
+    " bytes in all"
+  );
 }
 
 /**

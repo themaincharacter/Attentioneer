@@ -4407,6 +4407,8 @@ body {
 }
 
 .make-go,
+.ask-send,
+.ask-stop,
 .ask-copy,
 .ask-handoff,
 .ask-log,
@@ -4430,6 +4432,10 @@ body {
 
 .make-go:hover,
 .make-go:focus-visible,
+.ask-send:hover,
+.ask-send:focus-visible,
+.ask-stop:hover,
+.ask-stop:focus-visible,
 .ask-copy:hover,
 .ask-copy:focus-visible,
 .ask-handoff:hover,
@@ -4448,6 +4454,8 @@ body {
 }
 
 .make-go:disabled,
+.ask-send:disabled,
+.ask-stop:disabled,
 .ask-copy:disabled,
 .ask-handoff:disabled,
 .ask-log:disabled,
@@ -4516,6 +4524,24 @@ body {
   font-size: 10px;
   line-height: 1.4;
   color: #8d887c;
+}
+
+/* THE DECLARATION (Epic 15 story 2): one quiet line naming what will go — the
+   inclusion set and its sizes — and the stated fallback beside it. No accent,
+   no urgency: the words are the whole surface. PROVISIONAL: the look. */
+.ask-declaration {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #6b675e;
+  overflow-wrap: anywhere;
+}
+
+.ask-fallback {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #6b675e;
+  border-left: 2px solid #ddd7cc;
+  padding-left: 7px;
 }
 
 .ask-note,
