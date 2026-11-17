@@ -359,6 +359,24 @@ export const CONTENT_CLASSES = [
   "ground-confirm-remove",
   "ground-confirm-cancel",
   "ground-removal-problem",
+  // Story 16.5: the LINK HANDLE on the card's edge, the wires' layer (each
+  // wire, its line, its hover band, the midpoint remove mark, the two-step
+  // confirm and its one refusal sentence). All content: a press on any of them
+  // never pans the plane, creates anything or starts a card drag — the wire
+  // itself takes no press, so its band is listed for the same belt-and-braces
+  // reason the ink is.
+  "ground-link-handle",
+  "ground-wires",
+  "ground-wire",
+  "ground-wire-line",
+  "ground-wire-hit",
+  "ground-wire-mark",
+  "ground-wire-confirm",
+  "ground-wire-confirm-question",
+  "ground-wire-confirm-actions",
+  "ground-wire-confirm-remove",
+  "ground-wire-confirm-cancel",
+  "ground-wire-problem",
   "ground-bubble",
   "ground-bubble-name",
   "ground-bubble-file",

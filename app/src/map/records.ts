@@ -58,6 +58,11 @@ export const GROUND_RECORD_FILE = {
   ground: "ground.txt",
   /** One line per reading, keyed to the same slug as its reference. */
   readings: "readings.txt",
+  /**
+   * One line per WORDLESS ground link (story 16.5): `from | to`, an ordered
+   * pair of reference slugs and nothing else. Provisional with the rest.
+   */
+  links: "ground-links.txt",
 } as const;
 
 /**

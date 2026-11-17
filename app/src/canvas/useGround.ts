@@ -10,6 +10,18 @@ import {
   type GroundReference,
 } from "../map/ground";
 import {
+  GROUND_LINK_IO,
+  addGroundLink,
+  groundLinkRefusal,
+  loadGroundLinks,
+  orphanGroundLinks,
+  saveGroundLinks,
+  withoutGroundLink,
+  withoutGroundLinksFor,
+  type GroundLink,
+  type GroundLinkIo,
+} from "../map/groundLinks";
+import {
   loadReadings,
   loadReadingTexts,
   readingAbsolutePath,
@@ -33,14 +45,14 @@ import {
  * own map with its own family, so it loads and writes beside it instead of
  * riding the concept map's reload. `useGround` is the whole seam:
  *
- *   - LOAD: `map/ground.txt` and `map/readings.txt` are read on every
- *     workspace open (and every workspace change), each reference's reading
- *     text is read from `map/readings/<slug>.md`, and each reading's file is
- *     stat'ed ONCE (one `fileMeta` per reading, in parallel). The
- *     `states` are COMPUTED from that metadata and never written into a
- *     record (story 16.2 decision 1): a second truth would drift from the file.
- *     Nothing watches, polls or re-reads later; the `map/` folder alone is the
- *     source, and there is no index, cache or side table.
+ *   - LOAD: `map/ground.txt`, `map/readings.txt` and `map/ground-links.txt`
+ *     are read on every workspace open (and every workspace change), each
+ *     reference's reading text is read from `map/readings/<slug>.md`, and each
+ *     reading's file is stat'ed ONCE (one `fileMeta` per reading, in
+ *     parallel). The `states` are COMPUTED from that metadata and never
+ *     written into a record (story 16.2 decision 1): a second truth would drift
+ *     from the file. Nothing watches, polls or re-reads later; the `map/`
+ *     folder alone is the source, and there is no index, cache or side table.
  *   - ADD (story 16.1): coin the name, take the reading, then write the text
  *     file, the readings line and the ground line, in that order. The reference
  *     is written LAST, so a crash can leave an orphan reading but never a
@@ -57,6 +69,17 @@ import {
  *     in the fixed order below (the reference first, so a crash cannot leave a
  *     reference pointing at a reading whose text file is gone). A refused
  *     unlink answers one sentence and repairs nothing on its own.
+ *   - LINK / UNLINK (16.5): the ground map's WORDLESS wiring lives in
+ *     `map/ground-links.txt` and loads with the workspace beside the other two
+ *     files. A draw is ONE write (the ordered pair is the identity, so drawing
+ *     the same link again rewrites its one line); an unlink is one write. The
+ *     direction is recorded and READ BY NOTHING (the epic's reframe: a link is
+ *     not a Distance and carries no meaning). Deleting a reference also takes
+ *     every link that NAMES it, in both directions, in the same queued pass
+ *     after the reference's own removal (the card's existing order) — the app
+ *     never manufactures an orphan of its own. Orphans and malformed lines in
+ *     the link file are PRESERVED and surfaced in the ground notices group
+ *     (ADR-0009), exactly like the other two files' unreadable lines.
  *   - The whole read-modify-write runs through the app's one per-file
  *     discipline (`createWriteQueue`, ADR-0004/ADR-0018): one line at a time,
  *     never a whole-folder rewrite.
@@ -91,10 +114,23 @@ export interface GroundView {
    * from the file's metadata (see `resolveReadingState`).
    */
   states: Readonly<Record<string, ReadingState>>;
+  /**
+   * Every readable ground link, in FILE ORDER (story 16.5). A link is an
+   * ordered pair of slugs and nothing else: no word, no meaning.
+   */
+  links: readonly GroundLink[];
+  /**
+   * Links whose endpoint is not a reference this map carries (story 16.5):
+   * preserved in the file and REPORTED in the ground notices group, never
+   * dropped and never repaired into a card (ADR-0009).
+   */
+  orphanLinks: readonly GroundLink[];
   /** Unreadable `map/ground.txt` lines, preserved and surfaced. */
   malformedGround: readonly string[];
   /** Unreadable `map/readings.txt` lines, preserved and surfaced. */
   malformedReadings: readonly string[];
+  /** Unreadable `map/ground-links.txt` lines, preserved and surfaced. */
+  malformedLinks: readonly string[];
   /** The map folder's ground records have been read once. */
   loaded: boolean;
   /** Add one reference from a picked text file (the one create write). */
@@ -113,21 +149,37 @@ export interface GroundView {
   /**
    * Remove one reference, its reading and its kept text (story 16.3): the
    * `ground.txt` line, the `readings.txt` line, then `map/readings/<slug>.md`,
-   * in that order. A refused unlink answers one sentence and repairs nothing.
+   * in that order, and then every link that names it in both directions
+   * (story 16.5). A refused unlink answers one sentence and repairs nothing.
    */
   remove: (on: string) => Promise<GroundAddResult>;
+  /**
+   * Draw one WORDLESS link from a card to another (story 16.5): one ordered
+   * pair, one line. Drawing the identical link again rewrites that line; the
+   * reverse drag is a second, separate line. A self-link refuses with one
+   * sentence.
+   */
+  link: (from: string, to: string) => Promise<GroundAddResult>;
+  /** Remove one exact ordered pair; the two cards stay. */
+  unlink: (from: string, to: string) => Promise<GroundAddResult>;
 }
 
-const EMPTY: Omit<
+/** The view without its verbs: what the load and every write render. */
+type GroundLoaded = Omit<
   GroundView,
-  "create" | "move" | "refresh" | "repoint" | "remove"
-> = {
+  "create" | "move" | "refresh" | "repoint" | "remove" | "link" | "unlink"
+>;
+
+const EMPTY: GroundLoaded = {
   references: [],
   readings: [],
   texts: {},
   states: {},
+  links: [],
+  orphanLinks: [],
   malformedGround: [],
   malformedReadings: [],
+  malformedLinks: [],
   loaded: false,
 };
 
@@ -199,6 +251,26 @@ export async function removeGroundRecords(
 }
 
 /**
+ * THE DELETE CASCADE's one write (story 16.5): after the reference's own
+ * removal, every link that NAMES it — in both directions — leaves
+ * `map/ground-links.txt` in the same queued pass. PURE apart from that one
+ * bridge: the caller keeps the existing card-delete order and hands the same
+ * malformed lines back to the writer unchanged (ADR-0009). No orphan is ever
+ * manufactured by the app itself.
+ */
+export async function removeGroundLinksNaming(
+  workspacePath: string,
+  on: string,
+  links: readonly GroundLink[],
+  malformedLinks: readonly string[],
+  io: GroundLinkIo = GROUND_LINK_IO,
+): Promise<GroundLink[]> {
+  const next = withoutGroundLinksFor(links, on);
+  await saveGroundLinks(workspacePath, next, malformedLinks, io);
+  return next;
+}
+
+/**
  * The states of every reference, from the readings and their metadata (story
  * 16.2). Pure apart from the answers it is handed: one reading per slug, its
  * metadata (or null when there is no reading), and the load's clock.
@@ -238,10 +310,7 @@ async function metasOf(
 }
 
 export function useGround(workspacePath: string): GroundView {
-  const [state, setState] =
-    useState<
-      Omit<GroundView, "create" | "move" | "refresh" | "repoint" | "remove">
-    >(EMPTY);
+  const [state, setState] = useState<GroundLoaded>(EMPTY);
   // Synchronous mirrors: the queued write must never read a stale list.
   const referencesRef = useRef<GroundReference[]>([]);
   const readingsRef = useRef<Reading[]>([]);
@@ -249,15 +318,21 @@ export function useGround(workspacePath: string): GroundView {
   const malformedReadingsRef = useRef<string[]>([]);
   const textsRef = useRef<Record<string, string>>({});
   const statesRef = useRef<Record<string, ReadingState>>({});
-  // One queue for the ground family's two files: an add's ground line must
-  // land after its own readings line, never under a stale one.
+  // The ground map's wordless wiring (story 16.5): the whole truth is its one
+  // file, so the sync mirror holds exactly what the load read.
+  const linksRef = useRef<GroundLink[]>([]);
+  const malformedLinksRef = useRef<string[]>([]);
+  // One queue for the ground family's files: an add's ground line must land
+  // after its own readings line, never under a stale one; the link and the
+  // cascade share it so no link write can land under a stale list.
   const queueRef = useRef(createWriteQueue());
 
   const reload = useCallback(async () => {
     if (workspacePath === "") return;
-    const [ground, readings] = await Promise.all([
+    const [ground, readings, groundLinks] = await Promise.all([
       loadGround(workspacePath),
       loadReadings(workspacePath),
+      loadGroundLinks(workspacePath),
     ]);
     const [texts, metas] = await Promise.all([
       loadReadingTexts(
@@ -272,22 +347,42 @@ export function useGround(workspacePath: string): GroundView {
       metas,
       Date.now(),
     );
+    // Orphans are COMPUTED, never stored (story 16.5, in `snapshot`): a link
+    // naming a slug the map does not carry is kept in the file and named in
+    // the notices group.
     referencesRef.current = ground.references;
     readingsRef.current = readings.readings;
     malformedGroundRef.current = ground.malformed;
     malformedReadingsRef.current = readings.malformed;
+    malformedLinksRef.current = groundLinks.malformed;
+    linksRef.current = groundLinks.links;
     textsRef.current = texts;
     statesRef.current = states;
-    setState({
-      references: ground.references,
-      readings: readings.readings,
-      texts,
-      states,
-      malformedGround: ground.malformed,
-      malformedReadings: readings.malformed,
-      loaded: true,
-    });
+    setState(snapshot());
   }, [workspacePath]);
+
+  /**
+   * The view from the synchronous mirrors, AFTER a write has moved them: the
+   * one place each callback hands React its next render, so a new field can
+   * never be forgotten by one of the five write paths.
+   */
+  const snapshot = (): GroundLoaded => ({
+    references: referencesRef.current,
+    readings: readingsRef.current,
+    texts: textsRef.current,
+    states: statesRef.current,
+    links: linksRef.current,
+    // Recomputed on every write (story 16.5): a cascade can leave the file
+    // with fewer links but never with one the app itself orphaned.
+    orphanLinks: orphanGroundLinks(
+      linksRef.current,
+      referencesRef.current.map((reference) => reference.on),
+    ),
+    malformedGround: malformedGroundRef.current,
+    malformedReadings: malformedReadingsRef.current,
+    malformedLinks: malformedLinksRef.current,
+    loaded: true,
+  });
 
   useEffect(() => {
     // A different workspace starts from its own map folder, never the last
@@ -298,6 +393,8 @@ export function useGround(workspacePath: string): GroundView {
       readingsRef.current = [];
       malformedGroundRef.current = [];
       malformedReadingsRef.current = [];
+      malformedLinksRef.current = [];
+      linksRef.current = [];
       textsRef.current = {};
       statesRef.current = {};
       setState(EMPTY);
@@ -363,15 +460,7 @@ export function useGround(workspacePath: string): GroundView {
             [addition.reference.on]: "current" as ReadingState,
           };
           statesRef.current = states;
-          setState({
-            references: addition.references,
-            readings: nextReadings,
-            texts,
-            states,
-            malformedGround: malformedGroundRef.current,
-            malformedReadings: malformedReadingsRef.current,
-            loaded: true,
-          });
+          setState(snapshot());
           outcome = { ok: true };
         })
         .then(() => outcome)
@@ -395,15 +484,7 @@ export function useGround(workspacePath: string): GroundView {
           const next = moveGroundReference(referencesRef.current, on, x, y);
           await saveGround(workspacePath, next, malformedGroundRef.current);
           referencesRef.current = next;
-          setState({
-            references: next,
-            readings: readingsRef.current,
-            texts: textsRef.current,
-            states: statesRef.current,
-            malformedGround: malformedGroundRef.current,
-            malformedReadings: malformedReadingsRef.current,
-            loaded: true,
-          });
+          setState(snapshot());
           outcome = { ok: true };
         })
         .then(() => outcome)
@@ -465,15 +546,7 @@ export function useGround(workspacePath: string): GroundView {
           textsRef.current = texts;
           const states = { ...statesRef.current, [on]: "current" as ReadingState };
           statesRef.current = states;
-          setState({
-            references: referencesRef.current,
-            readings: nextReadings,
-            texts,
-            states,
-            malformedGround: malformedGroundRef.current,
-            malformedReadings: malformedReadingsRef.current,
-            loaded: true,
-          });
+          setState(snapshot());
           outcome = { ok: true };
         })
         .then(() => outcome)
@@ -515,15 +588,7 @@ export function useGround(workspacePath: string): GroundView {
           textsRef.current = texts;
           const states = { ...statesRef.current, [on]: "current" as ReadingState };
           statesRef.current = states;
-          setState({
-            references: referencesRef.current,
-            readings: nextReadings,
-            texts,
-            states,
-            malformedGround: malformedGroundRef.current,
-            malformedReadings: malformedReadingsRef.current,
-            loaded: true,
-          });
+          setState(snapshot());
           outcome = { ok: true };
         })
         .then(() => outcome)
@@ -539,7 +604,9 @@ export function useGround(workspacePath: string): GroundView {
    * REMOVE: the reference's line, its reading's line, then its text file — the
    * ONE order (story 16.3), through the same queue as every other write. A
    * refused unlink answers one sentence after the lines have gone; nothing is
-   * retried or repaired here.
+   * retried or repaired here. THEN, in the same queued pass, every link that
+   * names the slug leaves (story 16.5) — both directions, after the card's own
+   * removal, so the app never manufactures an orphan.
    */
   const remove = useCallback(
     (on: string): Promise<GroundAddResult> => {
@@ -559,21 +626,23 @@ export function useGround(workspacePath: string): GroundView {
           );
           referencesRef.current = removal.references;
           readingsRef.current = removal.readings;
+          // THE CASCADE (story 16.5): AFTER the reference's own removal (the
+          // existing card-delete order above is untouched) and in the same
+          // queued pass, every link that NAMES this slug leaves the link file —
+          // in BOTH directions, so the app never manufactures an orphan.
+          linksRef.current = await removeGroundLinksNaming(
+            workspacePath,
+            on,
+            linksRef.current,
+            malformedLinksRef.current,
+          );
           const texts = { ...textsRef.current };
           delete texts[on];
           textsRef.current = texts;
           const states = { ...statesRef.current };
           delete states[on];
           statesRef.current = states;
-          setState({
-            references: removal.references,
-            readings: removal.readings,
-            texts,
-            states,
-            malformedGround: malformedGroundRef.current,
-            malformedReadings: malformedReadingsRef.current,
-            loaded: true,
-          });
+          setState(snapshot());
           outcome =
             removal.refusal === null
               ? { ok: true }
@@ -592,18 +661,91 @@ export function useGround(workspacePath: string): GroundView {
     [workspacePath],
   );
 
+  /**
+   * LINK (story 16.5): DRAW one WORDLESS link from a card to another — one
+   * ordered pair, ONE write. The pair is the identity, so drawing the identical
+   * link again rewrites its one line (never a duplicate), while the reverse
+   * drag is a second, separate line. The direction is recorded because it was
+   * drawn and read by nothing (the epic's reframe: a link is not a Distance).
+   * A self-link, or an endpoint the map does not carry, refuses with one
+   * sentence and writes nothing.
+   */
+  const link = useCallback(
+    (from: string, to: string): Promise<GroundAddResult> => {
+      const refusal = groundLinkRefusal(
+        from,
+        to,
+        referencesRef.current.map((reference) => reference.on),
+      );
+      if (refusal !== null) {
+        return Promise.resolve({ ok: false, message: refusal });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const next = addGroundLink(linksRef.current, from, to);
+          await saveGroundLinks(workspacePath, next, malformedLinksRef.current);
+          linksRef.current = next;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * UNLINK (story 16.5): remove ONE exact ordered pair. The two cards stay
+   * exactly as they are — the wire is the only thing that goes. The reverse
+   * link, if it was drawn separately, is a different pair and stays.
+   */
+  const unlink = useCallback(
+    (from: string, to: string): Promise<GroundAddResult> => {
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const next = withoutGroundLink(linksRef.current, from, to);
+          await saveGroundLinks(workspacePath, next, malformedLinksRef.current);
+          linksRef.current = next;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
   return {
     references: state.references,
     readings: state.readings,
     texts: state.texts,
     states: state.states,
+    links: state.links,
+    orphanLinks: state.orphanLinks,
     malformedGround: state.malformedGround,
     malformedReadings: state.malformedReadings,
+    malformedLinks: state.malformedLinks,
     loaded: state.loaded,
     create,
     move,
     refresh,
     repoint,
     remove,
+    link,
+    unlink,
   };
 }

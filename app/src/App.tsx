@@ -60,6 +60,7 @@ import { GhostPreview } from "./canvas/GhostPreview";
 import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
 import { GroundLayer } from "./canvas/GroundLayer";
+import { GroundWires } from "./canvas/GroundWires";
 import { GroundBubble } from "./canvas/GroundBubble";
 import { useGround } from "./canvas/useGround";
 import { SketchToolbar } from "./canvas/SketchToolbar";
@@ -3830,6 +3831,21 @@ function App() {
             the person. */}
         <SketchLayer strokes={sketches} />
 
+        {/* STORY 16.5, the ground map's WIRES: one quiet, WORDLESS line per
+            link, drawn in the plane's world space BEHIND the cards and with
+            the same camera transform they use. A link is not a Distance (the
+            epic's REFRAME, 2026-11-17): there is no label, no arrowhead and no
+            count, and the recorded direction is read by nothing. An orphan
+            link has no card to attach to, so it is not drawn; the ground
+            notices group names it and the file keeps it. */}
+        {level === "ground" && (
+          <GroundWires
+            links={ground.links}
+            references={ground.references}
+            onRemoveLink={ground.unlink}
+          />
+        )}
+
         {/* THE GROUND MAP's own layer (story 16.1): its references are drawn
             at their points, with the reading's opening lines and the file's
             name — never the concept map's words, distances, marks, veils,
@@ -3856,6 +3872,7 @@ function App() {
             onRefresh={ground.refresh}
             onRepoint={ground.repoint}
             onRemove={ground.remove}
+            onLink={ground.link}
             interactionMode={gestureMode}
             zoom={camera.zoom}
           />
@@ -4582,6 +4599,8 @@ function App() {
         orphanPointers={orphanPointers}
         malformedGround={ground.malformedGround}
         malformedReadings={ground.malformedReadings}
+        malformedGroundLinks={ground.malformedLinks}
+        orphanGroundLinks={ground.orphanLinks}
         malformedQuantities={malformedQuantities}
         duplicateQuantities={duplicateQuantities}
         orphanQuantities={orphanQuantities}
@@ -4656,6 +4675,8 @@ function MarkNotices({
   orphanPointers,
   malformedGround,
   malformedReadings,
+  malformedGroundLinks,
+  orphanGroundLinks,
   malformedQuantities,
   duplicateQuantities,
   orphanQuantities,
@@ -4728,6 +4749,15 @@ function MarkNotices({
    */
   malformedGround: readonly string[];
   malformedReadings: readonly string[];
+  /**
+   * The ground map's WORDLESS links (story 16.5): unreadable lines in
+   * `map/ground-links.txt`, and links whose endpoint is not a reference the
+   * map carries. Both are PRESERVED and surfaced here (ADR-0009) under the
+   * ground group only — an orphan has no card to attach to, so it is never
+   * drawn.
+   */
+  malformedGroundLinks: readonly string[];
+  orphanGroundLinks: readonly { from: string; to: string }[];
   /** Quantities (Epic 8 story 1): unreadable lines, duplicates, lost/out-of-play words. */
   malformedQuantities: readonly string[];
   duplicateQuantities: readonly Quantity[];
@@ -4780,7 +4810,10 @@ function MarkNotices({
   // group only: record hygiene, never a claim that the map draws them.
   const hasGroundLines =
     level === "ground" &&
-    (malformedGround.length > 0 || malformedReadings.length > 0);
+    (malformedGround.length > 0 ||
+      malformedReadings.length > 0 ||
+      malformedGroundLinks.length > 0 ||
+      orphanGroundLinks.length > 0);
   // The running game's groups, with the empty families dropped; a group with
   // nothing left is dropped too, so no bare heading ever renders (the dynamics
   // group survives when it is only carrying quantity lines).
@@ -5014,6 +5047,27 @@ function MarkNotices({
                   key={`malformed-readings-${index}`}
                 >
                   unreadable line in map/readings.txt: {line}
+                </div>
+              ))}
+              {/* STORY 16.5, the links' two honesty surfaces: a record line the
+                  app cannot read, and a line naming a card the map does not
+                  carry. Both are KEPT in the file; the strip is the only place
+                  they are named (an orphan is never drawn as a wire). */}
+              {orphanGroundLinks.map((link, index) => (
+                <div
+                  className="mark-notice"
+                  key={`orphan-ground-link-${index}`}
+                >
+                  a link from {link.from} to {link.to} names a reference not on
+                  the map — kept in map/ground-links.txt
+                </div>
+              ))}
+              {malformedGroundLinks.map((line, index) => (
+                <div
+                  className="mark-notice"
+                  key={`malformed-ground-link-${index}`}
+                >
+                  unreadable line in map/ground-links.txt: {line}
                 </div>
               ))}
             </>

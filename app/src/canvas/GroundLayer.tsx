@@ -58,6 +58,13 @@ import type { GroundAddResult } from "./useGround";
  * refused unlink answers its one sentence the card is already gone, so the
  * sentence is shown where it stood. There is no undo until the history story.
  *
+ * STORY 16.5 adds ONE small affordance and no meaning: a quiet link handle on
+ * the card's edge, hover-revealed like the verbs. A drag from it onto another
+ * card wires the two WORDLESSLY (the wire itself is `GroundWires`); the card's
+ * body keeps the 4px press-to-open vs drag-to-move rule untouched, and the
+ * handle is handled before that rule because it is a button that starts its
+ * own gesture. There is no label, no count and no nudge here either.
+ *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
  */
@@ -95,6 +102,12 @@ interface GroundLayerProps {
   onRepoint: (on: string, from: string) => Promise<GroundAddResult>;
   /** Remove this reference, its reading and its kept text (story 16.3). */
   onRemove: (on: string) => Promise<GroundAddResult>;
+  /**
+   * Draw one WORDLESS link from this card to another (story 16.5): released on
+   * a card's body, it is one ordered pair and one write. Optional so a render
+   * test needs no plane; the app always passes the real write path.
+   */
+  onLink?: (from: string, to: string) => Promise<GroundAddResult>;
   /** How a gesture is armed right now — a drag stands still while armed. */
   interactionMode?: GestureMode;
   /**
@@ -113,6 +126,7 @@ export function GroundLayer({
   onRefresh,
   onRepoint,
   onRemove,
+  onLink,
   interactionMode = "idle",
   zoom = 1,
 }: GroundLayerProps) {
@@ -153,6 +167,7 @@ export function GroundLayer({
           onRefresh={onRefresh}
           onRepoint={onRepoint}
           onRemove={remove}
+          onLink={onLink}
         />
       ))}
       {refusal !== null && (
@@ -184,6 +199,7 @@ function GroundCard({
   onRefresh,
   onRepoint,
   onRemove,
+  onLink,
 }: {
   reference: GroundReference;
   reading: Reading | null;
@@ -195,6 +211,7 @@ function GroundCard({
   onRefresh: GroundLayerProps["onRefresh"];
   onRepoint: GroundLayerProps["onRepoint"];
   onRemove: (reference: GroundReference) => Promise<GroundAddResult>;
+  onLink?: (from: string, to: string) => Promise<GroundAddResult>;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -218,6 +235,45 @@ function GroundCard({
     function handleMouseDown(e: MouseEvent) {
       if (e.button !== 0) return;
       e.stopPropagation();
+
+      // STORY 16.5 — THE LINK HANDLE: a NEW small affordance on the card's
+      // edge, never a new meaning for the card's own press. A drag from it
+      // wires this card to whichever card it is released on; a release on
+      // empty paper, on this card itself, or Esc cancels and writes nothing.
+      // It must be handled BEFORE the generic button check below, because it
+      // is a button whose press starts a gesture of its own.
+      if ((e.target as HTMLElement).closest(".ground-link-handle")) {
+        if (isGestureArmed(interactionMode) || onLink === undefined) return;
+        e.preventDefault();
+        let cancelled = false;
+        const finish = () => {
+          window.removeEventListener("mouseup", onLinkUp);
+          window.removeEventListener("keydown", onLinkKey);
+        };
+        const onLinkKey = (ev: KeyboardEvent) => {
+          if (ev.key !== "Escape") return;
+          cancelled = true;
+          finish();
+        };
+        const onLinkUp = (ev: MouseEvent) => {
+          finish();
+          if (cancelled) return;
+          // Element-under-pointer, never nearest-card math: the drag names the
+          // card it was actually released on (the ring-bind idiom, ADR-0016).
+          const under = document.elementFromPoint(ev.clientX, ev.clientY);
+          const card =
+            under instanceof Element
+              ? under.closest(".ground-reference")
+              : null;
+          const slug = card === null ? null : card.getAttribute("data-slug");
+          if (slug === null || slug === reference.on) return;
+          void onLink(reference.on, slug);
+        };
+        window.addEventListener("mouseup", onLinkUp);
+        window.addEventListener("keydown", onLinkKey);
+        return;
+      }
+
       // The affordances are ordinary buttons: their own click handlers own the
       // press, and a press on one is never the start of a card drag.
       if ((e.target as HTMLElement).closest("button")) return;
@@ -354,6 +410,16 @@ function GroundCard({
       style={{ left: x, top: y }}
       data-slug={reference.on}
     >
+      {/* STORY 16.5 — the one new affordance: a small quiet handle on the
+          card's edge. Drag it onto another card and the two are WIRED, with no
+          word and no meaning (hover-revealed like the card's verbs). The card's
+          BODY keeps its press-to-open and drag-to-move exactly as before. */}
+      <button
+        type="button"
+        className="ground-link-handle"
+        aria-label="link to another card"
+        title="drag to link"
+      />
       <div className="ground-name">{reference.name}</div>
       <div className="ground-body" ref={bodyRef}>
         {bodyText !== null && (

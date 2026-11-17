@@ -5424,6 +5424,201 @@ body {
   animation: fade-in 140ms ease-out;
 }
 
+
+/* STORY 16.5 — the ground map's WORDLESS wires and the card's link handle.
+   A link is not a Distance (the epic's REFRAME): no word, no sign, no meaning,
+   no count. The wire is ONE quiet line in the plane's world space, behind the
+   cards, scaled by the same camera transform they use. It is drawn with the
+   distance wire's idiom (a 1px element stretched with scaleX) so following a
+   dragged card costs a compositor transform, never a layout pass.
+   PROVISIONAL: the stroke's colour and weight, the hit band's width, the
+   handle's and the mark's look. */
+.ground-wires {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ground-wire {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.ground-wire-line {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  width: 1px;
+  height: 0;
+  border-top: 1px solid rgba(141, 136, 124, 0.55);
+  transform-origin: 0 0;
+  pointer-events: none;
+  will-change: transform;
+  animation: fade-in 240ms ease-out;
+}
+
+/* The hover band: it takes the press only to reveal the remove mark, and a
+   press on it is an ordinary plane press (the wire itself has no verbs). */
+.ground-wire-hit {
+  position: absolute;
+  left: 0;
+  top: -6px;
+  z-index: 1;
+  width: 1px;
+  height: 12px;
+  background: transparent;
+  transform-origin: 0 0;
+  pointer-events: auto;
+}
+
+/* The remove mark, quiet until the wire is hovered: one small circle near the
+   midpoint. Its press asks the card delete's question; the cards stay. */
+.ground-wire-mark {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(141, 136, 124, 0.4);
+  border-radius: 50%;
+  background: rgba(255, 253, 248, 0.95);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: #8d8779;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+/* Revealed by hovering the band (the sibling combinator, because the wire
+   wrapper itself takes no pointer events) and kept while the mark itself is
+   hovered or focused. */
+.ground-wire-hit:hover ~ .ground-wire-mark,
+.ground-wire-mark:hover,
+.ground-wire-mark:focus-visible,
+.ground-wire:focus-within .ground-wire-mark {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ground-wire-mark:hover {
+  border-color: #8d8779;
+  color: #1e2126;
+}
+
+/* The two-step confirm, at the wire's midpoint (the card's inline ask, made
+   small): it only removes on its own verb; any other press or Esc backs out. */
+.ground-wire-confirm {
+  position: absolute;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px 8px;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 253, 248, 0.95);
+  border: 1px solid rgba(141, 136, 124, 0.22);
+  border-radius: 5px;
+  box-shadow: 0 1px 5px rgba(40, 35, 25, 0.06);
+  pointer-events: auto;
+  white-space: nowrap;
+  animation: fade-in 140ms ease-out;
+}
+
+.ground-wire-confirm-question {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #6f6a5f;
+}
+
+.ground-wire-confirm-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.ground-wire-confirm-actions button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  color: #8d8779;
+  cursor: pointer;
+}
+
+.ground-wire-confirm-actions button:hover {
+  color: #1e2126;
+}
+
+.ground-wire-confirm-actions button:disabled {
+  color: #c9c3b6;
+  cursor: default;
+}
+
+/* A refused unlink's one sentence, at the midpoint: the wire stays, nothing is
+   repaired or retried. */
+.ground-wire-problem {
+  position: absolute;
+  z-index: 7;
+  max-width: 240px;
+  padding: 3px 6px;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid rgba(141, 136, 124, 0.22);
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: #a0522d;
+  pointer-events: auto;
+  cursor: pointer;
+  animation: fade-in 140ms ease-out;
+}
+
+/* The card's link handle: a NEW small affordance on the edge, hover-revealed
+   like the verbs. It is the only way to start a wire; the card's body keeps
+   its press-to-open and drag-to-move rule untouched. */
+.ground-link-handle {
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  z-index: 3;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  padding: 0;
+  border: 1px solid rgba(141, 136, 124, 0.4);
+  border-radius: 50%;
+  background: rgba(255, 253, 248, 0.95);
+  opacity: 0;
+  pointer-events: none;
+  cursor: crosshair;
+  transition: opacity 120ms ease;
+}
+
+.ground-reference:hover .ground-link-handle,
+.ground-reference:focus-within .ground-link-handle,
+.ground-reference.expanded .ground-link-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ground-link-handle:hover {
+  border-color: #8d8779;
+  background: #fffdf8;
+}
+
 /* The creation bubble: world-anchored at the double-clicked point and
    counter-scaled by the component (the naming popup's idiom). Provisional:
    the card's look. */
