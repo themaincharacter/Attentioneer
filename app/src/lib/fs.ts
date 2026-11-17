@@ -125,3 +125,47 @@ export async function canonicalizePath(path: string): Promise<string> {
 export async function createMarkerExclusive(path: string): Promise<boolean> {
   return await invoke<boolean>("create_marker_exclusive", { path });
 }
+
+/**
+ * One path's identity facts, for the ground map's staleness reading (story
+ * 16.2). METADATA only — the command stats the path and opens nothing — so the
+ * map may say "has changed since this reading" and never "the text differs".
+ * The field names are the bridge's (snake_case, `meta.rs`), kept as they come
+ * so the one shape cannot drift from the Rust side.
+ */
+export interface FileMeta {
+  /** The path resolves to something right now. */
+  exists: boolean;
+  /** It is a regular file (a folder, FIFO or dangling link is not). */
+  is_file: boolean;
+  /** The file's size in bytes, when it is a regular file. */
+  len: number | null;
+  /** Last modification, milliseconds since the Unix epoch, when known. */
+  modified_ms: number | null;
+}
+
+/**
+ * A metadata answer: the facts, or the bridge's refusal as a VALUE. A reading
+ * that cannot be stat'ed is a state the map shows ("unreadable"), never an
+ * exception the plane has to catch; this is why `fileMeta` never rejects.
+ */
+export type FileMetaAnswer =
+  | ({ kind: "facts" } & FileMeta)
+  | { kind: "refused" };
+
+/**
+ * Stat one path without reading it (story 16.2's `file_meta`). Read-only by
+ * construction. A missing path comes back `exists: false` (the map says
+ * "missing"); a non-regular path says `exists: true, is_file: false` (the map
+ * says "unreadable"); an OS failure — permissions, a malformed path — is the
+ * refusal VALUE `{ kind: "refused" }`, never a throw. The map's states are
+ * computed at load from this answer and are never written into a record.
+ */
+export async function fileMeta(path: string): Promise<FileMetaAnswer> {
+  try {
+    const facts = await invoke<FileMeta>("file_meta", { path });
+    return { kind: "facts", ...facts };
+  } catch {
+    return { kind: "refused" };
+  }
+}

@@ -15,7 +15,7 @@ import {
 } from "../src/canvas/mapContentRules";
 import { MAP_CONTENT_OTHER_GAMES_HIDDEN } from "../src/canvas/deprecations";
 import type { GroundReference } from "../src/map/ground";
-import type { Reading } from "../src/map/readings";
+import type { Reading, ReadingState } from "../src/map/readings";
 
 /**
  * Story 16.1 — the ground map's own layer, and the separate-maps rule left
@@ -56,6 +56,13 @@ const reading: Reading = {
   taken: "2026-11-16T12:00:00.000Z",
 };
 
+/** The story-2 write verbs are inert in a render test (no DOM, no disk). */
+const inertVerbs = {
+  onMove: async () => ({ ok: true as const }),
+  onRefresh: async () => ({ ok: true as const }),
+  onRepoint: async () => ({ ok: true as const }),
+};
+
 describe("the ground map's own content, and only its own", () => {
   test("the separate-maps rule still blanks every concept family at ground", () => {
     expect(MAP_CONTENT_OTHER_GAMES_HIDDEN).toBe(true);
@@ -74,6 +81,8 @@ describe("the ground map's own content, and only its own", () => {
         texts: {
           "rain-gauge": "first line\nsecond line\n",
         },
+        states: { "rain-gauge": "current" },
+        ...inertVerbs,
       }),
     );
     expect(html).toContain("Rain gauge");
@@ -91,6 +100,8 @@ describe("the ground map's own content, and only its own", () => {
         references: [reference],
         readings: [],
         texts: {},
+        states: { "rain-gauge": "unread" },
+        ...inertVerbs,
       }),
     );
     expect(html).toContain("Rain gauge");
@@ -128,6 +139,13 @@ describe("the ground map's own content, and only its own", () => {
       "ground-bubble",
       "ground-bubble-name",
       "ground-bubble-actions",
+      // Story 16.2: the computed state word, the two person-pressed re-reads
+      // and the refusal sentence in place.
+      "ground-state",
+      "ground-actions",
+      "ground-refresh",
+      "ground-repoint",
+      "ground-problem",
     ]) {
       expect(CONTENT_CLASSES).toContain(name as never);
     }
@@ -211,5 +229,77 @@ describe("the negative space: the ground map announces and ranks nothing", () =>
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
     expect(code).not.toMatch(FORBIDDEN);
+  });
+});
+
+describe("story 16.2: the card says when the reading went stale, plainly", () => {
+  function render(state: ReadingState, withReading = true) {
+    return renderToStaticMarkup(
+      createElement(GroundLayer, {
+        references: [reference],
+        readings: withReading ? [reading] : [],
+        texts: withReading ? { "rain-gauge": "first line\n" } : {},
+        states: { "rain-gauge": state },
+        ...inertVerbs,
+      }),
+    );
+  }
+
+  test("a current reading adds no word: the reading itself is the evidence", () => {
+    const html = render("current");
+    expect(html).toContain("first line");
+    expect(html).not.toContain("ground-state");
+  });
+
+  test("changed, missing and unreadable each say one quiet, exact line", () => {
+    expect(render("changed")).toContain(
+      "the file has changed since this reading",
+    );
+    expect(render("missing")).toContain("the file is missing");
+    expect(render("unreadable")).toContain("the file cannot be read");
+    // A changed reading still SHOWS the lines it took.
+    expect(render("changed")).toContain("first line");
+  });
+
+  test("no reading line is unread, and the card offers a pick, not a re-read", () => {
+    const html = render("unread", false);
+    expect(html).toContain("no reading taken yet");
+    expect(html).not.toContain(">refresh<");
+    expect(html).toContain("point at a file…");
+  });
+
+  test("the two re-reads are quiet buttons on the card, never a badge", () => {
+    const html = render("changed");
+    expect(html).toContain(">refresh<");
+    expect(html).toContain("point at another file…");
+    // One small line of type: no count, score, badge or nudge anywhere in it.
+    expect(html).not.toMatch(/\b(count|score|streak|badge|nudge)\b/i);
+    expect(html).not.toMatch(/\d+\s*(of|\/)\s*\d+/);
+  });
+
+  test("the drag is one write on release, and the layer owns the raw press", () => {
+    // The pure rule is groundDrag's; the LAYER calls drop exactly once and
+    // writes once, on mouseup — never per frame.
+    expect(LAYER).toContain('from "./groundDrag"');
+    expect(LAYER).toContain("dropGroundDrag(drag)");
+    expect(LAYER).toContain("onMove(reference.on, point.x, point.y)");
+    expect(LAYER).toContain('"mouseup"');
+    expect(LAYER).toContain("stopPropagation()");
+    expect(LAYER).not.toContain("setInterval");
+    expect(LAYER).not.toContain("addEventListener(\"change\"");
+  });
+
+  test("the app passes the computed states and the three person verbs only", () => {
+    expect(APP).toContain("states={ground.states}");
+    expect(APP).toContain("onMove={ground.move}");
+    expect(APP).toContain("onRefresh={ground.refresh}");
+    expect(APP).toContain("onRepoint={ground.repoint}");
+    // No watcher, no refresh on open: the load reads the map folder and stats
+    // each reading once; the re-reads are the person's presses.
+    const groundHook = readFileSync(join(APP_DIR, "src", "canvas", "useGround.ts"), "utf8");
+    expect(groundHook).toContain("fileMeta(readingAbsolutePath(workspacePath, reading))");
+    expect(groundHook).not.toContain("setInterval");
+    // The hook never reads a head itself: the re-reads live in readings.ts.
+    expect(groundHook).not.toContain("readTextHead(");
   });
 });

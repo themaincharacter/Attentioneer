@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,14 +23,19 @@ import {
   type GroundIo,
 } from "../src/map/ground";
 import {
+  isAbsolutePath,
+  isInsideWorkspace,
   loadReadingTexts,
   parseReadingLine,
   parseReadings,
+  readingAbsolutePath,
   readingFileName,
+  readingFormFor,
   readingTextPath,
   readingsPath,
   READING_MAX_LINES,
   READING_REFUSALS,
+  refreshReading,
   serializeReadingLine,
   serializeReadings,
   takeReading,
@@ -79,11 +85,31 @@ const groundIo: GroundIo = {
   },
 };
 
-/** The ground io plus the bridge's head read and the folder bridge. */
+/** The ground io plus the bridge's head read, its stat and the folder bridge. */
 const readingIo: ReadingIo = {
   ...groundIo,
   createDirAll: async (path) => {
     mkdirSync(path, { recursive: true });
+  },
+  fileMeta: async (path) => {
+    try {
+      const stat = statSync(path);
+      return {
+        kind: "facts",
+        exists: true,
+        is_file: stat.isFile(),
+        len: stat.isFile() ? stat.size : null,
+        modified_ms: Math.floor(stat.mtimeMs),
+      };
+    } catch {
+      return {
+        kind: "facts",
+        exists: false,
+        is_file: false,
+        len: null,
+        modified_ms: null,
+      };
+    }
   },
   readTextHead: async (path, maxLines, maxBytes): Promise<TextHead> => {
     let bytes: Buffer;
@@ -288,11 +314,15 @@ describe("taking a reading: the head verbatim, or one sentence", () => {
     expect(readFileSync(readingTextPath(workspace, "rain-gauge"), "utf8")).toBe(
       text,
     );
+    // Story 16.2's form rule: the temp source lives OUTSIDE this workspace, so
+    // it is stored as the machine-local `at` with its absolute value. The
+    // head's size is stamped beside `taken` (the staleness fact).
     expect(result.reading).toEqual({
       on: "rain-gauge",
-      form: "path",
+      form: "at",
       from: source,
       taken: "2026-11-16T12:00:00.000Z",
+      bytes: text.length,
     });
     // The cap is the story's provisional 64 lines / 8 KiB (a hypothesis, not a
     // rule): a longer file is cut at the 64th line's newline.
@@ -368,5 +398,128 @@ describe("taking a reading: the head verbatim, or one sentence", () => {
     expect(readingFileName("/home/k/Documents/gauge.txt")).toBe("gauge.txt");
     expect(readingFileName("C:\\Users\\k\\gauge.txt")).toBe("gauge.txt");
     expect(readingFileName("gauge.txt")).toBe("gauge.txt");
+  });
+});
+
+describe("story 16.2: bytes in the line are tolerant, and the form follows the pick", () => {
+  test("a line with bytes round-trips; a legacy line is unknown, never rewritten", () => {
+    const fresh = {
+      on: "rain-gauge",
+      form: "path" as const,
+      from: "notes/gauge.txt",
+      taken: "2026-11-17T12:00:00.000Z",
+      bytes: 128,
+    };
+    expect(serializeReadingLine(fresh)).toBe(
+      "on: rain-gauge | form: path | from: notes/gauge.txt | taken: 2026-11-17T12:00:00.000Z | bytes: 128",
+    );
+    expect(parseReadingLine(serializeReadingLine(fresh))).toEqual(fresh);
+
+    // A story-1 line has no bytes tail: unknown size, and serializing it back
+    // must not invent one (no load-time migration).
+    const legacy = parseReadingLine(
+      "on: rain-gauge | form: path | from: notes/gauge.txt | taken: 2026-11-17T12:00:00.000Z",
+    );
+    expect(legacy).toEqual({
+      on: "rain-gauge",
+      form: "path",
+      from: "notes/gauge.txt",
+      taken: "2026-11-17T12:00:00.000Z",
+    });
+    expect(legacy?.bytes).toBeUndefined();
+    expect(serializeReadingLine(legacy!)).toBe(
+      "on: rain-gauge | form: path | from: notes/gauge.txt | taken: 2026-11-17T12:00:00.000Z",
+    );
+
+    // `at` is a reading form now; `url` is not one in this story.
+    expect(
+      parseReadingLine(
+        "on: rain | form: at | from: C:\\Users\\k\\gauge.txt | taken: 2026-11-17T12:00:00.000Z",
+      ),
+    ).toEqual({
+      on: "rain",
+      form: "at",
+      from: "C:\\Users\\k\\gauge.txt",
+      taken: "2026-11-17T12:00:00.000Z",
+    });
+    expect(
+      parseReadingLine(
+        "on: rain | form: url | from: https://x | taken: 2026-11-17T12:00:00.000Z",
+      ),
+    ).toBeNull();
+  });
+
+  test("inside the workspace stores path/relative; outside stores at/absolute", () => {
+    expect(readingFormFor("/w/garden", "/w/garden/notes/a.txt")).toEqual({
+      form: "path",
+      from: "notes/a.txt",
+    });
+    expect(readingFormFor("/w/garden", "/home/k/Documents/a.txt")).toEqual({
+      form: "at",
+      from: "/home/k/Documents/a.txt",
+    });
+    // A sibling whose name merely STARTS with the workspace's is outside.
+    expect(readingFormFor("/w/garden", "/w/garden-2/a.txt").form).toBe("at");
+    expect(isInsideWorkspace("/w/garden/", "/w/garden/notes/a.txt")).toBe(true);
+    expect(isAbsolutePath("/x")).toBe(true);
+    expect(isAbsolutePath("C:\\x")).toBe(true);
+    expect(isAbsolutePath("notes/a.txt")).toBe(false);
+  });
+
+  test("a legacy absolute path is read as absolute and left exactly as written", () => {
+    const legacy = {
+      on: "rain",
+      form: "path" as const,
+      from: "/home/k/Documents/gauge.txt",
+      taken: "2026-11-16T12:00:00.000Z",
+    };
+    expect(readingAbsolutePath("/w/garden", legacy)).toBe(
+      "/home/k/Documents/gauge.txt",
+    );
+    expect(serializeReadingLine(legacy)).not.toContain("/w/garden");
+    expect(
+      readingAbsolutePath("/w/garden", {
+        ...legacy,
+        form: "at",
+        from: "C:\\Users\\k\\gauge.txt",
+      }),
+    ).toBe("C:\\Users\\k\\gauge.txt");
+    expect(
+      readingAbsolutePath("/w/garden", { ...legacy, from: "notes/gauge.txt" }),
+    ).toBe("/w/garden/notes/gauge.txt");
+  });
+
+  test("a refresh re-takes the same file and keeps the line's form and value", async () => {
+    const workspace = freshWorkspace();
+    const source = join(workspace, "notes.txt");
+    writeFileSync(source, "one\ntwo\n", "utf8");
+    const first = await takeReading(
+      workspace,
+      "rain",
+      source,
+      readingIo,
+      "2026-11-16T12:00:00.000Z",
+    );
+    if (first.kind !== "taken") throw new Error("expected a reading");
+    expect(first.reading.form).toBe("path");
+    expect(first.reading.from).toBe("notes.txt");
+
+    writeFileSync(source, "one\ntwo\nthree\n", "utf8");
+    const refreshed = await refreshReading(
+      workspace,
+      first.reading,
+      readingIo,
+      "2026-11-17T12:00:00.000Z",
+    );
+    if (refreshed.kind !== "taken") throw new Error("expected a reading");
+    // Same form and value: the file did not move, so nothing is migrated.
+    expect(refreshed.reading.form).toBe("path");
+    expect(refreshed.reading.from).toBe("notes.txt");
+    expect(refreshed.reading.taken).toBe("2026-11-17T12:00:00.000Z");
+    expect(refreshed.reading.bytes).toBe(14);
+    expect(refreshed.text).toBe("one\ntwo\nthree\n");
+    expect(readFileSync(readingTextPath(workspace, "rain"), "utf8")).toBe(
+      "one\ntwo\nthree\n",
+    );
   });
 });

@@ -337,6 +337,14 @@ export const CONTENT_CLASSES = [
   "ground-name",
   "ground-reading",
   "ground-handle",
+  // Story 16.2: the computed state word, the two person-pressed re-reads and
+  // the refusal sentence in place. They are content like the rows above, so a
+  // press on them never pans the plane, creates anything or starts a gesture.
+  "ground-state",
+  "ground-actions",
+  "ground-refresh",
+  "ground-repoint",
+  "ground-problem",
   "ground-bubble",
   "ground-bubble-name",
   "ground-bubble-file",

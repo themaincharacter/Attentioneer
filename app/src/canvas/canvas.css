@@ -5177,9 +5177,12 @@ body {
  * borrowing the concept set (ADR-0032). Nothing counts or nudges.
  * ------------------------------------------------------------------------- */
 
-/* The layer is world space and offers no action: story 1 draws references and
-   nothing else (drag and rename are story 2). The reference rows are content to
-   the gate, so a press on one is never read as empty paper. */
+/* The layer is world space. Story 1 drew references and nothing else; story 2
+   makes the card pressable (a drag moves it, one write on release) and gives it
+   the computed state word and the two person-pressed re-reads. The reference
+   rows are content to the gate, so a press on one is never read as empty
+   paper. Provisional: the look (the state line's colour and the two quiet
+   actions) is ADR-0003's rendering seam. */
 .ground-layer {
   position: absolute;
   left: 0;
@@ -5232,6 +5235,71 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* A drag moves the card: the grab cursor says the press can, and the live
+   frame is quiet (no shadow, no scale) — one write follows the release. */
+.ground-reference {
+  cursor: grab;
+}
+
+.ground-reference.dragging {
+  cursor: grabbing;
+}
+
+/* The reading's state, one small line of type (story 16.2). It names what the
+   metadata says and nothing else: "current" renders nothing, and "changed" is
+   the file's metadata moving, never a claim about the text. */
+.ground-state {
+  font-size: 11.5px;
+  font-style: italic;
+  color: #a0522d;
+  white-space: nowrap;
+}
+
+.ground-state.missing,
+.ground-state.unreadable,
+.ground-state.unread {
+  color: #a09a8c;
+}
+
+/* A refusal's one sentence, in place: the old reading stays. */
+.ground-problem {
+  font-size: 11.5px;
+  color: #a0522d;
+}
+
+/* The two re-reads: quiet text buttons on the card, never a toolbar. They are
+   the only re-reads the app has; nothing here watches or polls. */
+.ground-actions {
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.ground-reference:hover .ground-actions,
+.ground-reference:focus-within .ground-actions {
+  opacity: 1;
+}
+
+.ground-actions button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  color: #8d8779;
+  cursor: pointer;
+}
+
+.ground-actions button:hover {
+  color: #1e2126;
+}
+
+.ground-actions button:disabled {
+  color: #c9c3b6;
+  cursor: default;
 }
 
 /* The creation bubble: world-anchored at the double-clicked point and

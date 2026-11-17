@@ -3,6 +3,7 @@ use std::path::Path;
 
 mod head;
 mod marker;
+mod meta;
 mod paths;
 
 /// Thin byte-level fs bridge. What machine files say and how they serialize
@@ -110,6 +111,19 @@ fn canonicalize_path(path: String) -> Result<String, paths::PathRefusal> {
     paths::canonicalize(&path)
 }
 
+/// One file's identity facts for the ground map's staleness reading (story
+/// 16.2): whether the path names a regular file, its size and its modified
+/// time. READ-ONLY BY CONSTRUCTION and it opens nothing — `fs::metadata` stats
+/// the path, so the reading's "changed / missing / unreadable" state is
+/// computed from metadata and never from the text (the implementation and its
+/// tests live in `meta.rs`). A missing path is an honest `exists: false`;
+/// every other OS failure is one line the bridge answers as a typed refusal
+/// VALUE, so a dangling reading is a state, not an exception.
+#[tauri::command]
+fn file_meta(path: String) -> Result<meta::FileMeta, String> {
+    meta::read(&path)
+}
+
 /// Create the ghost inbox's in-flight marker EXCLUSIVELY (Epic 10 story 1,
 /// ADR-0025 decision 2): the `wx` open. `Ok(true)` when this call created it,
 /// `Ok(false)` when a marker was already there. The implementation and its
@@ -144,6 +158,7 @@ pub fn run() {
             read_text_head,
             canonicalize_path,
             create_marker_exclusive,
+            file_meta,
             config_path
         ])
         .run(tauri::generate_context!())

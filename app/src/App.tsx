@@ -3835,13 +3835,23 @@ function App() {
             name — never the concept map's words, distances, marks, veils,
             ghosts or quantities. The separate-maps rule stays exactly as it
             was; this is the ground map's own content, mounted only here. The
-            layer is in FILE ORDER and offers no action (story 1 draws only);
-            its rows are content, so a press on one never creates over it. */}
+            layer is in FILE ORDER; its rows are content, so a press on one
+            never creates over it. STORY 16.2 makes each card live without
+            leaving this map: a drag moves it (one x|y write on release), the
+            state word is COMPUTED at load from the file's metadata, and the
+            two re-reads (refresh, point at another file) are the person's
+            alone — the app never re-reads a file behind their back. */}
         {level === "ground" && (
           <GroundLayer
             references={ground.references}
             readings={ground.readings}
             texts={ground.texts}
+            states={ground.states}
+            onMove={ground.move}
+            onRefresh={ground.refresh}
+            onRepoint={ground.repoint}
+            interactionMode={gestureMode}
+            zoom={camera.zoom}
           />
         )}
 

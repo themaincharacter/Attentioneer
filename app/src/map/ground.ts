@@ -31,8 +31,11 @@ import { GROUND_RECORD_FILE, mapDir } from "./records";
  * PROVISIONAL (the story's record shapes, before an ADR settles them): the
  * `ground.txt` name, the `on | name | x | y` line shape, the strict key
  * order on read and the int coordinates. A hand edit that changes the order is
- * an unreadable line, surfaced rather than guessed at. Renaming and moving are
- * story 2's business; this story only creates.
+ * an unreadable line, surfaced rather than guessed at. STORY 16.2 adds the one
+ * other person move this family needed: `moveGroundReference` places an
+ * existing reference at a new point (one line rewrite, on drop). Renaming is
+ * still out of scope, and no reading STATE is ever written here — states are
+ * computed at load in `readings.ts`.
  */
 
 /** One ground reference: the person's name at their point, keyed by slug. */
@@ -178,4 +181,24 @@ export function addGroundReference(
     y: Math.round(y),
   };
   return { references: [...references, reference], reference };
+}
+
+/**
+ * MOVE one reference to a new point (story 16.2 decision 6): the card is
+ * dropped, and the app rewrites this ONE line through the write queue. PURE —
+ * the caller writes the file, so a drag's commit is one write and a test can
+ * assert the bytes without a disk. Coordinates are rounded to whole map units
+ * like `addGroundReference`; a hand-duplicated slug moves every line that
+ * carries it (the read rule keeps duplicates as content, so the person's drag
+ * cannot be silently narrowed to one of them). No state, reading or name changes.
+ */
+export function moveGroundReference(
+  references: readonly GroundReference[],
+  on: string,
+  x: number,
+  y: number,
+): GroundReference[] {
+  return references.map((reference) =>
+    reference.on === on ? { ...reference, x: Math.round(x), y: Math.round(y) } : reference,
+  );
 }
