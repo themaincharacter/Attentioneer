@@ -43,11 +43,14 @@ import { probeSpec } from "../turn/cliBridge";
  * THE PROVIDERS PANEL (Epic 15 story 4) — the person's rows, where the key
  * lives, and which provider a turn carries.
  *
- * WHY A PANEL AND NOT FIELDS ON EACH ASK: a base URL typed into a panel is a
+ * WHY ONE BLOCK AND NOT FIELDS ON EACH ASK: a base URL typed into an ask is a
  * fact re-typed at every door a turn can leave by, and it cannot say which
  * models an endpoint offers. Rows are the one place; an ask only selects
- * providerId:modelId. The card's ask and the Ask Move use this same panel (one
- * piece, so the two surfaces cannot drift into two ideas of a provider).
+ * providerId:modelId. Since story 15.10 this is the Providers SECTION of the
+ * settings modal, mounted there and nowhere else — the ask panels have no
+ * provider form of their own (one implementation, so the surfaces cannot drift
+ * into two ideas of a provider). Its own heading and close verb are gone: the
+ * frame names the section and owns the close.
  *
  * WHY THE KEY IS WRITE-ONLY HERE: the person can SET a key and can see that one
  * is set ("a key is set"); no field is ever filled from the store, nothing
@@ -72,12 +75,9 @@ import { probeSpec } from "../turn/cliBridge";
 const DEFAULT_LOCAL_SPEC: LocalSpec = LOCAL_SPECS[0];
 
 export function ProvidersPanel({
-  onClose,
   onChanged,
 }: {
-  /** Close the panel (nothing is written by closing). */
-  onClose: () => void;
-  /** The rows or the selection changed (the ask re-reads its facts). */
+  /** The rows or the selection changed (the frame re-reads its facts). */
   onChanged?: () => void;
 }) {
   const [settings, setSettings] = useState<TurnSettings | null>(null);
@@ -560,19 +560,6 @@ export function ProvidersPanel({
 
   return (
     <div className="providers-panel" role="group" aria-label="providers">
-      <div className="providers-head">
-        <span className="providers-title">providers</span>
-        <button
-          type="button"
-          className="providers-close"
-          aria-label="close the providers panel"
-          title="close"
-          onClick={onClose}
-        >
-          ×
-        </button>
-      </div>
-
       {/* ALWAYS VISIBLE: which store keeps keys on THIS machine. The fallback
           is a stated state, never a silent one. */}
       <div className="providers-status" role="status">

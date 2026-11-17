@@ -104,12 +104,20 @@ interface AskPanelProps {
    */
   providerRef?: string | null;
   /**
+   * Is a provider configured? null until the config answers, true when the
+   * selection resolves, false when nothing does. The false case is the story
+   * 15.10 rule: ONE sentence and the settings shortcut, and no other action —
+   * a turn with no row cannot leave, so a clipboard send here would be a dead
+   * end offered as a door.
+   */
+  hasProvider?: boolean | null;
+  /**
    * WHERE KEYS LIVE on this machine ("the OS keychain", or the stated local
    * file), or null before the store answers. Always shown while composing: a
    * fallback that is not said is a silent one.
    */
   keyStore?: string | null;
-  /** Open the shared providers panel (rows, keys, the selection). */
+  /** Open Settings on its Providers section (the one place rows are edited). */
   onProviders?: () => void;
   /** The inclusion changed: the app reads exactly those previews, nothing else. */
   onIncludedChange: (included: Pointer[]) => void;
@@ -200,6 +208,7 @@ export function AskPanel({
   context,
   sent,
   providerRef = null,
+  hasProvider = null,
   keyStore = null,
   onProviders,
   onIncludedChange,
@@ -302,7 +311,30 @@ export function AskPanel({
 
       <div className="ask-word">{name}</div>
 
-      {session === null && (
+      {/* NOTHING CONFIGURED (story 15.10): the one sentence and the settings
+          shortcut, and nothing else — no question box, no clipboard verbs. */}
+      {session === null && hasProvider === false && (
+        <div className="ask-unconfigured">
+          <div className="ask-fallback" role="status">
+            nothing is configured: open settings to add a provider.
+          </div>
+          {onProviders !== undefined && (
+            <button
+              type="button"
+              className="ask-configure"
+              title="settings: the provider rows, keys, and the default"
+              onClick={(e) => {
+                e.stopPropagation();
+                onProviders();
+              }}
+            >
+              open settings
+            </button>
+          )}
+        </div>
+      )}
+
+      {session === null && hasProvider !== false && (
         <>
           <textarea
             className="ask-question"
@@ -381,13 +413,13 @@ export function AskPanel({
               <button
                 type="button"
                 className="ask-providers-open"
-                title="providers: rows, keys, and the selection"
+                title="settings: the provider rows, keys, and the default"
                 onClick={(e) => {
                   e.stopPropagation();
                   onProviders();
                 }}
               >
-                providers…
+                configure
               </button>
             )}
           </div>

@@ -213,6 +213,8 @@ export const PROVIDER_SENTENCES = {
   localNoModel: "a local provider needs the model file to hand to its command",
   localNoArgs: "a local provider needs the arguments that start its server",
   localIdle: "a local provider's idle window must be at least one minute",
+  /** The settings' Local model section names a row that is no longer there. */
+  localMissing: "that model on this machine is not configured",
 } as const;
 
 function textOf(value: unknown): string {
@@ -950,6 +952,53 @@ export function withSelection(
   modelId: string,
 ): TurnSettings {
   return { ...settings, providerId, modelId };
+}
+
+/** One option a provider select offers: the id a turn carries, the name shown. */
+export interface ProviderOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * The rows as select options, in the person's order. Every surface that offers
+ * a provider (the ask's selector, Settings' Turn defaults) maps the SAME rows,
+ * so a row added in one place is offered in the other without a second list.
+ */
+export function providerOptions(settings: TurnSettings): ProviderOption[] {
+  return settings.providers.map((provider) => ({
+    id: provider.id,
+    label: provider.name,
+  }));
+}
+
+/**
+ * Change one local row's idle window, and nothing else. This is the field the
+ * settings surface edits (the row's own field, not a global setting): the
+ * minutes are validated here so the config cannot hold a row the host would
+ * read as "no idle rule", and the rest of the row is carried verbatim.
+ */
+export function withLocalIdle(
+  settings: TurnSettings,
+  providerId: string,
+  minutes: number,
+): TurnSettings | Refusal {
+  const row = settings.providers.find((provider) => provider.id === providerId);
+  if (row === undefined || row.kind !== "local") {
+    return refused(PROVIDER_SENTENCES.localMissing);
+  }
+  if (!Number.isFinite(minutes) || minutes < 1) {
+    return refused(PROVIDER_SENTENCES.localIdle);
+  }
+  const idleMinutes = Math.floor(minutes);
+  return {
+    ...settings,
+    providers: settings.providers.map((provider) =>
+      provider.id === providerId && provider.kind === "local"
+        ? { ...provider, idleMinutes }
+        : provider,
+    ),
+  };
 }
 
 /* ------------------------------------------------------------------ *

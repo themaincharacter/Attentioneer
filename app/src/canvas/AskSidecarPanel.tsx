@@ -8,6 +8,7 @@ import {
 import { loadTurnSettings, saveTurnSettings } from "../turn/provider";
 import {
   modelsForMove,
+  providerOptions,
   resolveSelection,
   withSelection,
   formatProviderRef,
@@ -25,7 +26,6 @@ import { TURN_SENTENCES, routeOf, type TurnPort } from "../turn/turn";
 import type { TurnMessage } from "../turn/protocol";
 import { ASK_READ_MISSED } from "./contactRules";
 import { PacketSurface } from "./PacketSurface";
-import { ProvidersPanel } from "./ProvidersPanel";
 
 /**
  * THE CARD'S ASK PANEL (Epic 15 story 1; story 3b gives it the packet; story 4
@@ -48,9 +48,15 @@ import { ProvidersPanel } from "./ProvidersPanel";
  *
  * WHY THE PROVIDER IS A SELECTION AND NOT THREE FIELDS: the rows own the base
  * URL and the models (turn/providers.ts); the turn carries providerId:modelId
- * and the app re-derives the rest. The person edits rows in ONE panel (the
- * shared ProvidersPanel), so this panel and the Ask Move cannot drift into two
- * ideas of a provider.
+ * and the app re-derives the rest. Since story 15.10 the rows are edited in
+ * ONE place — the settings modal's Providers section — and this panel keeps
+ * only the selector plus the "configure" shortcut that opens Settings there.
+ * The old inline provider form is GONE, not copied: one implementation, so
+ * this panel and the Ask Move cannot drift into two ideas of a provider.
+ *
+ * WITH NOTHING CONFIGURED the panel says so in one sentence and offers the
+ * settings shortcut as its only action. It does not pretend a question could
+ * leave, and it does not grow a form of its own.
  *
  * WHY THE KEY FIELD IS GONE: a key is write-only. It is set in the providers
  * panel, its existence is stated here ("a key is set"), and it is read from the
@@ -84,7 +90,9 @@ export function AskSidecarPanel({
   card,
   workspacePath,
   turn,
+  onConfigure,
   onClose,
+  providersRev = 0,
 }: {
   /** The anchored card's already-loaded facts (the one block that rides). */
   card: AskCardFacts;
@@ -92,15 +100,18 @@ export function AskSidecarPanel({
   workspacePath: string;
   /** The app's turn port: send the packet, stop the running turn. */
   turn: TurnPort;
+  /** Open Settings on its Providers section (the one place rows are edited). */
+  onConfigure?: () => void;
   /** Close the panel (view state; nothing is written by closing). */
   onClose: () => void;
+  /** Bumped when Settings changes the rows (this panel re-reads them). */
+  providersRev?: number;
 }) {
   // The rows and the selection come from the config file; the store's name and
   // whether a key exists come from the key bridge. None of it is a key value.
   const [settings, setSettings] = useState<TurnSettings | null>(null);
   const [store, setStore] = useState<SecretStore | null>(null);
   const [keySet, setKeySet] = useState(false);
-  const [providersOpen, setProvidersOpen] = useState(false);
   const [providerNote, setProviderNote] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [running, setRunning] = useState(false);
@@ -121,16 +132,6 @@ export function AskSidecarPanel({
   const [reached, setReached] = useState<string | null>(null);
   const [sent, setSent] = useState<readonly TurnMessage[] | null>(null);
 
-  /** Re-read the rows, the store and whether a key is kept (never its value). */
-  async function reloadFacts(): Promise<void> {
-    const loaded = await loadTurnSettings();
-    setSettings(loaded);
-    setStore(await secretStatus());
-    setKeySet(
-      loaded.providerId === "" ? false : await keyExists(loaded.providerId),
-    );
-  }
-
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -146,7 +147,10 @@ export function AskSidecarPanel({
     return () => {
       alive = false;
     };
-  }, []);
+    // Settings can add or remove a row while this panel stays mounted; the
+    // app bumps its revision on every change, so the selector never offers a
+    // stale row (and never points at one that is gone).
+  }, [providersRev]);
 
   // The card's context is the app's ALREADY-LOADED state: no read, no reach
   // and no link. The packet is assembled purely from it, so the declaration
@@ -285,6 +289,46 @@ export function AskSidecarPanel({
     }
   }
 
+  // NOTHING CONFIGURED: one sentence, and the settings shortcut as the ONLY
+  // action. The question box and send are not offered — a turn with no row
+  // cannot leave, and a form here would be a second place to configure one.
+  if (settings !== null && resolveSelection(settings).kind !== "resolved") {
+    return (
+      <div
+        className="ground-ask-panel"
+        role="group"
+        aria-label="ask about this reference"
+      >
+        <div className="ground-ask-head">
+          <span className="ground-ask-title">ask about “{card.name}”</span>
+          <button
+            type="button"
+            className="ground-ask-close"
+            aria-label="close the ask"
+            title="close"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+        <div className="ground-ask-unconfigured">
+          <div className="ground-ask-problem" role="status">
+            {PROVIDER_SENTENCES.nothing}
+          </div>
+          {onConfigure !== undefined && (
+            <button
+              type="button"
+              className="ground-ask-open"
+              onClick={onConfigure}
+            >
+              open settings
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="ground-ask-panel"
@@ -320,11 +364,13 @@ export function AskSidecarPanel({
             }}
           >
             <option value="">nothing selected</option>
-            {(settings?.providers ?? []).map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.name}
-              </option>
-            ))}
+            {(settings === null ? [] : providerOptions(settings)).map(
+              (option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ),
+            )}
           </select>
         </label>
         <label className="ground-ask-field">
@@ -354,13 +400,16 @@ export function AskSidecarPanel({
           <span className="ground-ask-key-state">
             {keySet ? "a key is set" : "no key is set"}
           </span>
-          <button
-            type="button"
-            className="ground-ask-open"
-            onClick={() => setProvidersOpen((open) => !open)}
-          >
-            {providersOpen ? "hide providers" : "providers…"}
-          </button>
+          {onConfigure !== undefined && (
+            <button
+              type="button"
+              className="ground-ask-open"
+              title="settings: the provider rows, keys, and the default"
+              onClick={onConfigure}
+            >
+              configure
+            </button>
+          )}
         </div>
         {/* THE STATUS SENTENCE, always visible: which store keeps keys here. */}
         <div className="ground-ask-key-store" role="status">
@@ -372,13 +421,6 @@ export function AskSidecarPanel({
           </div>
         )}
       </div>
-
-      {providersOpen && (
-        <ProvidersPanel
-          onClose={() => setProvidersOpen(false)}
-          onChanged={() => void reloadFacts()}
-        />
-      )}
 
       <textarea
         className="ground-ask-question"

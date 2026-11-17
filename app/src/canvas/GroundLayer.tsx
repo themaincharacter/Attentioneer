@@ -214,6 +214,17 @@ interface GroundLayerProps {
    */
   onAsk?: TurnPort;
   /**
+   * Open Settings on its Providers section (story 15.10). The card's ask keeps
+   * only a selector and this shortcut — the rows are edited in Settings, never
+   * inline. Optional so a render test needs no app chrome.
+   */
+  onConfigure?: () => void;
+  /**
+   * Bumped by the app when Settings changed the rows, so the open card's ask
+   * re-reads its selector (a row added or removed is never stale on screen).
+   */
+  providersRev?: number;
+  /**
    * The workspace root, for the ONE cross-map read (story 16.7): the concept
    * map's word index, read-only, so a word mention can be drawn live or
    * dangling and the picker can offer the vocabulary. Optional so a render
@@ -245,10 +256,14 @@ export function GroundLayer({
   onDismissPull,
   onLink,
   onAsk,
+  onConfigure,
+  providersRev = 0,
   workspacePath = "",
   interactionMode = "idle",
   zoom = 1,
 }: GroundLayerProps) {
+  // onConfigure and providersRev are the GroundLayer's own props; the cards
+  // below receive them so an open card ask can open Settings and reload.
   const readingsBySlug = new Map(readings.map((reading) => [reading.on, reading]));
   // STORY 16.7 — WHICH card is expanded is the LAYER's view state, not each
   // card's: a card mention must be able to open ANOTHER card. It is still view
@@ -360,6 +375,8 @@ export function GroundLayer({
           onDismissPull={onDismissPull}
           onLink={onLink}
           onAsk={onAsk}
+          onConfigure={onConfigure}
+          providersRev={providersRev}
           workspacePath={workspacePath}
         />
       ))}
@@ -445,6 +462,8 @@ function GroundCard({
   onDismissPull,
   onLink,
   onAsk,
+  onConfigure,
+  providersRev,
   workspacePath,
 }: {
   reference: GroundReference;
@@ -480,6 +499,10 @@ function GroundCard({
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
   /** The app's turn port for the expanded card's `ask…` verb (story 15.1). */
   onAsk?: TurnPort;
+  /** Open Settings on Providers (story 15.10): the ask's only configure door. */
+  onConfigure?: () => void;
+  /** Bumped when Settings changed the rows (the ask re-reads its selector). */
+  providersRev?: number;
   /** The workspace root, for the card ask's ONE follow-up read (story 3b). */
   workspacePath?: string;
 }) {
@@ -1131,6 +1154,8 @@ function GroundCard({
           }}
           workspacePath={workspacePath ?? ""}
           turn={onAsk}
+          onConfigure={onConfigure}
+          providersRev={providersRev}
           onClose={() => setAsking(false)}
         />
       )}

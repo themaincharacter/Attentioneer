@@ -70,7 +70,10 @@ import {
 import { TURN_SENTENCES, routeOf } from "./turn/turn";
 import { readProposal } from "./turn/proposal";
 import { readSecret, secretStatus, secretStatusWords } from "./lib/secret";
-import { ProvidersPanel } from "./canvas/ProvidersPanel";
+import {
+  SettingsPanel,
+  type SettingsSection,
+} from "./canvas/SettingsPanel";
 import { NO_PROVIDER_SENTENCE, sendPacketApp } from "./turn/egress";
 import {
   fetchAskBlock,
@@ -784,7 +787,15 @@ function App() {
   // Neither is a key value — the key never enters a field.
   const [askProviderRef, setAskProviderRef] = useState<string | null>(null);
   const [askKeyStore, setAskKeyStore] = useState<string | null>(null);
-  const [providersOpen, setProvidersOpen] = useState(false);
+  // THE SETTINGS MODAL (story 15.10): which section is on screen, and whether
+  // it is open. It is app chrome, not a map surface — reachable from every map
+  // and from the ask panels' configure shortcut (which opens Providers).
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSection>("providers");
+  // Bumped whenever the rows are re-read, so an open card ask reloads its
+  // selector after Settings changed them.
+  const [providersRev, setProvidersRev] = useState(0);
   // The ghost's ask surface (Epic 10 story 3): the one panel where the person
   // asks for a packet or hands a model's reply back. It sits outside `.plane`
   // like the control's other actions; closed by Esc, its ×, or a level switch
@@ -1918,6 +1929,7 @@ function App() {
    * store's sentence is the one line the Ask panel always shows.
    */
   const refreshProviderFacts = useCallback(() => {
+    setProvidersRev((revision) => revision + 1);
     void loadTurnSettings()
       .then((settings) => {
         const resolved = resolveSelection(settings);
@@ -1940,6 +1952,25 @@ function App() {
       setAskKeyStore(secretStatusWords(store)),
     );
   }, []);
+
+  /**
+   * Open Settings on a section (story 15.10). The chrome's control and the ask
+   * panels' configure shortcut both land here; opening writes nothing.
+   */
+  const openSettings = useCallback((section: SettingsSection) => {
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  }, []);
+
+  /**
+   * Close Settings. Closing writes nothing at all — the frame's controls are
+   * the only writers. The app re-reads the provider facts so an ask behind the
+   * modal hears about a row that changed.
+   */
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    refreshProviderFacts();
+  }, [refreshProviderFacts]);
 
   /**
    * Open the quiet ASK panel (Epic 12 story 3) on the chooser's word, riding
@@ -4220,6 +4251,8 @@ function App() {
             onDismissPull={ground.dismissPull}
             onLink={ground.link}
             onAsk={turnPort}
+            onConfigure={() => openSettings("providers")}
+            providersRev={providersRev}
             workspacePath={workspace.path}
             interactionMode={gestureMode}
             zoom={camera.zoom}
@@ -4698,8 +4731,9 @@ function App() {
       {level === "ground" && askAt && (
         <AskPanel
           providerRef={askProviderRef}
+          hasProvider={askProvider}
           keyStore={askKeyStore}
-          onProviders={() => setProvidersOpen((open) => !open)}
+          onProviders={() => openSettings("providers")}
           name={
             ground.references.find((entry) => entry.on === askAt.on)?.name ??
             nameOf(askAt.on)
@@ -4729,21 +4763,17 @@ function App() {
         />
       )}
 
-      {/* THE PROVIDERS PANEL (Epic 15 story 4): the person's rows, where the
-          key is kept and which provider a turn carries. It sits outside
-          `.plane` like the app's other quiet surfaces; the Ask panel opens it
-          and re-reads its selection when it closes. The card's ask mounts the
-          same piece beside itself. */}
-      {providersOpen && (
-        <div className="providers-slot">
-          <ProvidersPanel
-            onClose={() => {
-              setProvidersOpen(false);
-              refreshProviderFacts();
-            }}
-            onChanged={refreshProviderFacts}
-          />
-        </div>
+      {/* THE SETTINGS MODAL (story 15.10): providers, turn defaults, the local
+          model and about, outside `.plane` like the app's other quiet
+          surfaces. The chrome's control opens it on any map; an ask's
+          configure shortcut opens it on Providers. Closing writes nothing. */}
+      {settingsOpen && (
+        <SettingsPanel
+          section={settingsSection}
+          onSection={setSettingsSection}
+          onClose={closeSettings}
+          onChanged={refreshProviderFacts}
+        />
       )}
 
       {/* The map tabs. DEPRECATED (hidden 2026-11-16 per user review — separate
@@ -4773,6 +4803,7 @@ function App() {
         onCompare={openComparison}
         onAsk={openGhostPanel}
         onAskPull={openPullAsk}
+        onSettings={() => openSettings("providers")}
       />
 
       {/* ALL LANGUAGE GAMES (PROVISIONAL, added 2026-11-16 per the lead's

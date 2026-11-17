@@ -141,7 +141,7 @@ describe("the review's clutter: six doors hidden, the ghost ask restored", () =>
     }
   });
 
-  test("the three jumpers and the pen survive in every game", () => {
+  test("the three jumpers, the pen and settings survive in every game", () => {
     for (const level of LEVELS) {
       const html = render(level);
       // The tab switching: the three games, the current one pressed.
@@ -162,8 +162,9 @@ describe("the review's clutter: six doors hidden, the ghost ask restored", () =>
       // lead's brief: `select` beside the pen and the `language games` list's
       // door). They are offered at concept only — a language game is the
       // concept map's content — so the dynamics and ground rows are unchanged.
+      // Story 15.10 adds one level-uniform verb: settings.
       expect(html.match(/<button/g) ?? []).toHaveLength(
-        LEVELS.length + 1 + (level === "concept" ? 2 : 0) +
+        LEVELS.length + 1 + 1 + (level === "concept" ? 2 : 0) +
           (level === "dynamics" ? 1 : 0),
       );
     }

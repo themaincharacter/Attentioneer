@@ -96,6 +96,12 @@ interface LevelControlProps {
    * gate never reaches it.
    */
   onAskPull: () => void;
+  /**
+   * Open Settings (story 15.10): the app's ONE place to configure anything.
+   * It sits beside the map tabs in every game — settings are about the app,
+   * not about the map on screen — and it writes nothing itself.
+   */
+  onSettings: () => void;
 }
 
 /**
@@ -196,6 +202,7 @@ export function LevelControl({
   onCompare,
   onAsk,
   onAskPull,
+  onSettings,
 }: LevelControlProps) {
   return (
     <div
@@ -216,6 +223,17 @@ export function LevelControl({
           {game}
         </button>
       ))}
+      {/* SETTINGS (story 15.10): a quiet verb beside the map tabs, offered in
+          every game. It is not a map surface: it opens the modal outside
+          `.plane`, and the ask panels' configure shortcut routes here. */}
+      <button
+        type="button"
+        className="level-settings"
+        title="settings — providers, turn defaults, the local model, about"
+        onClick={onSettings}
+      >
+        settings
+      </button>
       {/* Epic 13 story 2's door: THE PULL ASK — one quiet button, the ONLY
           trigger, offered in every game (the read set spans the levels). It
           sits outside `.plane` beside the control's other actions, so the
