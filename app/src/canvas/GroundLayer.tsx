@@ -1,4 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  loadConceptWord,
+  listConceptWords,
+  type ConceptWord,
+} from "../map/conceptWords";
 import type { GroundReference } from "../map/ground";
 import { NOTE_PREVIEW_LINES } from "../map/notes";
 import {
@@ -17,6 +22,16 @@ import {
 } from "./groundDrag";
 import { isGestureArmed, type GestureMode } from "./gates";
 import type { Point } from "./geometry";
+import { GroundConceptPanel, GroundNote } from "./GroundNote";
+import {
+  applyMention,
+  MentionPicker,
+  mentionChoices,
+  mentionTrigger,
+  nextActive,
+  pickerCommand,
+  type MentionChoice,
+} from "./MentionPicker";
 import type { GroundAddResult } from "./useGround";
 
 /**
@@ -78,6 +93,24 @@ import type { GroundAddResult } from "./useGround";
  * PROVISIONAL: the crop, the edit's verbs and the note's face (the story's
  * record shape is provisional too).
  *
+ * STORY 16.7 adds MENTIONS to that note and NOTHING ELSE. Typing `@` at a word
+ * boundary in the editor opens the picker (`MentionPicker`): ground cards first,
+ * then concept words, marked as concepts. Inserting one writes the PLAIN-TEXT
+ * form `[@Label](card://slug)` / `[@Label](word://slug)` into the draft, and the
+ * note's existing save path is the only thing that ever writes — a mention is
+ * text, never a record. Drawn on the card they are quiet chips
+ * (`GroundNote`): a card chip opens that card, a word chip opens a small
+ * read-only panel with the concept's name and memory, and a chip whose target
+ * is gone is muted, says "missing" and does nothing — never removed, never
+ * reported as malformed.
+ *
+ * THE ONE CROSS-MAP READ (amended ADR-0032) is this layer's, confined to
+ * `map/conceptWords.ts`: the concept map's word index is read ONCE per ground
+ * map open (read-only, no writer imported) so a word chip can be drawn dangling
+ * honestly and the picker can offer the vocabulary. Nothing is copied into the
+ * ground map and nothing is merged into a note. PROVISIONAL: the eager index
+ * read (a later story may scope it), and the open-card view state below.
+ *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
  */
@@ -128,6 +161,13 @@ interface GroundLayerProps {
    * test needs no plane; the app always passes the real write path.
    */
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
+  /**
+   * The workspace root, for the ONE cross-map read (story 16.7): the concept
+   * map's word index, read-only, so a word mention can be drawn live or
+   * dangling and the picker can offer the vocabulary. Optional so a render
+   * test needs no workspace; the app always passes the real root.
+   */
+  workspacePath?: string;
   /** How a gesture is armed right now — a drag stands still while armed. */
   interactionMode?: GestureMode;
   /**
@@ -149,10 +189,46 @@ export function GroundLayer({
   onRemove,
   onSetNote,
   onLink,
+  workspacePath = "",
   interactionMode = "idle",
   zoom = 1,
 }: GroundLayerProps) {
   const readingsBySlug = new Map(readings.map((reading) => [reading.on, reading]));
+  // STORY 16.7 — WHICH card is expanded is the LAYER's view state, not each
+  // card's: a card mention must be able to open ANOTHER card. It is still view
+  // state only (a reopened workspace shows every card small) and no write
+  // path here touches a file.
+  const [openOn, setOpenOn] = useState<string | null>(null);
+  // The concept map's word index, read once per workspace through the ONE
+  // cross-map helper. `null` means "not read yet" — never "empty" — so a word
+  // mention is not called dangling on ignorance.
+  const [concepts, setConcepts] = useState<readonly ConceptWord[] | null>(null);
+
+  useEffect(() => {
+    setConcepts(null);
+    if (workspacePath === "") return;
+    let alive = true;
+    listConceptWords(workspacePath)
+      .then((words) => {
+        if (alive) setConcepts(words);
+      })
+      .catch(() => {
+        // An unreadable concept map is honest ignorance: the picker shows what
+        // exists (the cards) and no word chip is called dangling.
+        if (alive) setConcepts(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [workspacePath]);
+
+  useEffect(() => {
+    // A card that went away (its delete, a reload) cannot stay open.
+    if (openOn !== null && !references.some((reference) => reference.on === openOn)) {
+      setOpenOn(null);
+    }
+  }, [references, openOn]);
+
   // A refused unlink's one sentence: the card is gone with its records, so the
   // sentence is shown where it stood (view state, cleared by a press or a
   // reload — it is never written anywhere).
@@ -174,6 +250,18 @@ export function GroundLayer({
     return result;
   }
 
+  // The names a mention may draw and a picker may offer: the map's own cards,
+  // already loaded (the card mention is the one expected to be used most).
+  const cardNames = new Map(
+    references.map((reference) => [reference.on, reference.name] as const),
+  );
+  const wordSlugs =
+    concepts === null ? null : new Set(concepts.map((word) => word.slug));
+  // The ONE read a word chip does: the concept's name and memory, or null when
+  // the target is gone (the chip then dangles instead of opening anything).
+  const readWord = (slug: string): Promise<ConceptWord | null> =>
+    workspacePath === "" ? Promise.resolve(null) : loadConceptWord(workspacePath, slug);
+
   return (
     <div className="ground-layer">
       {references.map((reference) => (
@@ -184,6 +272,14 @@ export function GroundLayer({
           text={texts[reference.on]}
           note={notes[reference.on]}
           state={states[reference.on] ?? (readingsBySlug.has(reference.on) ? "current" : "unread")}
+          open={openOn === reference.on}
+          onOpen={() => setOpenOn(reference.on)}
+          onOpenCard={(slug) => setOpenOn(slug)}
+          onClose={() => setOpenOn(null)}
+          cardNames={cardNames}
+          wordSlugs={wordSlugs}
+          concepts={concepts}
+          readWord={readWord}
           interactionMode={interactionMode}
           zoom={zoom}
           onMove={onMove}
@@ -218,6 +314,14 @@ function GroundCard({
   text,
   note,
   state,
+  open,
+  onOpen,
+  onOpenCard,
+  onClose,
+  cardNames,
+  wordSlugs,
+  concepts,
+  readWord,
   interactionMode,
   zoom,
   onMove,
@@ -232,6 +336,20 @@ function GroundCard({
   text: string | undefined;
   note: string | undefined;
   state: ReadingState;
+  /** Is this card expanded? (The LAYER's view state — a chip can open a card.) */
+  open: boolean;
+  onOpen: () => void;
+  /** Open ANOTHER card by slug (a mention's click: navigation, view state). */
+  onOpenCard: (slug: string) => void;
+  onClose: () => void;
+  /** Every ground card's name, for a chip's label fallback and the picker. */
+  cardNames: ReadonlyMap<string, string>;
+  /** Every concept word's slug, or null when the concept map was not read. */
+  wordSlugs: ReadonlySet<string> | null;
+  /** The concept index the picker offers (null: not read). */
+  concepts: readonly ConceptWord[] | null;
+  /** The ONE cross-map read: a word mention's name and memory, or null. */
+  readWord: (slug: string) => Promise<ConceptWord | null>;
   interactionMode: GestureMode;
   zoom: number;
   onMove: GroundLayerProps["onMove"];
@@ -243,14 +361,31 @@ function GroundCard({
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const dragRef = useRef<GroundDragState | null>(null);
   const [dragPos, setDragPos] = useState<Point | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  // STORY 16.3 — the expanded face and the delete's confirm are VIEW state:
-  // neither is a record, and a reopened workspace mounts this card closed.
-  const [open, setOpen] = useState(false);
+  // STORY 16.3 — the delete's confirm is VIEW state, like the expanded face
+  // (which the layer now owns so a mention can open a card): neither is a
+  // record, and a reopened workspace mounts this card closed.
   const [step, setStep] = useState<GroundDeleteStep>("idle");
+  // STORY 16.7 — the picker and the concept panel are VIEW state too. The
+  // picker holds the trigger's range so an insertion replaces exactly the typed
+  // `@query`; the panel holds the word the person just opened.
+  const [picker, setPicker] = useState<{
+    start: number;
+    caret: number;
+    query: string;
+    active: number;
+  } | null>(null);
+  const [panel, setPanel] = useState<{ name: string; memory: string } | null>(
+    null,
+  );
+  // Words the concept map no longer has: pressing a stale chip makes it dangle
+  // locally (view state, never a record), exactly like a chip whose target was
+  // gone before the workspace opened.
+  const [gone, setGone] = useState<readonly string[]>([]);
   // STORY 16.6 — the note's edit is VIEW state, like open/closed: nothing is
   // written until a save, and Esc leaves the stored note exactly as it was.
   // The refs mirror the draft so the press-away and Esc listeners (registered
@@ -263,6 +398,15 @@ function GroundCard({
   // The stored note is the prop the load handed in; keep the comparison fresh
   // so "done" with an unchanged draft writes nothing at all.
   storedNoteRef.current = note ?? "";
+
+  // STORY 16.7 — a CLOSED card shows no picker and no concept panel: both are
+  // view state of the open face, and every close path (a press away, Esc, a
+  // chip opening another card) goes through the layer's one `open` prop.
+  useEffect(() => {
+    if (open) return;
+    setPicker(null);
+    setPanel(null);
+  }, [open]);
 
   // Raw listener: d3-zoom stops mousedown at the plane (stopImmediatePropagation),
   // so React's synthetic onMouseDown never fires under it. This raw listener is
@@ -355,7 +499,9 @@ function GroundCard({
           setStep(deleteStepAfter("elsewhere"));
           return;
         }
-        setOpen(true);
+        // The press opens THIS card through the layer's view state, so a
+        // mention can open another one the same way.
+        onOpen();
       };
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("mouseup", onMouseUp);
@@ -367,9 +513,11 @@ function GroundCard({
 
   // Click away / Esc closes (and cancels the delete's ask). Capture so a plane
   // press that d3 handles still counts as a press away. While the confirm is
-  // asking this listener is live even before the card was expanded.
+  // asking this listener is live even before the card was expanded, and so is
+  // the concept panel: a word chip can be read on the SMALL card too (story
+  // 16.7), where the panel is a view that a press away closes.
   useEffect(() => {
-    if (!open && step === "idle") return;
+    if (!open && step === "idle" && panel === null) return;
     function onPressAway(e: MouseEvent) {
       const el = cardRef.current;
       if (el !== null && e.target instanceof Node && el.contains(e.target)) return;
@@ -379,7 +527,11 @@ function GroundCard({
       // card. An abandoned edit (Esc) never reaches here.
       if (editingRef.current) void saveNoteDraft();
       setStep("idle");
-      setOpen(false);
+      // Story 16.7: the picker and the concept panel are view state of an open
+      // card, so a press away closes them with it. Nothing is written by that.
+      setPicker(null);
+      setPanel(null);
+      onClose();
     }
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
@@ -389,11 +541,17 @@ function GroundCard({
         cancelNoteEdit();
         return;
       }
+      // Story 16.7: Esc closes the read-only concept panel FIRST, so the card
+      // (and the reading under it) stays where the person was looking.
+      if (panel !== null) {
+        setPanel(null);
+        return;
+      }
       if (step === "asking") {
         setStep("idle");
         return;
       }
-      setOpen(false);
+      onClose();
     }
     document.addEventListener("mousedown", onPressAway, true);
     window.addEventListener("keydown", onKey);
@@ -401,7 +559,7 @@ function GroundCard({
       document.removeEventListener("mousedown", onPressAway, true);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open, step]);
+  }, [open, step, panel]);
 
   // The expanded body scrolls the STORED reading; the plane's wheel zoom must
   // not steal the scroll. Passive: this only stops the plane, never the page.
@@ -451,6 +609,7 @@ function GroundCard({
   function cancelNoteEdit() {
     editingRef.current = false;
     setEditing(false);
+    setPicker(null);
     setDraft("");
   }
 
@@ -464,6 +623,7 @@ function GroundCard({
     const text = draftRef.current;
     editingRef.current = false;
     setEditing(false);
+    setPicker(null);
     if (text === storedNoteRef.current || busy) return;
     setBusy(true);
     setProblem(null);
@@ -476,6 +636,64 @@ function GroundCard({
       editingRef.current = true;
       setEditing(true);
     }
+  }
+
+  // STORY 16.7 — the picker's list and the mention's insert. Nothing here
+  // writes: an insertion is a draft edit, and the note's existing save path
+  // (done, a press away) is the only thing that ever lands on disk.
+  const cardsForPicker = Array.from(cardNames, ([slug, name]) => ({ slug, name }));
+  const choicesFor = (query: string): MentionChoice[] =>
+    mentionChoices(cardsForPicker, concepts ?? [], query, reference.on);
+  const choices = picker === null ? [] : choicesFor(picker.query);
+
+  /** Did the draft change open, narrow or close the mention list? */
+  function noteChanged(value: string, caret: number) {
+    const trigger = mentionTrigger(value, caret);
+    if (trigger === null) {
+      if (picker !== null) setPicker(null);
+      return;
+    }
+    setPicker({
+      start: trigger.start,
+      caret,
+      query: trigger.query,
+      active: 0,
+    });
+  }
+
+  /** Insert the chosen mention in place of the typed `@query` (a draft edit). */
+  function insertChoice(choice: MentionChoice) {
+    if (picker === null) return;
+    const field = editorRef.current;
+    const text = field?.value ?? draftRef.current;
+    const applied = applyMention(text, picker.start, picker.caret, choice);
+    draftRef.current = applied.text;
+    setDraft(applied.text);
+    setPicker(null);
+    // Put the caret back after the inserted mention once React has rendered the
+    // new value. A draft edit — the note is still unwritten until it is saved.
+    requestAnimationFrame(() => {
+      const el = editorRef.current;
+      if (el === null) return;
+      el.focus();
+      el.setSelectionRange(applied.caret, applied.caret);
+    });
+  }
+
+  /**
+   * A word chip's ONE read-only look at the concept map (`map/conceptWords.ts`).
+   * A null answer means the concept's reference is gone: the chip dangles, and
+   * nothing is reported as an error (the person's text stays as written).
+   */
+  async function openWord(slug: string) {
+    const word = await readWord(slug);
+    if (word === null) {
+      setGone((current) =>
+        current.includes(slug) ? current : [...current, slug],
+      );
+      return;
+    }
+    setPanel({ name: word.name, memory: word.memory });
   }
 
   async function repoint() {
@@ -526,14 +744,54 @@ function GroundCard({
             whole note. Editing: a textarea in its place, Enter a newline. */}
         {editing ? (
           <textarea
+            ref={editorRef}
             className="ground-note-editor"
             value={draft}
             autoFocus
             onChange={(e) => {
               draftRef.current = e.target.value;
               setDraft(e.target.value);
+              noteChanged(
+                e.target.value,
+                e.target.selectionStart ?? e.target.value.length,
+              );
             }}
             onKeyDown={(e) => {
+              // STORY 16.7 — the picker owns the keys while it is open. Esc
+              // closes the LIST only (never the edit); Enter/Tab insert; the
+              // arrows walk. Any other key is typing, which filters the list.
+              if (picker !== null) {
+                const command = pickerCommand(e.key);
+                if (command === "close") {
+                  // Esc closes the LIST only: it must not also reach the
+                  // window's Esc (which abandons the note edit).
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setPicker(null);
+                  return;
+                }
+                if (command === "prev" || command === "next") {
+                  e.preventDefault();
+                  const list = choicesFor(picker.query);
+                  setPicker((current) =>
+                    current === null
+                      ? null
+                      : {
+                          ...current,
+                          active: nextActive(command, current.active, list.length),
+                        },
+                  );
+                  return;
+                }
+                if (command === "insert") {
+                  e.preventDefault();
+                  const list = choicesFor(picker.query);
+                  const choice = list[picker.active] ?? list[0];
+                  if (choice === undefined) setPicker(null);
+                  else insertChoice(choice);
+                  return;
+                }
+              }
               if (e.key !== "Escape") return;
               e.preventDefault();
               e.stopPropagation();
@@ -541,9 +799,22 @@ function GroundCard({
             }}
           />
         ) : shownNote !== null ? (
-          <div className="ground-note">
-            {open ? shownNote : previewText(shownNote, NOTE_PREVIEW_LINES)}
-          </div>
+          // STORY 16.7: the note's face with its mention chips. The small card
+          // crops it (chips kept whole); the expanded face shows every line.
+          <GroundNote
+            text={shownNote}
+            maxLines={open ? null : NOTE_PREVIEW_LINES}
+            cardNames={cardNames}
+            wordSlugs={wordSlugs}
+            goneWords={gone}
+            onOpenCard={(slug) => {
+              // Moving to another card closes any concept the note was showing:
+              // the panel belongs to the card it was opened on.
+              setPanel(null);
+              onOpenCard(slug);
+            }}
+            onOpenWord={(slug) => void openWord(slug)}
+          />
         ) : null}
         {bodyText !== null && (
           <div className="ground-reading">{bodyText}</div>
@@ -641,6 +912,27 @@ function GroundCard({
             remove
           </button>
         </div>
+      )}
+      {/* STORY 16.7 — the `@` list, while the editor asks. It opens below the
+          CARD (so the note's own crop and scroll never clip it), takes no focus
+          of its own, and closes on Esc, on a pick, or when the trigger goes.
+          PROVISIONAL: the placement and the row look (ADR-0003's seam). */}
+      {open && picker !== null && (
+        <MentionPicker
+          choices={choices}
+          active={picker.active}
+          onPick={insertChoice}
+        />
+      )}
+      {/* STORY 16.7 — the concept's read-only panel. A VIEW: name and a cropped
+          memory, nothing written and nothing merged into the note. Esc, the
+          close verb or a press away closes it. */}
+      {panel !== null && (
+        <GroundConceptPanel
+          name={panel.name}
+          memory={panel.memory}
+          onClose={() => setPanel(null)}
+        />
       )}
     </div>
   );

@@ -393,6 +393,17 @@ export const CONTENT_CLASSES = [
   "ground-note-edit",
   "ground-note-done",
   "ground-note-editor",
+  // Story 16.7: the note's MENTION chips, the picker's rows and empty line, and
+  // the concept's read-only panel (with its close verb). They live inside the
+  // card, which is already content; listed anyway for the same belt-and-braces
+  // reason — a press on a chip, a picker row or the panel must never fall
+  // through to the plane's pan, creation or a card drag.
+  "ground-mention",
+  "ground-mention-picker",
+  "ground-mention-option",
+  "ground-mention-empty",
+  "ground-concept-panel",
+  "ground-concept-close",
   // Epic 10 story 3's ghost: the ONLY ghost element inside the plane is the
   // opened preview's faint diamond at the target. It is read-only by
   // construction (pointer-events: none), and it exists only inside the

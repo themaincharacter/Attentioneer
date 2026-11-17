@@ -531,7 +531,10 @@ describe("the card: the note above the reading, cropped, editable in place", () 
   test("the expanded face has the whole note and the in-place editor", () => {
     // The expanded face is view state, so the source is the proof: open shows
     // the stored text, the small face crops it, the editor replaces it.
-    expect(LAYER).toContain("open ? shownNote : previewText(shownNote, NOTE_PREVIEW_LINES)");
+    // (Story 16.7 moved the face into `GroundNote`, which crops with the same
+    // pure rule and keeps a mention's chip whole; `null` is the whole note.)
+    expect(LAYER).toContain("<GroundNote");
+    expect(LAYER).toContain("maxLines={open ? null : NOTE_PREVIEW_LINES}");
     expect(LAYER).toContain("ground-note-edit");
     expect(LAYER).toContain("ground-note-done");
     expect(LAYER).toContain("ground-note-editor");
@@ -562,8 +565,11 @@ describe("the card: the note above the reading, cropped, editable in place", () 
   test("the note's face and editor are styled, distinct from the reading", () => {
     expect(CSS).toContain(".ground-note {");
     expect(CSS).toContain(".ground-note-editor {");
+    // Story 16.7 turned the note into a normal block (a mention chip is an
+    // INLINE button in the sentence, which the legacy box clamp would blockify);
+    // the crop guard is a max-height now, and the expanded face lifts it.
     expect(CSS).toMatch(
-      /\.ground-reference\.expanded \.ground-note \{[^}]*-webkit-line-clamp: unset/s,
+      /\.ground-reference\.expanded \.ground-note \{[^}]*max-height: none/s,
     );
     // A different body voice: the note is serif, the reading stays sans.
     expect(CSS).toMatch(/\.ground-note \{[^}]*font-family: Georgia/s);

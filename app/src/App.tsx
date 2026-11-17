@@ -3875,6 +3875,7 @@ function App() {
             onRemove={ground.remove}
             onSetNote={ground.setNote}
             onLink={ground.link}
+            workspacePath={workspace.path}
             interactionMode={gestureMode}
             zoom={camera.zoom}
           />
