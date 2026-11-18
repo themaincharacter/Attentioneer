@@ -14,7 +14,7 @@ import {
   type AskTurnWriteIo,
   type DistilledIo,
 } from "../src/canvas/useGround";
-import { readingKind } from "../src/canvas/GroundLayer";
+import { readingKind, readingProvenance } from "../src/canvas/GroundLayer";
 import {
   buildCuratorMessages,
   cardDroppedCaveat,
@@ -551,20 +551,22 @@ describe("a curator card names the manager model and the task model", () => {
     expect(distilledAuthors(rule)).toBeNull();
   });
 
-  test("the card's line, the mirror and the writer all say the same sentence", async () => {
+  test("the card's ONE footer line, the mirror and the writer all say the same sentence", async () => {
     const reading = distilledReading("tide-card", "tide-question", TAKEN, {
       manager: "manager-small",
       task: "task-big",
     });
-    expect(readingKind(reading, new Map())).toBe(
-      "distilled by manager-small from task-big's reply",
-    );
-    // A rule card keeps 17.11's wording.
+    // STORY 17.15: the header line is gone (null); the footer carries the whole
+    // sentence once, naming both models AND the source card.
+    expect(readingKind(reading, new Map())).toBeNull();
     expect(
-      readingKind(
-        distilledReading("tide-card", "tide-question", TAKEN),
-        new Map([["tide-question", "tide question"]]),
-      ),
+      readingProvenance(reading, new Map([["tide-question", "tide question"]])),
+    ).toBe("distilled by manager-small from task-big's reply · from tide question");
+    // A rule card keeps 17.11's wording — as its single footer line too.
+    const rule = distilledReading("tide-card", "tide-question", TAKEN);
+    expect(readingKind(rule, new Map([["tide-question", "tide question"]]))).toBeNull();
+    expect(
+      readingProvenance(rule, new Map([["tide-question", "tide question"]])),
     ).toBe("a rule's copy of tide question");
 
     const workspace = freshWorkspace();

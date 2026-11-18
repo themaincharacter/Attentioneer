@@ -119,7 +119,7 @@ import type {
   AcpPermissionChoice,
   AcpProgressEntry,
 } from "../turn/acpEntries";
-import { besidePlacement } from "./geometry";
+import { artifactPlacement, besidePlacement, type Point } from "./geometry";
 import type { SidecarStart } from "../turn/sidecar";
 import { shippedAcpSpec, type AcpSpec } from "../turn/acpSpecs";
 import {
@@ -149,6 +149,7 @@ import {
   readingFor,
   readingTextPath,
   distilledReading,
+  distilledSourceSlug,
   refreshReading,
   restoreReadingText,
   resolveReadingState,
@@ -1978,6 +1979,27 @@ export type AskDistilledCard =
       text: string;
     }
   | { kind: "refused"; message: string };
+
+/**
+ * STORY 17.15 — THE ARTIFACTS ALREADY MADE FROM ONE CARD, as the points the
+ * next one cascades past. A distilled reading names its source; those cards are
+ * the column. PURE, so the placement rule reads the same records the map draws
+ * and nothing has to remember where the last artifact went.
+ */
+export function artifactsMadeFrom(
+  sourceSlug: string,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+): Point[] {
+  const made = new Set(
+    readings
+      .filter((reading) => distilledSourceSlug(reading) === sourceSlug)
+      .map((reading) => reading.on),
+  );
+  return references
+    .filter((reference) => made.has(reference.on))
+    .map((reference) => ({ x: reference.x, y: reference.y }));
+}
 
 /**
  * WRITE ONE DISTILLED CARD, in the house order:
@@ -5662,6 +5684,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
               ? undefined
               : { manager: sent.curator.manager, task: sent.curator.task };
           let cardRefusal: string | null = null;
+          // STORY 17.15 — the card this turn makes, so the layer can take the
+          // eye to it (the ask card stops being the one that is open).
+          let made: string | undefined;
           if (noCard === null) {
             const askNow =
               asksRef.current.find((entry) => entry.on === slug) ?? ask;
@@ -5669,7 +5694,19 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
               curated?.card.title ||
               askNameFromQuestion(question) ||
               askNow.name;
-            const at = besidePlacement(askNow.x, askNow.y);
+            // STORY 17.15 — THE ARTIFACT LANDS RIGHT: to the RIGHT of the ask
+            // card, level with it, and every later artifact from the same card
+            // cascades DOWN past the ones already there. The source's RESTING
+            // box is the measure (the same box the wire anchors to), never the
+            // expanded face it wears while the person is typing.
+            const at = artifactPlacement(
+              { x: askNow.x, y: askNow.y },
+              artifactsMadeFrom(
+                slug,
+                referencesRef.current,
+                readingsRef.current,
+              ),
+            );
             const written = await writeDistilledCard(
               workspacePath,
               referencesRef.current,
@@ -5712,11 +5749,12 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
               // The copy is an ordinary card: its appearance is an authored
               // move, so the derived index follows like any other add. The
               // wire itself is structure, not a history event.
-              const made = written.records.reading.on;
+              made = written.records.reading.on;
+              const madeOn = written.records.reading.on;
               queueHistory(() => [
                 cardAddEvent(
                   Date.now(),
-                  made,
+                  madeOn,
                   written.reference.x,
                   written.reference.y,
                 ),
@@ -5761,6 +5799,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
                     readback: sent.result.readback,
                     reached: sent.reached,
                     missed: sent.missed,
+                    // STORY 17.15: the layer opens the artifact this turn made.
+                    ...(made === undefined ? {} : { created: made }),
                     ...noCardLine,
                   }
                 : {

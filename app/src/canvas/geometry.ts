@@ -51,6 +51,50 @@ export function besidePlacement(x: number, y: number): Point {
   return { x: x + BESIDE_OFFSET_X, y };
 }
 
+/**
+ * STORY 17.15 — WHERE A CARD MADE FROM AN ANSWER LANDS: to the RIGHT of its
+ * source, level with it. The source is measured by its RESTING box (the one the
+ * wire anchors to), never by an expanded face: a card's address on the plane does
+ * not change when the person opens it, so placement and the wire must read the
+ * same box or the card lands under the open card's edge.
+ *
+ * Several artifacts from one source CASCADE DOWNWARD by one resting height plus
+ * a gap: the first sits level, each later one clears the ones above it. PURE, so
+ * "right, level, and never overlapping" is not the creation path's only truth.
+ * PROVISIONAL: the box, the two gaps (ADR-0003's rendering seam).
+ */
+export const GROUND_CARD_BOX: Box = { w: 300, h: 220 };
+
+/** World units between a source and the card made from it (provisional). */
+export const ARTIFACT_GAP_X = 40;
+
+/** World units between two artifacts made from the same source (provisional). */
+export const ARTIFACT_GAP_Y = 16;
+
+export function artifactPlacement(
+  source: Point,
+  taken: readonly Point[] = [],
+): Point {
+  const x = source.x + GROUND_CARD_BOX.w + ARTIFACT_GAP_X;
+  // LEVEL is the centred case: the artifact wears the source's resting box, so
+  // its centre is the source's centre and the first one starts at the source's
+  // own y. A reshaped artifact box would still want the same centre, which is
+  // the arithmetic this shorthand relies on.
+  let y = source.y;
+  const step = GROUND_CARD_BOX.h + ARTIFACT_GAP_Y;
+  // The column already made from this source, read top to bottom, so one clear
+  // push per card is enough: each overlap drops the candidate past that card.
+  const column = taken
+    .filter((point) => Math.abs(point.x - x) < GROUND_CARD_BOX.w)
+    .sort((a, b) => a.y - b.y);
+  for (const point of column) {
+    const overlaps =
+      y < point.y + GROUND_CARD_BOX.h && point.y < y + GROUND_CARD_BOX.h;
+    if (overlaps) y = point.y + step;
+  }
+  return { x, y };
+}
+
 /** The box's center, given its top-left position on the plane. */
 export function centerOf(pos: Point, box: Box): Point {
   return { x: pos.x + box.w / 2, y: pos.y + box.h / 2 };

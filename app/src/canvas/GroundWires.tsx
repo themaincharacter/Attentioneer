@@ -5,6 +5,7 @@ import {
   wireEndsUnderDrag,
   type GroundDragChannel,
 } from "./groundDragRef";
+import { GROUND_CARD_BOX } from "./geometry";
 import type { GroundAddResult } from "./useGround";
 
 /**
@@ -44,9 +45,14 @@ import type { GroundAddResult } from "./useGround";
  * look and the two-step wording.
  */
 
-/** The small card's world box, mirrored from canvas.css (PROVISIONAL). */
-export const GROUND_CARD_W = 300;
-export const GROUND_CARD_H = 220;
+/**
+ * The small card's world box, mirrored from canvas.css (PROVISIONAL). STORY
+ * 17.15 moved the numbers into `geometry` so placement and the wire cannot
+ * disagree about where a card's right or left edge is; these two names stay the
+ * wire's own reading of them.
+ */
+export const GROUND_CARD_W = GROUND_CARD_BOX.w;
+export const GROUND_CARD_H = GROUND_CARD_BOX.h;
 
 /** One wire's world geometry: where the line runs and where its mark sits. */
 export interface WireGeometry {

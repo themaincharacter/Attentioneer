@@ -311,6 +311,31 @@ export function readingProvenance(
   // STORY 16.14: a page's footer shows its HOST only. The full URL stays in
   // the record; the map's plane is not a list of links.
   if (reading.form === "url") return pageHost(reading.from);
+  // STORY 17.15 — A DISTILLED CARD SAYS WHERE IT CAME FROM ONCE, and this is
+  // where: the footer carries the whole sentence. Before this story the card's
+  // "what this is" line repeated the maker pair above the body while the footer
+  // named the source again, so the face said two things about one origin. The
+  // two statements are one now: who distilled, whose reply they read, and the
+  // source card's name. A RULE card (17.11) keeps its single line: a rule made
+  // it from that card; no model is claimed.
+  const distilled = distilledSourceSlug(reading);
+  if (distilled !== null) {
+    const name = cardNames.get(distilled);
+    const authors = distilledAuthors(reading);
+    if (authors === null) {
+      return name === undefined
+        ? "a rule's copy of a card that is gone"
+        : "a rule's copy of " + name;
+    }
+    return (
+      "distilled by " +
+      authors.manager +
+      " from " +
+      authors.task +
+      "'s reply · from " +
+      (name === undefined ? "a card that is gone" : name)
+    );
+  }
   const source = cardProvenanceSourceSlug(reading);
   if (source === null) return readingFileName(reading.from);
   const name = cardNames.get(source);
@@ -328,7 +353,7 @@ export function readingKind(
   reading: Reading | null,
   cardNames: ReadonlyMap<string, string>,
   pageTitle: string | null = null,
-): string {
+): string | null {
   if (reading === null) return "a reference with no reading";
   // STORY 16.15: an IMAGE never says "the reading kept from" — there is no
   // reading, only the person's own file, drawn where it is.
@@ -350,28 +375,12 @@ export function readingKind(
     if (video) return "the video kept from " + pageHost(reading.from);
     return "a web page at " + pageHost(reading.from);
   }
-  // STORY 17.11 — A DISTILLED CARD SAYS WHAT MADE IT. A RULE card says a rule,
-  // never a model; STORY 17.12's CURATOR card says exactly the two models
-  // (ADR-0037 decision 4): the manager that distilled, and the task whose
-  // reply it read. The form is one; the AUTHOR is the reading's own optional
-  // provenance, so a rule card can never drift into a claim it cannot support.
-  const distilled = distilledSourceSlug(reading);
-  if (distilled !== null) {
-    const authors = distilledAuthors(reading);
-    if (authors !== null) {
-      return (
-        "distilled by " +
-        authors.manager +
-        " from " +
-        authors.task +
-        "'s reply"
-      );
-    }
-    const name = cardNames.get(distilled);
-    return name === undefined
-      ? "a rule's copy of a card that is gone"
-      : "a rule's copy of " + name;
-  }
+  // STORY 17.15 — A DISTILLED CARD HAS NO SEPARATE "what this is" LINE. The
+  // whole provenance lives in the footer (manager, task, source once), and the
+  // old copy here was the line the card's width cut. Null means "no kind line";
+  // the JSX omits the row rather than drawing an empty one. A rule card's one
+  // line is a footer sentence too, for the same reason.
+  if (distilledSourceSlug(reading) !== null) return null;
   const source = selectionSourceSlug(reading);
   if (source !== null) {
     const name = cardNames.get(source);
@@ -1114,7 +1123,34 @@ export function GroundLayer({
               setOpenAskOn(ask.on);
             }}
             onClose={() => setOpenAskOn(null)}
-            onAskTurn={onAskTurn}
+            // STORY 17.15 — THE ARTIFACT TAKES THE EYE WHEN THE TURN LANDS.
+            // The ask card's turn writes the card (the hook reports its slug on
+            // `created`); the chat then CLOSES and the new card is the open one.
+            // The layer does this here because it owns which face is open — no
+            // second open-state path, and the ask card's composer unmounts, so
+            // typing can no longer land in the chat.
+            onAskTurn={
+              onAskTurn === undefined
+                ? undefined
+                : async (slug, question, onPart) => {
+                    const result = await onAskTurn(slug, question, onPart);
+                    if (result.ok && result.created !== undefined) {
+                      setOpenOn(result.created);
+                      setOpenAskOn(null);
+                      setOpenSessionOn(null);
+                      // After the commit, not before: the new card is in the
+                      // DOM and the ask card's composer is gone.
+                      requestAnimationFrame(() => {
+                        document
+                          .querySelector<HTMLElement>(
+                            `.ground-reference[data-slug="${result.created}"]`,
+                          )
+                          ?.focus();
+                      });
+                    }
+                    return result;
+                  }
+            }
             onStopTurn={onStopAskTurn}
             hasProvider={hasProvider}
             calls={calls}
@@ -1767,8 +1803,11 @@ function GroundCard({
   // re-point, read more) have nothing to act on; its bytes are already here.
   const fileReading = reading !== null && isFileReading(reading);
   // The footer's one attribution: a file's NAME, or a selection's SOURCE NAME.
+  // STORY 17.15: for a distilled card this is the WHOLE provenance sentence,
+  // and the kind line above the body is omitted (null), so the face says it once.
   const provenance =
     reading === null ? null : readingProvenance(reading, sourceNames);
+  const kindLine = readingKind(reading, sourceNames, pageTitle);
   // STORY 16.26 — A PAGE CARD WITH NO STORED TEXT IS WHOLE. Every new page card
   // keeps a title, a thumbnail and a host and no transcript: there is nothing
   // missing from it, so the reading slot says nothing rather than borrowing
@@ -1963,10 +2002,15 @@ function GroundCard({
     }
   }
 
+  // STORY 17.15 — THE NEW CARD TAKES THE EYE BY KEYBOARD TOO: the layer focuses
+  // the card it just revealed, so the next keystroke is the card's and never the
+  // chat's. Not in the tab order (-1): the map is still navigated by the person,
+  // this only finishes one programmatic move.
   return (
     <div
       ref={cardRef}
       className={`ground-reference${open ? " expanded" : ""}`}
+      tabIndex={-1}
       style={
         {
           left: x,
@@ -2015,9 +2059,9 @@ function GroundCard({
       {/* STORY 16.13 (shortlist items 3 and 10): the card's second line says
           WHAT THIS IS — the copy kept from a file, a copy of text selected from
           another card, or a reference with no reading. Never a broken box. */}
-      <div className="ground-kind">
-        {readingKind(reading, sourceNames, pageTitle)}
-      </div>
+      {kindLine !== null && (
+        <div className="ground-kind">{kindLine}</div>
+      )}
       <div className="ground-body" ref={bodyRef}>
         {/* STORY 16.14: the page's image line — above the note and the reading,
             and only when a local copy exists. It renders from the map folder,
@@ -2322,19 +2366,10 @@ function GroundCard({
               this is a copy; there is no file to refresh or point at.
             </div>
           )}
-          {/* STORY 17.11 — the same quiet line, saying the copy's maker: a
-              RULE made this card, so there is no file behind it to re-read. */}
-          {reading !== null && distilledSourceSlug(reading) !== null && (
-            <div className="ground-quiet">
-              {distilledAuthors(reading) === null
-                ? "a rule's copy; there is no file to refresh or point at."
-                : "distilled by " +
-                  distilledAuthors(reading)!.manager +
-                  " from " +
-                  distilledAuthors(reading)!.task +
-                  "'s reply; there is no file to refresh or point at."}
-            </div>
-          )}
+          {/* STORY 17.15 — a distilled card says nothing about files here. The
+              "there is no file" sentence belongs to a card whose bytes came
+              from a selection and whose verbs therefore have nothing to act
+              on; an artifact's origin is the reply, said once in the footer. */}
           {/* STORY 16.15: an image is drawn from its own file, so it has no
               reading to refresh — said quietly rather than left silent. */}
           {reading !== null && readingExtract(reading) === "image" && (

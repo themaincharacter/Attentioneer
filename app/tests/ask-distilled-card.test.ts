@@ -410,22 +410,31 @@ describe("a completed turn's card: the copy, the order and the wire", () => {
 });
 
 describe("the card says a RULE made it, never a model", () => {
-  test("the second line and the footer name the ask card and the rule", async () => {
+  test("ONE footer line names the ask card and the rule; the header line is gone", async () => {
     const workspace = freshWorkspace();
     const ask = anAsk();
     const written = await makeCard(workspace, ask);
     if (written.kind !== "written") throw new Error("no card was written");
     const reading = written.records.reading;
     const names = new Map([[ask.on, ask.name]]);
-    expect(readingKind(reading, names)).toBe("a rule's copy of " + ask.name);
-    expect(readingProvenance(reading, names)).toBe("from " + ask.name);
-    expect(readingKind(reading, new Map())).toBe(
+    // STORY 17.15: the "what this is" header (readingKind) has no line for a
+    // distilled card — the whole provenance is the footer's one sentence.
+    expect(readingKind(reading, names)).toBeNull();
+    expect(readingProvenance(reading, names)).toBe(
+      "a rule's copy of " + ask.name,
+    );
+    expect(readingProvenance(reading, new Map())).toBe(
       "a rule's copy of a card that is gone",
     );
-    const text =
-      readingKind(reading, names) + " " + readingProvenance(reading, names);
+    const text = readingProvenance(reading, names);
     expect(text).not.toContain("distilled by");
     expect(text).not.toContain("model");
+    // It is said ONCE: the two lines are no longer two statements.
+    expect(
+      [readingKind(reading, names), readingProvenance(reading, names)].filter(
+        (line) => line !== null,
+      ),
+    ).toHaveLength(1);
   });
 
   test("the mirror lists the card with its rule provenance", async () => {
@@ -553,8 +562,11 @@ describe("the hook makes exactly one card, in one place", () => {
     // ask names too (it is provenance only; the mention picker stays
     // references-only).
     expect(layer).toContain("...asks.map((ask) => [ask.on, ask.name] as const)");
+    // STORY 17.15 — the stray "no file" sentence is gone from a distilled
+    // card's verbs row; it belongs to a SELECTION card, whose quiet line stays.
+    expect(layer).not.toContain("a rule's copy; there is no file");
     expect(layer).toContain(
-      "a rule's copy; there is no file to refresh or point at.",
+      "this is a copy; there is no file to refresh or point at.",
     );
   });
 
