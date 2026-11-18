@@ -35,6 +35,8 @@ import {
   type ReadingState,
 } from "../map/readings";
 import type { Media } from "../map/media";
+import { askCardOf } from "../turn/context";
+import type { AskPacketCard } from "../turn/packet";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
 import {
@@ -593,6 +595,25 @@ export function GroundLayer({
   const cardNames = new Map(
     references.map((reference) => [reference.on, reference.name] as const),
   );
+  /**
+   * STORY 17.3 — the anchored card's block facts, as the packet reads them.
+   * Built from ALREADY-LOADED state through the same pure crop the send uses
+   * (turn/context.ts's askCardOf), so the declaration the card shows and the
+   * bytes the turn sends are composed from one description of the anchor. A
+   * DANGLING anchor keeps its slug as the block's name and rides no preview
+   * (story 17.6 states it; nothing is repaired here).
+   */
+  const anchorCardOf = (ask: AskCardRecord): AskPacketCard => {
+    const anchor =
+      references.find((reference) => reference.on === ask.anchor) ?? null;
+    return askCardOf({
+      name: anchor === null ? ask.anchor : anchor.name,
+      state: anchor === null ? null : states[anchor.on] ?? null,
+      reading: anchor === null ? null : readingsBySlug.get(anchor.on) ?? null,
+      readingText: anchor === null ? null : texts[anchor.on] ?? null,
+      note: anchor === null ? null : notes[anchor.on] ?? null,
+    });
+  };
   const wordSlugs =
     concepts === null ? null : new Set(concepts.map((word) => word.slug));
   // The ONE read a word chip does: the concept's name and memory, or null when
@@ -660,6 +681,7 @@ export function GroundLayer({
           key={ask.on}
           ask={ask}
           anchorName={cardNames.get(ask.anchor) ?? null}
+          anchor={anchorCardOf(ask)}
           turns={askTurns[ask.on] ?? []}
           open={openAskOn === ask.on}
           previewLines={previewLines}

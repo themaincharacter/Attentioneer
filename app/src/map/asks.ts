@@ -1,5 +1,6 @@
 import { createDirAll, readTextFile, writeTextFile } from "../lib/fs";
 import { canonicalJsonlLine, canonicalText, nextSlug, slugName } from "../lib/serialize";
+import { utf8ByteLength } from "../lib/textBytes";
 import type { GroundReference } from "./ground";
 import { ASK_RECORD_FILE, ASK_TURNS_DIR, mapDir } from "./records";
 
@@ -437,4 +438,85 @@ export function askLastTurn(turns: readonly AskTurn[]): AskTurn | null {
 export function askLastTurnText(turns: readonly AskTurn[]): string {
   const last = askLastTurn(turns);
   return last === null ? "" : askTurnLine(last);
+}
+
+/* ------------------------------------------------------------------------- *
+ * THE THREAD'S BOUND (story 17.3) — what a packet may carry of what was said.
+ *
+ * The conversation becomes CONTEXT for the next turn, but a conversation grows
+ * without limit and a packet is a BOUNDED view (ADR-0029's amendment). So the
+ * thread rides under a stated bound: the most recent WHOLE turns, capped by a
+ * turn count AND a byte budget — whichever bites first. The numbers are
+ * PROVISIONAL and they live HERE, never in the packet's text: the text says
+ * the bound in words, and the declaration shows the bytes.
+ *
+ * WHOLE TURNS ONLY. A turn is never cut mid-sentence to make the numbers fit:
+ * a turn that does not fit as a whole is left out, and because the selection is
+ * always the newest turns in order, what is left out is always the OLDER ones —
+ * a contiguous tail of the conversation, never a gap and never a half turn.
+ * ------------------------------------------------------------------------- */
+
+/** One stated bound: the smaller of a turn count and a byte budget (PROVISIONAL). */
+export interface AskThreadBound {
+  /** The most turns one packet's thread may carry. */
+  turns: number;
+  /** The most bytes the rendered thread may take. */
+  bytes: number;
+}
+
+/**
+ * THE STATED BOUND (PROVISIONAL, story 17.3): eight turns or four KiB,
+ * whichever is smaller. Provisional because a bound is a product choice, not a
+ * law: the law is that a bound is stated and the exact bytes are openable.
+ */
+export const ASK_THREAD_BOUND: AskThreadBound = { turns: 8, bytes: 4 * 1024 };
+
+/** What the bound selected: the newest whole turns, in conversation order. */
+export interface AskThreadSelection {
+  /** The selected turns, OLDEST first — the order they were said. */
+  turns: AskTurn[];
+  /** Whether earlier turns were left out (the qualitative fact, never a count). */
+  omitted: boolean;
+}
+
+/**
+ * THE ROLE AS THE RECORD HEARS IT (story 17.3), PURE: a packet's thread is read
+ * by a MODEL, so the card's "you" would point at the wrong speaker. The words
+ * stay verbatim; only the mark is the reader's — and it is the same mark the
+ * byte budget counts, so the bound measures exactly what the block shows.
+ */
+export function askThreadLine(turn: AskTurn): string {
+  return (turn.role === "person" ? "person" : "answer") + ": " + turn.text;
+}
+
+/**
+ * THE THREAD UNDER ITS BOUND (story 17.3), PURE: the most recent WHOLE turns
+ * that fit BOTH bounds, returned in conversation order. The walk goes backwards
+ * from the newest turn and stops at the first one that does not fit — so a turn
+ * is never truncated, and the selection is always a contiguous tail of the
+ * conversation. `omitted` is the one fact the packet turns into a sentence; the
+ * numbers themselves never enter the packet's text.
+ */
+export function lastTurns(
+  turns: readonly AskTurn[],
+  count: number,
+  bytes: number,
+): AskThreadSelection {
+  const selected: AskTurn[] = [];
+  let size = 0;
+  for (let at = turns.length - 1; at >= 0; at -= 1) {
+    if (selected.length + 1 > count) break;
+    // The budget counts the thread AS IT RENDERS: the role word, the words
+    // verbatim, and the newline that joins this turn to the one before it.
+    const add =
+      utf8ByteLength(askThreadLine(turns[at]!)) +
+      (selected.length === 0 ? 0 : 1);
+    if (size + add > bytes) break;
+    selected.push(turns[at]!);
+    size += add;
+  }
+  return {
+    turns: selected.reverse(),
+    omitted: selected.length < turns.length,
+  };
 }

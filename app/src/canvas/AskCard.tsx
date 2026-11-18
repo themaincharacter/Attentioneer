@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   ASK_QUESTION_REFUSAL,
+  ASK_THREAD_BOUND,
   askLastTurn,
   askRoleMark,
   type AskCard as AskCardRecord,
   type AskTurn,
 } from "../map/asks";
+import { assembleAskCardPacket, type AskPacketCard, type AskPacketReadback } from "../turn/packet";
 import { previewOverflows, previewText } from "../map/readings";
+import { PacketSurface } from "./PacketSurface";
 import type { GroundAddResult } from "./useGround";
 
 /**
@@ -40,9 +43,14 @@ import type { GroundAddResult } from "./useGround";
  * The card's wheel never zooms the plane: the scrollbox stops the event where
  * it starts, so the body scrolls and the camera stands still.
  *
- * WHAT IT SENDS is the existing card-ask packet anchored on the REFERENCE, not
- * on the ask card: the same packet, the same provider rows, the same streaming.
- * Story 17.3 owns the thread's bound in the packet; nothing here changes it.
+ * WHAT IT SENDS (story 17.3) is the packet assembled around the ANCHORED
+ * reference AND this card's conversation: the card's blocks as before, then the
+ * most recent whole turns under a stated bound, then the instruction and the
+ * bound. Before the send the card DECLARES every block with its exact size and
+ * opens the exact bytes through the shared PacketSurface — the same verb the
+ * embedded panel uses; after it, the same surface opens what left. The bound's
+ * numbers live in map/asks.ts; this file only passes them and draws what the
+ * packet declares.
  *
  * PROVISIONAL (ADR-0003's rendering seam): the card's size, the crop, the
  * scrollbox height and slack, the role marks and the stopped/incomplete wording.
@@ -188,6 +196,7 @@ function AskTurnLine({
 export function AskCard({
   ask,
   anchorName,
+  anchor,
   turns,
   open,
   previewLines,
@@ -199,6 +208,14 @@ export function AskCard({
   ask: AskCardRecord;
   /** The anchored reference's coined name, or null when the anchor is gone. */
   anchorName: string | null;
+  /**
+   * STORY 17.3 — the anchored card's block facts, ALREADY CROPPED (name, state,
+   * reading crop, note crop): the same block the card ask sends today. Optional
+   * so a render test that does not care about the declaration needs nothing;
+   * the layer always passes it, dangling anchor included (the slug then stands
+   * in the name and no preview rides).
+   */
+  anchor?: AskPacketCard;
   /** The card's conversation, in FILE ORDER (an absent file is empty). */
   turns: readonly AskTurn[];
   /** View state: a small card opens; an expanded card sends. */
@@ -231,7 +248,19 @@ export function AskCard({
   // Whether THIS turn was stopped by the person, so the partial says "stopped"
   // rather than "broke off". View state only.
   const stoppedRef = useRef(false);
+  /**
+   * STORY 17.3 — THE DECLARATION BEFORE THE SEND, and the readback after it.
+   * The packet is assembled from the SAME inputs the send composes from (this
+   * card's anchor facts, the thread in file order, the typed question), so the
+   * declaration and the bytes can never say different things. `sent` is the
+   * one readback: the messages that actually left, the follow-up included.
+   */
+  const [sent, setSent] = useState<AskPacketReadback | null>(null);
   const running = pending !== null && pending.ending === "running";
+  const packet =
+    anchor === undefined
+      ? null
+      : assembleAskCardPacket(anchor, turns, question, ASK_THREAD_BOUND);
 
   // ESC CLOSES THE CARD'S EDITOR — never the map. Capture phase, so the key is
   // consumed before the plane's or app's own bubble handlers can act on it. A
@@ -300,11 +329,16 @@ export function AskCard({
     // appends the verbatim words only when the turn settles.
     setPending(askSendPending(asked));
     setQuestion("");
+    // The bytes about to leave stay openable while they leave. The turn's own
+    // readback replaces them when it settles — including a follow-up's message,
+    // so the verb never claims less than what left.
+    if (packet !== null) setSent({ messages: packet.messages, read: null });
     const result = await onAskTurn(ask.on, asked, (text) => {
       setPending((current) => askPartPending(current, text));
     });
     setStopping(false);
     setPending((current) => askSettlePending(current, result.ok, stoppedRef.current));
+    if (result.readback !== undefined) setSent(result.readback);
     if (!result.ok) setProblem(result.message);
   }
 
@@ -429,6 +463,9 @@ export function AskCard({
             onChange={(e) => {
               setQuestion(e.target.value);
               if (problem !== null) setProblem(null);
+              // A new question is a NEW packet: the old readback no longer
+              // describes what would leave, so the declaration takes over.
+              if (sent !== null) setSent(null);
             }}
             onKeyDown={(e) => {
               if (e.key !== "Enter" || e.shiftKey) return;
@@ -436,6 +473,21 @@ export function AskCard({
               void send();
             }}
           />
+          {/* THE DECLARATION AND THE READBACK, the shared PacketSurface: before
+              the send every block with its exact size and the total, then one
+              verb that opens the bytes; after it, what actually left. The
+              anchored card's crops and the thread are already here, so nothing
+              is read to declare this. */}
+          {sent === null ? (
+            packet !== null && (
+              <PacketSurface
+                declaration={packet.declaration}
+                messages={packet.messages}
+              />
+            )
+          ) : (
+            <PacketSurface messages={sent.messages} read={sent.read} />
+          )}
           <div className="ask-card-actions">
             <button
               type="button"

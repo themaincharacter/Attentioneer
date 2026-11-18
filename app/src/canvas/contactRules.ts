@@ -190,6 +190,9 @@ function packetBlockWords(block: AskPacketDeclarationLine): string {
       return "your question (" + size + ")";
     case "card":
       return "the card \u201c" + block.name + "\u201d (" + size + ")";
+    case "thread":
+      // The conversation's block: named plainly, sized like every other block.
+      return "the conversation (" + size + ")";
     case "reach":
       return block.name + " (" + size + ", a preview)";
     case "instruction":

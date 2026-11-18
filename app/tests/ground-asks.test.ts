@@ -678,9 +678,12 @@ describe("the card's face: a conversation, cropped, and nothing counted", () => 
   });
 });
 
-describe("the ask path reuses the existing card-ask turn (no packet change)", () => {
+describe("the ask path reuses the existing card-ask turn (story 17.3 adds the thread)", () => {
   test("the hook assembles the card's packet and sends it through the port", () => {
-    expect(HOOK).toContain("assembleCardPacket(");
+    // 17.1 reused the card's packet; 17.3 extends it with the conversation, so
+    // the ask card's assembler is the thread-bearing one — same card block,
+    // same port, same ceiling.
+    expect(HOOK).toContain("assembleAskCardPacket(");
     expect(HOOK).toContain("cardAskContext(");
     expect(HOOK).toContain("turn.sendPacket(");
     // The app hands the hook the ONE turn port the card panel uses.

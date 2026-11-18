@@ -7564,6 +7564,26 @@ body {
   border-top: 1px solid rgba(141, 136, 124, 0.16);
 }
 
+/* STORY 17.3 — THE DECLARATION INSIDE THE CARD. The card is a fixed column,
+   so the shared PacketSurface gets a shorter ceiling here than the embedded
+   panel gives it: the declaration wraps at the card's width, and the bytes box
+   scrolls inside a bound of its own. The surface is the SAME piece — only the
+   room it has changes — so the send and stop verbs stay reachable. */
+.ask-card .ask-declaration {
+  font-size: 10px;
+  line-height: 1.35;
+  max-height: 54px;
+  overflow-y: auto;
+}
+
+.ask-card .ask-bytes {
+  max-height: 150px;
+}
+
+.ask-card .ask-message-text {
+  max-height: 110px;
+}
+
 .ask-card-question {
   box-sizing: border-box;
   width: 100%;

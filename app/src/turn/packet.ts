@@ -1,4 +1,11 @@
 import { utf8ByteLength } from "../lib/textBytes";
+import {
+  ASK_THREAD_BOUND,
+  askThreadLine,
+  lastTurns,
+  type AskThreadBound,
+  type AskTurn,
+} from "../map/asks";
 import type { PointerForm } from "../map/pointers";
 import type { TurnMessage } from "./protocol";
 
@@ -39,10 +46,21 @@ import type { TurnMessage } from "./protocol";
  * two cannot drift because they share this module's block renderer, its
  * instruction and its bound.
  *
- * PURE BY CONSTRUCTION: no fs import, no reader, no writer, no clock and no
- * randomness. The app reads the previews (turn/context.ts) and the pure
- * assembler below only arranges what it is handed, so bun can pin the exact
- * bytes without a window or a workspace.
+ * THE ASK CARD'S PACKET CARRIES THE THREAD (Epic 17 story 3). An ask card is a
+ * conversation about one anchored reference, so its turn sends the card's
+ * blocks AND the conversation so far, under a bound the person can see: the
+ * most recent WHOLE turns that fit a turn count and a byte budget (map/asks.ts
+ * chooses them). The thread is CONTEXT and the anchored card is the MATERIAL —
+ * the instruction says so, and the READ set stays the anchor's name alone, so
+ * a request for the thread's block is refused exactly like any other name the
+ * view did not offer. The text says the bound in words ("earlier turns in this
+ * conversation are not included"); the sizes live only in the declaration.
+ *
+ * PURE BY CONSTRUCTION: no reader, no writer, no clock and no randomness of
+ * its own. The app reads the previews (turn/context.ts) and the pure assembler
+ * below only arranges what it is handed — the thread included, which map/asks.ts
+ * selects with a pure function — so bun can pin the exact bytes without a
+ * window or a workspace.
  *
  * PROVISIONAL: the block order, the headings and their wording, the READ
  * syntax, the instruction paragraph, the preview lengths (the existing crops),
@@ -56,22 +74,77 @@ export const ASK_PACKET_TITLE = "# a question about one card on an attention map
 export const ASK_PACKET_BOUND = "This view; the map is larger.";
 
 /**
- * The fixed instruction (block three). It says what this view is, that it is a
- * view and not the map, the ONE form a retrieval may use, and that a missing
- * target is answered from what is here. No counts, no sizes: the bound is the
- * bound, said in words.
+ * The fixed instruction (the plain packet's third block; the ask card's fourth,
+ * where the thread sits between the card and this paragraph). It says what this
+ * view is, that it is a view and not the map, the ONE form a retrieval may use,
+ * and that a missing target is answered from what is here. No counts, no sizes:
+ * the bound is the bound, said in words.
  */
-export const ASK_PACKET_INSTRUCTION = [
+const INSTRUCTION_OPEN = [
   "## what you may ask for",
   "",
   "This view is one view of a map that is larger than it; it is not the map. Every block above is headed by its own name, exactly as written after the two hashes.",
+];
+
+/** The READ form, shared by both instruction wordings (the syntax is one). */
+const INSTRUCTION_READ = [
   "",
   "You may ask for one block in full: write, on a line of its own, exactly",
   "",
   "READ: <name>",
+];
+
+/** The plain tail: one block at most, and a name that is not here is not read. */
+const INSTRUCTION_TAIL =
+  "with the name written exactly as the block's heading. Ask for one block at most, and only when you need it. If what you need is not here, do not ask for it: answer from what this view gives you, and say plainly what you could not see.";
+
+export const ASK_PACKET_INSTRUCTION = [
+  ...INSTRUCTION_OPEN,
+  ...INSTRUCTION_READ,
   "",
-  "with the name written exactly as the block's heading. Ask for one block at most, and only when you need it. If what you need is not here, do not ask for it: answer from what this view gives you, and say plainly what you could not see.",
+  INSTRUCTION_TAIL,
 ].join("\n");
+
+/** The thread block's name: its heading text, and NEVER a READ name. */
+export const ASK_PACKET_THREAD_NAME = "the conversation so far";
+
+/** The thread block's heading (the name, as a block heading). */
+export const ASK_PACKET_THREAD_HEADING = "## " + ASK_PACKET_THREAD_NAME;
+
+/**
+ * What the bound says when it bit (PROVISIONAL, and qualitative on purpose):
+ * the person's declaration shows the bytes; the model is told only that the
+ * conversation has an earlier part it cannot see. No count, no size, no token
+ * number ever rides here.
+ */
+export const ASK_PACKET_THREAD_OMITTED =
+  "earlier turns in this conversation are not included.";
+
+/**
+ * THE ASK CARD'S INSTRUCTION (story 17.3): the same paragraph, extended to say
+ * that the conversation so far is CONTEXT and the anchored card is the
+ * MATERIAL, and that the ONE read is the anchored block's — never the thread's.
+ * The extension only appears when the thread block actually rode: a first
+ * question has no conversation to point at, and the packet never claims a block
+ * it does not carry.
+ */
+export function askCardInstruction(threadRides: boolean): string {
+  const lines = [...INSTRUCTION_OPEN];
+  if (threadRides) {
+    lines.push("");
+    lines.push(
+      "One of those blocks is " +
+        ASK_PACKET_THREAD_NAME +
+        ": what has already been said in this conversation, and context, not material. The anchored card is the material.",
+    );
+  }
+  lines.push(...INSTRUCTION_READ);
+  lines.push("");
+  lines.push(
+    "with the name written exactly as the block's heading. The anchored card is the only block you may ask for, and you may ask for it at most once. If what you need is not here, do not ask for it: answer from what this view gives you, and say plainly what you could not see.",
+  );
+  return lines.join("\n");
+}
 
 /** The heading of the question block (the person's own words, verbatim). */
 export const ASK_PACKET_QUESTION_HEADING = "## the question";
@@ -134,6 +207,7 @@ export interface AskPacketInput {
 export type AskPacketBlockKind =
   | "question"
   | "card"
+  | "thread"
   | "reach"
   | "instruction"
   | "bound";
@@ -175,6 +249,17 @@ export interface AskPacket {
   declaration: AskPacketDeclaration;
   /** The block names a single READ line may name. */
   retrievable: readonly string[];
+}
+
+/**
+ * WHAT ONE SENT PACKET LEFT (story 17.3): every message in the order it left,
+ * and the one block a follow-up fetched (or null). A surface opens these bytes
+ * verbatim, so the readback can never be a second summary of the send.
+ */
+export interface AskPacketReadback {
+  messages: readonly TurnMessage[];
+  /** The block the one follow-up fetched, or null when none happened. */
+  read: string | null;
 }
 
 /** The name a reach's block carries: its citation, exactly as the person sees it. */
@@ -222,6 +307,23 @@ function reachText(reach: AskPacketReach): string {
     lines.push(reach.preview);
   } else {
     lines.push("a citation only — no preview rides with this reach.");
+  }
+  return lines.join("\n");
+}
+
+/**
+ * THE THREAD'S BLOCK (story 17.3): the conversation so far, as WHOLE turns in
+ * the order they were said, under the stated bound. The bound's own numbers
+ * never appear — when it bit, the block says so in one qualitative sentence, so
+ * the model knows an earlier part exists without being handed a count.
+ */
+function threadText(thread: readonly AskTurn[], bound: AskThreadBound): string {
+  const selected = lastTurns(thread, bound.turns, bound.bytes);
+  const lines: string[] = [ASK_PACKET_THREAD_HEADING, ""];
+  for (const turn of selected.turns) lines.push(askThreadLine(turn));
+  if (selected.omitted) {
+    if (selected.turns.length > 0) lines.push("");
+    lines.push(ASK_PACKET_THREAD_OMITTED);
   }
   return lines.join("\n");
 }
@@ -287,7 +389,7 @@ export function assembleCardPacket(input: CardPacketInput): AskPacket {
   return assemblePacket(input.question, input.card, [], input.retrievable);
 }
 
-/** The one assembler both entry points use, so their bytes cannot drift. */
+/** The one assembler the two Epic 15 entry points use, so their bytes cannot drift. */
 function assemblePacket(
   question: string,
   card: AskPacketCard,
@@ -295,6 +397,26 @@ function assemblePacket(
   asked: readonly string[] | undefined,
 ): AskPacket {
   const blocks = blocksOf({ question, card, reaches, retrievable: asked });
+  // The READ set: only a block that actually rode, and only where the app can
+  // read a target at all. A url is named in the packet but never fetched, so it
+  // is never a retrieval either.
+  const readable = new Set<string>([card.name]);
+  for (const reach of reaches) {
+    if (reach.form !== "url") readable.add(askReachName(reach.form, reach.value));
+  }
+  return packetOf(blocks, asked, readable);
+}
+
+/**
+ * THE FINALIZER every assembler ends with: the exact bytes, the ONE message,
+ * the declaration (each block's own bytes, then the total) and the READ set.
+ * One place, so no entry point can declare a block it does not send.
+ */
+function packetOf(
+  blocks: readonly AskPacketBlock[],
+  asked: readonly string[] | undefined,
+  readable: ReadonlySet<string>,
+): AskPacket {
   const text = [ASK_PACKET_TITLE, ...blocks.map((block) => block.text)].join(
     "\n\n",
   );
@@ -306,13 +428,6 @@ function assemblePacket(
     })),
     total: utf8ByteLength(text),
   };
-  // The READ set: only a block that actually rode, and only where the app can
-  // read a target at all. A url is named in the packet but never fetched, so it
-  // is never a retrieval either.
-  const readable = new Set<string>([card.name]);
-  for (const reach of reaches) {
-    if (reach.form !== "url") readable.add(askReachName(reach.form, reach.value));
-  }
   const retrievable = [...new Set(asked ?? [])].filter((name) =>
     readable.has(name),
   );
@@ -323,6 +438,58 @@ function assemblePacket(
     declaration,
     retrievable,
   };
+}
+
+/**
+ * ASSEMBLE the ASK CARD's packet (Epic 17 story 3): the person's question, the
+ * anchored card — exactly the blocks a card ask sends today — then THE THREAD
+ * SO FAR, the same instruction extended to name the conversation as context,
+ * and the bound. The thread is chosen by `lastTurns` under `bound`: the most
+ * recent WHOLE turns that fit a turn count and a byte budget, in conversation
+ * order; when the bound bit, the block says so in one qualitative sentence.
+ *
+ * ONE RETRIEVAL, AND ONLY OF THE ANCHORED BLOCK. The readable set is the
+ * anchor's name alone: the thread's block is a block the model can SEE, never
+ * one it can ask for in full, so a "READ: the conversation so far" is refused
+ * by the same rule that refuses any other name the packet did not offer. The
+ * thread is context; the anchored card is the material.
+ */
+export function assembleAskCardPacket(
+  anchorCtx: AskPacketCard,
+  thread: readonly AskTurn[],
+  question: string,
+  bound: AskThreadBound = ASK_THREAD_BOUND,
+  asked?: readonly string[],
+): AskPacket {
+  const blocks: AskPacketBlock[] = [
+    {
+      kind: "question",
+      name: "the question",
+      text: ASK_PACKET_QUESTION_HEADING + "\n\n" + question,
+    },
+    {
+      kind: "card",
+      name: anchorCtx.name,
+      text: cardText(anchorCtx),
+    },
+  ];
+  // A conversation that has said nothing yet has no thread block to declare:
+  // the first question carries the card and the bound, and says nothing about
+  // turns that do not exist.
+  if (thread.length > 0) {
+    blocks.push({
+      kind: "thread",
+      name: ASK_PACKET_THREAD_NAME,
+      text: threadText(thread, bound),
+    });
+  }
+  blocks.push({
+    kind: "instruction",
+    name: "the instruction",
+    text: askCardInstruction(thread.length > 0),
+  });
+  blocks.push({ kind: "bound", name: "the bound", text: boundText() });
+  return packetOf(blocks, asked, new Set<string>([anchorCtx.name]));
 }
 
 /**

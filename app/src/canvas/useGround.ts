@@ -25,6 +25,7 @@ import {
 import {
   ASK_MISSING_REFUSAL,
   ASK_SOURCE_REFUSAL,
+  ASK_THREAD_BOUND,
   addAsk,
   appendExchange,
   askQuestionRefusal,
@@ -131,7 +132,11 @@ import {
   fetchAskBlock,
   type AskContext,
 } from "../turn/context";
-import { assembleCardPacket, type AskPacket } from "../turn/packet";
+import {
+  assembleAskCardPacket,
+  type AskPacket,
+  type AskPacketReadback,
+} from "../turn/packet";
 import { loadTurnSettings } from "../turn/provider";
 import { PROVIDER_SENTENCES, resolveSelection } from "../turn/providers";
 import {
@@ -261,10 +266,20 @@ import {
 
 /** What one person move said: done, or the sentence the layer shows. */
 export type GroundAddResult =
-  | { ok: true }
+  | {
+      ok: true;
+      /**
+       * STORY 17.3 — what an ask turn's send left, so the card can open the
+       * exact bytes afterwards (the follow-up included). Absent on every move
+       * that sends nothing.
+       */
+      readback?: AskPacketReadback;
+    }
   | {
       ok: false;
       message: string;
+      /** The same bytes for a turn that left and did not finish. */
+      readback?: AskPacketReadback;
       /**
        * The records were removed but a later piece refused (the unlink): the
        * card is already gone, so the layer shows the sentence where it stood
@@ -1240,14 +1255,24 @@ const ASK_TURN_IO: AskTurnIo = { appendExchange };
  * writes no answer line, even when the person saw words stream.
  */
 export type AskSendResult =
-  | { kind: "answer"; text: string }
-  | { kind: "failed"; sentence: string };
+  | { kind: "answer"; text: string; readback?: AskPacketReadback }
+  | { kind: "failed"; sentence: string; readback?: AskPacketReadback };
 
-/** Map one turn's result to what the ask card writes and says (PURE). */
-export function askSendResult(result: TurnResult): AskSendResult {
-  return result.kind === "answer"
-    ? { kind: "answer", text: result.text }
-    : { kind: "failed", sentence: turnSentence(result) };
+/**
+ * Map one turn's result to what the ask card writes and says (PURE). The
+ * readback is the SURFACE's fact (which bytes left), never a record field, so
+ * it rides only when the caller has one: a turn that never left hands over
+ * nothing rather than pretending bytes did.
+ */
+export function askSendResult(
+  result: TurnResult,
+  readback?: AskPacketReadback,
+): AskSendResult {
+  const base: AskSendResult =
+    result.kind === "answer"
+      ? { kind: "answer", text: result.text }
+      : { kind: "failed", sentence: turnSentence(result) };
+  return readback === undefined ? base : { ...base, readback };
 }
 
 /** What recording one ask turn did: the whole conversation and its sentence. */
@@ -2337,10 +2362,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
 
   /**
    * SEND one ask turn's question through the EXISTING card-ask path: the same
-   * packet assembler, the same provider rows, the same streaming. This is the
-   * only new send site; nothing about the packet, the provider rows or the
-   * steps changed (story 17.3 owns the thread's bound, story 17.4 owns the
-   * sending turn's PRISM).
+   * provider rows, the same streaming, and the packet the card declared before
+   * the press (story 17.3's assembler; the READ set stays the anchored block).
+   * This is the only new send site; the provider rows and the step ceiling are
+   * unchanged (story 17.4 owns the sending turn's PRISM).
    *
    * It runs OUTSIDE the write queue: a turn may take its whole budget, and a
    * card drag must never wait for a provider. Only the record write goes
@@ -2376,7 +2401,12 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             : fetchAskBlock(workspacePath, blockName, context),
         onPart === undefined ? {} : { onPart },
       );
-      return askSendResult(answered.result);
+      // The bytes that left, handed back so the card's surface can open them
+      // after the send exactly as the embedded panel's readback does.
+      return askSendResult(answered.result, {
+        messages: answered.messages,
+        read: answered.read,
+      });
     },
     [turn, workspacePath],
   );
@@ -2434,13 +2464,15 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
-   * STORY 17.1 — ASK ONE QUESTION inside an ask card. The question is sent
-   * through the existing card-ask path anchored on the REFERENCE (the packet's
-   * one block is the card this ask is about), and then ONE append-only write
-   * records the exchange: the person's line always, the answer line only when
-   * the turn answered. A failed or stopped turn leaves the person's line alone
-   * and answers the ONE sentence in the card — no PRISM (17.4), no packet
-   * change (17.3) and no map write beyond the ask card's conversation.
+   * STORY 17.1 — ASK ONE QUESTION inside an ask card. STORY 17.3 makes the
+   * question a packet: the anchored reference's blocks as before PLUS this
+   * card's conversation under the stated bound (the newest WHOLE turns that fit
+   * a turn count and a byte budget — map/asks.ts's lastTurns). The READ set is
+   * the anchor's own block, never a turn. Then ONE append-only write records
+   * the exchange: the person's line always, the answer line only when the turn
+   * answered. A failed or stopped turn leaves the person's line alone and
+   * answers the ONE sentence in the card — no PRISM (17.4) and no map write
+   * beyond the ask card's conversation.
    */
   const askTurn = useCallback(
     (
@@ -2475,11 +2507,18 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         note: anchor === null ? null : notesRef.current[anchor.on] ?? null,
       };
       const context = cardAskContext(facts);
-      const packet = assembleCardPacket({
+      // STORY 17.3 — THE PACKET CARRIES THE CARD AND THE THREAD: the anchored
+      // card's blocks as before, then the conversation so far under the stated
+      // bound (the newest WHOLE turns that fit a turn count and a byte budget).
+      // The thread is read from the SAME record the card renders, and the READ
+      // set stays the anchor's own block, so retrieval can never reach a turn.
+      const packet = assembleAskCardPacket(
+        context.card,
+        askTurnsRef.current[slug] ?? [],
         question,
-        card: context.card,
-        retrievable: context.retrievable,
-      });
+        ASK_THREAD_BOUND,
+        context.retrievable,
+      );
       let outcome: GroundAddResult = {
         ok: false,
         message: "nothing was written.",
@@ -2500,8 +2539,12 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             setState(snapshot());
             outcome =
               recorded.sentence === null
-                ? { ok: true }
-                : { ok: false, message: recorded.sentence };
+                ? { ok: true, readback: sent.readback }
+                : {
+                    ok: false,
+                    message: recorded.sentence,
+                    readback: sent.readback,
+                  };
           }),
         )
         .then(() => outcome)

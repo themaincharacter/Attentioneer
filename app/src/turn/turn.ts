@@ -594,6 +594,13 @@ export interface PacketTurnOptions extends TurnOptions {
  * as ONE more user message; anything else settles the first answer as the
  * answer. There is no retry anywhere here.
  *
+ * THE ASK CARD'S THREAD IS NOT READABLE (story 17.3). Its packet carries the
+ * conversation's block as CONTEXT, and the assembler never lists that block in
+ * `retrievable` — so a READ naming the thread is refused here by the SAME rule
+ * that refuses any name the view did not offer: one request, the anchored
+ * block's, and the first answer stands otherwise. The retrieval rule did not
+ * need a second branch; the packet's READ set is the whole of it.
+ *
  * THE CEILING IS ASKED HERE, not assumed: an HTTP ask with one readable block
  * gets two exchanges, a plain ask one, and a CLI turn never reaches this
  * function (its route dispatches once). When the model asks to read past the
