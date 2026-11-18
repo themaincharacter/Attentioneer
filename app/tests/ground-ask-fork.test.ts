@@ -17,14 +17,11 @@ import {
 } from "../src/canvas/AskCard";
 import {
   askThreadOf,
-  reanchorRefusal,
   writeAskTurn,
   writeForkAsk,
   type AskTurnWriteIo,
 } from "../src/canvas/useGround";
 import {
-  ASK_MISSING_REFUSAL,
-  ASK_SOURCE_REFUSAL,
   addAsk,
   appendExchange,
   askTurnPath,
@@ -37,7 +34,7 @@ import {
   parseAskLine,
   parseAsks,
   proposeForkName,
-  reanchorAsk,
+  renameAsk,
   saveAsks,
   serializeAskLine,
   serializeAsks,
@@ -196,8 +193,8 @@ describe("the record: from/carry is one optional tail", () => {
   });
 });
 
-describe("a fork inherits the anchor and mints its own slug", () => {
-  test("forkAsk copies the anchor, names the parent, and carries whole turns", () => {
+describe("a fork is a PEER card and mints its own slug", () => {
+  test("forkAsk names the parent and carries whole turns, with no anchor", () => {
     const parent: AskCardRecord = {
       on: "rain-gauge-question",
       name: "Rain gauge question",
@@ -207,12 +204,13 @@ describe("a fork inherits the anchor and mints its own slug", () => {
     };
     const taken = sharedSlugs([GAUGE], [parent]);
     const made = forkAsk([parent], taken, parent, 2, "Another question", 680, 60);
+    // STORY 17.10: no anchor is inherited — a fork is a peer card; context
+    // arrives by wire (17.9's mechanism), never by a copied field.
     expect(made.ask).toEqual({
       on: "another-question",
       name: "Another question",
       x: 680,
       y: 60,
-      anchor: "rain-gauge",
       from: "rain-gauge-question",
       carry: 2,
     });
@@ -503,13 +501,12 @@ describe("the ONE bound applies to the WHOLE composed thread", () => {
   });
 });
 
-describe("re-anchoring is ONE field's change", () => {
+describe("STORY 17.10 — an ask renames, and NEVER re-anchors", () => {
   const FORK: AskCardRecord = {
     on: "fork",
     name: "Fork",
     x: 680,
     y: 60,
-    anchor: "rain-gauge",
     from: "parent",
     carry: 2,
   };
@@ -518,53 +515,37 @@ describe("re-anchoring is ONE field's change", () => {
     name: "Other",
     x: 0,
     y: 0,
-    anchor: "rain-gauge",
   };
 
-  test("only the anchor changes; the name, point, words and branch point stay", () => {
-    const next = reanchorAsk([FORK, OTHER], FORK.on, "old-well")!;
+  test("a rename changes the NAME only: slug, point and branch point stay", () => {
+    const next = renameAsk([FORK, OTHER], FORK.on, "The fork's new name")!;
     const changed = next.find((entry) => entry.on === FORK.on)!;
-    expect(changed).toEqual({ ...FORK, anchor: "old-well" });
+    expect(changed).toEqual({ ...FORK, name: "The fork's new name" });
+    expect(changed.on).toBe(FORK.on);
     expect(changed.from).toBe("parent");
     expect(changed.carry).toBe(2);
     expect(next.find((entry) => entry.on === OTHER.on)).toEqual(OTHER);
-    // The serialized file changes ONE line, and only its anchor field.
-    const before = serializeAsks([FORK, OTHER]);
-    const after = serializeAsks(next);
-    expect(after.split("\n")[1]).toBe(before.split("\n")[1]);
-    expect(after.split("\n")[0]).toBe(
-      serializeAskLine({ ...FORK, anchor: "old-well" }),
-    );
+    // The anchor the parent's LEGACY record carried did not travel here, and
+    // the rename cannot write one: the serialized fork still has no anchor.
+    expect(serializeAskLine(changed)).not.toContain("anchor:");
+    expect(serializeAskLine(changed)).toContain("name: The fork's new name");
   });
 
-  test("a target that is already gone refuses with ONE sentence", () => {
-    expect(reanchorRefusal([FORK], ["rain-gauge"], FORK.on, "old-well")).toBe(
-      ASK_SOURCE_REFUSAL,
-    );
-    expect(reanchorRefusal([FORK], [], "no-such-card", "rain-gauge")).toBe(
-      ASK_MISSING_REFUSAL,
-    );
-    expect(reanchorRefusal([FORK], [GAUGE.on, WELL.on], FORK.on, "old-well")).toBe(
-      null,
-    );
+  test("an unknown slug is refused (null), never appended", () => {
+    expect(renameAsk([FORK], "no-such-card", "x")).toBeNull();
   });
 
-  test("the next packet names the NEW anchor, and the fork still carries", () => {
-    const next = reanchorAsk([FORK], FORK.on, "old-well")!;
-    const moved = next[0]!;
-    // The hook's own lookup: find the reference the card names NOW.
-    const anchor = [GAUGE, WELL].find((entry) => entry.on === moved.anchor)!;
-    const view = askThreadOf(moved, [moved], {
-      [FORK.on]: [turn("person", "own question")],
-    });
-    const packet = assembleAskCardPacket(
-      [anchorFacts(anchor.name)],
-      view.turns,
-      "and now?",
-    );
-    expect(anchor.name).toBe("Old well");
-    expect(packet.text).toContain("## Old well");
-    expect(packet.text).not.toContain("## Rain gauge");
+  test("a fork of a legacy anchored parent still carries its turns and no anchor", () => {
+    // The OLD card keeps its own anchor on its own line (display only); the new
+    // branch is a peer, whose context will arrive by wire.
+    const parent: AskCardRecord = { ...FORK, name: "Parent", anchor: "rain-gauge" };
+    const made = forkAsk([parent], sharedSlugs([GAUGE], [parent]), parent, 1, "Branch", 700, 60);
+    expect(made.ask.anchor).toBeUndefined();
+    expect(made.ask.from).toBe(parent.on);
+    expect(made.ask.carry).toBe(1);
+    expect(serializeAskLine(made.ask)).not.toContain("anchor:");
+    // The parent's line is byte-identical (one card in, one untouched).
+    expect(serializeAsks(made.asks).split("\n")[0]).toBe(serializeAskLine(parent));
   });
 });
 

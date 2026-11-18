@@ -180,7 +180,10 @@ describe("the bubble's markup and the cluster's press discipline", () => {
     // The cluster stays a labelled group of real buttons, the word above the
     // dot and the pen below it — never a div with a handler.
     expect(MENU).toContain('role="group"');
-    expect(MENU).toContain('aria-label="create at this point"');
+    // STORY 17.10: the label is chosen at render — the concept vocabulary says
+    // "create", a caller's door list says "make".
+    expect(MENU).toContain('"create at this point"');
+    expect(MENU).toContain('"make at this point"');
     const word = MENU.indexOf('aria-label="coin a word here"');
     const dot = MENU.indexOf('className="plane-menu-dot"');
     const draw = MENU.indexOf('className="plane-menu-option plane-menu-draw"');

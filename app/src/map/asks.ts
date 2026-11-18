@@ -87,17 +87,26 @@ export interface AskCard {
   /**
    * The reference this ask is ABOUT — a field, never a link. A slug the map no
    * longer carries is kept exactly as written (story 17.6 states it).
+   *
+   * STORY 17.9/17.10 — LEGACY, DISPLAY ONLY. Context is the incoming wires,
+   * never this field; after 17.10 no shipped path writes an anchor, and the
+   * re-anchor verb is gone. Old records still PARSE and still say what they
+   * were about. Optional because an ask card made now (the double-click's ask,
+   * or a fork of an unanchored card) has no anchor at all: nothing from the
+   * click but the point.
    */
-  anchor: string;
+  anchor?: string;
   /**
    * STORY 17.6 — THE NAME THE ANCHOR HAD, remembered on the ask card itself
    * (PROVISIONAL record addition, flagged for an ADR). While the anchor is on
    * the map the card reads the reference's own name; once it is gone the card
    * can still say "this was about <the name it had>; that card is gone" instead
    * of a generic "a card that is not here". A card that cannot be named is a
-   * worse hole than one that can, so the name is written at the moment the
-   * person anchors (creation, fork inheritance, re-anchor) and never rewritten
-   * by a reference going away: remembering is not repairing. Optional because
+   * worse hole than one that can, so the name was written at the moment the
+   * person anchored (creation, fork inheritance, re-anchor) and never rewritten
+   * by a reference going away: remembering is not repairing. STORY 17.9/17.10
+   * make the whole field LEGACY: new cards are peers with no anchor, so they
+   * write no remembered name either; old records keep reading theirs. Optional because
    * cards recorded before this story simply have no remembered name; their card
    * falls back to the generic line rather than inventing one.
    */
@@ -202,7 +211,7 @@ export function askTurnPath(workspacePath: string, slug: string): string {
  * together. PROVISIONAL: the field's name and its last position.
  */
 const ASK_LINE =
-  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+) \| anchor: (\S+)(?: \| from: (\S+) \| carry: (\d+))?(?: \| anchorName: (.+))?$/;
+  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+)(?: \| anchor: (\S+))?(?: \| from: (\S+) \| carry: (\d+))?(?: \| anchorName: (.+))?$/;
 
 /**
  * Parse one line. Anything out of shape — a missing key, a decimal coordinate,
@@ -216,8 +225,16 @@ export function parseAskLine(line: string): AskCard | null {
   const match = ASK_LINE.exec(line);
   if (!match) return null;
   const [, on, name, x, y, anchor, from, carry, anchorName] = match;
-  if (on === "" || name.trim() === "" || anchor === "") return null;
-  const ask: AskCard = { on, name, x: Number(x), y: Number(y), anchor };
+  if (on === "" || name.trim() === "") return null;
+  const ask: AskCard = { on, name, x: Number(x), y: Number(y) };
+  // STORY 17.10 — AN ASK WITHOUT AN ANCHOR IS A LEGAL RECORD. The anchor is
+  // legacy display only, so its absence means "this card was never bound to a
+  // reference", not a malformed line. An EMPTY tail stays out of shape (a name
+  // that is nothing is not a name), exactly as it was before.
+  if (anchor !== undefined) {
+    if (anchor === "") return null;
+    ask.anchor = anchor;
+  }
   if (from !== undefined) {
     const count = Number(carry);
     if (!Number.isSafeInteger(count) || count < 0) return null;
@@ -236,7 +253,13 @@ export function parseAskLine(line: string): AskCard | null {
 
 /** One ask card as its canonical line (no trailing newline). */
 export function serializeAskLine(ask: AskCard): string {
-  const base = `on: ${ask.on} | name: ${ask.name} | x: ${ask.x} | y: ${ask.y} | anchor: ${ask.anchor}`;
+  // STORY 17.10 — THE ANCHOR TAIL IS LEGACY AND OPTIONAL. A card made now names
+  // no anchor; an old card's anchor is PRESERVED byte for byte when the file is
+  // rewritten, so display-only means display-only. No shipped path can put a
+  // NEW anchor here: `addAsk`, `forkAsk` and `renameAsk` never take one.
+  const anchored =
+    ask.anchor === undefined ? "" : ` | anchor: ${ask.anchor}`;
+  const base = `on: ${ask.on} | name: ${ask.name} | x: ${ask.x} | y: ${ask.y}${anchored}`;
   // STORY 17.5: the fork's tail rides only when the record is a fork, and only
   // as the pair — a card made from a reference is byte-identical to story 17.1
   // UNTIL 17.6 remembers a name, which adds its own last optional tail.
@@ -331,10 +354,17 @@ export function sharedSlugs(
 }
 
 /**
- * Append an ask card at a point, minting its slug against the SHARED slug space
- * (both files) with the concept map's dedupe rule. PURE: the caller writes the
- * file, so a test can assert the line without a disk. A blank name is the
- * caller's refusal; this function only names, places and anchors.
+ * Append an EMPTY ask card at a point, minting its slug against the SHARED slug
+ * space (both files) with the concept map's dedupe rule. PURE: the caller
+ * writes the file, so a test can assert the line without a disk. A blank name
+ * is the caller's refusal; this function only names and places.
+ *
+ * STORY 17.10 — THE USER'S CORRECTION: "a double click opens a bubble menu and
+ * you can select reference or ask." An ask is a PEER card, so creation takes
+ * NOTHING from the click but the point — no anchor, no theme, no source. The
+ * old creation path bound a reference by field; that mechanism is retired, and
+ * the reference verb buys the same result by WIRING the source into this card
+ * (17.9's mechanism) after it exists.
  */
 export function addAsk(
   asks: readonly AskCard[],
@@ -342,29 +372,20 @@ export function addAsk(
   name: string,
   x: number,
   y: number,
-  anchor: string,
-  anchorName?: string,
 ): AskAddition {
   const ask: AskCard = {
     on: nextSlug(slugName(name), taken),
     name,
     x: Math.round(x),
     y: Math.round(y),
-    anchor,
   };
-  // STORY 17.6: the name the anchor has RIGHT NOW is written into the record,
-  // before it can go away. A source the map does not carry is left unnamed (the
-  // generic line is honest); a blank name is no name and is never written.
-  if (anchorName !== undefined && anchorName.trim() !== "") {
-    ask.anchorName = anchorName;
-  }
   return { asks: [...asks, ask], ask };
 }
 
 /**
  * FORK an ask card at a turn (story 17.5), PURE apart from naming: the new card
- * INHERITS the parent's anchor (a re-anchor is one later field's change), names
- * the parent with `from` and how many of its turns it reads with `carry`, and
+ * names the parent with `from` and how many of its turns it reads with `carry`
+ * (STORY 17.10: no anchor is inherited — a fork is a peer card), and
  * is placed beside it. Nothing of the parent's conversation is written here or
  * anywhere — the parent's own file is never read by this function and never
  * touched by the caller's write; only `asks.txt` gains one line. The slug is
@@ -382,60 +403,40 @@ export function forkAsk(
   name: string,
   x: number,
   y: number,
-  anchorName?: string,
 ): AskAddition {
+  // STORY 17.10 — A FORK IS A PEER CARD TOO. It branches the conversation and
+  // nothing else: the parent's anchor is LEGACY DISPLAY on the parent's own
+  // line, and the addendum's rule — no shipped path writes an anchor — means
+  // the branch starts with none. Context arrives by wire, as it does for every
+  // ask made after 17.9.
   const ask: AskCard = {
     on: nextSlug(slugName(name), taken),
     name,
     x: Math.round(x),
     y: Math.round(y),
-    anchor: parent.anchor,
     from: parent.on,
     carry: Math.max(0, Math.floor(carry)),
   };
-  // STORY 17.6: a fork INHERITS the remembered name with the anchor it
-  // inherits. An older parent with no remembered name may be named from the
-  // reference the caller still holds (the optional argument); with neither, the
-  // fork simply has no remembered name and its card says the generic line.
-  const remembered =
-    parent.anchorName !== undefined ? parent.anchorName : anchorName;
-  if (remembered !== undefined && remembered.trim() !== "") {
-    ask.anchorName = remembered;
-  }
   return { asks: [...asks, ask], ask };
 }
 
 /**
- * RE-ANCHOR one ask card (story 17.5; story 17.6 keeps the remembered name in
- * step): ONE field's change — the name, the point, the conversation and (on a
- * fork) `from`/`carry` all stay exactly as they were. The new anchor's name is
- * written into `anchorName` when the caller has it, so the sentence a later
- * delete would need names the card the ask is NOW about, never the old one; the
- * sentence itself clears the moment the anchor resolves, which is a consequence
- * of the field, not a repair. PURE: the caller checks that the target reference
- * is still on the map (a re-anchor to a card that is gone refuses with one
- * sentence, before any write) and writes the whole file once. A slug this file
- * does not carry answers `null`, never an appended card.
+ * RENAME one ask card: the person's name changes and NOTHING else does.
+ *
+ * STORY 17.10 — an empty ask card names itself from its first question's short
+ * form, and the person can rename it at any time. Identity is the SLUG (the
+ * wire target and the conversation's file name), so a rename never mints a new
+ * one and never moves a wire. The anchor is legacy display and is left exactly
+ * as the record had it: this helper cannot write one. A slug this file does not
+ * carry answers `null`, never an appended card.
  */
-export function reanchorAsk(
+export function renameAsk(
   asks: readonly AskCard[],
   slug: string,
-  anchor: string,
-  anchorName?: string,
+  name: string,
 ): AskCard[] | null {
   if (!asks.some((ask) => ask.on === slug)) return null;
-  const remembered =
-    anchorName !== undefined && anchorName.trim() !== "" ? anchorName : undefined;
-  return asks.map((ask) => {
-    if (ask.on !== slug) return ask;
-    const next: AskCard = { ...ask, anchor };
-    // A remembered name belongs to the OLD anchor; the caller must hand the new
-    // one (the app always does). Without it, no stale name is left claiming the
-    // new anchor was understood — the generic line is the honest state.
-    if (remembered !== undefined) next.anchorName = remembered;
-    else delete next.anchorName;
-    return next;
-  });
+  return asks.map((ask) => (ask.on === slug ? { ...ask, name } : ask));
 }
 
 /* ------------------------------------------------------------------------- *
@@ -710,11 +711,42 @@ export function askQuestionRefusal(question: string): string | null {
 }
 
 /**
+ * STORY 17.10 — WHAT AN EMPTY ASK READS UNTIL IT HAS ASKED ANYTHING. The
+ * double-click's ask is created with nothing from the click but the point, so
+ * it needs a name that says what it is rather than inventing a topic.
+ * PROVISIONAL wording.
+ */
+export const ASK_UNTITLED_NAME = "Untitled ask";
+
+/** How much of the first question becomes the card's name (PROVISIONAL). */
+export const ASK_NAME_SHORT = 40;
+
+/**
+ * STORY 17.10 — THE SHORT FORM OF A QUESTION, PURE: the first non-empty line,
+ * its runs of whitespace collapsed to one space, cut at a stated length with an
+ * ellipsis. The card NAMES ITSELF from this when it is still "Untitled ask";
+ * the person's own rename always wins (the writer checks the sentinel first).
+ * The name is a title, not a record of the question — the conversation holds
+ * the words verbatim.
+ */
+export function askNameFromQuestion(question: string): string {
+  const line =
+    question
+      .split(/\r?\n/)
+      .map((part) => part.trim())
+      .find((part) => part !== "") ?? "";
+  const oneLine = line.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= ASK_NAME_SHORT) return oneLine;
+  return oneLine.slice(0, ASK_NAME_SHORT).trimEnd() + "…";
+}
+
+/**
  * The name the affordance PROPOSES for a new ask card (PROVISIONAL): the
- * anchored card's name plus the noun for what the card is, so the person edits
+ * source card's name plus the noun for what the card is, so the person edits
  * their own words rather than typing a name from nothing. The selection card's
- * idiom, with the anchor's name in place of selected text. Only the person's
- * confirm writes anything.
+ * idiom, with the source's name in place of selected text. STORY 17.10: the
+ * proposal names the SOURCE, never binds it — the source arrives as a wire.
+ * Only the person's confirm writes anything.
  */
 export function proposeAskName(anchorName: string): string {
   const name = anchorName.trim();

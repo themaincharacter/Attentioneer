@@ -41,10 +41,12 @@ import { mapDir } from "./records";
  * itself already landed (the records are the truth) and is never undone.
 
  * STORY 17.8 — THE ASK CARDS' OWN MOVES, STRUCTURE ONLY. Six events name
- * what happened to an ask card and never a word of it: `ask.add` (the slug and
- * the anchor it is about), `ask.remove` and `ask.restore` (the slug),
- * `ask.reanchor` (the slug and the NEW anchor), `ask.fork` (the new slug, the
- * parent's slug and how many of the parent's turns it carries) and `ask.turn`
+ * what happened to an ask card and never a word of it: `ask.add` (the slug,
+ * plus a legacy anchor when an old line carries one), `ask.remove` and
+ * `ask.restore` (the slug), `ask.reanchor` (LEGACY: parsed and displayed for
+ * old lines, but STORY 17.10 removed the verb, so nothing writes it now),
+ * `ask.fork` (the new slug, the parent's slug and how many of the parent's
+ * turns it carries) and `ask.turn`
  * (the slug and the turn's ENDING). A conversation is a document held by its
  * own file (`map/asks/<slug>.jsonl`); it is never quoted, previewed, sized or
  * counted here — the same rule the notes and the readings already live by.
@@ -190,8 +192,12 @@ export type HistoryEvent =
       readonly t: number;
       readonly type: "ask.add";
       readonly slug: string;
-      /** The reference the new card is ABOUT (a slug, never a link). */
-      readonly anchor: string;
+      /**
+       * STORY 17.10 — LEGACY, OPTIONAL. A card made now names no anchor (the
+       * addendum retires the mechanism and the verb), so its line carries only
+       * the slug. Old lines keep parsing with their anchor, display only.
+       */
+      readonly anchor?: string;
     }
   | {
       readonly v: 1;
@@ -373,9 +379,15 @@ export function linkRemoveEvent(
 export function askAddEvent(
   t: number,
   slug: string,
-  anchor: string,
+  /**
+   * STORY 17.10 — no anchor is written for a new card; the parameter stays for
+   * an older caller's byte-identical line and is omitted when absent.
+   */
+  anchor?: string,
 ): HistoryEvent {
-  return { v: HISTORY_VERSION, t, type: "ask.add", slug, anchor };
+  return anchor === undefined
+    ? { v: HISTORY_VERSION, t, type: "ask.add", slug }
+    : { v: HISTORY_VERSION, t, type: "ask.add", slug, anchor };
 }
 
 /** One ask card was removed (its conversation goes with it, restored by Restore). */
@@ -388,7 +400,11 @@ export function askRestoreEvent(t: number, slug: string): HistoryEvent {
   return { v: HISTORY_VERSION, t, type: "ask.restore", slug };
 }
 
-/** One ask card was re-anchored: the NEW anchor's slug, nothing else. */
+/**
+ * One ask card was re-anchored (LEGACY, story 17.10): the NEW anchor's slug,
+ * nothing else. No shipped path calls this — the verb is gone — but the parser
+ * still constructs it so an old history file reads as it was written.
+ */
 export function askReanchorEvent(
   t: number,
   slug: string,
@@ -620,9 +636,15 @@ export function parseHistoryEvent(line: string): HistoryEvent | null {
     // the PRISM's two words, stays PRESERVED and reported, never guessed at.
     case "ask.add": {
       const slug = stringField(record, "slug");
+      if (slug === null) return null;
+      // STORY 17.10: an anchor-free add is the shape a new card writes. A line
+      // WITH an anchor still parses (legacy display), and an empty one is out
+      // of shape rather than a card that claims to be about nothing.
       const anchor = stringField(record, "anchor");
-      if (slug === null || anchor === null) return null;
-      return askAddEvent(t, slug, anchor);
+      if (record.anchor !== undefined && anchor === null) return null;
+      return anchor === null
+        ? askAddEvent(t, slug)
+        : askAddEvent(t, slug, anchor);
     }
     case "ask.remove":
     case "ask.restore": {

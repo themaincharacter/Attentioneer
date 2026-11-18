@@ -7467,9 +7467,9 @@ body {
  *
  * PROVISIONAL (ADR-0003's rendering seam): the size, the crop, the scrollbox's
  * slack, the role marks and the stopped/incomplete wording. STORY 17.5 adds the
- * fork's one divider line, the fork verb seated on a turn, the fork's naming
- * row and the re-anchor chooser; 17.6's dangling anchor sentence is not
- * anticipated here.
+ * fork's one divider line, the fork verb seated on a turn and the fork's naming
+ * row; 17.6's dangling anchor sentence is not anticipated here. STORY 17.10
+ * removes the re-anchor chooser and makes the title pill the rename field.
  * ------------------------------------------------------------------------- */
 .ask-card {
   position: absolute;
@@ -7501,6 +7501,21 @@ body {
 .ask-card-name {
   font-size: 17px;
   color: var(--ink-strong);
+}
+
+/* STORY 17.10 — the title pill IS the rename field: it takes the name's own
+   type so the card does not jump when the field opens. */
+.ask-card-name-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid var(--ink-rule);
+  background: transparent;
+  font: inherit;
+  font-size: 17px;
+  color: var(--ink-strong);
+  outline: none;
 }
 
 .ask-card-kind {
@@ -7632,15 +7647,13 @@ body {
   outline: none;
 }
 
-.ask-card-fork-actions,
-.ask-card-reanchor-row {
+.ask-card-fork-actions {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.ask-card-fork-actions button,
-.ask-card-reanchor-row button {
+.ask-card-fork-actions button {
   padding: 0;
   border: none;
   background: none;
@@ -7650,26 +7663,13 @@ body {
   cursor: pointer;
 }
 
-.ask-card-fork-actions button:hover,
-.ask-card-reanchor-row button:hover {
+.ask-card-fork-actions button:hover {
   color: var(--ink-strong);
 }
 
-.ask-card-fork-actions button:disabled,
-.ask-card-reanchor-row button:disabled {
+.ask-card-fork-actions button:disabled {
   color: var(--ink-faint);
   cursor: default;
-}
-
-.ask-card-reanchor-pick {
-  max-width: 190px;
-  font: inherit;
-  font-size: 11.5px;
-  color: var(--ink-strong);
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid #e4dfd4;
-  border-radius: 4px;
-  padding: 2px 4px;
 }
 
 /* The small face shows the LAST turn only; the pure crop has already cut it,

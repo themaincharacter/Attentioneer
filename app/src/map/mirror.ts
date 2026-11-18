@@ -212,6 +212,13 @@ function sortedLinks(links: readonly GroundLink[]): GroundLink[] {
  * time and every size live in the record's files. This line has one format and
  * no slot for any of them.
  */
+/**
+ * STORY 17.10 — how the mirror names a peer ask (no anchor): the same words its
+ * own second line uses. PROVISIONAL wording, mirror-local so the map file does
+ * not depend on a React component.
+ */
+export const MIRROR_ASK_PEER = "a question";
+
 export const MIRROR_ASK_GONE = " (gone)";
 export const MIRROR_ASK_UNKNOWN = "a card that is not here";
 
@@ -220,6 +227,18 @@ export function mirrorAskLine(
   anchorName: string | null,
   parentName: string | null,
 ): string {
+  // STORY 17.10 — A PEER ASK HAS NO ANCHOR AND IS NOT "GONE". The mirror says
+  // what the card's own second line says: it is a question. An old record with
+  // an anchor keeps the about-line and the gone mark exactly as before.
+  if (ask.anchor === undefined) {
+    let peer = ask.name + " — " + MIRROR_ASK_PEER;
+    if (isFork(ask) && ask.from !== undefined) {
+      peer +=
+        "; forked from " +
+        (parentName === null ? ask.from + MIRROR_ASK_GONE : parentName);
+    }
+    return flat(peer);
+  }
   const remembered = ask.anchorName === undefined ? null : ask.anchorName;
   const about = anchorName ?? remembered ?? MIRROR_ASK_UNKNOWN;
   // The gone mark follows the FIELD, not the name: a resolved anchor is never
@@ -325,7 +344,8 @@ export function renderMirror(view: MirrorView): string {
   if (view.asks.length === 0) lines.push("none yet.", "");
   const askNameOf = new Map(view.asks.map((ask) => [ask.on, ask.name]));
   for (const ask of view.asks) {
-    const anchorName = nameOf.get(ask.anchor) ?? null;
+    const anchorName =
+      ask.anchor === undefined ? null : (nameOf.get(ask.anchor) ?? null);
     const parentName =
       ask.from === undefined ? null : (askNameOf.get(ask.from) ?? null);
     lines.push(mirrorAskLine(ask, anchorName, parentName));

@@ -66,20 +66,27 @@ import type { GroundAddResult } from "./useGround";
  * reference is gone the card's second line states what it was about — by the
  * name the RECORD remembered when the person bound it — and that the card is
  * gone. The thread still reads top to bottom and still sends (the packet
- * records the null inclusion); re-anchoring, or restoring the deleted card,
- * clears the sentence because the anchor resolves again. THE THREAD IS NEVER
+ * records the null inclusion); restoring the deleted card clears the sentence
+ * because the anchor resolves again (STORY 17.10 removed the re-anchor verb —
+ * the field is display-only legacy). THE THREAD IS NEVER
  * TOUCHED: no turn is rewritten, truncated or deleted, and no ask is merged or
  * moved to a "close" card.
  *
  * A FORK IS A BRANCH, NOT A DUPLICATE (story 17.5). The `fork` verb sits WITH
  * a turn: it branches the conversation there and writes a new card that
- * REFERENCES the parent's first n turns and inherits its anchor. This component
+ * REFERENCES the parent's first n turns. STORY 17.10: a fork inherits no anchor
+ * (it is a peer card; context arrives by wire). This component
  * never copies them — the layer hands it the COMPOSED thread (carried prefix
  * read from the parent, then the card's own turns), `carried` says where the
  * branch point sits, and one quiet divider marks it. A parent that is gone
  * replaces the carried part with one stated line and the own turns still read
- * and still send. The re-anchor verb changes ONE field: the next turn is about
- * the reference the person chose.
+ * and still send.
+ *
+ * STORY 17.10 — AN ASK IS A PEER CARD. The ground bubble's ASK door makes the
+ * card EMPTY (no anchor, nothing from the press but the point); it says "a
+ * question", names itself from its first question's short form, and its title
+ * pill is the rename field. The reply is the card's own thread, above the
+ * composer — no new record kind, no document, no separate surface.
  *
  * THE PER-ASK PROVIDER SELECTOR IS GONE BY DESIGN (story 17.7, recorded in
  * 17.7b): one selection lives in Settings. The card READS that selection and,
@@ -103,8 +110,9 @@ import type { GroundAddResult } from "./useGround";
  *
  * PROVISIONAL (ADR-0003's rendering seam): the card's size, the crop, the
  * scrollbox height and slack, the role marks, the stopped/incomplete wording,
- * story 17.5's divider and missing-parent lines and the fork/re-anchor
- * chooser's look, story 17.6's dangling sentence, its wording and its place
+ * story 17.5's divider and missing-parent lines and the fork chooser's look,
+ * STORY 17.10's "a question" line, the "Untitled ask" sentinel, the short-name
+ * rule and the rename field, story 17.6's dangling sentence, its wording and its place
  * on the "what this is" line, story 17.7b's fact lines' placement and the
  * pre-send state's wording (the sentence is reused, not new), and — STORY
  * 17.9 — the context line's wording and the dangling-wire sentence.
@@ -112,6 +120,15 @@ import type { GroundAddResult } from "./useGround";
 
 /** The quiet line an ask card with no turns shows (PROVISIONAL wording). */
 export const ASK_EMPTY_SENTENCE = "no question asked yet";
+
+/**
+ * STORY 17.10 — WHAT A PEER ASK SAYS IT IS. A card made by the bubble's ASK
+ * door was born empty: no anchor, no theme, nothing from the press but the
+ * point. Its second line says the one true thing — it is a question — instead
+ * of the dangling-anchor sentence, which speaks about a card that is gone and
+ * has nothing to say about a card that never existed. PROVISIONAL wording.
+ */
+export const ASK_PEER_LINE = "a question";
 
 /**
  * STORY 17.9 — WHAT THE CARD SAYS IT HAS. The user's correction: the cards
@@ -144,8 +161,8 @@ export function askKindLine(anchorName: string | null): string {
  * REMEMBERS, and the fact that the card is gone. It sits where the card's
  * "what this is" line sits — above the thread, on the small and the expanded
  * face alike — so the sentence is never hidden behind an open card. No error
- * state, no red, no modal, no verb: re-anchoring is the person's act and lives
- * with the card's other verbs. A card recorded before the name was remembered
+ * state, no red, no modal, no verb: STORY 17.10 retired the re-anchor verb, so
+ * the anchor is read and shown, never changed. A card recorded before the name was remembered
  * says the generic sentence rather than inventing one.
  */
 export function askDanglingLine(remembered: string | null): string {
@@ -340,7 +357,6 @@ export function AskCard({
   turns,
   carried = 0,
   forkMissing = false,
-  anchorChoices,
   open,
   previewLines,
   hasProvider,
@@ -350,7 +366,7 @@ export function AskCard({
   onAskTurn,
   onStopTurn,
   onForkTurn,
-  onReanchor,
+  onRename,
   onRemove,
   onLink,
   interactionMode = "idle",
@@ -395,8 +411,6 @@ export function AskCard({
    * carried part, and the card's own turns still read and it can still send.
    */
   forkMissing?: boolean;
-  /** The references a re-anchor may choose (slug and the person's name). */
-  anchorChoices?: readonly { slug: string; name: string }[];
   /** View state: a small card opens; an expanded card sends. */
   open: boolean;
   /** How many lines the small face crops at (the stated preference). */
@@ -435,11 +449,12 @@ export function AskCard({
    */
   onForkTurn?: (carry: number, name: string) => Promise<GroundAddResult>;
   /**
-   * STORY 17.5 — RE-ANCHOR this card: one field's change, written once. The
-   * chooser offers the map's references; a target that is gone is refused by
-   * the writer's one sentence.
+   * STORY 17.10 — RENAME this card: the title pill IS the rename field. The
+   * name is the person's and the slug is identity (a wire target and the
+   * conversation's file name), so a rename never moves a wire. Optional so a
+   * render test needs no writer.
    */
-  onReanchor?: (anchor: string) => Promise<GroundAddResult>;
+  onRename?: (name: string) => Promise<GroundAddResult>;
   /**
    * STORY 17.8 — REMOVE this ask card: immediate, with the toast's Restore as
    * the only guard (the reference card's idiom). The layer reads the record
@@ -463,13 +478,17 @@ export function AskCard({
   const [pending, setPending] = useState<AskPending | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
-  // STORY 17.5 — the fork's PROPOSED name before anything is written, and the
-  // re-anchor chooser's pick. Both are view state: cancel or Esc forgets them,
-  // and only the confirm reaches a writer.
+  // STORY 17.5 — the fork's PROPOSED name before anything is written. View
+  // state: cancel or Esc forgets it, and only the confirm reaches a writer.
   const [forking, setForking] = useState<{ carry: number; name: string } | null>(
     null,
   );
-  const [reanchorTo, setReanchorTo] = useState<string | null>(null);
+  // STORY 17.10 — the title pill's in-place rename: a draft and a ref that says
+  // whether the field is still live (so Enter-then-blur commits ONCE and Esc
+  // cancels without writing).
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState(ask.name);
+  const renamingRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -508,8 +527,11 @@ export function AskCard({
   // consumed before the plane's or app's own bubble handlers can act on it. A
   // draft writes nothing: this handler only collapses the card.
   //
-  // STORY 17.5: while a fork's name or a re-anchor's pick is open, Esc forgets
-  // THAT first (one press, one thing) and a second press collapses the card.
+  // STORY 17.5, extended by STORY 17.10: while a fork's name or the rename
+  // field is open, Esc
+  // forgets THAT first (one press, one thing) and a second press collapses the
+  // card. STORY 17.10 removed the re-anchor chooser: there is nothing left to
+  // escape from but the name field and the card itself.
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
@@ -520,15 +542,16 @@ export function AskCard({
         setForking(null);
         return;
       }
-      if (reanchorTo !== null) {
-        setReanchorTo(null);
+      if (renamingRef.current) {
+        renamingRef.current = false;
+        setRenaming(false);
         return;
       }
       onClose();
     }
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [open, onClose, forking, reanchorTo]);
+  }, [open, onClose, forking]);
 
   // STORY 17.9 — THE WIRING HANDLE. The same raw-listener idiom the reference
   // card uses (d3-zoom stops mousedown at the plane): a press on the handle
@@ -627,7 +650,6 @@ export function AskCard({
   function startFork(carry: number): void {
     if (busy || running || onForkTurn === undefined) return;
     setForking({ carry, name: proposeForkName(ask.name) });
-    setReanchorTo(null);
     setProblem(null);
   }
 
@@ -655,32 +677,34 @@ export function AskCard({
   }
 
   /**
-   * START A RE-ANCHOR (story 17.5): offer the map's references, the current
-   * anchor preselected when it is still there. Nothing is written until the
-   * confirm, and the pick is view state only.
+   * STORY 17.10 (the addendum) — THE RE-ANCHOR VERB IS GONE. It survived 17.9
+   * as a verb that changed nothing a turn sends, and a verb that does nothing
+   * is worse than no verb. The anchor field remains DISPLAY-ONLY legacy on old
+   * records; context arrives by wire. Reachability is unchanged: the reference
+   * card's own verb makes an empty ask and wires it.
    */
-  function startReanchor(): void {
-    if (busy || running || onReanchor === undefined) return;
-    const choices = anchorChoices ?? [];
-    if (choices.length === 0) return;
-    const current = choices.find((choice) => choice.slug === ask.anchor);
-    setForking(null);
-    setReanchorTo(current?.slug ?? choices[0]!.slug);
+
+  /** The title pill's rename: seed the draft from the record and select it. */
+  function startRename(): void {
+    if (onRename === undefined || busy) return;
+    renamingRef.current = true;
+    setNameDraft(ask.name);
+    setRenaming(true);
     setProblem(null);
   }
 
-  /** CONFIRM the re-anchor: ONE field's change. A gone target answers one sentence. */
-  async function makeReanchor(): Promise<void> {
-    if (reanchorTo === null || onReanchor === undefined || busy) return;
-    setBusy(true);
-    setProblem(null);
-    const result = await onReanchor(reanchorTo);
-    setBusy(false);
-    if (!result.ok) {
-      setProblem(result.message);
-      return;
-    }
-    setReanchorTo(null);
+  /**
+   * Commit the rename ONCE. A blank name and an unchanged name write nothing;
+   * a refusal is the writer's one sentence on the card.
+   */
+  async function commitRename(): Promise<void> {
+    if (!renamingRef.current) return;
+    renamingRef.current = false;
+    setRenaming(false);
+    const next = nameDraft.trim();
+    if (next === "" || next === ask.name || onRename === undefined) return;
+    const result = await onRename(next);
+    if (!result.ok) setProblem(result.message);
   }
 
   /**
@@ -763,15 +787,58 @@ export function AskCard({
       data-slug={ask.on}
       onClick={open ? undefined : onOpen}
     >
-      <div className="ask-card-name">{ask.name}</div>
+      {/* STORY 17.10 — THE TITLE PILL IS THE RENAME FIELD. Double-clicking the
+          name opens an in-place field seeded with the old name (the concept
+          map's word idiom); Enter or a press away writes it, Esc forgets it.
+          The empty ask names itself from its first question until the person
+          renames it, so this is the one place a name changes. */}
+      {renaming ? (
+        <input
+          className="ask-card-name ask-card-name-input"
+          value={nameDraft}
+          autoFocus
+          aria-label="rename this ask card"
+          onFocus={(e) => e.currentTarget.select()}
+          onChange={(e) => setNameDraft(e.target.value)}
+          onBlur={() => void commitRename()}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              // The card's own capture listener also sees Esc; forget the
+              // draft here and stop it so the card does not collapse too.
+              e.preventDefault();
+              e.stopPropagation();
+              renamingRef.current = false;
+              setRenaming(false);
+              return;
+            }
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            e.currentTarget.blur();
+          }}
+        />
+      ) : (
+        <div
+          className="ask-card-name"
+          title={onRename === undefined ? undefined : "double-click to rename"}
+          onDoubleClick={onRename === undefined ? undefined : startRename}
+        >
+          {ask.name}
+        </div>
+      )}
       {/* STORY 17.6 — WHEN THE ANCHOR IS GONE the second line STATES it: the
           name the record remembered, and that the card is gone. It clears by
-          itself when the anchor resolves again (a re-anchor, or the deleted
-          card's own Restore) — a consequence of the field, never a repair. */}
+          itself when the anchor resolves again (the deleted card's own
+          Restore) — a consequence of the field, never a repair. STORY 17.10
+          keeps this sentence: it is still true of an old record. */}
       <div className="ask-card-kind">
-        {anchorName === null
-          ? askDanglingLine(ask.anchorName ?? null)
-          : askKindLine(anchorName)}
+        {/* STORY 17.10 — AN ABSENT ANCHOR IS NOT A DANGLING ONE. A peer ask
+            says what it is; a legacy card with an anchor still says what it was
+            about, or states the dangling sentence (17.6, kept). */}
+        {ask.anchor === undefined
+          ? ASK_PEER_LINE
+          : anchorName === null
+            ? askDanglingLine(ask.anchorName ?? null)
+            : askKindLine(anchorName)}
       </div>
       {/* STORY 17.9 — WHAT THIS CARD HAS WIRED INTO IT, by name above the
           thread. The list is the RESOLVED wires; a gone wire is said once and
@@ -995,58 +1062,6 @@ export function AskCard({
                 )
               ) : (
                 <PacketSurface messages={sent.messages} read={sent.read} />
-              )}
-              {/* STORY 17.5 — RE-ANCHOR is a verb on the expanded card: it changes
-                  ONE field, so the next turn is about the newly chosen reference.
-                  The chooser is the map's own card list; a choice that is already
-                  gone is refused by the writer's one sentence, never repaired. */}
-              {onReanchor !== undefined && (
-                <div className="ask-card-reanchor-row">
-                  {reanchorTo === null ? (
-                    <button
-                      type="button"
-                      className="ask-card-reanchor"
-                      disabled={
-                        busy || running || (anchorChoices?.length ?? 0) === 0
-                      }
-                      onClick={startReanchor}
-                    >
-                      re-anchor
-                    </button>
-                  ) : (
-                    <>
-                      <select
-                        className="ask-card-reanchor-pick"
-                        aria-label="anchor this card to"
-                        value={reanchorTo}
-                        disabled={busy}
-                        onChange={(e) => setReanchorTo(e.target.value)}
-                      >
-                        {(anchorChoices ?? []).map((choice) => (
-                          <option key={choice.slug} value={choice.slug}>
-                            {choice.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="ask-card-reanchor-make"
-                        disabled={busy}
-                        onClick={() => void makeReanchor()}
-                      >
-                        make it about this
-                      </button>
-                      <button
-                        type="button"
-                        className="ask-card-reanchor-cancel"
-                        disabled={busy}
-                        onClick={() => setReanchorTo(null)}
-                      >
-                        cancel
-                      </button>
-                    </>
-                  )}
-                </div>
               )}
               <div className="ask-card-actions">
                 <button

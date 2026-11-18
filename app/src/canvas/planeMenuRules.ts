@@ -84,14 +84,31 @@ export function dotOffset(above: number, below: number): number {
   return ((above - below) / 2) * (MENU_BUBBLE_H + MENU_GAP);
 }
 
-/** The column for the choices the menu offers right now. */
+/**
+ * The column for any membership, as seats above and below the dot.
+ *
+ * STORY 17.10 — THE GROUND MAP REUSES THIS GEOMETRY. The concept map's bubble
+ * (canvas/PlaneMenu.tsx) is handed a DOOR LIST there — ask, the reference
+ * doors, session — and the same anchor invariant must hold for any number of
+ * doors, so the raw rule is exported instead of a second cluster being written.
+ */
+export function columnCluster(above: number, below: number): MenuCluster {
+  return {
+    above,
+    below,
+    total: above + below,
+    lift: dotOffset(above, below),
+  };
+}
+
+/** The column for the choices the concept menu offers right now. */
 export function menuCluster(members: MenuMembers): MenuCluster {
   const above = members.word ? 1 : 0;
   const below =
     (members.lack ? 1 : 0) +
     (members.assumption ? 1 : 0) +
     (members.draw ? 1 : 0);
-  return { above, below, total: above + below, lift: dotOffset(above, below) };
+  return columnCluster(above, below);
 }
 
 /**

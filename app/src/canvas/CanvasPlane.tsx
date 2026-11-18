@@ -110,7 +110,12 @@ export interface PlaneApi {
   centerOn: (px: number, py: number, zoom?: number) => void;
 }
 
-const PlaneContext = createContext<PlaneApi | null>(null);
+/**
+ * STORY 17.10 — exported so the pure-seam test can mount the concept map's
+ * bubble (canvas/PlaneMenu.tsx) with a camera, exactly as the plane does. It is
+ * still the plane's own context; nothing else reads it directly.
+ */
+export const PlaneContext = createContext<PlaneApi | null>(null);
 
 export function usePlane(): PlaneApi {
   const api = useContext(PlaneContext);

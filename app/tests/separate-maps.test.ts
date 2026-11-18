@@ -297,13 +297,16 @@ describe("the bubble at dynamics and ground offers DRAW alone", () => {
     expect(creationKinds("ground")).toEqual(["word", "lack"]);
   });
 
-  test("the word bubble is written but gated; the draw bubble always renders", () => {
-    expect(MENU).toContain('{kinds.includes("word") && (');
+  test("the word bubble is written but gated; the draw bubble renders for the concept menu", () => {
+    // STORY 17.10: the concept vocabulary is gated behind "no door list"; the
+    // ground map hands the same component its own doors instead.
+    expect(MENU).toContain('{doors === undefined && kinds.includes("word") && (');
     expect(MENU).toContain('aria-label="coin a word here"');
-    expect(MENU).toContain("onClick={onWord}");
+    expect(MENU).toContain("onClick={() => onWord?.()}");
     expect(MENU).toContain('className="plane-menu-option plane-menu-draw"');
     expect(MENU).toContain('aria-label="draw here"');
     expect(MENU).toContain("onClick={onDraw}");
+    expect(MENU).toContain("{doors === undefined && onDraw !== undefined && (");
     // The cluster's geometry reads the OFFER (not a hardcoded word above).
     expect(MENU).toContain('word: kinds.includes("word"),');
     // The first PAINTED choice takes focus, so the draw-only cluster is usable.

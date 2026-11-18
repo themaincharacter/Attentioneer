@@ -531,9 +531,14 @@ describe("the hook queues the mirror after every ground write", () => {
     "restore",
     // STORY 17.8: the ask cards' authored moves. A turn is NOT here: it adds
     // no name, anchor or parent, so MAP.md did not change.
-    "createAsk",
+    //
+    // STORY 17.10: `ask about this` and the bubble's ASK door both reach the
+    // ONE empty-ask writer (`writeEmptyAsk`), and the retired re-anchor verb is
+    // replaced by the rename path. The delegating verbs (`createAsk`,
+    // `createEmptyAsk`) are not listed: they hold no write of their own.
+    "writeEmptyAsk",
+    "renameAskTo",
     "forkAskAt",
-    "reanchorAskTo",
     "removeAsk",
   ];
 
@@ -558,9 +563,11 @@ describe("the hook queues the mirror after every ground write", () => {
         // ground line last) and then mirrors.
         body.lastIndexOf("await createFetchedPage"),
         body.lastIndexOf("await createFetchedVideo"),
-        // STORY 17.8: the ask moves delegate their one record write (and an
-        // ask restore its two) and then mirror.
+        // STORY 17.8, 17.10: the ask moves delegate their record writes (and
+        // an ask restore its two, the empty-ask writer its wire too) and then
+        // mirror.
         body.lastIndexOf("await writeAskCard"),
+        body.lastIndexOf("await saveGroundLinks"),
         body.lastIndexOf("await writeForkAsk"),
         body.lastIndexOf("await removeAskRecords"),
         body.lastIndexOf("await restoreAskCard"),
@@ -573,12 +580,15 @@ describe("the hook queues the mirror after every ground write", () => {
   test("exactly twenty-two call sites (one per write path, not on load)", () => {
     // Story 16.12 added the selection card as the ninth authored write path;
     // story 16.13 adds restore as the tenth; story 16.14 the page card and
-    // story 16.15 the video card. STORY 17.8 adds four ask moves (create, fork,
-    // re-anchor, remove) and the ask restore inside the one toast handler.
+    // story 16.15 the video card. STORY 17.8 adds four ask moves; STORY 17.10
+    // (the addendum) retires the re-anchor verb and adds the rename and the
+    // empty-ask writer in its place, so the count is unchanged.
     // STORY 18.4 adds the run's result card, which is an ordinary reference.
     // STORY 18.5 adds three session moves (create, remove, run) and the session
     // restore inside the one toast handler.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(22);
+    // STORY 17.10 adds one mirror for the FIRST question's short-form rename
+    // (an empty card names itself), which is a name change like any other.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(23);
   });
 
   test("opening never writes the mirror", () => {

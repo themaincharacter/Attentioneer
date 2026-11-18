@@ -380,8 +380,12 @@ describe("the hidden affordances (hidden 2026-11-16, not deleted)", () => {
 
   test("the ring menu's lack and assumption choices are present but gated", () => {
     const menu = source("src/canvas/PlaneMenu.tsx");
-    expect(menu).toContain("{kinds.includes(\"lack\") && (");
-    expect(menu).toContain("{kinds.includes(\"assumption\") && onAssumption && (");
+    expect(menu).toContain(
+      "{doors === undefined && kinds.includes(\"lack\") && onLack !== undefined && (",
+    );
+    expect(menu).toContain(
+      "{doors === undefined && kinds.includes(\"assumption\") && onAssumption && (",
+    );
     expect(menu).toContain('kinds = ["word"]');
     expect(menu).toContain('aria-label="cast a lack here"');
     expect(menu).toContain('aria-label="state an assumption about this spot"');

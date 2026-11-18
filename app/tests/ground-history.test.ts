@@ -341,14 +341,14 @@ describe("authored moves only: the look leaves no line", () => {
     // The only call form the verbs use; the definition is not a call site.
     // Story 16.12 added the selection card as the ninth authored write path;
     // story 16.13 adds the restore as the tenth; story 16.14 the page card and
-    // story 16.15 the video card. STORY 17.8 adds five ask moves (create, fork,
-    // re-anchor, remove, a turn) and the ask restore inside the one toast
-    // handler, where the reference restore already lives. STORY 18.4 adds the
-    // run's result card, another ordinary reference move. STORY 18.5 adds three
-    // session moves (create, remove, run) and the session restore inside the
-    // one toast handler.
+    // story 16.15 the video card. STORY 17.8 adds the ask moves; STORY 17.10
+    // retires the re-anchor verb and adds the empty-ask writer in its place
+    // (the rename changes a name, which this log does not event). STORY 18.4
+    // adds the run's result card, another ordinary reference move. STORY 18.5
+    // adds three session moves (create, remove, run) and the session restore
+    // inside the one toast handler.
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(23);
+    expect(calls.length).toBe(22);
   });
 
   test("the mirror and the history own the same verbs", () => {
@@ -366,10 +366,11 @@ describe("authored moves only: the look leaves no line", () => {
       "setNote",
       // STORY 16.13: a restore is an authored move, and it logs its own line.
       "restore",
-      // STORY 17.8: the ask cards' authored moves.
-      "createAsk",
+      // STORY 17.8/17.10: the ask cards' authored moves. The empty-ask writer
+      // is the one creation road (both doors delegate to it); the rename is a
+      // mirror-only move, because this log's ask events are structural.
+      "writeEmptyAsk",
       "forkAskAt",
-      "reanchorAskTo",
       "removeAsk",
       "askTurn",
       // STORY 18.4: the run's result becomes a reference card.
@@ -606,10 +607,9 @@ describe("the whole log", () => {
       "link",
       "unlink",
       "setNote",
-      // STORY 17.8 — the ask moves append AFTER their own record write.
-      "createAsk",
+      // STORY 17.8/17.10 — the ask moves append AFTER their own record write.
+      "writeEmptyAsk",
       "forkAskAt",
-      "reanchorAskTo",
       "removeAsk",
       "askTurn",
     ];
@@ -626,9 +626,11 @@ describe("the whole log", () => {
         // Story 16.14: so does the page card's.
         body.lastIndexOf("await writePageCard"),
         body.lastIndexOf("await createFetchedPage"),
-        // STORY 17.8: the ask moves delegate their one record write; a turn's
-        // writes are the PRISM and the conversation line, both inside it.
+        // STORY 17.8/17.10: the ask moves delegate their record writes (the
+        // empty-ask writer also writes the source's wire); a turn's writes are
+        // the PRISM and the conversation line, both inside it.
         body.lastIndexOf("await writeAskCard"),
+        body.lastIndexOf("await saveGroundLinks"),
         body.lastIndexOf("await writeForkAsk"),
         body.lastIndexOf("await removeAskRecords"),
         body.lastIndexOf("await writeAskTurn"),

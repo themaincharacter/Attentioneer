@@ -36,7 +36,6 @@ import {
   loadTurns,
   parseAskLine,
   parseAsks,
-  reanchorAsk,
   saveAsks,
   serializeAskLine,
   sharedSlugs,
@@ -182,7 +181,6 @@ async function seedAsk(workspace: string): Promise<AskCardRecord> {
     [REFERENCE, OTHER],
     [],
     [],
-    REFERENCE.on,
     "Rain gauge question",
     360,
     60,
@@ -318,7 +316,7 @@ describe("the record remembers the name the anchor had", () => {
     expect(parseAskLine(serializeAskLine(spaced))).toEqual(spaced);
   });
 
-  test("creation remembers the anchor's name; a source not on the map stays unnamed", async () => {
+  test("STORY 17.10 — creation writes neither an anchor nor a remembered name", async () => {
     const workspace = freshWorkspace();
     await saveGround(workspace, [REFERENCE], [], groundIo);
     const written = await writeAskCard(
@@ -326,32 +324,21 @@ describe("the record remembers the name the anchor had", () => {
       [REFERENCE],
       [],
       [],
-      REFERENCE.on,
       "Rain gauge question",
       360,
       60,
       { saveAsks: (ws, asks, malformed) => saveAsks(ws, asks, malformed, askIo) },
     );
-    expect(written.ask.anchorName).toBe("Rain gauge");
-    expect(readFileSync(join(workspace, "map", "asks.txt"), "utf8")).toContain(
-      "anchorName: Rain gauge",
-    );
-    // A card made about a card the map does not carry writes no invented name.
-    const dangling = await writeAskCard(
-      workspace,
-      [],
-      written.asks,
-      [],
-      "a-card-that-went",
-      "Gone question",
-      10,
-      20,
-      { saveAsks: (ws, asks, malformed) => saveAsks(ws, asks, malformed, askIo) },
-    );
-    expect(dangling.ask.anchorName).toBeUndefined();
+    expect(written.ask.anchor).toBeUndefined();
+    expect(written.ask.anchorName).toBeUndefined();
+    const bytes = readFileSync(join(workspace, "map", "asks.txt"), "utf8");
+    expect(bytes).not.toContain("anchor:");
+    expect(bytes).not.toContain("anchorName:");
   });
 
-  test("a fork inherits it; a re-anchor keeps it in step with the new anchor", () => {
+  test("a legacy record keeps its remembered name; a fork writes none", () => {
+    // The OLD card was written when the field was the mechanism: it still has
+    // it, display only. A fork is a PEER card and starts clean.
     const parent: AskCardRecord = {
       on: "rain-gauge-question",
       name: "Rain gauge question",
@@ -360,6 +347,7 @@ describe("the record remembers the name the anchor had", () => {
       anchor: "rain-gauge",
       anchorName: "Rain gauge",
     };
+    expect(parseAskLine(serializeAskLine(parent))).toEqual(parent);
     const forked = forkAsk(
       [parent],
       sharedSlugs([REFERENCE], [parent]),
@@ -369,15 +357,9 @@ describe("the record remembers the name the anchor had", () => {
       680,
       60,
     );
-    expect(forked.ask.anchorName).toBe("Rain gauge");
-    // The re-anchor writes the name of the card it is NOW about.
-    const moved = reanchorAsk([forked.ask], forked.ask.on, "old-well", "Old well");
-    expect(moved).not.toBeNull();
-    expect(moved![0]!.anchor).toBe("old-well");
-    expect(moved![0]!.anchorName).toBe("Old well");
-    // Without a new name the stale one is not left claiming the new anchor.
-    const unnamed = reanchorAsk([forked.ask], forked.ask.on, "old-well");
-    expect(unnamed![0]!.anchorName).toBeUndefined();
+    expect(forked.ask.anchor).toBeUndefined();
+    expect(forked.ask.anchorName).toBeUndefined();
+    expect(serializeAskLine(forked.ask)).not.toContain("anchor");
   });
 });
 
@@ -446,8 +428,6 @@ describe("the card says it in ONE quiet line, named", () => {
         onOpen: () => {},
         onClose: () => {},
         onAskTurn: async () => ({ ok: true }),
-        onReanchor: async () => ({ ok: true }),
-        anchorChoices: [{ slug: OTHER.on, name: OTHER.name }],
       }),
     );
     expect(html).toContain(askDanglingLine("Rain gauge"));
@@ -457,9 +437,11 @@ describe("the card says it in ONE quiet line, named", () => {
     expect(html.indexOf("which harbor keeps the lantern lit")).toBeLessThan(
       html.indexOf("the northern pier"),
     );
-    // It can still send, and re-anchoring is offered.
+    // It can still send; STORY 17.10 REMOVED the re-anchor verb, and the card
+    // offers no way to write the field.
     expect(html).toContain("ask-card-send");
-    expect(html).toContain("ask-card-reanchor");
+    expect(html).not.toContain("ask-card-reanchor");
+    expect(html).not.toContain("re-anchor");
     // One quiet line, never an error, a colour or a modal.
     expect(html).not.toContain("ask-card-problem");
     expect(html).not.toMatch(/\berror\b|danger|\bred\b|\bmodal\b/i);
@@ -467,8 +449,10 @@ describe("the card says it in ONE quiet line, named", () => {
     expect(askDanglingLine("Rain gauge")).not.toMatch(/\d/);
   });
 
-  test("a re-anchored card clears the line and names the new card", () => {
-    const moved = reanchorAsk([ASK], ASK.on, OTHER.on, OTHER.name)![0]!;
+  test("a legacy record whose anchor resolves names that card, with no sentence", () => {
+    // STORY 17.10: no shipped path writes this field; a record that HAS it
+    // (from 17.6) still displays its anchor's live name.
+    const moved = { ...ASK, anchor: OTHER.on, anchorName: OTHER.name };
     const html = renderToStaticMarkup(
       createElement(AskCard, {
         ask: moved,
@@ -580,7 +564,16 @@ describe("a gone anchor still sends, and its PRISM records the null inclusion", 
 describe("delete says it, restore clears it, and neither repairs anything", () => {
   test("the thread bytes and the ask line survive both moves unchanged", async () => {
     const workspace = freshWorkspace();
-    const ask = await seedAsk(workspace);
+    const seeded = await seedAsk(workspace);
+    // STORY 17.10: a card made now has NO anchor, so this test speaks through a
+    // LEGACY record — the only kind that can dangle. The field is display only;
+    // it is written here the way an older app wrote it.
+    const ask: AskCardRecord = {
+      ...seeded,
+      anchor: REFERENCE.on,
+      anchorName: REFERENCE.name,
+    };
+    await saveAsks(workspace, [ask], [], askIo);
     const asksBefore = asksBytes(workspace);
     const conversationBefore = conversationBytes(workspace, ask.on);
 
@@ -665,12 +658,11 @@ describe("delete says it, restore clears it, and neither repairs anything", () =
       removalIo,
     );
     const asksGone = await loadAsks(workspace, askIo);
-    const moved = reanchorAsk(
-      asksGone.asks,
-      ask.on,
-      OTHER.on,
-      OTHER.name,
-    )!;
+    const moved = asksGone.asks.map((entry) =>
+      entry.on === ask.on
+        ? { ...entry, anchor: OTHER.on, anchorName: OTHER.name }
+        : entry,
+    );
     await saveAsks(workspace, moved, asksGone.malformed, askIo);
     const asksBack = await loadAsks(workspace, askIo);
     const html = renderLayer(

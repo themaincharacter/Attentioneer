@@ -406,11 +406,18 @@ interface GroundLayerProps {
     x: number,
     y: number,
   ) => Promise<GroundAddResult>;
-  /** STORY 17.5 — re-anchor one ask card: one field's change. */
-  onReanchorAsk?: (
-    slug: string,
-    anchor: string,
-  ) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.10 — RENAME one ask card (the title pill is the rename field).
+   * The slug is identity; the name is the person's.
+   */
+  onRenameAsk?: (slug: string, name: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.10 — OPEN the ask card that was just made (the bubble's ASK door
+   * creates it elsewhere; the layer owns which face is open). The token is a
+   * fresh object per creation, so closing the card does not reopen it on an
+   * unrelated render.
+   */
+  revealAsk?: { slug: string } | null;
   /**
    * STORY 17.8 — remove one ask card: the immediate delete (16.13's rule) with
    * the toast's Restore as its guard. The layer holds the bytes; this prop only
@@ -560,7 +567,8 @@ export function GroundLayer({
   sessionPermission = {},
   onCreateAsk,
   onForkAsk,
-  onReanchorAsk,
+  onRenameAsk,
+  revealAsk,
   onRemoveAsk,
   onAskTurn,
   onStopAskTurn,
@@ -640,6 +648,25 @@ export function GroundLayer({
       setOpenAskOn(null);
     }
   }, [asks, openAskOn]);
+
+  // The token already honoured, so a later render can never reopen a card the
+  // person closed (a rename or a turn re-renders but changes no token).
+  const revealedAskRef = useRef<{ slug: string } | null>(null);
+  useEffect(() => {
+    // STORY 17.10 — OPEN THE ASK CARD THE PERSON JUST ASKED FOR. The bubble's
+    // ASK door makes the card outside this layer, so the layer is handed its
+    // slug; opening it puts the composer in front of the person, which is the
+    // next thing the empty card needs. The effect also watches the ask list so
+    // a token that arrives before the record can retry once it lands — the ref
+    // makes that retry happen at most once.
+    if (revealAsk === null || revealAsk === undefined) return;
+    if (revealedAskRef.current === revealAsk) return;
+    if (!asks.some((ask) => ask.on === revealAsk.slug)) return;
+    revealedAskRef.current = revealAsk;
+    setOpenOn(null);
+    setOpenSessionOn(null);
+    setOpenAskOn(revealAsk.slug);
+  }, [revealAsk, asks]);
 
   useEffect(() => {
     // STORY 18.3: the same rule for a session card — a card a hand edit removed
@@ -793,6 +820,11 @@ export function GroundLayer({
           onRemove={remove}
           onCreateSelection={onCreateSelection}
           onCreateAsk={onCreateAsk}
+          onAskMade={(slug) => {
+            setOpenOn(null);
+            setOpenSessionOn(null);
+            setOpenAskOn(slug);
+          }}
           onSetNote={onSetNote}
           onPull={onPull}
           onDismissPull={onDismissPull}
@@ -806,8 +838,11 @@ export function GroundLayer({
       {/* STORY 17.1 — THE ASK CARDS, beside the reference cards on the same
           plane: their own record family, their own conversations, and the same
           grammar (name → what this is → the crop). Story 17.2 owns the thread's
-          face, 17.5 the fork and the re-anchor, and 17.6 the dangling ANCHOR's
-          one quiet line (a fork's missing parent is a different, stated hole).
+          face, 17.5 the fork, and 17.6 the dangling ANCHOR's one quiet line (a
+          fork's missing parent is a different, stated hole). STORY 17.10
+          retires the re-anchor verb: the anchor is display-only legacy now, and
+          these cards are peers made by the bubble's ASK door or wired to their
+          sources.
           THE MIRROR DOES NOT KNOW ASK CARDS YET (map/mirror.ts renders ground
           references and their readings only): the ask cards draw here, and
           MAP.md's asks section is the mirror's own render of the same record
@@ -819,8 +854,10 @@ export function GroundLayer({
         // still readable. Nothing is copied and nothing is repaired.
         const thread = askThreadOf(ask, asks, askTurns);
         // STORY 17.6 — THE ANCHOR, RESOLVED ONCE: the live name while the map
-        // carries it, or "gone" with the name the record remembers. Nothing
-        // here looks for a replacement, rewrites the anchor or merges asks.
+        // carries it, or "gone" with the name the record remembers. STORY 17.10
+        // adds the empty case: a card with NO anchor is not dangling — it is a
+        // peer ask, and its second line says "a question". Nothing here looks
+        // for a replacement, rewrites the anchor or merges asks.
         const anchorView = askAnchorOf(ask, references);
         // STORY 17.9 — THE WIRES ARE THE CONTEXT: what is connected INTO this
         // card supplies its packet, never the legacy anchor field.
@@ -835,10 +872,6 @@ export function GroundLayer({
             turns={thread.turns}
             carried={thread.carried.length}
             forkMissing={thread.missing}
-            anchorChoices={references.map((reference) => ({
-              slug: reference.on,
-              name: reference.name,
-            }))}
             open={openAskOn === ask.on}
             previewLines={previewLines}
             onOpen={() => {
@@ -872,10 +905,10 @@ export function GroundLayer({
                     return result;
                   }
             }
-            onReanchor={
-              onReanchorAsk === undefined
+            onRename={
+              onRenameAsk === undefined
                 ? undefined
-                : (anchor) => onReanchorAsk(ask.on, anchor)
+                : (name) => onRenameAsk(ask.on, name)
             }
             onRemove={
               onRemoveAsk === undefined
@@ -1043,6 +1076,7 @@ function GroundCard({
   onRemove,
   onCreateSelection,
   onCreateAsk,
+  onAskMade,
   onSetNote,
   onPull,
   onDismissPull,
@@ -1104,6 +1138,11 @@ function GroundCard({
     x: number,
     y: number,
   ) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.10 — the card it just made, so the LAYER (which owns which face is
+   * open) can open it. A reference card does not hold the open-ask state.
+   */
+  onAskMade?: (slug: string) => void;
   onSetNote?: (on: string, text: string) => Promise<GroundAddResult>;
   onPull?: (on: string) => Promise<GroundAddResult>;
   onDismissPull?: (on: string) => void;
@@ -1515,10 +1554,11 @@ function GroundCard({
   }
 
   // STORY 17.1 — THE ASK CARD'S TWO MOVES. `ask about this` only PROPOSES a
-  // name (the anchored card's name plus "question", the selection card's
-  // idiom); the confirm is the ONE write, and a blank name is refused with the
-  // same one sentence before anything is queued. Cancel forgets the proposal;
-  // the reference card is never touched by either.
+  // name (the SOURCE card's name plus "question", the selection card's idiom);
+  // the confirm is the ONE write — an EMPTY ask card plus a wire from this
+  // reference (STORY 17.10), and a blank name is refused with the same one
+  // sentence before anything is queued. Cancel forgets the proposal; the
+  // reference card itself is never touched by either.
   function askAboutCard() {
     if (onCreateAsk === undefined || busy) return;
     setAskNaming({ name: proposeAskName(reference.name) });
@@ -1552,6 +1592,9 @@ function GroundCard({
       return;
     }
     setAskNaming(null);
+    // STORY 17.10 — the new ask card OPENS (the layer owns that state): the
+    // person pressed the verb to ask in it, and its composer is next.
+    if (result.created !== undefined) onAskMade?.(result.created);
   }
 
   // STORY 16.7 — the picker's list and the mention's insert. Nothing here

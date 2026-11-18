@@ -9,7 +9,6 @@ import { createWriteQueue } from "../lib/writeQueue";
 import {
   askAddEvent,
   askForkEvent,
-  askReanchorEvent,
   askRemoveEvent,
   askRestoreEvent,
   askTurnEvent,
@@ -38,8 +37,10 @@ import {
   ASK_MISSING_REFUSAL,
   ASK_SOURCE_REFUSAL,
   ASK_THREAD_BOUND,
+  ASK_UNTITLED_NAME,
   addAsk,
   appendExchange,
+  askNameFromQuestion,
   askQuestionRefusal,
   askRefusal,
   askTurnPath,
@@ -49,7 +50,7 @@ import {
   loadAskConversations,
   loadAsks,
   loadTurns,
-  reanchorAsk,
+  renameAsk,
   restoreConversation,
   saveAsks,
   sharedSlugs,
@@ -321,7 +322,8 @@ import {
  *     where it is, named in the ground notices group and in the mirror's
  *     unknowns, never adopted and never deleted.
  *   - THE ASKS' TWO MEMORIES (17.8): every ask move above also appends its
- *     structural line to the history — `ask.add`, `ask.fork`, `ask.reanchor`,
+ *     structural line to the history — `ask.add`, `ask.fork` (STORY 17.10
+ *     retires `ask.reanchor`: the verb is gone; old lines still parse),
  *     `ask.remove`, `ask.restore`, and one `ask.turn` per SENDING turn whose
  *     ending is the PRISM's own outcome (same fact, two records that never
  *     disagree; the PRISM first, then the words, then the line) — and the
@@ -574,11 +576,13 @@ export interface GroundView {
   /** The map folder's ground records have been read once. */
   loaded: boolean;
   /**
-   * STORY 17.1 — MAKE AN ASK CARD beside a reference: one `map/asks.txt` line,
-   * with a name the person accepted or edited and an `anchor` field naming the
-   * reference it is about. The anchor is a FIELD, never a link; a blank name
-   * refuses before anything is queued, and the source card's files are never
-   * touched. The shared slug space (both files) mints the new slug.
+   * STORY 17.1 — MAKE AN ASK CARD beside a reference. STORY 17.10 rewrites what
+   * that means, per the user's correction: the card is created EMPTY (no
+   * anchor, nothing from the press but the point) and the SOURCE IS WIRED INTO
+   * IT (17.9's mechanism). So `ask about this` and the bubble's ASK door reach
+   * the same result by two roads. One queued step writes the ask line and the
+   * wire; a blank name refuses before anything is queued and the source card's
+   * files are never touched. The shared slug space mints the new slug.
    */
   createAsk: (
     sourceSlug: string,
@@ -586,6 +590,23 @@ export interface GroundView {
     x: number,
     y: number,
   ) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.10 — MAKE AN EMPTY ASK CARD at the point the person double-clicked
+   * (the bubble's ASK door): no source, no wire, no anchor — nothing from the
+   * press but the point. The card names itself from its first question's short
+   * form and the person can rename it.
+   */
+  createEmptyAsk: (
+    name: string,
+    x: number,
+    y: number,
+  ) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.10 — RENAME one ask card: the name changes, the slug (identity,
+   * wire target, conversation file) does not. The anchor is legacy display and
+   * is never written here.
+   */
+  renameAskTo: (slug: string, name: string) => Promise<GroundAddResult>;
   /**
    * STORY 17.1 — ASK ONE QUESTION inside an ask card: the existing card-ask
    * turn path (the packet anchored on the reference, the person's question),
@@ -608,11 +629,12 @@ export interface GroundView {
    */
   askStop: () => Promise<void>;
   /**
-   * STORY 17.5 — FORK one ask card at a turn: ONE `map/asks.txt` line with the
-   * parent's anchor inherited and `from`/`carry` naming the branch point. The
-   * parent's conversation file is READ (never written, never copied); a parent
-   * that is not on the map refuses with one sentence and writes nothing. The
-   * new slug rides back on the result so the layer can open it.
+   * STORY 17.5 — FORK one ask card at a turn: ONE `map/asks.txt` line with
+   * `from`/`carry` naming the branch point. The parent's conversation file is
+   * READ (never written, never copied); a parent that is not on the map refuses
+   * with one sentence and writes nothing. The new slug rides back on the result
+   * so the layer can open it. STORY 17.10: no anchor is inherited — a fork is a
+   * peer card, and its context arrives by wire.
    */
   forkAskAt: (
     parentSlug: string,
@@ -620,16 +642,6 @@ export interface GroundView {
     name: string,
     x: number,
     y: number,
-  ) => Promise<GroundAddResult>;
-  /**
-   * STORY 17.5 — RE-ANCHOR one ask card: ONE field changes (`anchor`) and
-   * nothing else does. A target the map does not carry refuses with one
-   * sentence before any write; the conversation, the point and a fork's
-   * `from`/`carry` stay exactly as they were.
-   */
-  reanchorAskTo: (
-    slug: string,
-    anchor: string,
   ) => Promise<GroundAddResult>;
   /**
    * STORY 17.8 — REMOVE one ask card, immediately and reversibly: the record
@@ -796,7 +808,8 @@ type GroundLoaded = Omit<
   | "askTurn"
   | "askStop"
   | "forkAskAt"
-  | "reanchorAskTo"
+  | "createEmptyAsk"
+  | "renameAskTo"
   | "removeAsk"
   | "removeSession"
   | "createSession"
@@ -1736,15 +1749,18 @@ export async function writeResultCard(
  * STORY 17.1 — THE ASK CARD'S RECORD: one `map/asks.txt` line, and one
  * append-only conversation write.
  *
- * The creation is the ground add's shape with the anchor in place of a reading:
- * ONE queued write of the ask line, and NOTHING else — no reading text, no
- * note, no media, no link and no touch of the reference card. The shared slug
- * space (both files) mints the slug, so a link, a mention or an anchor can
- * always resolve to exactly one card.
+ * The creation is the ground add's shape with NOTHING in place of a reading:
+ * STORY 17.10 makes an ask a PEER card, born EMPTY (no anchor, no theme,
+ * nothing from the press but the point), so ONE queued step writes the ask line
+ * and — for the reference verb — the wire from the source (17.9's mechanism).
+ * No reading text, no note, no media and no touch of the reference card. The
+ * shared slug space (all three files) mints the slug, so a link, a mention or a
+ * legacy anchor can always resolve to exactly one card.
  *
- * The turn is the existing card-ask path's: the app sends the packet anchored
- * on the reference, and only what CAME BACK is written here. The person's line
- * is always appended; the answer line only when the turn actually answered. A
+ * The turn is the existing card-ask path's: the app sends the packet built from
+ * the cards WIRED INTO this one (17.9), and only what CAME BACK is written
+ * here. The person's line is always appended; the answer line only when the
+ * turn actually answered. A
  * failed or stopped turn therefore leaves the person's line alone and hands
  * back the ONE sentence the card shows. A partial is never an answer (story
  * 17.4 owns PRISM and that rule's record).
@@ -1766,21 +1782,22 @@ export interface AskCardRecords {
 
 /**
  * STORY 17.1 — WRITE ONE ASK CARD, in the house order: the ask line only, and
- * the slug minted against BOTH slugs files (the ground references and the asks
- * already on the map). A blank name is the caller's refusal (it never reaches
- * here), and the source card is only NAMED by the anchor field — nothing about
- * it is read, rewritten or repaired. PURE apart from the bridge it is handed.
- * STORY 17.6 adds ONE fact to the line: the anchor's name AS IT IS NOW, so the
- * card can still say what it was about after the reference goes. A source the
- * map does not carry stays unnamed (the generic sentence, never an invented
- * name), and the reference itself is still untouched.
+ * the slug minted against ALL THREE slugs families (the ground references, the
+ * asks already on the map, the session cards). A blank name is the caller's
+ * refusal (it never reaches here).
+ *
+ * STORY 17.10 — THE CARD IS BORN EMPTY. The user's correction: the double-click
+ * bubble's ASK door makes a PEER card, so creation takes nothing from the click
+ * but the point — no anchor, no theme, no source read, no reference touched.
+ * The reference verb buys the SAME result by creating this card and then WIRING
+ * its source into it (17.9's mechanism, one queue step later). PURE apart from
+ * the bridge it is handed.
  */
 export async function writeAskCard(
   workspacePath: string,
   references: readonly GroundReference[],
   asks: readonly AskCard[],
   malformedAsks: readonly string[],
-  sourceSlug: string,
   name: string,
   x: number,
   y: number,
@@ -1792,17 +1809,12 @@ export async function writeAskCard(
    */
   sessions: readonly SessionCard[] = [],
 ): Promise<AskCardRecords> {
-  // STORY 17.6: the name the anchor has at this moment rides the record. The
-  // reference is READ for its name only — never written, never repaired.
-  const source = references.find((reference) => reference.on === sourceSlug);
   const addition = addAsk(
     asks,
     sharedSlugs(references, asks, sessions),
     name.trim(),
     x,
     y,
-    sourceSlug,
-    source?.name,
   );
   await io.saveAsks(workspacePath, addition.asks, malformedAsks);
   return { asks: addition.asks, ask: addition.ask };
@@ -1836,12 +1848,8 @@ export async function writeForkAsk(
 ): Promise<AskCardRecords | null> {
   const parent = asks.find((ask) => ask.on === parentSlug);
   if (parent === undefined) return null;
-  // STORY 17.6: the fork inherits the remembered name; an older parent without
-  // one is named from the reference the map still carries, and with neither the
-  // fork writes no tail at all (the generic sentence is the honest state).
-  const anchorReference = references.find(
-    (reference) => reference.on === parent.anchor,
-  );
+  // STORY 17.10: the fork is a peer card — no anchor is inherited or written
+  // (the parent's own legacy anchor stays on the parent's line, display only).
   const addition = forkAsk(
     asks,
     sharedSlugs(references, asks, sessions),
@@ -1850,7 +1858,6 @@ export async function writeForkAsk(
     name.trim(),
     x,
     y,
-    anchorReference?.name,
   );
   await io.saveAsks(workspacePath, addition.asks, malformedAsks);
   return { asks: addition.asks, ask: addition.ask };
@@ -1878,23 +1885,6 @@ export function askThreadOf(
 }
 
 /**
- * STORY 17.5 — THE RE-ANCHOR'S ONE REFUSAL RULE, PURE: a slug this file does
- * not carry and a reference the map no longer carries both answer ONE sentence
- * before anything is queued (a card that is already gone is not an anchor).
- * Null means the write may go ahead; the caller writes one field.
- */
-export function reanchorRefusal(
-  asks: readonly AskCard[],
-  referenceSlugs: readonly string[],
-  slug: string,
-  anchor: string,
-): string | null {
-  if (!asks.some((ask) => ask.on === slug)) return ASK_MISSING_REFUSAL;
-  if (!referenceSlugs.includes(anchor)) return ASK_SOURCE_REFUSAL;
-  return null;
-}
-
-/**
  * STORY 17.6 — WHAT AN ASK CARD'S ANCHOR RESOLVES TO, PURE: the reference's
  * name while the map carries it, or "gone" with the name the record REMEMBERS.
  * The view never looks for a replacement card, never rewrites the anchor and
@@ -1915,6 +1905,13 @@ export function askAnchorOf(
   ask: AskCard,
   references: readonly GroundReference[],
 ): AskAnchorView {
+  // STORY 17.10 — A CARD WITH NO ANCHOR IS NOT DANGLING. New asks are born
+  // empty; an absent field means "never bound", so the card says what it is
+  // ("a question") instead of accusing a card that never existed. The legacy
+  // field, when present, still resolves or is stated as gone (17.6's rule).
+  if (ask.anchor === undefined) {
+    return { name: null, gone: false, remembered: null };
+  }
   const reference =
     references.find((entry) => entry.on === ask.anchor) ?? null;
   return {
@@ -3915,26 +3912,33 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
-   * STORY 17.1 — MAKE AN ASK CARD BESIDE A REFERENCE. One queued write of
-   * `map/asks.txt`; no reading, no note, no media, no link, and NEVER a touch
-   * of the reference card. The anchor is a FIELD naming the reference, and the
-   * slug is minted in the shared space of both files. The conversation file
-   * appears with the first turn, not here: a card that has never been asked in
-   * has no conversation to invent.
+   * STORY 17.10 — THE ONE EMPTY-ASK WRITE, shared by BOTH roads to an ask card:
+   * the ground bubble's ASK door (no source) and a reference card's verb (a
+   * source). The user's correction is the shape: an ask is a PEER card, born
+   * EMPTY — no anchor, no theme, nothing from the press but the point. The
+   * conversation file appears with the first turn, not here: a card that has
+   * never been asked in has no conversation to invent.
    *
-   * STORY 17.8 adds the authored move to the log (`ask.add`, a slug and its
-   * anchor) and the new line to MAP.md's asks section.
+   * `ask about this` now means exactly what the double-click's ask means PLUS
+   * one thing: the reference is WIRED INTO the new card (17.9's mechanism — the
+   * wire is the context; no anchor is written). Both records land in ONE queued
+   * step, the ask line first and the wire second, so the wire can never point
+   * at a card that is not there. STORY 17.8 adds the authored lines to the log
+   * (`ask.add`, then `link.add`) and the new line to MAP.md.
    */
-  const createAsk = useCallback(
+  const writeEmptyAsk = useCallback(
     (
-      sourceSlug: string,
+      sourceSlug: string | null,
       name: string,
       x: number,
       y: number,
     ): Promise<GroundAddResult> => {
       const refusal = askRefusal(name);
       if (refusal !== null) return Promise.resolve({ ok: false, message: refusal });
-      if (!referencesRef.current.some((reference) => reference.on === sourceSlug)) {
+      if (
+        sourceSlug !== null &&
+        !referencesRef.current.some((reference) => reference.on === sourceSlug)
+      ) {
         return Promise.resolve({ ok: false, message: ASK_SOURCE_REFUSAL });
       }
       let outcome: GroundAddResult = {
@@ -3948,7 +3952,6 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             referencesRef.current,
             asksRef.current,
             malformedAsksRef.current,
-            sourceSlug,
             name,
             x,
             y,
@@ -3957,13 +3960,95 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             sessionsRef.current,
           );
           asksRef.current = written.asks;
+          let wired: string | null = null;
+          if (sourceSlug !== null) {
+            const nextLinks = addGroundLink(
+              linksRef.current,
+              sourceSlug,
+              written.ask.on,
+            );
+            await saveGroundLinks(
+              workspacePath,
+              nextLinks,
+              malformedLinksRef.current,
+            );
+            linksRef.current = nextLinks;
+            wired = sourceSlug;
+          }
+          setState(snapshot());
+          // The new slug rides back so the layer can OPEN the card the person
+          // just asked for — the composer is the next thing they need.
+          outcome = { ok: true, created: written.ask.on };
+          // STORY 17.8/17.10: the authored lines join the log — the slug, the
+          // wire's ordered pair (structure only, no words) — and MAP.md follows.
+          queueHistory(() => {
+            const at = Date.now();
+            const events = [askAddEvent(at, written.ask.on)];
+            if (wired !== null) {
+              events.push(linkAddEvent(at, wired, written.ask.on));
+            }
+            return events;
+          });
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /** STORY 17.1/17.10 — `ask about this`: an empty ask card PLUS the wire. */
+  const createAsk = useCallback(
+    (
+      sourceSlug: string,
+      name: string,
+      x: number,
+      y: number,
+    ): Promise<GroundAddResult> => writeEmptyAsk(sourceSlug, name, x, y),
+    [writeEmptyAsk],
+  );
+
+  /** STORY 17.10 — the bubble's ASK door: the point and nothing else. */
+  const createEmptyAsk = useCallback(
+    (name: string, x: number, y: number): Promise<GroundAddResult> =>
+      writeEmptyAsk(null, name, x, y),
+    [writeEmptyAsk],
+  );
+
+  /**
+   * STORY 17.10 — RENAME one ask card. One queued write of `map/asks.txt`;
+   * the name is the person's and the SLUG is identity (wire target and
+   * conversation file), so nothing else moves. A blank name refuses before the
+   * queue, an unknown slug answers the one sentence. The anchor is legacy
+   * display and this path cannot write one.
+   */
+  const renameAskTo = useCallback(
+    (slug: string, name: string): Promise<GroundAddResult> => {
+      const refusal = askRefusal(name);
+      if (refusal !== null) return Promise.resolve({ ok: false, message: refusal });
+      if (!asksRef.current.some((ask) => ask.on === slug)) {
+        return Promise.resolve({ ok: false, message: ASK_MISSING_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const next = renameAsk(asksRef.current, slug, name.trim());
+          if (next === null) {
+            outcome = { ok: false, message: ASK_MISSING_REFUSAL };
+            return;
+          }
+          await saveAsks(workspacePath, next, malformedAsksRef.current);
+          asksRef.current = next;
           setState(snapshot());
           outcome = { ok: true };
-          // STORY 17.8: the authored move joins the log (the slug and the
-          // anchor it is about — no words), and MAP.md's asks section follows.
-          queueHistory(() => [
-            askAddEvent(Date.now(), written.ask.on, written.ask.anchor),
-          ]);
+          // A rename changes no name, anchor or parent surface in MAP.md? It
+          // changes the NAME, so the derived mirror follows it.
           queueMirror();
         })
         .then(() => outcome)
@@ -4046,65 +4131,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     [workspacePath],
   );
 
-  /**
-   * STORY 17.5 — RE-ANCHOR one ask card: ONE field's change, ONE queued write.
-   * A target reference the map no longer carries refuses with one sentence and
-   * writes nothing (a card that is already gone is not an anchor); the card's
-   * words, its point and a fork's branch point are untouched. An unknown ask
-   * slug refuses the same way, never appended.
-   */
-  const reanchorAskTo = useCallback(
-    (slug: string, anchor: string): Promise<GroundAddResult> => {
-      const refusal = reanchorRefusal(
-        asksRef.current,
-        referencesRef.current.map((reference) => reference.on),
-        slug,
-        anchor,
-      );
-      if (refusal !== null) {
-        return Promise.resolve({ ok: false, message: refusal });
-      }
-      let outcome: GroundAddResult = {
-        ok: false,
-        message: "nothing was written.",
-      };
-      return queueRef.current
-        .push(async () => {
-          // STORY 17.6: the new anchor's name is remembered in the same write,
-          // so a later delete of the NEW card can be said by name. The write is
-          // still ONE field's change: `anchor` plus the name that belongs to it.
-          const target = referencesRef.current.find(
-            (reference) => reference.on === anchor,
-          );
-          const next = reanchorAsk(
-            asksRef.current,
-            slug,
-            anchor,
-            target?.name,
-          );
-          if (next === null) {
-            outcome = { ok: false, message: ASK_MISSING_REFUSAL };
-            return;
-          }
-          await saveAsks(workspacePath, next, malformedAsksRef.current);
-          asksRef.current = next;
-          setState(snapshot());
-          outcome = { ok: true };
-          // STORY 17.8: one field's change, one line (the NEW anchor's slug),
-          // and the mirror's about-line follows it.
-          queueHistory(() => [
-            askReanchorEvent(Date.now(), slug, anchor),
-          ]);
-          queueMirror();
-        })
-        .then(() => outcome)
-        .catch(() => ({
-          ok: false,
-          message: "cannot write the map folder.",
-        }));
-    },
-    [workspacePath],
-  );
+  // STORY 17.10 (the addendum) — THE RE-ANCHOR VERB IS GONE. A verb that no
+  // longer changes what a turn sends is worse than no verb. The anchor field
+  // stays DISPLAY-ONLY legacy on old records (17.6's dangling sentence still
+  // reads); no path in this file writes one, and the reference verb's road is
+  // the wire above, not a field.
 
   /**
    * STORY 17.8 — REMOVE one ask card, immediately and reversibly. The same
@@ -4614,10 +4645,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
 
   /**
    * STORY 17.1 — ASK ONE QUESTION inside an ask card. STORY 17.3 makes the
-   * question a packet: the anchored reference's blocks as before PLUS this
-   * card's conversation under the stated bound (the newest WHOLE turns that fit
-   * a turn count and a byte budget — map/asks.ts's lastTurns). The READ set is
-   * the anchor's own block, never a turn. Then ONE append-only write records
+   * question a packet; STORY 17.9 corrects whose facts ride in it: the cards
+   * WIRED INTO this one, never the legacy anchor field, PLUS this card's
+   * conversation under the stated bound (the newest WHOLE turns that fit a turn
+   * count and a byte budget — map/asks.ts's lastTurns). The READ set names the
+   * INCLUDED wired cards, never a turn. Then ONE append-only write records
    * the exchange: the person's line always, the answer line only when the turn
    * answered. A failed or stopped turn leaves the person's line alone and
    * answers the ONE sentence in the card.
@@ -4644,6 +4676,32 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       const ask = asksRef.current.find((entry) => entry.on === slug);
       if (ask === undefined) {
         return Promise.resolve({ ok: false, message: ASK_MISSING_REFUSAL });
+      }
+      // STORY 17.10 — AN EMPTY CARD NAMES ITSELF FROM ITS FIRST QUESTION. The
+      // user's correction made the card a peer, created wordless; the first
+      // thing it is asked is the most honest name it can propose, so the
+      // "Untitled ask" sentinel becomes the question's one-line short form. A
+      // name the person already changed is never overwritten. The rename is
+      // queued now, ahead of the turn's own record write, so a reopen reads the
+      // name even if the turn is stopped; a failed rename changes no words.
+      if (ask.name === ASK_UNTITLED_NAME) {
+        const short = askNameFromQuestion(question);
+        if (short !== "") {
+          void queueRef.current
+            .push(async () => {
+              const next = renameAsk(asksRef.current, slug, short);
+              if (next === null) return;
+              await saveAsks(workspacePath, next, malformedAsksRef.current);
+              asksRef.current = next;
+              setState(snapshot());
+              // The mirror follows a name.
+              queueMirror();
+            })
+            .catch(() => {
+              // A name is not an answer: a failed rename writes nothing and
+              // leaves the card "Untitled ask".
+            });
+        }
       }
       // THE CONTEXT IS THE WIRES (story 17.9, the user's correction): every
       // card wired INTO this ask card contributes what it has. The record's
@@ -5632,10 +5690,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     restoreNotice: state.restoreNotice,
     loaded: state.loaded,
     createAsk,
+    createEmptyAsk,
+    renameAskTo,
     askTurn,
     askStop,
     forkAskAt,
-    reanchorAskTo,
     removeAsk,
     removeSession,
     createSession,

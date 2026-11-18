@@ -68,6 +68,14 @@ interface GroundBubbleProps {
   /** The world point the person double-clicked. */
   x: number;
   y: number;
+  /**
+   * STORY 17.10 — WHICH DOOR THE BUBBLE OPENED FROM. The ground double-click
+   * now opens the concept map's bubble (canvas/PlaneMenu.tsx) with a door list;
+   * choosing a REFERENCE door opens THIS form already on that intent, so the
+   * person does not pick the same thing twice. Absent (or "file") keeps the
+   * old order: a name, then a file. PROVISIONAL: the door order is the spec's.
+   */
+  initialIntent?: GroundIntent;
   /** Add the reference (the app's one write path); a refusal is a sentence. */
   onAdd: (name: string, from: string) => Promise<GroundAddResult>;
   /**
@@ -96,6 +104,7 @@ interface GroundBubbleProps {
 export function GroundBubble({
   x,
   y,
+  initialIntent = "file",
   onAdd,
   onAddPage,
   onAddVideo,
@@ -108,7 +117,9 @@ export function GroundBubble({
   const [name, setName] = useState("");
   // STORY 16.15: the INTENT is the person's choice and it chooses the
   // extractor. Nothing here looks at a file's bytes or guesses a host's kind.
-  const [intent, setIntent] = useState<GroundIntent>("file");
+  // STORY 17.10: the bubble can ARRIVE on a door the person already chose in
+  // the double-click's bubble; its own intent row stays editable from there.
+  const [intent, setIntent] = useState<GroundIntent>(initialIntent);
   const [from, setFrom] = useState<string | null>(null);
   // A pasted address is kept VERBATIM: it is handed to the app exactly as
   // given, and the sidecar's own guard decides whether it can be taken.
@@ -127,6 +138,16 @@ export function GroundBubble({
   // Opening moves focus into the name field (the coin field's idiom).
   useEffect(() => {
     nameRef.current?.focus();
+  }, []);
+
+  // STORY 17.10 — the SESSION door arrives from the bubble already chosen, so
+  // the row's name is PROPOSED here exactly as choosing the door inside this
+  // form did before. A reference door simply starts with its own intent.
+  useEffect(() => {
+    if (initialIntent !== "session") return;
+    const row = ACP_SPECS.find((spec) => spec.id === tool);
+    if (row !== undefined) setName(proposeSessionName(row.name));
+    // Mount only: the person's own draft always wins after this.
   }, []);
 
   // The press must not pan the plane or start a word gesture.

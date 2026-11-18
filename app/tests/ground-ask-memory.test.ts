@@ -566,8 +566,10 @@ describe("the turn's order is a stated contract", () => {
     expect(writeAt).toBeGreaterThan(-1);
     expect(historyAt).toBeGreaterThan(writeAt);
     expect(body).not.toContain("await queueHistory");
-    // A turn adds nothing to MAP.md: the mirror is not queued here.
-    expect(body).not.toContain("queueMirror(");
+    // STORY 17.10: the FIRST question may rename an Untitled ask (a mirror
+    // BEFORE the send), but the TURN itself adds nothing to MAP.md: after the
+    // record write there is no mirror.
+    expect(body.slice(writeAt)).not.toContain("queueMirror(");
   });
 });
 

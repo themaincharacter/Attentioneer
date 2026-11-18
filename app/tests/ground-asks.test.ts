@@ -245,7 +245,9 @@ describe("the ask card is its own record family", () => {
     expect(parsed.asks).toEqual([ask]);
     expect(parsed.malformed).toEqual(["not an ask line"]);
     // The file is not validated into shape: a bad line is never guessed at.
-    expect(parseAskLine("on: x | name: y | x: 1 | y: 2")).toBeNull();
+    // STORY 17.10: a line with NO anchor is legal now (an empty ask card), so
+    // the unreadable example loses its coordinates instead.
+    expect(parseAskLine("on: x | name: y | x: 1")).toBeNull();
   });
 
   test("the conversation is JSONL, one line per turn, the words verbatim", () => {
@@ -273,14 +275,14 @@ describe("the ask card is its own record family", () => {
       [REFERENCE],
       [],
       [],
-      SOURCE_SLUG,
       "Rain gauge question",
       360,
       60,
         askCardIo,
       );
     expect(written.asks).toHaveLength(1);
-    expect(written.ask.anchor).toBe(SOURCE_SLUG);
+    // STORY 17.10: an ask is a PEER card — creation writes no anchor.
+    expect(written.ask.anchor).toBeUndefined();
     // ONE record file, one line; no readings line and no note for the ask.
     expect(readFileSync(asksPath(workspace), "utf8")).toBe(
       serializeAskLine(written.ask) + "\n",
@@ -293,7 +295,7 @@ describe("the ask card is its own record family", () => {
 describe("ONE slug space with ground.txt", () => {
   test("minting an ask card checks BOTH files", () => {
     const taken = sharedSlugs([REFERENCE], []);
-    const first = addAsk([], taken, SOURCE_NAME, 10, 20, SOURCE_SLUG);
+    const first = addAsk([], taken, SOURCE_NAME, 10, 20);
     // The ground reference already holds `rain-gauge`: the ask dedupes.
     expect(first.ask.on).toBe("rain-gauge-2");
     const second = addAsk(
@@ -302,7 +304,6 @@ describe("ONE slug space with ground.txt", () => {
       SOURCE_NAME,
       30,
       40,
-      SOURCE_SLUG,
     );
     expect(second.ask.on).toBe("rain-gauge-3");
     // The person's words and point are kept exactly; coordinates are ints.
@@ -338,23 +339,22 @@ describe("ONE slug space with ground.txt", () => {
   });
 });
 
-describe("the anchor is a FIELD, never a link", () => {
-  test("a dangling anchor is a legal record and is never repaired", async () => {
+describe("the anchor is legacy display, never a new write", () => {
+  test("a dangling anchor still parses and is never repaired", async () => {
+    // STORY 17.10: the creation path cannot write an anchor (an ask is a
+    // peer card). An OLD record still parses, keeps its field exactly, and the
+    // loader never repairs it — that is the 17.6 sentence's home.
+    const legacy: AskCardRecord = {
+      on: "gone-question",
+      name: "Gone question",
+      x: 10,
+      y: 20,
+      anchor: "a-card-that-went",
+    };
     const workspace = freshWorkspace();
-    const written = await writeAskCard(
-      workspace,
-      [], // the source does NOT exist on this map
-      [],
-      [],
-      "a-card-that-went",
-      "Gone question",
-      10,
-      20,
-      askCardIo,
-    );
+    await saveAsks(workspace, [legacy], [], askIo);
     const reloaded = await loadAsks(workspace, askIo);
-    expect(reloaded.asks).toEqual([written.ask]);
-    // No repair, no refusal: the field keeps exactly what it was given.
+    expect(reloaded.asks).toEqual([legacy]);
     expect(reloaded.asks[0]!.anchor).toBe("a-card-that-went");
   });
 });
@@ -368,7 +368,6 @@ describe("one exchange survives a reopen", () => {
       [REFERENCE],
       [],
       [],
-      SOURCE_SLUG,
       "Rain gauge question",
       360,
       60,
@@ -392,8 +391,9 @@ describe("one exchange survives a reopen", () => {
     // The words are VERBATIM, whitespace and newlines included.
     expect(turns[written.ask.on]!.turns[0]!.text).toBe(QUESTION);
     expect(turns[written.ask.on]!.turns[1]!.text).toBe(ANSWER);
-    // The card still says what it is about.
-    expect(asks.asks[0]!.anchor).toBe(SOURCE_SLUG);
+    // STORY 17.10: an ask card is a peer — creation writes no anchor. What it
+    // is about arrives through the wire (17.9), not through the record.
+    expect(asks.asks[0]!.anchor).toBeUndefined();
     expect(readFileSync(askTurnPath(workspace, written.ask.on), "utf8")).toBe(
       serializeTurnLine(recorded.turns[0]!) +
         "\n" +
@@ -516,7 +516,6 @@ describe("the reference card is never modified", () => {
       [REFERENCE],
       [],
       [],
-      SOURCE_SLUG,
       "Rain gauge question",
       360,
       60,
@@ -578,7 +577,11 @@ describe("an empty question refuses and writes nothing", () => {
 
   test("the creation refuses a blank name before the queue", () => {
     expect(askRefusal("")).toBe(ASK_NAME_REFUSAL);
-    const createBlock = HOOK.slice(HOOK.indexOf("const createAsk = useCallback"));
+    // STORY 17.10: both roads (the bubble's ask door and the reference verb)
+    // reach the ONE empty-ask writer, so that is where the refusal lives.
+    const createBlock = HOOK.slice(
+      HOOK.indexOf("const writeEmptyAsk = useCallback"),
+    );
     const scoped = createBlock.slice(0, createBlock.indexOf("const askTurn = useCallback"));
     expect(scoped.indexOf("askRefusal(name)")).toBeGreaterThan(-1);
     expect(scoped.indexOf("askRefusal(name)")).toBeLessThan(
@@ -714,7 +717,11 @@ describe("the ask path reuses the existing card-ask turn (story 17.3 adds the th
     );
     expect(historyCall).not.toContain("question");
     expect(historyCall).not.toContain("recorded.turns");
-    expect(sendBlock).not.toContain("queueMirror(");
+    // STORY 17.10: the FIRST question's short form renames an Untitled ask, so
+    // the turn block CAN queue a mirror — before the send. After the send, the
+    // turn itself still adds nothing to MAP.md (no name, anchor or parent).
+    const afterSend = sendBlock.slice(sendBlock.indexOf("sendAskQuestion("));
+    expect(afterSend).not.toContain("queueMirror(");
   });
 
   test("the proposed name is the anchored card's words plus the noun", () => {

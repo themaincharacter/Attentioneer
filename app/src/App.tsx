@@ -102,7 +102,8 @@ import type { AskPacket } from "./turn/packet";
 import { readingFor } from "./map/readings";
 import type { Media } from "./map/media";
 import { GroundWires } from "./canvas/GroundWires";
-import { GroundBubble } from "./canvas/GroundBubble";
+import { GroundBubble, type GroundIntent } from "./canvas/GroundBubble";
+import { ASK_UNTITLED_NAME } from "./map/asks";
 import { useGround } from "./canvas/useGround";
 import { SketchToolbar } from "./canvas/SketchToolbar";
 import { LanguageGameBar } from "./canvas/LanguageGameBar";
@@ -325,9 +326,11 @@ import type { Workspace } from "./workspace/lifecycle";
  * Creation lives on the double-click (Epic 3 feedback): a double-click on
  * empty plane opens a small menu there. DEPRECATED (hidden 2026-11-16 per user
  * review): the menu's lack kind is hidden (and, per the separate-maps review
- * further down, the WORD is concept-only), so today the bubble paints the word
- * above the anchor dot at concept and the pen's draw below it — a single click
- * creates nothing.
+ * further down, the WORD is concept-only), so at concept the bubble paints the
+ * word above the anchor dot and the pen's draw below it — a single click
+ * creates nothing. STORY 17.10: GROUND opens the SAME bubble component with the
+ * ground's doors (ask first, then the reference doors, session last); the
+ * reference form opens only after a door was chosen.
  * The mark's own gestures are story 2's: the ring drags to bind/unbind, a
  * double-click on a bare ring grows it into a named question-word, and its ×
  * withdraws it. Wire geometry is derived from *live* word positions, so a
@@ -636,12 +639,32 @@ function App() {
   // The plane point where the double-click creation menu is open, if any.
   const [menuAt, setMenuAt] = useState<Point | null>(null);
   // The ground map's creation bubble, at the double-clicked point (story
-  // 16.1). It is its own affordance, not the concept menu: a name plus a text
-  // file, and nothing from the word/lack grammar.
+  // 16.1). STORY 17.10: the double-click now opens the CONCEPT MAP'S BUBBLE
+  // (canvas/PlaneMenu.tsx) with the ground's doors, so this form opens only
+  // after a reference door was chosen, already on that intent.
   const [groundAt, setGroundAt] = useState<Point | null>(null);
+  /** Which reference door the ground bubble opened from (story 17.10). */
+  const [groundIntent, setGroundIntent] = useState<GroundIntent>("file");
+  /**
+   * STORY 17.10 — THE GROUND DOUBLE-CLICK'S BUBBLE, at the point. This is the
+   * SAME component the concept map opens (canvas/PlaneMenu.tsx), handed the
+   * ground's doors; there is no second bubble.
+   */
+  const [groundMenuAt, setGroundMenuAt] = useState<Point | null>(null);
+  /**
+   * STORY 17.10 — the ask card the ASK door just made, so the layer can open
+   * it. A fresh token per creation keeps a later render from reopening a card
+   * the person closed.
+   */
+  const [revealAsk, setRevealAsk] = useState<{ slug: string } | null>(null);
   // Another workspace starts with no ground draft (its map folder is another
-  // map's truth; the bubble must never write into a map it was not opened on).
-  useEffect(() => setGroundAt(null), [workspace?.path]);
+  // map's truth; the bubbles must never write into a map not opened on).
+  useEffect(() => {
+    setGroundAt(null);
+    setGroundMenuAt(null);
+    setGroundIntent("file");
+    setRevealAsk(null);
+  }, [workspace?.path]);
   // The playing-set selector (Epic 4 story 1, ADR-0013): its draft selection
   // and the draw tool's armed state. The gate arms while it is open.
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -3842,19 +3865,26 @@ function App() {
   /**
    * A double-click on empty plane opens that map's creation affordance at the
    * point. Concept (and, while it waits for its own modelling surfaces,
-   * dynamics) opens the ring menu; GROUND opens its own reference bubble
-   * (story 16.1) — a name and a text file, never a concept word. The two
-   * affordances are separate on purpose: `wordCreationOffered` stays
-   * concept-only and the ground noun is its own.
+   * dynamics) opens the ring menu.
+   *
+   * STORY 17.10 — THE USER'S CORRECTION: "a double click opens a bubble menu and
+   * you can select reference or ask." GROUND now opens the SAME bubble the
+   * concept map opens (canvas/PlaneMenu.tsx), with the ground's own doors: ask
+   * first, then the reference doors, then session. Choosing a reference door
+   * opens the existing ground form on that intent; choosing ASK makes a peer
+   * card at the point. The bubble is not a second invention — it is the concept
+   * map's component, its placement and its dismissal discipline, reused.
    */
   const handlePlaneDoubleClick = useCallback(
     (point: Point) => {
       if (level === "ground") {
         setMenuAt(null);
-        setGroundAt(point);
+        setGroundAt(null);
+        setGroundMenuAt(point);
         return;
       }
       setGroundAt(null);
+      setGroundMenuAt(null);
       setMenuAt(point);
     },
     [level],
@@ -3862,6 +3892,34 @@ function App() {
 
   const closePlaneMenu = useCallback(() => setMenuAt(null), []);
   const closeGroundBubble = useCallback(() => setGroundAt(null), []);
+  const closeGroundMenu = useCallback(() => setGroundMenuAt(null), []);
+
+  /** STORY 17.10 — the ASK door: an empty peer card at the point, then OPEN. */
+  const chooseGroundAsk = useCallback(async () => {
+    const spot = groundMenuAt;
+    if (spot === null) return;
+    setGroundMenuAt(null);
+    const result = await ground.createEmptyAsk(
+      ASK_UNTITLED_NAME,
+      spot.x,
+      spot.y,
+    );
+    if (result.ok && result.created !== undefined) {
+      setRevealAsk({ slug: result.created });
+    }
+  }, [groundMenuAt, ground.createEmptyAsk]);
+
+  /** STORY 17.10 — a reference/session door: the existing form, on that door. */
+  const chooseGroundDoor = useCallback(
+    (intent: GroundIntent) => {
+      const spot = groundMenuAt;
+      if (spot === null) return;
+      setGroundMenuAt(null);
+      setGroundIntent(intent);
+      setGroundAt(spot);
+    },
+    [groundMenuAt],
+  );
 
   /** The ground bubble's one write: the app's loaded ground state owns it. */
   const addGroundAt = useCallback(
@@ -4426,7 +4484,8 @@ function App() {
             askTurns={ground.askTurns}
             onCreateAsk={ground.createAsk}
             onForkAsk={ground.forkAskAt}
-            onReanchorAsk={ground.reanchorAskTo}
+            onRenameAsk={ground.renameAskTo}
+            revealAsk={revealAsk}
             onAskTurn={ground.askTurn}
             onStopAskTurn={ground.askStop}
             /* STORY 18.3 — the session cards: their records, their transcripts
@@ -4757,15 +4816,65 @@ function App() {
           />
         )}
 
-        {/* THE GROUND MAP's creation bubble (story 16.1): double-click empty
-            paper, type a name, pick a text file. It is a DIFFERENT affordance
-            with a different noun from the concept ring menu above (which
-            ground never opens); `wordCreationOffered` stays concept-only. A
-            refused file shows one quiet sentence and creates nothing. */}
+        {/* STORY 17.10 — THE GROUND DOUBLE-CLICK'S BUBBLE. It is the CONCEPT
+            MAP'S component (canvas/PlaneMenu.tsx) — the same dot, stems,
+            inverse-camera placement, Esc/away-press and raw-mousedown guard —
+            handed the ground's doors: ask first (the new thing), then the
+            existing reference doors, then session. Choosing a reference door
+            opens the SAME form as before, already on that intent; choosing ask
+            makes an empty peer card at the point and opens it. */}
+        {level === "ground" && groundMenuAt !== null && (
+          <PlaneMenu
+            x={groundMenuAt.x}
+            y={groundMenuAt.y}
+            doors={[
+              {
+                id: "ask",
+                label: "ask",
+                title: "ask a question here",
+                seat: "above",
+                onPress: () => void chooseGroundAsk(),
+              },
+              {
+                id: "file",
+                label: "a file",
+                title: "add a reference from a file",
+                onPress: () => chooseGroundDoor("file"),
+              },
+              {
+                id: "page",
+                label: "a page",
+                title: "add a reference from a web page",
+                onPress: () => chooseGroundDoor("page"),
+              },
+              {
+                id: "video",
+                label: "a video",
+                title: "add a reference from a video",
+                onPress: () => chooseGroundDoor("video"),
+              },
+              {
+                id: "session",
+                label: "a session",
+                title: "start a session card here",
+                onPress: () => chooseGroundDoor("session"),
+              },
+            ]}
+            onClose={closeGroundMenu}
+          />
+        )}
+
+        {/* THE GROUND MAP's reference form (story 16.1): after the bubble's
+            reference door (STORY 17.10), type a name, pick the source. The
+            NOUN is still the ground map's own and `wordCreationOffered` stays
+            concept-only; what changed is that the SAME concept bubble opens
+            first, with the ground's doors. A refused file shows one quiet
+            sentence and creates nothing. */}
         {level === "ground" && groundAt !== null && (
           <GroundBubble
             x={groundAt.x}
             y={groundAt.y}
+            initialIntent={groundIntent}
             onAdd={addGroundAt}
             onAddPage={addGroundPageAt}
             onAddVideo={addGroundVideoAt}
