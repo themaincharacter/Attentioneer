@@ -238,6 +238,7 @@ import {
   readCuratorAnswer,
   type CuratorRead,
 } from "../turn/curator";
+import { mapDigest } from "../turn/curatorDigest";
 import {
   TURN_SENTENCES,
   routeOf,
@@ -4385,6 +4386,13 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       packet: AskPacket,
       context: AskContext,
       question: string,
+      /**
+       * THE MAP DIGEST (story 17.14), composed by the caller from the loaded
+       * view and handed here to ride the curator's prompt. PROMPT MATERIAL
+       * ONLY: it is never recorded, never rendered and never kept past the
+       * call — the string is used for one prompt and dropped.
+       */
+      digest: string,
       onPart?: (text: string) => void,
       onPhase?: (phase: AskWorkPhase) => void,
       effort?: string | null,
@@ -4504,10 +4512,14 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         };
       }
       const managerRoute = routeOf(manager.provider, manager.model, managerKey);
-      // THE PACKET IS PURE AND CARRIES NO MATERIAL (turn/curator.ts): only the
-      // question, the reply and the schema. The same turn port and the same
-      // request line — nothing new crosses the wire.
-      const messages = buildCuratorMessages({ question, reply });
+      // THE PACKET IS PURE AND CARRIES NO MATERIAL (turn/curator.ts): the
+      // question, the reply and the schema, plus STORY 17.14's map digest —
+      // the map's own labels, never a reading body (turn/curatorDigest.ts has
+      // no text input to leak). ADR-0037's amendment is the reason: the
+      // curator "sees the big picture of what really matters" so a returned
+      // answer is not automatically attention-worthy. The same turn port and
+      // the same request line — nothing new crosses the wire.
+      const messages = buildCuratorMessages({ question, reply, digest });
       // STORY 16.28 — THE SECOND WAIT IS NAMED to the card: the task's text is
       // already on screen, so this is the one thing left to say while the
       // manager distils. The line goes the moment this call ends, whichever
@@ -5736,6 +5748,23 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           packet,
           context,
           question,
+          // STORY 17.14 — THE MAP DIGEST, composed from the loaded view: the
+          // cards on this map, the ones wired into this ask, and the artifacts
+          // this ask already made, nearest first and bounded. It is prompt
+          // material only (nothing is written, counted or kept) and the ONE
+          // reading-shaped thing it does not receive is a reading's text: no
+          // texts or notes map is handed to the builder, so none can ride.
+          mapDigest({
+            askSlug: slug,
+            wired: contextFacts.facts.flatMap((facts) =>
+              facts.on === undefined ? [] : [facts.on],
+            ),
+            references: referencesRef.current,
+            asks: asksRef.current,
+            askTurns: askTurnsRef.current,
+            sessions: sessionsRef.current,
+            readings: readingsRef.current,
+          }),
           onPart,
           onPhase,
           // STORY 16.29 — the card's pick rides the TASK call beside the

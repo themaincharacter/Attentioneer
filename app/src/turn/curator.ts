@@ -6,12 +6,26 @@ import { oneLine, type TurnMessage } from "./protocol";
  * that distils a task's reply into a card.
  *
  * WHAT LEAVES: the person's question (the brief's "what was asked"), the reply
- * VERBATIM, and the card schema. NOT the material: the curator distils the
- * answer, it does not re-read the sources. That is a construction fact, not a
- * promise: this module's only inputs are the question and the reply, so no
- * card reading, note, thread or block can reach the prompt even by accident.
- * ADR-0037's rule 2 (the manager never drops material) is about the OUTBOUND
- * brief; this call is the INBOUND distillation, and it carries the reply alone.
+ * VERBATIM, the card schema, and — since ADR-0037's amendment — the MAP DIGEST
+ * (story 17.14): one bounded block of names, kinds and one-line descriptions,
+ * composed by turn/curatorDigest.ts. NOT the material: the curator distils the
+ * answer, it does not re-read the sources. That is still a construction fact,
+ * not a promise: the digest arrives as a STRING of the map's own labels, and
+ * this module never imports the records, the texts or the notes, so no card's
+ * reading body can reach the prompt even by accident. The amendment's words
+ * are the rule: "It can see material but that's not what I mean here. It sees
+ * the big picture of what really matters and should be brief." The digest is
+ * the big picture; the reading bodies stay on the map.
+ *
+ * BREVITY IS A RULE HERE, NOT A STYLE (amendment 2 and 4): the prompt states
+ * the limits as limits, and the parser ENFORCES them below (per-field caps →
+ * one sentence, no card). A card that restates the reply at length has failed
+ * even when every field is filled, so a long answer is a bug this module
+ * refuses rather than ships. And the default stance is DECLINE (amendment 3):
+ * an answer is not attention-worthy because it was returned; if it does not
+ * establish something the map can use, the legal answer is one sentence and no
+ * card. Without a language game the digest is the only guide, and the prompt
+ * says exactly that.
  *
  * WHY THE SAME DISCIPLINE AS THE GHOST BLOCK: the curator is a model and can
  * be wrong, so its answer is PARSED, never trusted. One fenced block with a
@@ -35,8 +49,9 @@ import { oneLine, type TurnMessage } from "./protocol";
  * the ask card writes the artifact.
  *
  * PROVISIONAL: the fence's language tag, every sentence below, the five field
- * names, and the cue list. ADR-0037 settles the artifact's shape, not these
- * words.
+ * names, the cue list, and the per-field caps (their numbers are a first
+ * choice, not a settled rule). ADR-0037 and its amendment settle the
+ * artifact's shape and that it is brief, not these words or limits.
  */
 
 /** The fence's language tag (PROVISIONAL). */
@@ -54,6 +69,32 @@ export const CURATOR_SCHEMA_KEYS = [
 /** The one sentence a malformed block gets: no card is made. */
 export const CURATOR_MALFORMED_SENTENCE =
   "the curator's answer was not a card the app can use, so no card was made.";
+
+/**
+ * The one sentence a card that ran past the length limits gets (story 17.14).
+ * A separate sentence, because it says WHAT happened: the answer was the right
+ * shape and still too long, which is a different bug from a broken block —
+ * and the person should know the card was refused for its length, not its
+ * syntax. PROVISIONAL wording.
+ */
+export const CURATOR_OVERLONG_SENTENCE =
+  "the curator's card ran past the card's length limits, so no card was made.";
+
+/**
+ * THE PER-FIELD CAPS (story 17.14, PROVISIONAL). The prompt states them as
+ * limits; this table is where they are ENFORCED. A field over its cap is not
+ * cropped or "cleaned up" — the whole answer is malformed and no card is made,
+ * because a long card is a bug, not a style choice (the story's words). The
+ * numbers are a first choice to be lived with and changed by testing, not a
+ * derivation: two sentences is what a claim can be and still be a claim; three
+ * short items is a list a person can hold; the character caps stop a "two
+ * sentence" claim from becoming one 700-word run-on.
+ */
+export const CURATOR_CAP_TITLE_CHARS = 80;
+export const CURATOR_CAP_CLAIM_SENTENCES = 2;
+export const CURATOR_CAP_CLAIM_CHARS = 240;
+export const CURATOR_CAP_FIELD_ITEMS = 3;
+export const CURATOR_CAP_FIELD_CHARS = 200;
 
 /**
  * The one sentence a decline gets when the curator's own words are empty. A
@@ -144,12 +185,20 @@ export type CuratorRead =
   /** A tagged block that is not a usable card: one sentence, no card. */
   | { kind: "invalid"; sentence: string };
 
-/** What the curator's prompt is built from — and ONLY these two things. */
+/** What the curator's prompt is built from — these three things and nothing else. */
 export interface CuratorInput {
   /** The person's authored question, verbatim (the brief's "what was asked"). */
   question: string;
   /** The task model's reply, verbatim. Never edited, capped or re-wrapped. */
   reply: string;
+  /**
+   * THE MAP DIGEST (story 17.14, ADR-0037's amendment): one already-bounded
+   * block of the map's cards — names, kinds and one-line descriptions, never a
+   * reading body — composed by turn/curatorDigest.ts. PROMPT MATERIAL ONLY:
+   * nothing in this module records it, and an empty string means the caller
+   * had no map to describe.
+   */
+  digest: string;
 }
 
 /** The prompt's title (PROVISIONAL, and part of the bytes). */
@@ -161,16 +210,21 @@ const BRIEF_HEADING = "## the brief";
 /** The reply's heading. */
 const REPLY_HEADING = "## the reply, verbatim";
 
+/** The map digest's heading. */
+const DIGEST_HEADING = "## the map digest";
+
 /** The card instruction's heading. */
 const CARD_HEADING = "## the card";
 
 /**
- * THE PROMPT (story 17.12): the brief (the question and why this call exists),
- * the reply WHOLE, and the schema. There is no material section because there
- * is no material input — the packet carries the reply, the brief and the
- * schema, exactly as the addendum says, and nothing else.
+ * THE PROMPT (stories 17.12 and 17.14): the brief (the question, why this call
+ * exists, and the default stance), the MAP DIGEST (the map's own labels,
+ * nearest first — PROMPT MATERIAL ONLY), the reply WHOLE, and the schema with
+ * its brevity rules. There is no material section: the digest is a string of
+ * names and kinds, never a reading, and this module could not include one.
  */
 export function curatorPrompt(input: CuratorInput): string {
+  const digest = input.digest.trim();
   return [
     CURATOR_TITLE,
     "",
@@ -180,27 +234,48 @@ export function curatorPrompt(input: CuratorInput): string {
     "",
     input.question.trim(),
     "",
-    "They asked for a card they can keep, so this step distils the reply below into one. This step does not re-read any source: only the reply below is in this view, and nothing about its sources is inferred.",
+    "They asked for a card they can keep, so this step distils the reply below into one. This step does not re-read any source: the digest below is the map's own labels, never any card's reading, and nothing about a source is inferred from them.",
     "",
+    'A returned answer is not automatically worth keeping. It earns a card only if it establishes something this map can use; there is no language game here yet, so the digest below is the only guide to what matters.',
+    "",
+    ...(digest === ""
+      ? []
+      : [
+          DIGEST_HEADING,
+          "",
+          "What this map already holds, nearest first — the ask being distilled, the artifacts already made from it, the cards wired into it, then the rest of the map. These are labels, not readings.",
+          "",
+          digest,
+          "",
+        ]),
     REPLY_HEADING,
     "",
     input.reply,
     "",
     CARD_HEADING,
     "",
+    "A card is a COMPRESSION of the reply, not a copy of it. Say what matters and stop.",
+    "Limits — a card over any of them is refused:",
+    "",
+    "- the claim is at most two sentences;",
+    "- every other field is at most three short items;",
+    "- the title is a phrase of a few words.",
+    "",
+    "Do NOT restate the question. Do NOT open with a preamble. Do NOT end with a hedge.",
+    "",
     "Write one fenced code block whose language tag is " + CURATOR_FENCE + ".",
     "The block carries ONE JSON object with exactly these five keys, each a non-empty string:",
     "",
     '- "title": the card\'s name, a phrase of a few words.',
-    '- "claim": what the reply established, in one or two sentences.',
-    '- "rests on": what the claim rests on, as the reply stated it.',
-    '- "does not cover": what the answer does not establish, as the reply stated it.',
-    '- "uncertainty": every doubt, contradiction, scope limit or "this may not apply" the reply carried.',
+    '- "claim": what the reply established, in at most two sentences.',
+    '- "rests on": what the claim rests on, at most three short items.',
+    '- "does not cover": what the answer does not establish, at most three short items.',
+    '- "uncertainty": every doubt, contradiction, scope limit or "this may not apply" the reply carried, at most three short items.',
     "",
     'If the reply carried none of those, write "none stated" in "uncertainty".',
     "If the reply carried any of them, the card MUST carry them: a card that drops a caveat is not usable.",
     "",
-    "If the reply carries nothing worth keeping, write NO block at all and answer in one sentence saying so. That is a legal answer.",
+    "DECLINE IS THE DEFAULT. If the reply establishes nothing this map can use — it restates the question, repeats a card already on the map, or adds a claim nobody is working on — write NO block and answer in ONE sentence saying why (for example: \"nothing here the map can use: it repeats the question and adds no claim.\"). A decline is a legal answer.",
     "Write one block at most. A second block, a missing key or a block that is not JSON makes no card.",
   ].join("\n");
 }
@@ -241,6 +316,60 @@ function uncertaintyWord(uncertainty: string): string {
 export function cardDroppedCaveat(card: CuratorCard, reply: string): boolean {
   if (!replyCarriedCaveat(reply)) return false;
   return NO_UNCERTAINTY.includes(uncertaintyWord(card.uncertainty));
+}
+
+/**
+ * How many sentences a field states, counted the plain way: a run of text
+ * ended by . ! or ?. A "sentence" is the reader's unit, so an abbreviation
+ * with a full stop is miscounted by exactly one — the caps are loose enough
+ * that the over-count is safe, and the alternative (a list of abbreviations)
+ * is a grammar this module has no business owning.
+ */
+function sentenceCount(text: string): number {
+  const parts = text.split(/(?<=[.!?])\s+/);
+  return parts.filter((part) => part.trim() !== "").length;
+}
+
+/**
+ * How many ITEMS a field states, counted the plain way the prompt teaches: one
+ * per line, per semicolon, or per bullet. A single prose sentence is one item,
+ * which is what "three short items" is meant to allow.
+ */
+function itemCount(text: string): number {
+  const parts = text.split(/\n|;|\u2022/);
+  return parts.filter((part) => part.trim() !== "").length;
+}
+
+/**
+ * IS THIS CARD OVER ITS LENGTH LIMITS? (story 17.14, PROVISIONAL numbers). The
+ * prompt states the caps; this is where they bind, and an over-cap card is
+ * MALFORMED — one sentence and no card — because "brief" is the artifact's
+ * rule, not a preference the model may decline (ADR-0037's amendment: "Brevity
+ * is a rule, not a preference... a card that restates the reply at length has
+ * failed, even if every field is filled").
+ *
+ * The title is one line by construction of the card; a title carrying a line
+ * break is over the cap too, since a name is a phrase on the map, not prose.
+ */
+export function cardOverLength(card: CuratorCard): boolean {
+  if (card.title.length > CURATOR_CAP_TITLE_CHARS || /\r?\n/.test(card.title)) {
+    return true;
+  }
+  if (
+    sentenceCount(card.claim) > CURATOR_CAP_CLAIM_SENTENCES ||
+    card.claim.length > CURATOR_CAP_CLAIM_CHARS
+  ) {
+    return true;
+  }
+  for (const field of [card.restsOn, card.doesNotCover, card.uncertainty]) {
+    if (
+      itemCount(field) > CURATOR_CAP_FIELD_ITEMS ||
+      field.length > CURATOR_CAP_FIELD_CHARS
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -328,6 +457,12 @@ export function readCuratorAnswer(answer: string, reply: string): CuratorRead {
   const card = cardOf(value as Record<string, unknown>);
   if (card === null) {
     return { kind: "invalid", sentence: CURATOR_MALFORMED_SENTENCE };
+  }
+  // THE LENGTH RULE (story 17.14), enforced before the caveat rule because a
+  // long card fails on its own terms: the answer was the right shape and still
+  // too verbose, and the sentence says that rather than blaming the syntax.
+  if (cardOverLength(card)) {
+    return { kind: "invalid", sentence: CURATOR_OVERLONG_SENTENCE };
   }
   // THE CAVEAT RULE, enforced before the card can become an artifact. It reads
   // the REPLY, never the curator's own answer: the question is what the reply

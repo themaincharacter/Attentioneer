@@ -105,6 +105,11 @@ const TAKEN = "2026-11-18T12:00:00.000Z";
 const QUESTION = "When does the tide turn, and will it hold?";
 const REPLY =
   "The tide turns about six. The harbor master says the gate may not open then, so the six o'clock answer might not apply on a spring tide.\n\nI am not sure about the second gate.";
+/** STORY 17.14's map digest: labels only, carried as a string. */
+const DIGEST = [
+  '- "tide table" — reference — a file, tide.md (wired into this ask)',
+  '- "harbor notice" — reference — a page at harbor.example (wired into this ask)',
+].join("\n");
 
 const CARD: CuratorCard = {
   title: "The tide turns at six",
@@ -158,13 +163,20 @@ describe("the curator's prompt carries the reply and none of the material", () =
       expect(askPacket.text).toContain(card.reading!);
     }
 
-    const curator = buildCuratorMessages({ question: QUESTION, reply: REPLY });
+    const curator = buildCuratorMessages({
+      question: QUESTION,
+      reply: REPLY,
+      digest: DIGEST,
+    });
     expect(curator).toHaveLength(1);
     const text = curator[0].content;
     expect(text).toContain(REPLY);
     expect(text).toContain(QUESTION);
     for (const key of CURATOR_SCHEMA_KEYS) expect(text).toContain(key);
     expect(text).toContain(CURATOR_FENCE);
+    // STORY 17.14: the digest rides, and it is labels only.
+    expect(text).toContain("## the map digest");
+    expect(text).toContain(DIGEST);
     // NOT the wired readings, notes or card names as material blocks.
     for (const card of wired) {
       expect(text).not.toContain(card.reading!);
@@ -176,23 +188,28 @@ describe("the curator's prompt carries the reply and none of the material", () =
     expect(text).not.toContain("READ: ");
   });
 
-  test("the module's inputs are only the question and the reply", () => {
+  test("the module's inputs are the question, the reply and the digest — no records", () => {
     const cur = source("turn/curator.ts");
-    // No packet, material or context import can reach this prompt.
+    // No packet, material or record import can reach this prompt: the digest
+    // arrives as a string of the map's own labels (STORY 17.14), never as a
+    // reading, a note or an ask context.
     expect(cur).not.toContain('from "./packet"');
+    expect(cur).not.toContain('from "./context"');
     expect(cur).not.toContain("AskPacketCard");
     expect(cur).not.toContain("AskPacketReach");
-    expect(cur).not.toContain("context");
-    // The one input type has exactly two fields.
+    expect(cur).not.toContain("map/readings");
+    expect(cur).not.toContain("readingText");
+    // The one input type has exactly three fields.
     const input = cur.slice(
       cur.indexOf("export interface CuratorInput"),
       cur.indexOf("}", cur.indexOf("export interface CuratorInput")),
     );
-    expect(input.match(/question:|reply:/g)).toHaveLength(2);
-    // The hook builds it from exactly those two values.
+    expect(input.match(/question:|reply:|digest:/g)).toHaveLength(3);
+    // The hook composes the digest from the loaded view, then hands it over.
     expect(source("canvas/useGround.ts")).toContain(
-      "buildCuratorMessages({ question, reply })",
+      "buildCuratorMessages({ question, reply, digest })",
     );
+    expect(source("canvas/useGround.ts")).toContain("mapDigest({");
   });
 });
 
