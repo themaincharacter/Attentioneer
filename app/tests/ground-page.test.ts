@@ -38,6 +38,7 @@ import {
   isWebUrl,
   pageHost,
   pageReading,
+  loadReadingTexts,
   parseReadingLine,
   resolveReadingState,
   serializeReadingLine,
@@ -371,13 +372,15 @@ describe("the url reading and its media record", () => {
     ).toBe("current");
   });
 
-  test("the card's kind is the title; the footer is the HOST only", () => {
+  test("the card's kind is \"a web page — the title\"; the footer is the HOST only", () => {
     const reading = pageReading("rivers", "https://example.com/a/b?q=1", "t");
+    // STORY 16.26: the card no longer carries a transcript, so its own line
+    // says what it is and names the copied title.
     expect(readingKind(reading, new Map(), "Rain & Rivers")).toBe(
-      "Rain & Rivers",
+      "a web page — Rain & Rivers",
     );
     expect(readingKind(reading, new Map(), null)).toBe(
-      "the page kept from example.com",
+      "a web page at example.com",
     );
     expect(readingProvenance(reading, new Map())).toBe("example.com");
     expect(readingProvenance(reading, new Map())).not.toContain("/a/b");
@@ -634,7 +637,7 @@ describe("the window seam asks once and treats a failed thumb as no picture", ()
 });
 
 describe("a page card is copied beside the map and reopens OFFLINE", () => {
-  test("text, reading line, local thumb, media line, ground line — and no fetch at reopen", async () => {
+  test("reading line, local thumb, media line, ground line — NO stored text — and no fetch at reopen", async () => {
     const workspace = freshWorkspace();
     try {
       const ground = await loadGround(workspace, groundIo);
@@ -665,7 +668,11 @@ describe("a page card is copied beside the map and reopens OFFLINE", () => {
       expect(written.entry.title).toBe("Rain & Rivers");
       expect(written.entry.thumb).toBe("media/rivers.svg");
       expect(existsSync(join(workspace, "map", "media", "rivers.svg"))).toBe(true);
-      expect(existsSync(join(workspace, "map", "readings", "rivers.md"))).toBe(true);
+      // STORY 16.26 — NO TRANSCRIPT IS KEPT for a new page card: the words the
+      // reducer scraped are not the page, and the page is read again when it is
+      // asked. So no readings file exists and the card's text is empty.
+      expect(existsSync(join(workspace, "map", "readings", "rivers.md"))).toBe(false);
+      expect(written.text).toBe("");
 
       // OFFLINE REOPEN: a fresh READ, no server and no fetch anywhere.
       const reopened = {
@@ -680,9 +687,15 @@ describe("a page card is copied beside the map and reopens OFFLINE", () => {
       const thumbs = await loadThumbSrcs(workspace, reopened.media.media, mediaIo);
       expect(thumbs.rivers.startsWith("data:image/svg+xml")).toBe(true);
       expect(thumbs.rivers).toContain("iVBORw0KGgo");
-      expect(readFileSync(join(workspace, "map", "readings", "rivers.md"), "utf8")).toBe(
-        "Every river is a slow argument.",
+      // The card's face keeps title, host and picture; the text slot is empty
+      // and the card says nothing about it (16.26's "whole as a thumbnail").
+      expect(reopened.readings.readings[0]?.extract).toBe("page");
+      const reopenedTexts = await loadReadingTexts(
+        workspace,
+        reopened.readings.readings.map((read) => read.on),
+        readingIo,
       );
+      expect(reopenedTexts).toEqual({});
       // The full URL stays a record; the card face never shows it.
       const line = readFileSync(join(workspace, "map", "readings.txt"), "utf8");
       expect(line).toContain(PAGE_URL);

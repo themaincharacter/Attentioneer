@@ -141,7 +141,6 @@ import {
   REFRESH_UNCHANGED,
   loadReadings,
   loadReadingTexts,
-  cappedReadingText,
   isFileReading,
   pageReading,
   readingAbsolutePath,
@@ -156,7 +155,6 @@ import {
   saveReadings,
   selectionReading,
   storeDistilledText,
-  storeReadingText,
   storeSelectionText,
   takeReading,
   videoReading,
@@ -199,6 +197,7 @@ import {
 import { pullReading, type PulledText } from "../map/pull";
 import {
   createPageFetcher,
+  createPageTextFetcher,
   createVideoFetcher,
   type PageFetchAnswer,
   type PageImage,
@@ -209,6 +208,7 @@ import { isPointerForm, pointerKey } from "../map/pointers";
 import type { Prism } from "../map/prisms";
 import { appendAskCardMove, appendSessionRun } from "../contacts/prismLog";
 import { askOutcomeOf, type AskEnding } from "../contacts/ask";
+import { readAskPages } from "../turn/pageAsk";
 import {
   askCardsContext,
   fetchAskBlock,
@@ -3189,7 +3189,6 @@ export async function bindSessionCard(
 
 /** The bridges a page card's creation needs; a test passes its own fakes. */
 export interface PageIo {
-  storeReadingText: typeof storeReadingText;
   saveReadings: typeof saveReadings;
   saveMedia: typeof saveMedia;
   storeThumb: typeof storeThumb;
@@ -3198,7 +3197,6 @@ export interface PageIo {
 
 /** The real bridges, bound once so the hook's path is the tested one. */
 const PAGE_IO: PageIo = {
-  storeReadingText,
   saveReadings,
   saveMedia,
   storeThumb,
@@ -3240,15 +3238,25 @@ export function pageRefusal(name: string, url: string): string | null {
 }
 
 /**
- * STORY 16.14 — CREATE A PAGE CARD, in the house order:
+ * STORY 16.14 — CREATE A PAGE CARD; STORY 16.26 TAKES THE TEXT OUT OF IT.
  *
- *   1. the extracted text FIRST (`map/readings/<new-slug>.md`, already capped);
- *   2. the readings line NEXT (`form: url`, `extract: page`, the URL verbatim);
- *   3. the thumbnail's local file (when the page had an image);
- *   4. the media line (`map/media.jsonl`) — the record naming the title and the
- *      LOCAL thumb path, never a remote URL;
- *   5. the ground line LAST, so a crash can leave orphan pieces but never a
- *      card whose reading is absent.
+ * The user's ruling ("it tries to do some weird text parsing … just need a
+ * simple page thumbnail or something in the card; the llm can open the page
+ * and crawl it") makes the card a THUMBNAIL, not a transcript. So a NEW page
+ * card keeps:
+ *
+ *   1. the readings line (`form: url`, `extract: page`, the URL verbatim);
+ *   2. the thumbnail's local file (when the page had an image);
+ *   3. the media line (`map/media.jsonl`) — the title and the LOCAL thumb path,
+ *      never a remote URL;
+ *   4. the ground line LAST, so a crash can leave orphan pieces but never a
+ *      card whose record is absent.
+ *
+ * NO TEXT IS WRITTEN. The fetched words were only ever what a reducer scraped
+ * from the page's chrome; the page itself is read again by the sidecar when it
+ * is asked (16.26), under 16.14's guards, and the read rides the packet. An
+ * EXISTING card keeps the text it already has: this function only ever makes a
+ * new card, so nothing on disk is rewritten or deleted.
  *
  * NOTHING IS FETCHED HERE: the sidecar read the page first, and a refusal
  * returns before this function is called — so a failed fetch writes nothing at
@@ -3282,8 +3290,12 @@ export async function writePageCard(
     options.taken,
   );
   const reading = pageReading(addition.reference.on, url, taken);
-  const text = cappedReadingText(page.text);
-  await io.storeReadingText(workspacePath, reading.on, text);
+  // STORY 16.26 — NO TEXT IS KEPT. `page.text` was read by the sidecar only to
+  // prove the page answers at all (an empty extraction is still a refusal);
+  // the card's face is its thumbnail and host, and the words come fresh at ask
+  // time. The empty string is this card's honest "no stored reading", exactly
+  // what a reopen finds.
+  const text = "";
   const nextReadings = withReading(readings, reading);
   await io.saveReadings(workspacePath, nextReadings, malformedReadings);
 
@@ -4368,6 +4380,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         result: askSendResult(answered.result, {
           messages: answered.messages,
           read: answered.read,
+          // STORY 16.26 — the declaration of the packet that left, so a page's
+          // block can be sized beside its own bytes: the block exists only
+          // once the sidecar answered, so this is where its size is true.
+          declaration: packet.declaration,
         }),
         ending: askEndingOf(answered.result),
         left: true,
@@ -5505,7 +5521,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * line, wire).
    */
   const askTurn = useCallback(
-    (
+    async (
       slug: string,
       question: string,
       onPart?: (text: string) => void,
@@ -5576,8 +5592,22 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       // by `assembleAskCardPacket`, so it can never bite twice or per part, and
       // a missing parent simply composes the fork's own turns — the card still
       // sends.
+      // STORY 16.26 — THE PAGES ARE OPENED NOW, ONCE EACH, AND THEIR READS
+      // RIDE. A page card keeps no transcript (the user's ruling: a thumbnail
+      // in the card, the page opened when it is asked), so this is the ONLY
+      // moment a page is read: after the press, before the packet is composed,
+      // for the wired cards that are pages and no others. A failed read is one
+      // sentence in its block and the ask still sends. Nothing here runs at
+      // render, and a context with no page never starts the sidecar for one.
+      //
+      // ONLY THE CARDS THE BOUND KEEPS ARE OPENED: a page whose block will not
+      // ride is a read the model never sees, so the selection happens FIRST and
+      // the pages are read for exactly the prefix that is about to leave.
+      const kept = selectAskContextCards(wired.cards, ASK_CONTEXT_BOUND).cards;
+      const opened = await readAskPages(kept, createPageTextFetcher());
+      const contextCards = [...opened, ...wired.cards.slice(opened.length)];
       const packet = assembleAskCardPacket(
-        wired.cards,
+        contextCards,
         askThreadOf(ask, asksRef.current, askTurnsRef.current).turns,
         question,
         ASK_THREAD_BOUND,
@@ -5594,160 +5624,158 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         ok: false,
         message: "nothing was written.",
       };
-      return sendAskQuestion(packet, context, question, onPart)
-        .then((sent) =>
-          queueRef.current.push(async () => {
-            // ONE PRISM PER SENDING TURN (story 17.4), then the words: the
-            // Move lands first because the answer line names its id. A turn
-            // that never left the machine — no provider, no port — is not a
-            // Move and records nothing.
-            const recorded = await writeAskTurn(
+      try {
+        const sent = await sendAskQuestion(packet, context, question, onPart);
+        await queueRef.current.push(async () => {
+          // ONE PRISM PER SENDING TURN (story 17.4), then the words: the
+          // Move lands first because the answer line names its id. A turn
+          // that never left the machine — no provider, no port — is not a
+          // Move and records nothing.
+          const recorded = await writeAskTurn(
+            workspacePath,
+            slug,
+            inclusion,
+            question,
+            sent,
+          );
+          askTurnsRef.current = {
+            ...askTurnsRef.current,
+            [slug]: recorded.turns,
+          };
+          // STORY 17.11 — THE ARTIFACT, and only for a COMPLETED turn
+          // (ADR-0037's first story: the node and the wire before the
+          // curator). The rule asks ONE question — did this turn answer with
+          // text? — and otherwise writes nothing but the one line. The
+          // reply's bytes are the answer line's, copied, never moved. Placed
+          // beside the ask card it came from and wired back to it, in the
+          // house order (text, readings line, ground line, then the wire).
+          const noCard = askTurnCardNote(sent);
+          // STORY 17.12 — WHEN THE CURATOR MADE A CARD, ITS FIELDS ARE THE
+          // CARD: the title names the node, the distilled text is the
+          // reading, and the two model ids are the provenance. A turn whose
+          // caller predates the curator still writes 17.11's rule copy, so
+          // the writer has exactly one call site for both.
+          const curated =
+            sent.curator?.read?.kind === "card" ? sent.curator.read : null;
+          const curatedAuthors =
+            curated === null || sent.curator === undefined
+              ? undefined
+              : { manager: sent.curator.manager, task: sent.curator.task };
+          let cardRefusal: string | null = null;
+          if (noCard === null) {
+            const askNow =
+              asksRef.current.find((entry) => entry.on === slug) ?? ask;
+            const cardName =
+              curated?.card.title ||
+              askNameFromQuestion(question) ||
+              askNow.name;
+            const at = besidePlacement(askNow.x, askNow.y);
+            const written = await writeDistilledCard(
               workspacePath,
+              referencesRef.current,
+              readingsRef.current,
+              linksRef.current,
+              malformedGroundRef.current,
+              malformedReadingsRef.current,
+              malformedLinksRef.current,
               slug,
-              inclusion,
-              question,
-              sent,
+              cardName,
+              at.x,
+              at.y,
+              curated?.text ??
+                (sent.result.kind === "answer" ? sent.result.text : ""),
+              new Date().toISOString(),
+              undefined,
+              {
+                taken: sharedSlugs(
+                  referencesRef.current,
+                  asksRef.current,
+                  sessionsRef.current,
+                ),
+              },
+              curatedAuthors,
             );
-            askTurnsRef.current = {
-              ...askTurnsRef.current,
-              [slug]: recorded.turns,
-            };
-            // STORY 17.11 — THE ARTIFACT, and only for a COMPLETED turn
-            // (ADR-0037's first story: the node and the wire before the
-            // curator). The rule asks ONE question — did this turn answer with
-            // text? — and otherwise writes nothing but the one line. The
-            // reply's bytes are the answer line's, copied, never moved. Placed
-            // beside the ask card it came from and wired back to it, in the
-            // house order (text, readings line, ground line, then the wire).
-            const noCard = askTurnCardNote(sent);
-            // STORY 17.12 — WHEN THE CURATOR MADE A CARD, ITS FIELDS ARE THE
-            // CARD: the title names the node, the distilled text is the
-            // reading, and the two model ids are the provenance. A turn whose
-            // caller predates the curator still writes 17.11's rule copy, so
-            // the writer has exactly one call site for both.
-            const curated =
-              sent.curator?.read?.kind === "card" ? sent.curator.read : null;
-            const curatedAuthors =
-              curated === null || sent.curator === undefined
-                ? undefined
-                : { manager: sent.curator.manager, task: sent.curator.task };
-            let cardRefusal: string | null = null;
-            if (noCard === null) {
-              const askNow =
-                asksRef.current.find((entry) => entry.on === slug) ?? ask;
-              const cardName =
-                curated?.card.title ||
-                askNameFromQuestion(question) ||
-                askNow.name;
-              const at = besidePlacement(askNow.x, askNow.y);
-              const written = await writeDistilledCard(
-                workspacePath,
-                referencesRef.current,
-                readingsRef.current,
-                linksRef.current,
-                malformedGroundRef.current,
-                malformedReadingsRef.current,
-                malformedLinksRef.current,
-                slug,
-                cardName,
-                at.x,
-                at.y,
-                curated?.text ??
-                  (sent.result.kind === "answer" ? sent.result.text : ""),
-                new Date().toISOString(),
-                undefined,
-                {
-                  taken: sharedSlugs(
-                    referencesRef.current,
-                    asksRef.current,
-                    sessionsRef.current,
-                  ),
-                },
-                curatedAuthors,
-              );
-              if (written.kind === "refused") {
-                cardRefusal = written.message;
-              } else {
-                referencesRef.current = written.records.references;
-                readingsRef.current = written.records.readings;
-                linksRef.current = written.links;
-                textsRef.current = {
-                  ...textsRef.current,
-                  [written.records.reading.on]: written.text,
-                };
-                statesRef.current = {
-                  ...statesRef.current,
-                  [written.records.reading.on]: "current" as ReadingState,
-                };
-                // The copy is an ordinary card: its appearance is an authored
-                // move, so the derived index follows like any other add. The
-                // wire itself is structure, not a history event.
-                const made = written.records.reading.on;
-                queueHistory(() => [
-                  cardAddEvent(
-                    Date.now(),
-                    made,
-                    written.reference.x,
-                    written.reference.y,
-                  ),
-                ]);
-                queueMirror();
-              }
+            if (written.kind === "refused") {
+              cardRefusal = written.message;
+            } else {
+              referencesRef.current = written.records.references;
+              readingsRef.current = written.records.readings;
+              linksRef.current = written.links;
+              textsRef.current = {
+                ...textsRef.current,
+                [written.records.reading.on]: written.text,
+              };
+              statesRef.current = {
+                ...statesRef.current,
+                [written.records.reading.on]: "current" as ReadingState,
+              };
+              // The copy is an ordinary card: its appearance is an authored
+              // move, so the derived index follows like any other add. The
+              // wire itself is structure, not a history event.
+              const made = written.records.reading.on;
+              queueHistory(() => [
+                cardAddEvent(
+                  Date.now(),
+                  made,
+                  written.reference.x,
+                  written.reference.y,
+                ),
+              ]);
+              queueMirror();
             }
-            // STORY 17.8 — THE TURN'S LINE, in the stated order: the PRISM and
-            // the conversation line are already written by `writeAskTurn` (the
-            // Move first, so the answer line can name its id), and the history
-            // line follows them in this same queue. Its ending is the PRISM's
-            // own outcome through ONE mapping (askTurnHistoryEvent), so the two
-            // records can never disagree; a turn that never left the app made
-            // no Move and gets no line. The mirror is queued only when a card
-            // was made above (a turn alone adds nothing MAP.md describes).
-            queueHistory(() => {
-              const event = askTurnHistoryEvent(
-                Date.now(),
-                slug,
-                sent.ending,
-                recorded.prism,
-              );
-              return event === null ? [] : [event];
-            });
-            setState(snapshot());
-            // STORY 17.7b: the turn's hit facts ride out with the words, on
-            // either ending — the card says what happened beside the turn.
-            const noCardLine = noCard === null ? {} : { noCard };
-            outcome =
-              cardRefusal !== null
+          }
+          // STORY 17.8 — THE TURN'S LINE, in the stated order: the PRISM and
+          // the conversation line are already written by `writeAskTurn` (the
+          // Move first, so the answer line can name its id), and the history
+          // line follows them in this same queue. Its ending is the PRISM's
+          // own outcome through ONE mapping (askTurnHistoryEvent), so the two
+          // records can never disagree; a turn that never left the app made
+          // no Move and gets no line. The mirror is queued only when a card
+          // was made above (a turn alone adds nothing MAP.md describes).
+          queueHistory(() => {
+            const event = askTurnHistoryEvent(
+              Date.now(),
+              slug,
+              sent.ending,
+              recorded.prism,
+            );
+            return event === null ? [] : [event];
+          });
+          setState(snapshot());
+          // STORY 17.7b: the turn's hit facts ride out with the words, on
+          // either ending — the card says what happened beside the turn.
+          const noCardLine = noCard === null ? {} : { noCard };
+          outcome =
+            cardRefusal !== null
+              ? {
+                  ok: false,
+                  message: cardRefusal,
+                  readback: sent.result.readback,
+                  reached: sent.reached,
+                  missed: sent.missed,
+                  ...noCardLine,
+                }
+              : recorded.sentence === null
                 ? {
-                    ok: false,
-                    message: cardRefusal,
+                    ok: true,
                     readback: sent.result.readback,
                     reached: sent.reached,
                     missed: sent.missed,
                     ...noCardLine,
                   }
-                : recorded.sentence === null
-                  ? {
-                      ok: true,
-                      readback: sent.result.readback,
-                      reached: sent.reached,
-                      missed: sent.missed,
-                      ...noCardLine,
-                    }
-                  : {
-                      ok: false,
-                      message: recorded.sentence,
-                      readback: sent.result.readback,
-                      reached: sent.reached,
-                      missed: sent.missed,
-                      ...noCardLine,
-                    };
-          }),
-        )
-        .then(() => outcome)
-        .catch(() => ({
-          ok: false,
-          message: "cannot write the map folder.",
-        }));
+                : {
+                    ok: false,
+                    message: recorded.sentence,
+                    readback: sent.result.readback,
+                    reached: sent.reached,
+                    missed: sent.missed,
+                    ...noCardLine,
+                  };
+        });
+      } catch {
+        return { ok: false, message: "cannot write the map folder." };
+      }
+      return outcome;
     },
     [workspacePath, sendAskQuestion],
   );

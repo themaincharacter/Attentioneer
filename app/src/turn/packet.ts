@@ -56,6 +56,13 @@ import type { TurnMessage } from "./protocol";
  * view did not offer. The text says the bound in words ("earlier turns in this
  * conversation are not included"); the sizes live only in the declaration.
  *
+ * A PAGE IS READ AT ASK TIME, NOT AT RENDER (story 16.26). The card keeps a
+ * title and a thumbnail, never a transcript; when the question is assembled the
+ * sidecar opens the page once and its read rides as its own DECLARED block,
+ * beside the card's. The block is whole (the sidecar's cap is the only bound)
+ * and it is never a READ name: the model already has all of it. A read that
+ * failed is one citation sentence in the block, and the ask still sends.
+ *
  * PURE BY CONSTRUCTION: no reader, no writer, no clock and no randomness of
  * its own. The app reads the previews (turn/context.ts) and the pure assembler
  * below only arranges what it is handed — the thread included, which map/asks.ts
@@ -152,6 +159,14 @@ export function askCardInstruction(options: {
    * which keeps every earlier packet's bytes identical.
    */
   chosenRides?: boolean;
+  /**
+   * STORY 16.26 — WHETHER A PAGE'S READ RODE. A page card keeps no transcript;
+   * its page is opened when the question is sent and rides as its own block.
+   * The instruction says which block that is, so the model reads the live page
+   * as the card's material instead of wondering what the extra block is.
+   * Absent means no page rode, which keeps every earlier packet identical.
+   */
+  pageRides?: boolean;
 }): string {
   const lines = [...INSTRUCTION_OPEN];
   // THE CORRECTION (story 17.9): the cards WIRED INTO this question are what it
@@ -191,6 +206,14 @@ export function askCardInstruction(options: {
         ": what has already been said in this conversation, and context, not material. The cards are the material.",
     );
   }
+  // STORY 16.26 — the page's block belongs to the card it follows, and it is
+  // the LIVE page (opened when this question was sent), not a stored copy.
+  if (options.pageRides === true) {
+    lines.push("");
+    lines.push(
+      "One block is the page a card above points at, opened when you asked: it is that card's material as the page answers now, not a stored copy of it.",
+    );
+  }
   lines.push(...INSTRUCTION_READ);
   lines.push("");
   lines.push(
@@ -203,6 +226,25 @@ export function askCardInstruction(options: {
 
 /** The heading of the question block (the person's own words, verbatim). */
 export const ASK_PACKET_QUESTION_HEADING = "## the question";
+
+/**
+ * STORY 16.26 — A PAGE BLOCK'S NAME: the address, verbatim. The person's card
+ * shows the host only, but the block is where a read goes and a read is named
+ * by what it reads; the address is already the record's, so nothing new is
+ * said. PURE, and PROVISIONAL like the rest of this file's wording.
+ */
+export function askPageName(url: string): string {
+  return "the page at " + url;
+}
+
+/**
+ * STORY 16.26 — WHAT A BLOCK SAYS WHEN THE PAGE COULD NOT BE READ (PROVISIONAL
+ * wording). One sentence, prefixed by the sidecar's own refusal sentence: the
+ * ask still sends, and the model is told the page is missing rather than left
+ * to guess what a silent hole means.
+ */
+export const ASK_PACKET_PAGE_UNREAD =
+  "the page could not be read when this question was sent: ";
 
 /** One card's bounded preview, as the app read it (never the whole file). */
 export interface AskPacketCard {
@@ -248,7 +290,32 @@ export interface AskPacketCard {
    * PRISM's inclusion set.
    */
   on?: string;
+  /**
+   * STORY 16.26 — THE ADDRESS THIS CARD IS A PAGE AT, when it is one. It is
+   * NEVER rendered and never sent: the card's face shows the HOST (the person
+   * asked for a thumbnail, not a link), and the address is what the ASK's one
+   * read asks the sidecar for. Absent on every card that is not a page, and on
+   * a video (a video has a look, not a page to crawl).
+   */
+  pageUrl?: string;
+  /**
+   * STORY 16.26 — THE PAGE AS IT ANSWERED WHEN THIS QUESTION WAS SENT, or the
+   * one sentence saying it could not be read. The app attaches this at send
+   * time (turn/pageAsk.ts), never at render: the card keeps no page text of
+   * its own, and a page visited once is read again for the next question.
+   */
+  page?: AskPacketPage;
 }
+
+/**
+ * STORY 16.26 — A PAGE'S READ AT ASK TIME (PROVISIONAL shape). One web page is
+ * opened by the sidecar when the question leaves, under 16.14's guards; what
+ * rides is the read, whole, or one citation sentence. There is no third state
+ * and no half page: a failed read is said, never hidden.
+ */
+export type AskPacketPage =
+  | { url: string; text: string }
+  | { url: string; failed: string };
 
 /** One included reach: its citation and its target's bounded preview. */
 export interface AskPacketReach {
@@ -296,6 +363,7 @@ export interface AskPacketInput {
 export type AskPacketBlockKind =
   | "question"
   | "card"
+  | "page"
   | "thread"
   | "reach"
   | "instruction"
@@ -349,6 +417,14 @@ export interface AskPacketReadback {
   messages: readonly TurnMessage[];
   /** The block the one follow-up fetched, or null when none happened. */
   read: string | null;
+  /**
+   * STORY 16.26 — THE DECLARATION OF THE PACKET THAT ACTUALLY LEFT. A page's
+   * block only exists once the sidecar answered, so its size can only be
+   * declared in the readback: the surface says every block's exact bytes
+   * beside the bytes themselves. Absent when a caller has no declaration to
+   * hand over, which keeps every earlier readback identical.
+   */
+  declaration?: AskPacketDeclaration;
 }
 
 /** The name a reach's block carries: its citation, exactly as the person sees it. */
@@ -412,6 +488,35 @@ function cardText(card: AskPacketCard): string {
   return lines.join("\n").replace(/\n+$/, "");
 }
 
+/**
+ * STORY 16.26 — A PAGE'S BLOCK: its address as the heading, then what the page
+ * answered at the moment this question was sent — the read WHOLESALE (the
+ * sidecar's own text cap is the only bound), never a crop. When the read
+ * failed the block is the one citation sentence, so the model knows what it
+ * does not have and the ask still sends.
+ */
+function pageText(page: AskPacketPage): string {
+  const lines: string[] = ["## " + askPageName(page.url), ""];
+  if ("failed" in page) {
+    lines.push(ASK_PACKET_PAGE_UNREAD + page.failed);
+    return lines.join("\n");
+  }
+  lines.push("the page as it answered when this question was sent:");
+  lines.push("");
+  lines.push(page.text);
+  return lines.join("\n").replace(/\n+$/, "");
+}
+
+/** The block a card's page rides as, or null when this card is not a page. */
+function pageBlockOf(card: AskPacketCard): AskPacketBlock | null {
+  if (card.page === undefined) return null;
+  return {
+    kind: "page",
+    name: askPageName(card.page.url),
+    text: pageText(card.page),
+  };
+}
+
 /** One reach's block bytes: its citation heading and its bounded preview. */
 function reachText(reach: AskPacketReach): string {
   const lines: string[] = [
@@ -468,6 +573,11 @@ function blocksOf(input: AskPacketInput): AskPacketBlock[] {
       text: cardText(input.card),
     },
   ];
+  // STORY 16.26 — a page's read follows its card's block. A caller that
+  // attached no page (the card route, which does not open pages) adds nothing,
+  // so every earlier packet's bytes stay identical.
+  const page = pageBlockOf(input.card);
+  if (page !== null) blocks.push(page);
   for (const reach of input.reaches) {
     blocks.push({
       kind: "reach",
@@ -581,6 +691,10 @@ export interface AskContextSelection {
  * allow. A card that does not fit is never cut and never followed by a later
  * one, so the context is always a prefix of the wires. `omitted` says the bound
  * bit, never by how much.
+ *
+ * STORY 16.26 — A PAGE'S READ IS NOT COUNTED HERE. The card is one card; the
+ * page it points at is what that card IS, and its own bound is the sidecar's
+ * stated caps rather than this count. The declaration still sizes the block.
  */
 export function selectAskContextCards(
   cards: readonly AskPacketCard[],
@@ -640,6 +754,11 @@ export function assembleAskCardPacket(
       text += "\n\n" + ASK_PACKET_CONTEXT_OMITTED;
     }
     blocks.push({ kind: "card", name: card.name, text });
+    // STORY 16.26 — the page's read rides beside its card, declared like any
+    // other block, so a wired page card is CONTEXT the model can read in full
+    // without a retrieval (the text is already whole) and never a guess.
+    const page = pageBlockOf(card);
+    if (page !== null) blocks.push(page);
   });
   // A conversation that has said nothing yet has no thread block to declare:
   // the first question carries the cards and the bound, and says nothing about
@@ -661,6 +780,12 @@ export function assembleAskCardPacket(
       // STORY 16.19: the selection's block rides whole (one line), so it says
       // what it is and is never a READ target (there is no fuller text).
       chosenRides: context.cards.some((card) => card.chosen !== undefined),
+      // STORY 16.26 — a page's READ is its card's material, said plainly when
+      // one actually rode. A page that could not be read says so in its own
+      // block, and this sentence never claims material that is not there.
+      pageRides: context.cards.some(
+        (card) => card.page !== undefined && "text" in card.page,
+      ),
     }),
   });
   blocks.push({ kind: "bound", name: "the bound", text: boundText() });

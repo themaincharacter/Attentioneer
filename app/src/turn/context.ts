@@ -7,6 +7,7 @@ import {
   READING_MAX_LINES,
   READING_PREVIEW_LINES,
   previewText,
+  readingExtract,
   readingStateWord,
   type Reading,
   type ReadingState,
@@ -186,6 +187,17 @@ export function askCardOf(card: AskCardFacts): AskPacketCard {
   // one line by construction, so there is nothing to crop.
   if (card.chosen !== undefined && card.chosen !== null) {
     built.chosen = card.chosen;
+  }
+  // STORY 16.26 — A PAGE CARD CARRIES ITS ADDRESS so the ask can OPEN it at
+  // send time. The address is never rendered and never sent: what rides is the
+  // read, not a link. A video is not a page (it has a look, not words), so it
+  // carries no address here and the ask opens nothing for it.
+  if (
+    card.reading !== null &&
+    card.reading.form === "url" &&
+    readingExtract(card.reading) === "page"
+  ) {
+    built.pageUrl = card.reading.from;
   }
   return built;
 }

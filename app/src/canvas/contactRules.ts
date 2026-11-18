@@ -193,6 +193,10 @@ function packetBlockWords(block: AskPacketDeclarationLine): string {
     case "thread":
       // The conversation's block: named plainly, sized like every other block.
       return "the conversation (" + size + ")";
+    case "page":
+      // STORY 16.26 — the page's read, sized like any other block: the numbers
+      // here are the declaration's whole point.
+      return block.name + " (" + size + ")";
     case "reach":
       return block.name + " (" + size + ", a preview)";
     case "instruction":
@@ -200,6 +204,23 @@ function packetBlockWords(block: AskPacketDeclarationLine): string {
     case "bound":
       return "the bound (" + size + ")";
   }
+}
+
+/**
+ * STORY 16.26 — THE PAGE THAT WILL BE OPENED. A page card keeps no transcript,
+ * so the page is read when the question is sent. The declaration says that
+ * BEFORE the press, in one sentence naming the address: the person is told a
+ * read will happen and that the block's exact size appears beside these once
+ * it answers. No size is promised before it exists, and no counter is shown.
+ *
+ * PURE, so bun pins the wording without a window. PROVISIONAL wording.
+ */
+export function askLivePageWords(url: string): string {
+  return (
+    "the page at " +
+    url +
+    " will be read when you send, and its block declared beside these with the bytes that come back."
+  );
 }
 
 /** While the app reads the included previews, nothing can leave yet. */

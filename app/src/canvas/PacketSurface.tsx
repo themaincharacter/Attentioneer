@@ -6,6 +6,7 @@ import {
   ASK_BYTES_LABEL,
   ASK_BYTES_OPEN,
   askCallsWords,
+  askLivePageWords,
   askReadWords,
   packetDeclarationWords,
   type AskCallsFacts,
@@ -30,17 +31,30 @@ import {
  * the model named a block. It shows no counters, no token meters and no sizes
  * anywhere else: this is the only place a size is said.
  *
+ * STORY 16.26 adds ONE pre-send line: a page card keeps no transcript, so the
+ * page is read when the question is sent, and the declaration says that before
+ * the press. Its block's size appears in the readback, beside the exact bytes
+ * that left, because the block does not exist until the page has answered.
+ *
  * PROVISIONAL (ADR-0003's rendering seam): the layout, the verb's wording and
  * the readback's placement beside the send.
  */
 export function PacketSurface({
   declaration = null,
+  livePages = null,
   calls = null,
   messages = null,
   read = null,
 }: {
   /** The packet's blocks and sizes, or null when there is nothing to declare. */
   declaration?: AskPacketDeclaration | null;
+  /**
+   * STORY 16.26 — THE PAGES THE QUESTION WILL OPEN WHEN IT IS SENT. Their
+   * blocks exist only once the sidecar answers, so the PRE-SEND declaration
+   * says the read will happen (naming the address); the sizes appear in the
+   * readback, beside the bytes that actually left. Null says nothing.
+   */
+  livePages?: readonly string[] | null;
   /**
    * STORY 17.13 — THE TWO CALLS a send will make, when the caller knows them:
    * the task model and the manager model (or the same one, or none). Null
@@ -65,6 +79,15 @@ export function PacketSurface({
             askCallsWords(calls).map((line, index) => (
               <div className="ask-calls-line" key={index}>
                 {line}
+              </div>
+            ))}
+          {/* STORY 16.26 — the page the send will open, said before the press.
+              One line per page, and no size claimed: the size is the readback's
+              fact once the page has answered. */}
+          {livePages !== null &&
+            livePages.map((url, index) => (
+              <div className="ask-live-page" key={index}>
+                {askLivePageWords(url)}
               </div>
             ))}
         </div>

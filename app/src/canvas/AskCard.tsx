@@ -11,7 +11,13 @@ import {
   type AskCard as AskCardRecord,
   type AskTurn,
 } from "../map/asks";
-import { assembleAskCardPacket, type AskPacketCard, type AskPacketReadback } from "../turn/packet";
+import {
+  ASK_CONTEXT_BOUND,
+  assembleAskCardPacket,
+  selectAskContextCards,
+  type AskPacketCard,
+  type AskPacketReadback,
+} from "../turn/packet";
 import { ASK_READ_MISSED, type AskCallsFacts } from "./contactRules";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
@@ -635,6 +641,21 @@ export function AskCard({
     question,
     ASK_THREAD_BOUND,
   );
+  // STORY 16.26 — THE PAGES THIS QUESTION WILL OPEN when it is sent. A page
+  // card keeps no transcript, so nothing about the page exists to declare yet:
+  // the surface says the read will happen (and names the address), and the
+  // readback below carries every block's exact size once the packet is real.
+  // Nothing is fetched here, on open, on render or on type.
+  // Only a card the declaration actually carries is named: the context bound
+  // is the packet's own, applied here by the same pure selection, so the line
+  // never promises a read for a card whose block was dropped.
+  const pageUrls = [
+    ...new Set(
+      selectAskContextCards(context, ASK_CONTEXT_BOUND)
+        .cards.map((card) => card.pageUrl)
+        .filter((url): url is string => url !== undefined && url !== ""),
+    ),
+  ];
 
   // ESC CLOSES THE CARD'S EDITOR — never the map. Capture phase, so the key is
   // consumed before the plane's or app's own bubble handlers can act on it. A
@@ -1235,12 +1256,17 @@ export function AskCard({
                 packet !== null && (
                   <PacketSurface
                     declaration={packet.declaration}
+                    livePages={pageUrls}
                     calls={calls}
                     messages={packet.messages}
                   />
                 )
               ) : (
-                <PacketSurface messages={sent.messages} read={sent.read} />
+                <PacketSurface
+                  declaration={sent.declaration ?? null}
+                  messages={sent.messages}
+                  read={sent.read}
+                />
               )}
               <div className="ask-card-actions">
                 <button

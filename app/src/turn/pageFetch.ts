@@ -251,6 +251,56 @@ export async function fetchVideo(
 }
 
 /**
+ * STORY 16.26 — THE ASK'S READ: the page's TEXT only, and only ONE request.
+ * The card's own creation asks once and quietly asks for the picture as a
+ * second request (16.14's thumbnail). An ask needs no picture, and the story's
+ * rule is ONE fetch per ask per card, so this seam sends the `page` request and
+ * nothing else — the thumbnail's second request would be a second fetch for a
+ * card that already has its image beside the map.
+ */
+export type PageTextAnswer =
+  | { kind: "text"; title: string; text: string }
+  | { kind: "refused"; sentence: string };
+
+/**
+ * READ ONE page's text for a packet, through the SAME guards and the SAME one
+ * request/one line seam the card's creation uses. Nothing is written and no
+ * image is asked for: the caller puts the words in a block, and that block is
+ * declared — with its exact size — beside the bytes it sends.
+ */
+export async function fetchPageText(
+  transport: TurnTransport,
+  url: string,
+  timeoutMs: number = PAGE_FETCH_TIMEOUT_MS,
+): Promise<PageTextAnswer> {
+  const id = nextPageFetchId++;
+  const page = await once(transport, id, "page", pageRequestLine(id, url), timeoutMs);
+  if (page.kind === "timeout") {
+    return { kind: "refused", sentence: "that page took too long to answer." };
+  }
+  if (page.kind === "error") {
+    return { kind: "refused", sentence: page.sentence };
+  }
+  if (page.line.kind !== "page") {
+    return { kind: "refused", sentence: "that page could not be read." };
+  }
+  return { kind: "text", title: page.line.title, text: page.line.text };
+}
+
+/** The app's ask-time page read: make sure the child is up, then ask it once. */
+export function createPageTextFetcher(
+  transport: TurnTransport = createSidecarTransport(),
+): (url: string) => Promise<PageTextAnswer> {
+  return async (url) => {
+    const started = await startSidecar();
+    if (started.kind === "refused") {
+      return { kind: "refused", sentence: started.sentence };
+    }
+    return await fetchPageText(transport, url);
+  };
+}
+
+/**
  * The app's fetcher: make sure the child is up, then ask it. A sidecar that
  * will not start is its own sentence — the page was never reached, so the
  * bubble must not blame the address.

@@ -335,13 +335,20 @@ export function readingKind(
   if (readingExtract(reading) === "image") {
     return "the image from " + readingFileName(reading.from);
   }
-  // STORY 16.14: a page says WHAT IT IS with its own copied title; a page whose
-  // media line is missing (or carries no title) still names its host. STORY
-  // 16.15 reuses that for a video — the title is the media line's.
+  // STORY 16.14: a page says WHAT IT IS with its own copied title. STORY 16.15
+  // reuses that for a video — the title is the media line's. STORY 16.26 gives
+  // the PAGE its own grammar: "a web page — <title>", because the card no
+  // longer carries a transcript and this line is how the person sees what the
+  // card is. A page whose media line is missing (or carries no title) names its
+  // host instead, and says nothing it does not have.
   if (reading.form === "url") {
-    if (pageTitle !== null && pageTitle.trim() !== "") return pageTitle;
-    const noun = readingExtract(reading) === "video" ? "video" : "page";
-    return "the " + noun + " kept from " + pageHost(reading.from);
+    const video = readingExtract(reading) === "video";
+    if (pageTitle !== null && pageTitle.trim() !== "") {
+      const title = pageTitle.trim();
+      return video ? title : "a web page — " + title;
+    }
+    if (video) return "the video kept from " + pageHost(reading.from);
+    return "a web page at " + pageHost(reading.from);
   }
   // STORY 17.11 — A DISTILLED CARD SAYS WHAT MADE IT. A RULE card says a rule,
   // never a model; STORY 17.12's CURATOR card says exactly the two models
@@ -1762,6 +1769,16 @@ function GroundCard({
   // The footer's one attribution: a file's NAME, or a selection's SOURCE NAME.
   const provenance =
     reading === null ? null : readingProvenance(reading, sourceNames);
+  // STORY 16.26 — A PAGE CARD WITH NO STORED TEXT IS WHOLE. Every new page card
+  // keeps a title, a thumbnail and a host and no transcript: there is nothing
+  // missing from it, so the reading slot says nothing rather than borrowing
+  // the absence line (that line is for a copy that was never taken). An OLD
+  // page card keeps the text it already has, and renders it exactly as before.
+  const pageWithoutText =
+    reading !== null &&
+    reading.form === "url" &&
+    readingExtract(reading) === "page" &&
+    shownText === null;
 
   async function run(action: () => Promise<GroundAddResult>) {
     if (busy) return;
@@ -2104,7 +2121,7 @@ function GroundCard({
           // STORY 16.15: an image or a video has no reading and never pretends
           // to. Its slot says, in one quiet line, what the reading needs.
           <div className="ground-reading ground-needs">{needsLine}</div>
-        ) : (
+        ) : pageWithoutText ? null : (
           // STORY 16.13 (shortlist item 3): the reading's slot still says what
           // happened. A refused or absent reading leaves a card with its name,
           // its kind and this one quiet line — never an empty box.
