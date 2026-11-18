@@ -338,6 +338,12 @@ export const CONTENT_CLASSES = [
   "ground-layer",
   "ground-reference",
   "ground-name",
+  // STORY 16.21: the name PILL above the card and its rename field. They are
+  // inside the card, which is already content; listed anyway for the same
+  // belt-and-braces reason — a press on the name (or in its field) must never
+  // fall through to the plane's pan, creation or a gesture.
+  "ground-pill",
+  "ground-pill-input",
   "ground-reading",
   "ground-handle",
   // Story 16.2: the computed state word, the two person-pressed re-reads and

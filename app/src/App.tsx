@@ -4632,6 +4632,9 @@ function App() {
             calls={askCalls}
             onOpenSettings={() => openSettings("providers")}
             onMove={ground.move}
+            /* STORY 16.21 — the name pill is the card's rename field; the
+               name is the record's field and the slug stays identity. */
+            onRename={ground.rename}
             onRefresh={ground.refresh}
             onRepoint={ground.repoint}
             onRemove={ground.remove}

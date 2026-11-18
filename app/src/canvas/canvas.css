@@ -5554,8 +5554,13 @@ body {
 
 /* The person's words: the concept map's word scale at the card's HEADING
    strength — but regular weight (story 17: hierarchy is strength and size, so
-   nothing here is bold). */
+   nothing here is bold). STORY 16.21: these words no longer live inside the
+   card; they are the text of the name PILL above it, so they keep exactly the
+   heading's type and only change where they sit. A long name is cut with one
+   ellipsis — the pill is a name, never a paragraph. */
 .ground-name {
+  display: block;
+  max-width: 240px;
   font-size: 17px;
   line-height: 1.2;
   font-weight: 400;
@@ -5564,6 +5569,62 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* STORY 16.21 — THE NAME FLOATS ABOVE THE CARD, as a quiet pill rather than a
+   line inside the body: the body's reading used to crop the name, and the
+   plane's scale shrank it away at low zoom. The pill is the card's HANDLE and
+   its RENAME FIELD; it carries no count, no state and no verb.
+
+   THE COUNTER-SCALE is --pill-scale, set inline by CardNamePill from the
+   plane's OWN camera zoom through one pure, clamped rule:
+   scale = clamp(1 / zoom, 1, 4). The floor keeps a zoomed-in pill at least the
+   card's own scale; the ceiling makes 25% zoom full legibility and stops
+   growing there, so a deeper zoom-out shrinks the pills with the map instead of
+   stacking full-size names on top of each other. The origin is the BOTTOM LEFT
+   so the pill grows up and to the right out of the card's own top-left corner.
+   PROVISIONAL (ADR-0003's seam): the bounds, the gap, the padding and the
+   max-width. */
+.ground-pill {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 1;
+  box-sizing: border-box;
+  max-width: 260px;
+  padding: 3px 9px 4px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid var(--ink-rule);
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(40, 35, 25, 0.07);
+  transform: scale(var(--pill-scale, 1));
+  transform-origin: left bottom;
+  white-space: nowrap;
+  /* A press on the name is a press on the handle: the grab cursor says the
+     card can be moved by the words, not only by its body. */
+  cursor: grab;
+}
+
+/* The rename field opens IN the pill's own shape and type, so the card does not
+   jump when the person double-clicks the name. One underline is the only sign
+   that the words are being edited. */
+.ground-pill-input {
+  box-sizing: border-box;
+  width: 180px;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid var(--ink-rule);
+  background: transparent;
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.2;
+  color: var(--ink-strong);
+  outline: none;
+  cursor: text;
+  /* The card forbids selection (a drag must never select its text); the one
+     exception is the name being typed, where selection is the affordance. */
+  user-select: text;
 }
 
 /* STORY 16.13 (shortlist items 3 and 10): the card's SECOND line — what this

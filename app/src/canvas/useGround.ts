@@ -97,6 +97,7 @@ import {
   moveGroundReference,
   saveGround,
   withGroundRemoved,
+  withGroundRenamed,
   type GroundReference,
 } from "../map/ground";
 // STORY 18.3b — THE RUN LANE LEFT THE WINDOW. This file used to import the
@@ -786,6 +787,13 @@ export interface GroundView {
   ) => Promise<GroundAddResult>;
   /** Move one reference to a dropped point (one line, on release). */
   move: (on: string, x: number, y: number) => Promise<GroundAddResult>;
+  /**
+   * STORY 16.21 — RENAME one reference from its name pill: the name changes on
+   * one `ground.txt` line and the slug (identity: the reading's key, a link's
+   * endpoint, an ask's anchor) does not move. An empty field is a legal name
+   * and stores "Untitled reference".
+   */
+  rename: (on: string, name: string) => Promise<GroundAddResult>;
   /** Re-read this reference's file, by the person's press only. */
   refresh: (on: string) => Promise<GroundAddResult>;
   /** Point this reference at another file and take its head (one write). */
@@ -855,6 +863,7 @@ type GroundLoaded = Omit<
   | "createPage"
   | "createVideo"
   | "move"
+  | "rename"
   | "refresh"
   | "repoint"
   | "remove"
@@ -982,6 +991,47 @@ export interface GroundRemoval {
    * was not on the map when the delete ran (nothing was kept from it).
    */
   removed: RemovedCard | null;
+}
+
+/** The bridge a rename needs: the ground family's one writer. */
+export interface GroundRenameIo {
+  saveGround: typeof saveGround;
+}
+
+/** The real bridge, bound once so this module stays importable in tests. */
+const GROUND_RENAME_IO: GroundRenameIo = { saveGround };
+
+/** What one rename wrote: the new list and the line it changed (null if gone). */
+export interface GroundRename {
+  references: GroundReference[];
+  renamed: GroundReference | null;
+}
+
+/**
+ * STORY 16.21 — THE RENAME'S ONE WRITE. The name pill doubles as the card's
+ * rename field, and this is the single path that field reaches: the SAME
+ * `map/ground.txt` read-modify-write the move and the delete use, through the
+ * same write queue, on ONE line. The slug, the point, the reading, the note and
+ * every link stay exactly as they were (identity is the slug, not the name), so
+ * a rename can never orphan anything. Malformed lines ride back untouched
+ * (ADR-0009). An empty field is stored as the untitled sentence by the record's
+ * own rule. PURE apart from the bridge it is handed, so a test asserts the
+ * bytes without the hook.
+ */
+export async function renameGroundRecords(
+  workspacePath: string,
+  on: string,
+  name: string,
+  references: readonly GroundReference[],
+  malformedGround: readonly string[],
+  io: GroundRenameIo = GROUND_RENAME_IO,
+): Promise<GroundRename> {
+  const next = withGroundRenamed(references, on, name);
+  await io.saveGround(workspacePath, next, malformedGround);
+  return {
+    references: next,
+    renamed: next.find((reference) => reference.on === on) ?? null,
+  };
 }
 
 /** The one sentence a refused unlink answers (PROVISIONAL wording). */
@@ -5448,6 +5498,47 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
+   * STORY 16.21 — RENAME, from the card's name pill. One line through the same
+   * write queue the move uses; the slug, point, reading, note and links are
+   * untouched. The mirror is re-rendered because it shows names, and NOTHING is
+   * logged: the history's vocabulary has no rename event yet (PROVISIONAL — a
+   * later story may coin one; until then a rename is not a silent record
+   * change, it is one record's name field).
+   */
+  const rename = useCallback(
+    (on: string, name: string): Promise<GroundAddResult> => {
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const result = await renameGroundRecords(
+            workspacePath,
+            on,
+            name,
+            referencesRef.current,
+            malformedGroundRef.current,
+          );
+          referencesRef.current = result.references;
+          setState(snapshot());
+          if (result.renamed === null) {
+            outcome = { ok: false, message: "that card is not on this map." };
+            return;
+          }
+          outcome = { ok: true };
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
    * Replace one slug's reading in place (a refresh or a re-point keeps the
    * line's position in the file), or append it when the slug had none (an
    * `unread` reference adopting a file).
@@ -6288,6 +6379,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     createPage,
     createVideo,
     move,
+    rename,
     refresh,
     repoint,
     remove,

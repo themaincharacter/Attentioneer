@@ -204,6 +204,52 @@ export function withGroundRemoved(
 }
 
 /**
+ * STORY 16.21 — THE NAME THE MAP SAYS WHEN THE PERSON LEFT NONE. A ground line
+ * cannot carry an empty name (the parser would keep it as a malformed line and
+ * the card would lose the one word that identifies it), so the empty field
+ * becomes THIS sentence at the write and the pill renders it like any other
+ * name. The ask card's "Untitled ask" is the same rule, one family over.
+ * PROVISIONAL wording.
+ */
+export const GROUND_UNTITLED_NAME = "Untitled reference";
+
+/** The name a card SHOWS: the record's words, or the one sentence for none. */
+export function groundDisplayName(name: string): string {
+  return name.trim() === "" ? GROUND_UNTITLED_NAME : name;
+}
+
+/**
+ * The name a write STORES: trimmed, and the untitled sentence when the field is
+ * blank. Never an empty name — an empty `name:` tail would make the line
+ * unreadable on the next load, and the person's empty field is a legal name,
+ * not a missing one.
+ */
+export function groundNameForWrite(name: string): string {
+  const trimmed = name.trim();
+  return trimmed === "" ? GROUND_UNTITLED_NAME : trimmed;
+}
+
+/**
+ * STORY 16.21 — RENAME one reference: the NAME is the person's and changes;
+ * the SLUG is identity (the reading's key, a link's endpoint, an ask's anchor)
+ * and never moves. One line is rewritten in place, so a rename can neither
+ * reorder the map nor orphan a reading. PURE — the caller writes the file
+ * through the app's one write queue, so a test can assert the bytes without a
+ * disk. A hand-duplicated slug renames every line that carries it (the read
+ * rule keeps duplicates as content).
+ */
+export function withGroundRenamed(
+  references: readonly GroundReference[],
+  on: string,
+  name: string,
+): GroundReference[] {
+  const next = groundNameForWrite(name);
+  return references.map((reference) =>
+    reference.on === on ? { ...reference, name: next } : reference,
+  );
+}
+
+/**
  * MOVE one reference to a new point (story 16.2 decision 6): the card is
  * dropped, and the app rewrites this ONE line through the write queue. PURE —
  * the caller writes the file, so a drag's commit is one write and a test can

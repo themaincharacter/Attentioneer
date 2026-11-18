@@ -53,6 +53,7 @@ import type { GroundLink } from "../map/groundLinks";
 import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import { besidePlacement, type Point } from "./geometry";
 import { AskCard } from "./AskCard";
+import { CardNamePill } from "./CardNamePill";
 import { SelectionAsk, clearTextSelection } from "./SelectionAsk";
 import { SessionCard as SessionCardView } from "./SessionCard";
 import {
@@ -219,6 +220,20 @@ import {
  * are CONTEXT, not content — Esc, the card's close and asking all take the
  * widget and its highlight away, and an empty selection opens nothing. No
  * second model call happens anywhere in that path: the card's own send asks.
+ *
+ * STORY 16.21 TAKES THE NAME OUT OF THE CARD AND PUTS IT ABOVE IT. The card
+ * body's first line is the TYPE LINE (16.13), never the name: the name is a
+ * PILL above the card (`CardNamePill`), counter-scaled against the plane's
+ * zoom with a stated clamp so it stays legible at 25% and stops growing before
+ * a deep zoom-out turns a row of cards into a wall of names. The pill is also
+ * the card's one HANDLE — its press reaches the same raw mousedown listener
+ * below, so the drag rule (`groundDrag.ts`), its threshold and its single
+ * write on release are unchanged and there is no second drag to keep in step —
+ * and its one RENAME FIELD: double-click, the old name is selected, Enter
+ * writes through the hook's one name path, Escape abandons, and an empty field
+ * stores and reads "Untitled reference". It sits above the card, so it can
+ * never cover the card's own verbs, and it is inside the content the plane's
+ * gate already knows, so it can never be read as empty paper.
  *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
@@ -528,6 +543,13 @@ interface GroundLayerProps {
   onOpenSettings?: () => void;
   /** Move one reference to its dropped point (one line, on release). */
   onMove: (on: string, x: number, y: number) => Promise<GroundAddResult>;
+  /**
+   * STORY 16.21 — RENAME one reference from its name pill. The existing name
+   * write path (`useGround`): the name is the record's field and the slug is
+   * identity, so a rename never moves a wire, a reading or an ask's anchor.
+   * Optional so a render test needs no writer.
+   */
+  onRename?: (on: string, name: string) => Promise<GroundAddResult>;
   /** Re-read this reference's file (the person's press only). */
   onRefresh: (on: string) => Promise<GroundAddResult>;
   /** Point this reference at another file (a new pick, one write). */
@@ -624,6 +646,7 @@ export function GroundLayer({
   calls = null,
   onOpenSettings,
   onMove,
+  onRename,
   onRefresh,
   onRepoint,
   onRemove,
@@ -959,6 +982,7 @@ export function GroundLayer({
           interactionMode={interactionMode}
           zoom={zoom}
           onMove={onMove}
+          onRename={onRename}
           onRefresh={onRefresh}
           onRepoint={onRepoint}
           onRemove={remove}
@@ -1235,6 +1259,7 @@ function GroundCard({
   interactionMode,
   zoom,
   onMove,
+  onRename,
   onRefresh,
   onRepoint,
   onRemove,
@@ -1284,6 +1309,8 @@ function GroundCard({
   interactionMode: GestureMode;
   zoom: number;
   onMove: GroundLayerProps["onMove"];
+  /** STORY 16.21: the name pill's one writer (absent in a render test). */
+  onRename?: GroundLayerProps["onRename"];
   onRefresh: GroundLayerProps["onRefresh"];
   onRepoint: GroundLayerProps["onRepoint"];
   onRemove: (reference: GroundReference) => Promise<GroundAddResult>;
@@ -1423,6 +1450,14 @@ function GroundCard({
       // drag included (ADR-0016's gate).
       if (isGestureArmed(interactionMode)) return;
 
+      // STORY 16.21 — was this press on the name PILL? The pill is the card's
+      // HANDLE, not its door: a press there that never moves opens nothing (a
+      // double-click on it opens the rename field). The drag itself is the very
+      // same rule below — the pill is a child of this card, so its press lands
+      // here like a press on the body, with the same threshold and the same one
+      // write on release. There is no second drag to keep in step.
+      const onPill = (e.target as HTMLElement).closest(".ground-pill") !== null;
+
       let drag = beginGroundDrag(
         { x: reference.x, y: reference.y },
         { x: e.clientX, y: e.clientY },
@@ -1460,7 +1495,9 @@ function GroundCard({
         // A press that never moved OPENS the card: the expanded face shows
         // the stored reading. A drag never opens (the drop above returns
         // first). STORY 16.13: there is no delete ask left to back out of.
-        onOpen();
+        // STORY 16.21: a press on the NAME is the handle, so it opens nothing —
+        // the double-click on the pill opens the rename field instead.
+        if (!onPill) onOpen();
       };
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("mouseup", onMouseUp);
@@ -1830,7 +1867,28 @@ function GroundCard({
         aria-label="link to another card"
         title="drag to link"
       />
-      <div className="ground-name">{reference.name}</div>
+      {/* STORY 16.21 — THE NAME FLOATS ABOVE THE CARD. It left the body because
+          the body's own reading cropped it and the plane's scale shrank it: the
+          pill counter-scales (clamped) so the name is legible at 25% zoom, it is
+          the card's drag HANDLE (a press on it rides the card's one raw mousedown
+          listener, below — no second drag) and a double-click renames it through
+          the one name write path. The body below starts at the TYPE LINE. */}
+      <CardNamePill
+        name={reference.name}
+        zoom={zoom}
+        busy={busy}
+        onRename={
+          onRename === undefined
+            ? undefined
+            : async (name: string) => {
+                const result = await onRename(reference.on, name);
+                // A refused write is one sentence on the card, never a name
+                // that quietly snaps back for no stated reason.
+                if (!result.ok) setProblem(result.message);
+                return result;
+              }
+        }
+      />
       {/* STORY 16.13 (shortlist items 3 and 10): the card's second line says
           WHAT THIS IS — the copy kept from a file, a copy of text selected from
           another card, or a reference with no reading. Never a broken box. */}
