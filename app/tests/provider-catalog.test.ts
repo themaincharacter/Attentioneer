@@ -15,6 +15,7 @@ import {
   ALLOWLIST,
   API_FALLBACK,
   CatalogRefused,
+  EXPORT_LIMIT_BYTES,
   MODELS_DEV_URL,
   parseExport,
   projectCatalog,
@@ -559,7 +560,9 @@ describe("the refresh refuses to write an empty or malformed payload", () => {
             deepseek: {
               ...deepseek,
               models: {
-                [first]: { ...models[first], name: "x".repeat(210_000) },
+                // Derived from the cap, not a magic number: a fixed size
+                // silently stopped testing anything the day the cap moved.
+                [first]: { ...models[first], name: "x".repeat(EXPORT_LIMIT_BYTES) },
               },
             },
           }),

@@ -173,8 +173,14 @@ export const API_FALLBACK: Readonly<Record<string, string>> = {
 /**
  * The export stays a WINDOW, not a dump. A refresh that would cross this line
  * refuses instead of committing a file nobody can read in a diff.
+ *
+ * WHY 400 KB, not 200: the export reached 198.7 KB on 2026-11-18 (15 providers,
+ * 792 models, each model now carrying its effort options), so a 200 KB line
+ * would have refused the NEXT upstream model — a cap that fires on ordinary
+ * growth is a cap that trains people to ignore it. This one leaves room for
+ * roughly a third more catalogue before it says no.
  */
-export const EXPORT_LIMIT_BYTES = 200_000;
+export const EXPORT_LIMIT_BYTES = 400_000;
 
 /** A refusal is a sentence, never a half-written file. */
 export class CatalogRefused extends Error {
