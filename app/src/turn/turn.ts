@@ -215,6 +215,15 @@ export function routeOf(
   provider: ProviderRow,
   model: ModelRow,
   apiKey: string,
+  /**
+   * STORY 16.29 — THE PER-ASK EFFORT, and it rides ONLY when a caller asks for
+   * it. The ask card's task call passes its card's pick; the CURATOR's call
+   * site passes three arguments on purpose — it distils, it does not reason,
+   * so no effort ever reaches the manager's request. A CLI row has no body to
+   * put it in, and a local row is started without one; the field is the HTTP
+   * wire's own.
+   */
+  reasoningEffort?: string | null,
 ): TurnRoute {
   if (provider.kind === "cli") return { kind: "cli", spec: cliSpecOf(provider) };
   // A local row has no base URL until its child is running: the route carries
@@ -222,7 +231,10 @@ export function routeOf(
   if (provider.kind === "local") {
     return { kind: "local", row: provider, model };
   }
-  return { kind: "http", provider: providerFrom(provider, model, apiKey) };
+  return {
+    kind: "http",
+    provider: providerFrom(provider, model, apiKey, reasoningEffort),
+  };
 }
 
 /**

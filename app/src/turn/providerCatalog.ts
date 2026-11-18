@@ -48,6 +48,12 @@ interface ExportedModel {
   tool_call: boolean;
   attachment: boolean;
   reasoning: boolean;
+  /**
+   * STORY 16.29 — the effort values the catalogue declares for this model, or
+   * absent when it declares none. The refresh script writes this only from
+   * models.dev's own `reasoning_options`; nothing here invents one.
+   */
+  effort?: string[];
 }
 
 /** The shape of one provider in the committed export. */
@@ -104,6 +110,13 @@ export interface CatalogModel {
   attachment: boolean;
   /** The export's `reasoning`; carried, not surfaced by this story. */
   reasoning: boolean;
+  /**
+   * STORY 16.29 — THE EFFORT VALUES THE CATALOGUE DECLARES FOR THIS MODEL, in
+   * its own order, or `[]` when it declares none. This is the ONLY source an
+   * ask card's effort selector may draw from: no module hard-codes a level, and
+   * an empty list is the card's rule to offer NO selector rather than guess.
+   */
+  effort: readonly string[];
 }
 
 /** One provider the app can offer as a starting point. Data, never a promise. */
@@ -215,6 +228,7 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] =
       toolCall: model.tool_call === true,
       attachment: model.attachment === true,
       reasoning: model.reasoning === true,
+      effort: [...(model.effort ?? [])],
     })),
     ...(provider.headers === undefined
       ? {}
@@ -227,6 +241,26 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] =
 /** One entry by id, or null when the id is not in the catalogue. */
 export function catalogEntry(id: string): ProviderCatalogEntry | null {
   return PROVIDER_CATALOG.find((entry) => entry.id === id) ?? null;
+}
+
+/**
+ * STORY 16.29 — THE EFFORT VALUES A ROW'S MODEL DECLARES, from the catalogue
+ * and nowhere else. A row is matched by its EXACT base URL (the same test the
+ * Custom badge makes: a person who edits the URL has made it their own) and the
+ * model by its exact id. An unknown endpoint, an unknown model, a CLI or local
+ * row, or a model the catalogue gives no efforts all answer `[]` — which the
+ * ask card reads as "offer no selector", never as "offer a default".
+ *
+ * PURE and offline: the committed JSON is the only input.
+ */
+export function catalogEffortOptions(
+  baseUrl: string,
+  modelId: string,
+): readonly string[] {
+  const entry = catalogEntryForBaseUrl(baseUrl);
+  if (entry === null) return [];
+  const model = entry.models.find((candidate) => candidate.id === modelId.trim());
+  return model === undefined ? [] : model.effort;
 }
 
 /**

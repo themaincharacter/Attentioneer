@@ -43,6 +43,7 @@ export function PacketSurface({
   declaration = null,
   livePages = null,
   calls = null,
+  effort = null,
   messages = null,
   read = null,
 }: {
@@ -61,6 +62,13 @@ export function PacketSurface({
    * means the caller cannot say, and the surface says nothing new.
    */
   calls?: AskCallsFacts | null;
+  /**
+   * STORY 16.29 — THE EFFORT THIS ASK WILL SEND, or null for default. It is
+   * handed beside the calls rather than merged into them by the caller, so the
+   * calls section stays the ONE place that decides how the effort is worded,
+   * and the manager line never picks it up (the curator sends none).
+   */
+  effort?: string | null;
   /** Every message that would leave (or did), verbatim; null hides the verb. */
   messages?: readonly TurnMessage[] | null;
   /** The one block a follow-up fetched, or null when none happened. */
@@ -76,7 +84,7 @@ export function PacketSurface({
               the same words the pure rules produced. The blocks above are
               byte-identical to before this section arrived. */}
           {calls !== null &&
-            askCallsWords(calls).map((line, index) => (
+            askCallsWords({ ...calls, effort }).map((line, index) => (
               <div className="ask-calls-line" key={index}>
                 {line}
               </div>

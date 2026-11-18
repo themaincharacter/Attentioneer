@@ -1183,6 +1183,14 @@ export function providerFrom(
   provider: HttpProviderRow,
   model: ModelRow,
   apiKey: string,
+  /**
+   * STORY 16.29 — THE PER-ASK EFFORT, or absent for "default". It is passed as
+   * a fourth argument rather than read from the row because the choice belongs
+   * to the ASK, not to Settings: two cards may send the same model at different
+   * efforts. The value came from the vendored catalogue; this function only
+   * decides whether it rides at all.
+   */
+  reasoningEffort?: string | null,
 ): TurnProvider {
   const wire: TurnProvider = {
     baseUrl: provider.baseUrl.trim(),
@@ -1194,6 +1202,13 @@ export function providerFrom(
   // the exact three-field shape every earlier test pinned.
   if (provider.headers !== undefined && Object.keys(provider.headers).length > 0) {
     wire.headers = { ...provider.headers };
+  }
+  // STORY 16.29 — "default" SENDS NOTHING. The sentinel and an absent value are
+  // the same request, so the field is added only for a real pick; an empty
+  // string is treated the same way (it is not a level the catalogue states).
+  const effort = reasoningEffort?.trim() ?? "";
+  if (effort !== "" && effort !== "default") {
+    wire.reasoningEffort = effort;
   }
   return wire;
 }

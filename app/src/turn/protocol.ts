@@ -72,6 +72,16 @@ export interface TurnProvider {
    * override. Absent means the row carries none.
    */
   headers?: Record<string, string>;
+  /**
+   * STORY 16.29 — THE EFFORT THE PERSON PICKED FOR THIS ASK, or absent for
+   * "default". The VALUE comes from the vendored catalogue's own per-model
+   * list (never a hard-coded level); this wire carries it unchanged and the
+   * sidecar writes it as the request body's `reasoning_effort` when it is
+   * present. Absent means the body carries no such field at all, so a provider
+   * that does not know the name sees exactly the request it always did. The
+   * CURATOR call never sets this: it distils, it does not reason.
+   */
+  reasoningEffort?: string;
 }
 
 /** The two roles story 1 sends: one fixed instruction and the person's words. */
@@ -590,7 +600,15 @@ function isProvider(value: unknown): value is TurnProvider {
   )) {
     return false;
   }
-  return value.headers === undefined || isHeaderMap(value.headers);
+  if (value.headers !== undefined && !isHeaderMap(value.headers)) return false;
+  // STORY 16.29 — an effort may ride or be absent; when it rides it is a
+  // non-empty string and nothing else. "default" is not refused HERE: the
+  // builder never puts it on this wire, and the sidecar passes what it is given
+  // through unchanged (a hand-built line is not this reader's to reinterpret).
+  return (
+    value.reasoningEffort === undefined ||
+    isNonEmptyString(value.reasoningEffort)
+  );
 }
 
 /** A model-list provider: a base URL and a key that may be empty. */
@@ -1011,6 +1029,11 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
   // a headerless row carries.
   if (provider.headers !== undefined) {
     parsedProvider.headers = { ...provider.headers };
+  }
+  // STORY 16.29 — the effort rides the parsed provider unchanged, and an
+  // absent one stays absent (the three-field shape every earlier test pinned).
+  if (provider.reasoningEffort !== undefined) {
+    parsedProvider.reasoningEffort = provider.reasoningEffort;
   }
   return {
     id: value.id,

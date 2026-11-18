@@ -60,6 +60,7 @@ import {
   restoreConversation,
   saveAsks,
   sharedSlugs,
+  withAskEffort,
   withAskMoved,
   withoutAsk,
   type AskCard,
@@ -662,6 +663,18 @@ export interface GroundView {
    */
   renameAskTo: (slug: string, name: string) => Promise<GroundAddResult>;
   /**
+   * STORY 16.29 — REMEMBER one ask card's effort choice (PROVISIONAL record
+   * field): ONE queued write of `map/asks.txt`, every other field untouched.
+   * `null` is "default" and REMOVES the field, because absence is what sending
+   * nothing means. The value is not validated against the catalogue here — the
+   * card only offers declared values, and the send path re-checks the model's
+   * current list before anything reaches the wire.
+   */
+  setAskEffort: (
+    slug: string,
+    effort: string | null,
+  ) => Promise<GroundAddResult>;
+  /**
    * STORY 17.1 — ASK ONE QUESTION inside an ask card: the existing card-ask
    * turn path (the packet anchored on the reference, the person's question),
    * and then ONE append-only write of the exchange — the person's line always,
@@ -682,6 +695,12 @@ export interface GroundView {
      * VIEW STATE only: it never reaches a record.
      */
     onPhase?: (phase: AskWorkPhase) => void,
+    /**
+     * STORY 16.29 — THIS ASK'S EFFORT, or null for default. It reaches the
+     * TASK call's provider and stops there; the curator's route is built
+     * without it, because that call distils rather than reasons.
+     */
+    effort?: string | null,
   ) => Promise<GroundAddResult>;
   /**
    * STORY 17.2 — STOP the running ask turn: the existing turn port's stop, so
@@ -894,6 +913,7 @@ type GroundLoaded = Omit<
   | "createEmptyAsk"
   | "askFromSelection"
   | "renameAskTo"
+  | "setAskEffort"
   | "renameSessionTo"
   | "moveAsk"
   | "moveSession"
@@ -4367,6 +4387,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       question: string,
       onPart?: (text: string) => void,
       onPhase?: (phase: AskWorkPhase) => void,
+      effort?: string | null,
     ): Promise<AskTurnSend> => {
       if (turn === undefined) {
         return {
@@ -4394,7 +4415,15 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         resolved.provider.kind === "http"
           ? await readSecret(resolved.provider.id)
           : "";
-      const route = routeOf(resolved.provider, resolved.model, apiKey);
+      // STORY 16.29 — THE TASK CALL'S EFFORT, and THIS is the only route that
+      // carries one. The value was the catalogue's and the card's; "default"
+      // and an absent pick become the same request (no field).
+      const route = routeOf(
+        resolved.provider,
+        resolved.model,
+        apiKey,
+        effort ?? null,
+      );
       const answered = await turn.sendPacket(
         route,
         packet,
@@ -4765,6 +4794,43 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           }
           // A rename changes the NAME, so the derived mirror follows it.
           queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 16.29 — REMEMBER one ask card's effort pick. One queued write of
+   * `map/asks.txt`; the words, the name, the anchor and every conversation
+   * byte are untouched. `null` removes the field ("default" = send nothing).
+   * No history line and no mirror: an effort is not identity and no mirror
+   * renders it, so this changes exactly one record line.
+   */
+  const setAskEffort = useCallback(
+    (slug: string, effort: string | null): Promise<GroundAddResult> => {
+      if (!asksRef.current.some((ask) => ask.on === slug)) {
+        return Promise.resolve({ ok: false, message: ASK_MISSING_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const next = withAskEffort(asksRef.current, slug, effort);
+          if (next === null) {
+            outcome = { ok: false, message: ASK_MISSING_REFUSAL };
+            return;
+          }
+          await saveAsks(workspacePath, next, malformedAsksRef.current);
+          asksRef.current = next;
+          setState(snapshot());
+          outcome = { ok: true };
         })
         .then(() => outcome)
         .catch(() => ({
@@ -5565,6 +5631,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       question: string,
       onPart?: (text: string) => void,
       onPhase?: (phase: AskWorkPhase) => void,
+      effort?: string | null,
     ): Promise<GroundAddResult> => {
       const refusal = askQuestionRefusal(question);
       if (refusal !== null) {
@@ -5671,6 +5738,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           question,
           onPart,
           onPhase,
+          // STORY 16.29 — the card's pick rides the TASK call beside the
+          // question; the curator's route below is built without it.
+          effort ?? null,
         );
         await queueRef.current.push(async () => {
           // ONE PRISM PER SENDING TURN (story 17.4), then the words: the
@@ -6788,6 +6858,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     createEmptyAsk,
     askFromSelection,
     renameAskTo,
+    setAskEffort,
     renameSessionTo,
     moveAsk,
     moveSession,

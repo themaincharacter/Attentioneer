@@ -217,23 +217,30 @@ describe("the example model is the first with tool-use, else the first", () => {
     }
   });
 
-  test("every exported model is trimmed to five facts, with unique ids", () => {
+  test("every exported model is trimmed to five facts plus optional effort", () => {
     for (const provider of EXPORT.providers) {
       const ids = provider.models.map((model) => model.id);
       expect(new Set(ids).size).toBe(ids.length);
       for (const model of provider.models) {
-        expect(Object.keys(model).sort()).toEqual([
-          "attachment",
-          "id",
-          "name",
-          "reasoning",
-          "tool_call",
-        ]);
+        // STORY 16.29 — the export gained ONE optional fact: the model's
+        // declared effort values. A model without them still carries exactly
+        // the five facts it always did, so absence stays absence.
+        const facts = ["attachment", "id", "name", "reasoning", "tool_call"];
+        if ("effort" in model) facts.push("effort");
+        expect(Object.keys(model).sort()).toEqual(facts.sort());
         expect(model.id.trim()).not.toBe("");
         expect(model.name.trim()).not.toBe("");
         expect(typeof model.tool_call).toBe("boolean");
         expect(typeof model.attachment).toBe("boolean");
         expect(typeof model.reasoning).toBe("boolean");
+        if ("effort" in model) {
+          expect(Array.isArray(model.effort)).toBe(true);
+          expect(model.effort.length).toBeGreaterThan(0);
+          for (const value of model.effort) {
+            expect(typeof value).toBe("string");
+            expect(value.trim()).not.toBe("");
+          }
+        }
       }
     }
   });

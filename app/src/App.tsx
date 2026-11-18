@@ -86,6 +86,9 @@ import {
   resolveSelection,
 } from "./turn/providers";
 import type { AskCallsFacts } from "./canvas/contactRules";
+// STORY 16.29 — the effort options a task model's catalogue entry declares are
+// read HERE, once, from the committed export; the card never guesses a level.
+import { catalogEffortOptions } from "./turn/providerCatalog";
 import { TURN_SENTENCES, routeOf } from "./turn/turn";
 import { readProposal } from "./turn/proposal";
 import { readSecret, secretStatus, secretStatusWords } from "./lib/secret";
@@ -879,6 +882,13 @@ function App() {
    * EPHEMERAL app state — never a record.
    */
   const [askCalls, setAskCalls] = useState<AskCallsFacts | null>(null);
+  /**
+   * STORY 16.29 — THE EFFORT VALUES the resolved task model's catalogue entry
+   * declares, or [] when it declares none (or the row is not an HTTP endpoint
+   * the catalogue lists). The ask card offers a selector ONLY for a non-empty
+   * list; a level the catalogue never stated is never offered.
+   */
+  const [askEfforts, setAskEfforts] = useState<readonly string[]>([]);
   const [askIncluded, setAskIncluded] = useState<AskPointer[]>([]);
   const [askSent, setAskSent] = useState<AskSentView | null>(null);
   // WHICH PROVIDER, AND WHERE THE KEY LIVES (Epic 15 story 4): the selection's
@@ -2073,8 +2083,20 @@ function App() {
                 ? { row: manager.provider.name, model: manager.model.name }
                 : null,
           });
+          // STORY 16.29 — THE CATALOGUE'S OWN VALUES for the task model. Only
+          // an HTTP row has a base URL to match, and only an exact catalogue
+          // match offers anything; everything else is the honest empty list.
+          setAskEfforts(
+            resolved.provider.kind === "http"
+              ? catalogEffortOptions(
+                  resolved.provider.baseUrl,
+                  resolved.model.id,
+                )
+              : [],
+          );
         } else {
           setAskCalls(null);
+          setAskEfforts([]);
         }
       })
       .catch(() => {
@@ -2083,6 +2105,7 @@ function App() {
         setAskProviderRef(null);
         setAskFallback(NO_PROVIDER_SENTENCE);
         setAskCalls(null);
+        setAskEfforts([]);
       });
     void secretStatus().then((store) =>
       setAskKeyStore(secretStatusWords(store)),
@@ -4652,6 +4675,8 @@ function App() {
             // comes back here by design (story 17.7).
             hasProvider={askProvider}
             calls={askCalls}
+            efforts={askEfforts}
+            onSetAskEffort={ground.setAskEffort}
             onOpenSettings={() => openSettings("providers")}
             onMove={ground.move}
             /* STORY 16.21 — the name pill is the card's rename field; the

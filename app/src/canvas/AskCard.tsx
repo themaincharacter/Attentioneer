@@ -500,6 +500,8 @@ export function AskCard({
   previewLines,
   hasProvider,
   calls = null,
+  efforts = [],
+  onSetEffort,
   onOpenSettings,
   onOpen,
   onClose,
@@ -589,6 +591,21 @@ export function AskCard({
    */
   calls?: AskCallsFacts | null;
   /**
+   * STORY 16.29 — THE EFFORT VALUES THIS CARD MAY OFFER, read from the vendored
+   * catalogue for the task model the Settings selection resolves to. This is the
+   * ONLY source: the card draws no level the catalogue did not state, and an
+   * empty list means NO selector at all (and no field on the wire). Optional so
+   * a render test that does not care about effort needs nothing.
+   */
+  efforts?: readonly string[];
+  /**
+   * STORY 16.29 — REMEMBER this card's effort pick on its own record line, so a
+   * reopen shows the same choice. The card calls it on every change; `null`s
+   * mean "default", which the writer stores as ABSENCE (send nothing). Optional
+   * so a render test needs no write path.
+   */
+  onSetEffort?: (effort: string | null) => Promise<GroundAddResult>;
+  /**
    * Open Settings on its Providers section — the ONE verb the pre-send state
    * offers. Optional so a render test needs no modal; the layer always passes
    * the app's real opener.
@@ -607,6 +624,12 @@ export function AskCard({
     /** STORY 16.28 — the layer names the curator's start and end; the card
      *  sets the task phase itself at the press. */
     onPhase?: (phase: AskWorkPhase) => void,
+    /**
+     * STORY 16.29 — the effort THIS ask sends, or null for default. It rides
+     * beside the question because it belongs to the ask, not to Settings: the
+     * layer hands it to the task call's provider and to NOTHING else.
+     */
+    effort?: string | null,
   ) => Promise<GroundAddResult>;
   /** Stop the running turn (the existing turn port's stop). */
   onStopTurn?: () => Promise<void>;
@@ -662,6 +685,14 @@ export function AskCard({
   onNarrate?: (gesture: GestureNarration) => void;
 }) {
   const [question, setQuestion] = useState("");
+  /**
+   * STORY 16.29 — THE CARD'S EFFORT CHOICE. The options come from the catalogue
+   * and the stored value comes from this card's own record; "default" is the
+   * absence of a wire field. View state mirrors the record so the selector
+   * answers the press at once, and the effect below follows the record when a
+   * write (or a Restore) lands.
+   */
+  const [effortChoice, setEffortChoice] = useState(ask.effort ?? "default");
   const [pending, setPending] = useState<AskPending | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
@@ -702,6 +733,12 @@ export function AskCard({
    * one readback: the messages that actually left, the follow-up included.
    */
   const [sent, setSent] = useState<AskPacketReadback | null>(null);
+  // STORY 16.29 — THE RECORD IS THE TRUTH when it changes under us (its own
+  // write landing, a rename's rewrite, a Restore). The local pick above is only
+  // the between-press answer.
+  useEffect(() => {
+    setEffortChoice(ask.effort ?? "default");
+  }, [ask.effort]);
   /**
    * STORY 17.7b — WHAT THE LAST SETTLED TURN HIT (the ceiling, a missed READ),
    * or null. VIEW STATE beside `pending`: the record keeps words only, so a
@@ -716,6 +753,32 @@ export function AskCard({
    */
   const [noCard, setNoCard] = useState<string | null>(null);
   const running = pending !== null && pending.ending === "running";
+  /**
+   * STORY 16.29 — WHAT THIS MODEL'S CATALOGUE ENTRY OFFERS. "default" is ours,
+   * not a level: it means "send nothing", so a catalogue that happens to list
+   * it is not offered twice. An empty list is the card's one answer to a model
+   * that declares no efforts — NO SELECTOR, never a guess.
+   */
+  const offeredEfforts = [
+    ...new Set(
+      (efforts ?? []).filter(
+        (value) => value.trim() !== "" && value !== "default",
+      ),
+    ),
+  ];
+  /**
+   * THE EFFORT THE SEND WILL ACTUALLY CARRY. A stored pick that the current
+   * model no longer lists is NOT put on the wire: the person may have switched
+   * models since, and an effort the catalogue does not state for this one would
+   * be an invented level. It reads as "default" instead, and the person can
+   * pick again from what IS offered.
+   */
+  const effectiveEffort = offeredEfforts.includes(effortChoice)
+    ? effortChoice
+    : "default";
+  // STORY 16.29 — null is "default", and the calls rules word no clause for
+  // it; the declaration and the wire therefore read the same value.
+  const wireEffort = effectiveEffort === "default" ? null : effectiveEffort;
   // STORY 16.23 — THE CARD IS MOVABLE BY THE SAME ONE RULE as a reference.
   // STORY 16.25 — and like the reference card, the live frame is NOT React
   // state: the element carries the hand (`frameGroundCard`) and the point goes
@@ -983,7 +1046,11 @@ export function AskCard({
     },
       // The layer speaks only for the curator; a phase it never names stays
       // whatever the send set.
-      (next) => setPhase(next));
+      (next) => setPhase(next),
+      // STORY 16.29 — the card's own pick rides THIS turn. It goes to the task
+      // call only; the layer never hands it to the curator (that call distils,
+      // it does not reason).
+      wireEffort);
     // The turn is over: no wait is running, so no line is owed.
     setPhase("idle");
     setStopping(false);
@@ -1470,6 +1537,7 @@ export function AskCard({
                           declaration={packet.declaration}
                           livePages={pageUrls}
                           calls={calls}
+                          effort={wireEffort}
                           messages={packet.messages}
                         />
                       )
@@ -1498,6 +1566,45 @@ export function AskCard({
                 </button>
               )}
               <div className="ask-card-actions">
+                {/* STORY 16.29 — THE EFFORT SELECTOR, BESIDE SEND. It exists
+                    ONLY when the catalogue lists efforts for this model: a
+                    model that declares none gets no control at all, because a
+                    level the catalogue never stated is an invented promise
+                    about a provider. "default" is the choice that sends no
+                    field. The pick is the CARD's (per ask) and writes itself to
+                    the record, so a reopen remembers it. */}
+                {offeredEfforts.length > 0 && (
+                  <label
+                    className="ask-card-effort"
+                    title="the effort levels this model's catalogue entry declares"
+                  >
+                    <span className="ask-card-effort-label">effort</span>
+                    <select
+                      className="ask-card-effort-select"
+                      value={effectiveEffort}
+                      disabled={running || busy}
+                      onChange={(e) => {
+                        const picked = e.target.value;
+                        setEffortChoice(picked);
+                        if (onSetEffort === undefined) return;
+                        void onSetEffort(picked === "default" ? null : picked).then(
+                          (result) => {
+                            // A refused write is one sentence, never a selector
+                            // that silently disagrees with the record.
+                            if (!result.ok) setProblem(result.message);
+                          },
+                        );
+                      }}
+                    >
+                      <option value="default">default</option>
+                      {offeredEfforts.map((effort) => (
+                        <option key={effort} value={effort}>
+                          {effort}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <button
                   type="button"
                   className="ask-card-send"

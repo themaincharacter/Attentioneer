@@ -37,6 +37,15 @@
  * allowlist came back, or if an allowlisted provider lost its name, its key
  * variable or its chat models, this script says why and writes NOTHING.
  *
+ * STORY 16.29 ADDS ONE FIELD: each model carries the EFFORT VALUES the
+ * catalogue declares for it (models.dev's `reasoning_options` entry of
+ * `type: "effort"`), in the catalogue's order and only when it lists some. The
+ * ask card offers exactly that list beside send, and a model the catalogue gives
+ * no efforts gets NO selector — the app never invents a level, because an
+ * invented one is a claim about a provider we do not maintain. A model whose
+ * entry is empty or another type (`toggle`, `budget_tokens`) writes no
+ * `effort` key at all.
+ *
  * RUN IT WITH: bun run catalog:refresh  (it is never run by a test or by the app)
  */
 
@@ -58,6 +67,15 @@ export interface CatalogExportModel {
   tool_call: boolean;
   attachment: boolean;
   reasoning: boolean;
+  /**
+   * STORY 16.29 — THE EFFORT VALUES THIS MODEL DECLARES, in the catalogue's own
+   * order, or absent when it declares none. models.dev publishes them as a
+   * `reasoning_options` entry of `type: "effort"`; this export carries the
+   * values only, so the app can offer EXACTLY what the model lists and nothing
+   * where it lists none. An empty list is stored as absence: a model with no
+   * efforts gets no selector, never an invented default.
+   */
+  effort?: string[];
 }
 
 /** One provider, trimmed to the fields the picker and the form use. */
@@ -188,6 +206,35 @@ function textField(value: unknown): string {
 }
 
 /**
+ * STORY 16.29 — A MODEL'S DECLARED EFFORT VALUES, from models.dev's
+ * `reasoning_options`. Only the catalogue's own `type: "effort"` entry counts,
+ * and only its string values are kept, trimmed, de-duplicated and in the
+ * catalogue's order. No list is ever invented here: a model whose entry is
+ * absent, empty or any other type answers NO efforts, and the caller stores
+ * absence rather than an empty array.
+ */
+export function effortValues(reasoningOptions: unknown): string[] {
+  if (!Array.isArray(reasoningOptions)) return [];
+  const effort = reasoningOptions.find(
+    (option) =>
+      option !== null &&
+      typeof option === "object" &&
+      (option as { type?: unknown }).type === "effort",
+  );
+  if (effort === undefined) return [];
+  const values = (effort as { values?: unknown }).values;
+  if (!Array.isArray(values)) return [];
+  const efforts: string[] = [];
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed === "" || efforts.includes(trimmed)) continue;
+    efforts.push(trimmed);
+  }
+  return efforts;
+}
+
+/**
  * THE PROJECTION: models.dev's payload in, the app's trimmed export out. Pure
  * (no network, no disk) so a test can hand it an empty or broken payload and
  * watch it refuse without touching the committed file.
@@ -236,13 +283,19 @@ export function projectCatalog(raw: unknown): CatalogExport {
         const one = model as Record<string, unknown>;
         const id = textField(one.id);
         const modelName = textField(one.name);
-        return {
+        const projectedModel: CatalogExportModel = {
           id,
           name: modelName === "" ? id : modelName,
           tool_call: one.tool_call === true,
           attachment: one.attachment === true,
           reasoning: one.reasoning === true,
         };
+        // STORY 16.29 — the catalogue's effort values ride only when it lists
+        // some; a model with none writes no `effort` key, so the app can read
+        // "absent" as "offer no selector" without a second flag.
+        const effort = effortValues(one.reasoning_options);
+        if (effort.length > 0) projectedModel.effort = effort;
+        return projectedModel;
       })
       .filter((model) => model.id !== "");
     if (models.length === 0) {

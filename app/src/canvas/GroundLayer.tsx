@@ -534,6 +534,9 @@ interface GroundLayerProps {
      *  the card's one quiet line says the manager is distilling only while
      *  that second call is actually running. */
     onPhase?: (phase: AskWorkPhase) => void,
+    /** STORY 16.29 — this ask's effort, or null for default; forwarded to the
+     *  TASK call only. */
+    effort?: string | null,
   ) => Promise<GroundAddResult>;
   /** Stop the running ask turn (the existing turn port's stop — story 17.2). */
   onStopAskTurn?: () => Promise<void>;
@@ -604,6 +607,17 @@ interface GroundLayerProps {
    * names them before the send; null means the config has not answered.
    */
   calls?: AskCallsFacts | null;
+  /**
+   * STORY 16.29 — THE EFFORT VALUES the task model's catalogue entry declares,
+   * read by the app from the committed export. Empty means the card offers no
+   * selector at all. Passed through untouched: no level is decided here.
+   */
+  efforts?: readonly string[];
+  /** Remember one ask card's effort pick on its own record line. */
+  onSetAskEffort?: (
+    slug: string,
+    effort: string | null,
+  ) => Promise<GroundAddResult>;
   /** Open Settings on Providers — the pre-send state's ONE verb. */
   onOpenSettings?: () => void;
   /** Move one reference to its dropped point (one line, on release). */
@@ -709,6 +723,7 @@ export function GroundLayer({
   onRemoveAsk,
   onAskTurn,
   onStopAskTurn,
+  onSetAskEffort,
   onRunSession,
   onStopSession,
   onChooseSessionTool,
@@ -720,6 +735,7 @@ export function GroundLayer({
   onMoveSession,
   hasProvider,
   calls = null,
+  efforts = [],
   onOpenSettings,
   onMove,
   onRename,
@@ -1136,8 +1152,14 @@ export function GroundLayer({
             onAskTurn={
               onAskTurn === undefined
                 ? undefined
-                : async (slug, question, onPart, onPhase) => {
-                    const result = await onAskTurn(slug, question, onPart, onPhase);
+                : async (slug, question, onPart, onPhase, effort) => {
+                    const result = await onAskTurn(
+                      slug,
+                      question,
+                      onPart,
+                      onPhase,
+                      effort,
+                    );
                     if (result.ok && result.created !== undefined) {
                       setOpenOn(result.created);
                       setOpenAskOn(null);
@@ -1158,6 +1180,12 @@ export function GroundLayer({
             onStopTurn={onStopAskTurn}
             hasProvider={hasProvider}
             calls={calls}
+            efforts={efforts}
+            onSetEffort={
+              onSetAskEffort === undefined
+                ? undefined
+                : (effort) => onSetAskEffort(ask.on, effort)
+            }
             onOpenSettings={onOpenSettings}
             autoAsk={
               askSeed !== null && askSeed.slug === ask.on

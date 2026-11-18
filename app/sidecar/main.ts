@@ -402,10 +402,19 @@ async function runTurn(request: TurnRequest): Promise<void> {
         headers: built.headers,
         // stream:true — the answer arrives as deltas (story 7). A provider
         // that ignores this answers one JSON body, handled below.
+        // STORY 16.29 — THE PER-ASK EFFORT RIDES THE BODY, and only when the
+        // request carries one. The value was the catalogue's and the person's
+        // pick; this process passes it through UNCHANGED, because a provider
+        // that knows `reasoning_effort` reads it and one that does not ignores
+        // an unknown field. "default" never reaches this branch: the builder
+        // omits it, which is why the body has no field at all for that choice.
         body: JSON.stringify({
           model: request.provider.model,
           messages: request.messages,
           stream: true,
+          ...(request.provider.reasoningEffort === undefined
+            ? {}
+            : { reasoning_effort: request.provider.reasoningEffort }),
         }),
         signal: controller.signal,
       });

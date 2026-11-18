@@ -8111,6 +8111,40 @@ body {
   cursor: default;
 }
 
+/* STORY 16.29 — THE EFFORT SELECTOR, BESIDE SEND. It is a quiet word and a
+   native control, not a second toolbar: it appears ONLY when this model's
+   catalogue entry lists levels (the component renders nothing otherwise), and
+   it reads at the same small ink as the verbs around it. "default" is the
+   choice that sends no field, so the face never has to explain a value. */
+.ask-card-effort {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--ink-marker);
+}
+
+.ask-card-effort-select {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink-marker);
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.ask-card-effort-select:hover,
+.ask-card-effort-select:focus-visible {
+  color: var(--ink-strong);
+}
+
+.ask-card-effort-select:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+}
+
 /* While a turn runs the field is disabled but still reads as the draft's
    place: the same ink, one strength down. */
 .ask-card-question:disabled {

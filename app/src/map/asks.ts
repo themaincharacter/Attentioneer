@@ -146,6 +146,18 @@ export interface AskCard {
    */
   chosenFrom?: string;
   /**
+   * STORY 16.29 — THE EFFORT THE PERSON PICKED FOR THIS CARD, when they picked
+   * one that is not "default" (PROVISIONAL record addition, flagged for an ADR).
+   * The values themselves come from the vendored catalogue's per-model
+   * `effort` list; the record stores the person's choice so a reopen remembers
+   * it. ABSENCE IS "default": a card with no field sends NO `reasoning_effort`,
+   * which is exactly what the default choice means. A stored value the current
+   * model's catalogue entry no longer lists is not sent — the card offers only
+   * declared values, and a stale one is treated as default rather than invented
+   * onto the wire.
+   */
+  effort?: string;
+  /**
    * STORY 16.19 — THE WORDS THE PERSON CHOSE, stored VERBATIM apart from the
    * one stated collapse (runs of whitespace, a selection's line breaks among
    * them, become ONE space — see `selectionWords`). One line by construction,
@@ -236,13 +248,16 @@ export function askTurnPath(workspacePath: string, slug: string): string {
  * person's words may contain the ` | ` separator (only the exact
  * ` | x: N | y: N | anchor: <slug>` tail is structural). STORY 17.5 appends ONE
  * optional tail — ` | from: <ask-slug> | carry: <n>` — and STORY 17.6 appends
- * the LAST optional tail — ` | anchorName: <the name the anchor had>` — after
- * it. Both are optional, so a card recorded before either story writes exactly
- * the line it always did, byte for byte, and a fork's pair still travels
- * together. PROVISIONAL: the field's name and its last position.
+ * an optional tail — ` | anchorName: <the name the anchor had>` — after it.
+ * STORY 16.19 appends the chosen-words pair and STORY 16.29 the final one,
+ * ` | effort: "<the person's pick>"`, JSON-quoted so a catalogue value with a
+ * space or a quote round-trips exactly. Every tail is optional, so a card
+ * recorded before a story writes exactly the line it always did, byte for byte,
+ * and a fork's pair still travels together. PROVISIONAL: the field's name and
+ * its last position.
  */
 const ASK_LINE =
-  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+)(?: \| anchor: (\S+))?(?: \| from: (\S+) \| carry: (\d+))?(?: \| anchorName: (.+?))?(?: \| chosenFrom: (\S+) \| chosen: ("(?:\\.|[^"\\])*"))?$/;
+  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+)(?: \| anchor: (\S+))?(?: \| from: (\S+) \| carry: (\d+))?(?: \| anchorName: (.+?))?(?: \| chosenFrom: (\S+) \| chosen: ("(?:\\.|[^"\\])*"))?(?: \| effort: ("(?:\\.|[^"\\])*"))?$/;
 
 /**
  * Parse one line. Anything out of shape — a missing key, a decimal coordinate,
@@ -255,7 +270,7 @@ const ASK_LINE =
 export function parseAskLine(line: string): AskCard | null {
   const match = ASK_LINE.exec(line);
   if (!match) return null;
-  const [, on, name, x, y, anchor, from, carry, anchorName, chosenFrom, chosen] =
+  const [, on, name, x, y, anchor, from, carry, anchorName, chosenFrom, chosen, effort] =
     match;
   if (on === "" || name.trim() === "") return null;
   const ask: AskCard = { on, name, x: Number(x), y: Number(y) };
@@ -298,6 +313,20 @@ export function parseAskLine(line: string): AskCard | null {
     ask.chosenFrom = chosenFrom;
     ask.chosen = words;
   }
+  // STORY 16.29 — THE EFFORT THE PERSON PICKED, stored as ONE JSON string. A
+  // line with an empty effort is out of shape (an effort that is nothing is
+  // not a choice), and "default" is never written: absence is what default
+  // means, so the wire sends nothing without a second field to explain.
+  if (effort !== undefined) {
+    let picked: unknown;
+    try {
+      picked = JSON.parse(effort);
+    } catch {
+      return null;
+    }
+    if (typeof picked !== "string" || picked.trim() === "") return null;
+    ask.effort = picked;
+  }
   return ask;
 }
 
@@ -326,9 +355,15 @@ export function serializeAskLine(ask: AskCard): string {
   // STORY 16.19 — THE CHOSEN WORDS ARE THE NEW LAST TAIL, as a PAIR. A card made
   // any other way writes exactly the line it always did, byte for byte; the
   // words are JSON-escaped so the line stays one line and round-trips verbatim.
-  return ask.chosenFrom === undefined || ask.chosen === undefined
-    ? remembered
-    : `${remembered} | chosenFrom: ${ask.chosenFrom} | chosen: ${JSON.stringify(ask.chosen)}`;
+  const worded =
+    ask.chosenFrom === undefined || ask.chosen === undefined
+      ? remembered
+      : `${remembered} | chosenFrom: ${ask.chosenFrom} | chosen: ${JSON.stringify(ask.chosen)}`;
+  // STORY 16.29 — the effort is the LAST optional tail, written only when the
+  // card holds a real pick; "default" is absence, so it never appears here.
+  return ask.effort === undefined
+    ? worded
+    : `${worded} | effort: ${JSON.stringify(ask.effort)}`;
 }
 
 /** Whether a card is a fork: it names a parent and carries a count of its turns. */
@@ -506,6 +541,35 @@ export function renameAsk(
 ): AskCard[] | null {
   if (!asks.some((ask) => ask.on === slug)) return null;
   return asks.map((ask) => (ask.on === slug ? { ...ask, name } : ask));
+}
+
+/**
+ * STORY 16.29 — REMEMBER ONE CARD'S EFFORT CHOICE (PROVISIONAL record field).
+ * PURE, so a test asserts the line without a disk. A `null` is the person
+ * choosing "default": the field is REMOVED rather than stored, because absence
+ * is exactly what "send nothing" means on this record. Every other field — the
+ * name, the anchor, a fork's parent, the chosen words — stays byte-identical.
+ * A slug this file does not carry answers null, and the caller writes nothing.
+ *
+ * The VALUE is not validated against the catalogue here: the card only offers
+ * declared values, and the send path re-checks the current options before it
+ * puts anything on the wire (a model can change under a stored pick).
+ */
+export function withAskEffort(
+  asks: readonly AskCard[],
+  slug: string,
+  effort: string | null,
+): AskCard[] | null {
+  if (!asks.some((ask) => ask.on === slug)) return null;
+  return asks.map((ask) => {
+    if (ask.on !== slug) return ask;
+    if (effort === null) {
+      const cleared = { ...ask };
+      delete cleared.effort;
+      return cleared;
+    }
+    return { ...ask, effort };
+  });
 }
 
 /**

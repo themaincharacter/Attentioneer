@@ -297,6 +297,15 @@ export interface AskCallsFacts {
   task: AskModelName;
   /** The manager model, or null when no manager is configured at all. */
   manager: AskModelName | null;
+  /**
+   * STORY 16.29 — THE EFFORT THIS ASK SENDS, or null/absent for default. It is
+   * the CARD's own pick (the person's, per ask), not a Settings value, which is
+   * why it is handed in beside the two calls rather than read from the row. The
+   * declaration names it on the TASK line only: the curator distils, it does
+   * not reason, and a declaration that implied an effort on the distil call
+   * would describe a request the app never makes.
+   */
+  effort?: string | null;
 }
 
 /** The parts of the calls section (PROVISIONAL wording). */
@@ -308,6 +317,15 @@ export const ASK_CALLS_CONDITION =
 export const ASK_CALLS_SAME = "one model does both: ";
 export const ASK_CALLS_NO_MANAGER =
   "no manager model is configured, so the card will be made by a rule instead";
+/**
+ * STORY 16.29 — THE EFFORT CLAUSE. It rides the TASK line, because that is the
+ * only call it reaches. With two models the sentence reads "... at <effort>";
+ * with ONE model doing both, the same line also says the distil call sends
+ * none, so the declaration never implies an effort the app does not send.
+ */
+export const ASK_CALLS_EFFORT = " at ";
+export const ASK_CALLS_EFFORT_CURATOR =
+  " for the answer; the distil call sends no effort";
 
 /** A row and model as one name; a row that already says the model says it once. */
 function askModelWords(name: AskModelName): string {
@@ -328,13 +346,24 @@ function askModelWords(name: AskModelName): string {
  */
 export function askCallsWords(calls: AskCallsFacts): string[] {
   const task = askModelWords(calls.task);
+  // STORY 16.29 — "default" is not an effort to name: it is the choice that
+  // sends no field, so the calls section says nothing about it.
+  const effort = calls.effort?.trim() ?? "";
+  const named = effort === "" || effort === "default" ? "" : effort;
+  const taskLine = ASK_CALLS_TASK + task + (named === "" ? "" : ASK_CALLS_EFFORT + named);
   if (calls.manager === null) {
-    return [ASK_CALLS_TASK + task, ASK_CALLS_NO_MANAGER];
+    return [taskLine, ASK_CALLS_NO_MANAGER];
   }
   const manager = askModelWords(calls.manager);
-  if (manager === task) return [ASK_CALLS_SAME + task];
+  if (manager === task) {
+    return [
+      ASK_CALLS_SAME +
+        task +
+        (named === "" ? "" : ASK_CALLS_EFFORT + named + ASK_CALLS_EFFORT_CURATOR),
+    ];
+  }
   return [
-    ASK_CALLS_TASK + task,
+    taskLine,
     ASK_CALLS_MANAGER + manager,
     ASK_CALLS_CONDITION,
   ];
