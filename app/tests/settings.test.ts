@@ -113,14 +113,16 @@ function oneRow(): ProviderRow {
 }
 
 /* ------------------------------------------------------------------ *
- * The frame: one modal, four sections, closed without a write.
+ * The frame: one modal, five sections (story 17 added Reading), closed
+ * without a write.
  * ------------------------------------------------------------------ */
 
-describe("the frame is one modal with the four sections", () => {
-  test("the section list is Providers, Turn defaults, Local model, About", () => {
+describe("the frame is one modal with the five sections", () => {
+  test("the section list is Providers, Turn defaults, Reading, Local model, About", () => {
     expect(SETTINGS_SECTIONS.map((section) => section.label)).toEqual([
       "Providers",
       "Turn defaults",
+      "Reading",
       "Local model",
       "About",
     ]);
@@ -173,7 +175,11 @@ describe("the frame is one modal with the four sections", () => {
   test("closing writes nothing: the close path is state and a read", () => {
     const app = source("App.tsx");
     const start = app.indexOf("const closeSettings");
-    const end = app.indexOf("}, [refreshProviderFacts]);", start);
+    // STORY 17: closing re-reads the fold threshold as well as the rows.
+    const end = app.indexOf(
+      "}, [refreshProviderFacts, refreshReadingPreference]);",
+      start,
+    );
     const close = app.slice(start, end);
     expect(close).toContain("setSettingsOpen(false)");
     expect(close).toContain("refreshProviderFacts()");

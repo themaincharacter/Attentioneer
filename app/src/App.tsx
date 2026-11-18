@@ -69,6 +69,11 @@ import {
   type GestureNarration,
 } from "./canvas/gestureWord";
 import { createTurnPort } from "./turn/sidecar";
+import { loadReadingPreference } from "./lib/appConfig";
+import {
+  DEFAULT_READING_PREFERENCE,
+  type ReadingPreference,
+} from "./lib/readingPreference";
 import { loadTurnSettings } from "./turn/provider";
 import {
   formatProviderRef,
@@ -822,6 +827,12 @@ function App() {
   // Bumped whenever the rows are re-read, so an open card ask reloads its
   // selector after Settings changed them.
   const [providersRev, setProvidersRev] = useState(0);
+  // STORY 17 (shortlist items 7–9): the person's STATED fold threshold. The app
+  // holds the current value so every ground card re-crops when Settings writes
+  // a new one; the defaults stand until the config answers, and nothing here
+  // counts or tracks what was read.
+  const [readingPreference, setReadingPreference] =
+    useState<ReadingPreference>(DEFAULT_READING_PREFERENCE);
   // The ghost's ask surface (Epic 10 story 3): the one panel where the person
   // asks for a packet or hands a model's reply back. It sits outside `.plane`
   // like the control's other actions; closed by Esc, its ×, or a level switch
@@ -1994,6 +2005,22 @@ function App() {
   }, []);
 
   /**
+   * STORY 17 (shortlist items 7–9) — re-read the STATED fold threshold. Settings
+   * is the only writer; this is the read side, so a changed count lands on every
+   * ground card without a reload. An unreadable config keeps the default, the
+   * same honest ignorance as everywhere else.
+   */
+  const refreshReadingPreference = useCallback(() => {
+    void loadReadingPreference()
+      .then(setReadingPreference)
+      .catch(() => setReadingPreference(DEFAULT_READING_PREFERENCE));
+  }, []);
+
+  useEffect(() => {
+    refreshReadingPreference();
+  }, [refreshReadingPreference]);
+
+  /**
    * Open Settings on a section (story 15.10). The chrome's control and the ask
    * panels' configure shortcut both land here; opening writes nothing.
    */
@@ -2010,7 +2037,10 @@ function App() {
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
     refreshProviderFacts();
-  }, [refreshProviderFacts]);
+    // STORY 17: the fold threshold is a config value like the rows, so closing
+    // re-reads it too — the cards are already re-cropped on "keep".
+    refreshReadingPreference();
+  }, [refreshProviderFacts, refreshReadingPreference]);
 
   /**
    * Open the quiet ASK panel (Epic 12 story 3) on the chooser's word, riding
@@ -4378,6 +4408,8 @@ function App() {
             workspacePath={workspace.path}
             onNarrate={narrate}
             interactionMode={gestureMode}
+            previewLines={readingPreference.previewLines}
+            noteLines={readingPreference.noteLines}
             zoom={camera.zoom}
           />
         )}
@@ -4935,6 +4967,7 @@ function App() {
           onSection={setSettingsSection}
           onClose={closeSettings}
           onChanged={refreshProviderFacts}
+          onReadingChanged={refreshReadingPreference}
         />
       )}
 

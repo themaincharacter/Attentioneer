@@ -154,6 +154,10 @@ export function nextActive(
  * focus of its own (a click is a mouse-down on the row, which keeps the caret
  * in the textarea), and it is a content element to the plane's gate, so a press
  * on it can never pan the plane or start a card drag.
+ *
+ * STORY 17 (shortlist item 8): the list carries `ground-popover`, the second,
+ * smaller prose scale — it reads as its own small surface rather than as a
+ * shrunken card. The scale lives in canvas.css; the concept map is untouched.
  */
 export function MentionPicker({
   choices,
@@ -165,7 +169,11 @@ export function MentionPicker({
   onPick: (choice: MentionChoice) => void;
 }) {
   return (
-    <div className="ground-mention-picker" role="listbox" aria-label="mention">
+    <div
+      className="ground-mention-picker ground-popover"
+      role="listbox"
+      aria-label="mention"
+    >
       {choices.length === 0 ? (
         <div className="ground-mention-empty">
           nothing to mention here yet

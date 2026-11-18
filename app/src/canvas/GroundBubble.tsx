@@ -35,6 +35,10 @@ import { counterScale } from "./veilRules";
  * gate's content lists plus a raw mousedown stop, so its presses never pan the
  * plane, start a word gesture or count as another double-click.
  *
+ * STORY 17 (shortlist item 8): the bubble carries `ground-popover`, the
+ * second, smaller prose scale, so the creation surface reads as its own small
+ * popover instead of a shrunken card. Its title stays the quiet meta label.
+ *
  * PROVISIONAL: the card's size, the intent row's look, the wording of the
  * sentences and the "name it first." rule (ADR-0003's rendering seam and the
  * story's record shapes).
@@ -222,7 +226,7 @@ export function GroundBubble({
   return (
     <div
       ref={rootRef}
-      className="ground-bubble"
+      className="ground-bubble ground-popover"
       role="group"
       aria-label="add a ground reference"
       style={{

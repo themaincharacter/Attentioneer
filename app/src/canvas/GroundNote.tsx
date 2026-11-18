@@ -6,7 +6,7 @@ import {
   parseMentions,
   type Mention,
 } from "../map/mentions";
-import { previewText } from "../map/readings";
+import { previewOverflows, previewText } from "../map/readings";
 
 /**
  * Story 16.7 — THE NOTE'S MENTIONS, drawn over the person's own words.
@@ -122,8 +122,12 @@ export function GroundNote({
 }) {
   const segments = cropSegments(parseMentions(text), maxLines);
   const cardSlugs = new Set(cardNames.keys());
+  // STORY 17 (shortlist items 7–9): a cropped note ends in a soft fade rather
+  // than a hard edge. Only the FACE is faded — the stored file keeps every line
+  // and the expanded card shows all of it, so the fade is the fold's sign.
+  const cropped = maxLines !== null && previewOverflows(text, maxLines);
   return (
-    <div className="ground-note">
+    <div className={cropped ? "ground-note cropped" : "ground-note"}>
       {segments.map((segment, index) =>
         segment.kind === "text" ? (
           <Fragment key={index}>{segment.text}</Fragment>
@@ -156,6 +160,11 @@ export const CONCEPT_PANEL_LINES = 12;
  * The concept's read-only panel — the meta vocabulary this card is playing
  * with, shown without touching either map. Name, then a cropped memory. It is a
  * VIEW: closing it (the ×, Esc, or a press away) writes nothing.
+ *
+ * STORY 17 (shortlist item 8): it carries `ground-popover`, the SECOND, SMALLER
+ * prose scale. A popover is its own small surface, not a shrunken card: its
+ * type is tight and its one heading collapses to body size (canvas.css). The
+ * CONCEPT MAP's own surfaces are deliberately untouched by that story.
  */
 export function GroundConceptPanel({
   name,
@@ -168,7 +177,11 @@ export function GroundConceptPanel({
 }) {
   const cropped = previewText(memory, CONCEPT_PANEL_LINES);
   return (
-    <div className="ground-concept-panel" role="note" aria-label={`concept: ${name}`}>
+    <div
+      className="ground-concept-panel ground-popover"
+      role="note"
+      aria-label={`concept: ${name}`}
+    >
       <div className="ground-concept-name">{name}</div>
       {cropped.trim() !== "" && (
         <div className="ground-concept-memory">{cropped}</div>

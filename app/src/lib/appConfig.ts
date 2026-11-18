@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { readTextFile } from "./fs";
+import {
+  DEFAULT_READING_PREFERENCE,
+  readReadingPreference,
+  storedReadingPreference,
+  type ReadingPreference,
+} from "./readingPreference";
 import { canonicalJson, writeMachineFile } from "./serialize";
 import { createWriteQueue } from "./writeQueue";
 
@@ -24,6 +30,13 @@ import { createWriteQueue } from "./writeQueue";
  * kept in the OS keychain, or — where no keychain answers — in ONE stated
  * owner-only fallback file (see src-tauri/src/secrets.rs and lib/secret.ts).
  * This file has no key field and no writer that could add one.
+ *
+ * STORY 17 (shortlist items 7-9) ADDS THE READING PREFERENCE: how many lines
+ * a ground card's face shows before its fold. It is a PREFERENCE, not a
+ * counter - two bounded numbers the person states in Settings, read back by
+ * the crop and written through the SAME queued merge as everything else. Its
+ * pure shape and bounds live in lib/readingPreference.ts; this file owns only
+ * the key and the I/O.
  *
  * PROVISIONAL: the file's shape and the keys' names are not settled by any ADR.
  */
@@ -72,4 +85,43 @@ export async function saveAppConfig(patch: AppConfig): Promise<void> {
     const current = await loadAppConfig();
     await writeMachineFile(await configPath(), canonicalJson({ ...current, ...patch }));
   });
+}
+
+/* ------------------------------------------------------------------------- *
+ * STORY 17 (shortlist items 7-9) - THE STATED FOLD THRESHOLD.
+ *
+ * Two numbers the person can SEE and CHANGE, under the config's own "reading"
+ * key. Nothing else is stored: no counter, no history, no last-used value. The
+ * read falls back to the defaults on any ignorance (a missing file, a
+ * malformed key), exactly like the rest of this module; the write goes through
+ * the same queued merge, so it can never drop another feature's key.
+ * ------------------------------------------------------------------------- */
+
+/** The config key the stated fold threshold lives under. */
+export const READING_CONFIG_KEY = "reading";
+
+/**
+ * The stated threshold from the config. An unreadable or malformed file is the
+ * same honest default the card already renders with.
+ */
+export async function loadReadingPreference(): Promise<ReadingPreference> {
+  try {
+    const config = await loadAppConfig();
+    return readReadingPreference(config[READING_CONFIG_KEY]);
+  } catch {
+    return DEFAULT_READING_PREFERENCE;
+  }
+}
+
+/**
+ * Persist the two stated counts (each bounded, field by field) and answer what
+ * LANDED, so Settings can show the number that is actually used rather than the
+ * number that was typed.
+ */
+export async function saveReadingPreference(
+  preference: ReadingPreference,
+): Promise<ReadingPreference> {
+  const stored = storedReadingPreference(preference);
+  await saveAppConfig({ [READING_CONFIG_KEY]: stored });
+  return stored;
 }

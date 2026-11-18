@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   loadConceptWord,
   listConceptWords,
@@ -15,7 +15,9 @@ import {
   isFileReading,
   pageHost,
   proposeSelectionName,
+  previewOverflows,
   previewText,
+  READING_PREVIEW_LINES,
   readingAbsolutePath,
   readingExtract,
   readingFileName,
@@ -156,6 +158,15 @@ import type { TurnPort } from "../turn/turn";
  * honestly and the picker can offer the vocabulary. Nothing is copied into the
  * ground map and nothing is merged into a note. PROVISIONAL: the eager index
  * read (a later story may scope it), and the open-card view state below.
+ *
+ * STORY 17 (shortlist items 7-9) — THE TYPE SYSTEM's one visible consequence:
+ * the small card's CROP IS A STATED PREFERENCE. `previewLines` and `noteLines`
+ * arrive as props (lib/readingPreference.ts owns their bounds, Settings states
+ * them), so the pure `previewText` helper reads the same number the CSS clamp
+ * does and a changed threshold re-crops every card without a reload. The cut is
+ * drawn with a soft fade and ONE small verb, "more", which opens the card —
+ * never a hard edge and never a number. A card whose text fits its threshold
+ * draws no cut at all; the fade is the fold's sign, not decoration.
  *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
@@ -401,6 +412,15 @@ interface GroundLayerProps {
   /** How a gesture is armed right now — a drag stands still while armed. */
   interactionMode?: GestureMode;
   /**
+   * STORY 17 (shortlist item 7-9) — HOW MANY LINES THE SMALL FACE SHOWS. The
+   * person's stated threshold from Settings (lib/readingPreference.ts bounds
+   * it); the crop and the CSS clamp both read it. Optional so a render test
+   * needs no config, in which case the module's own default stands.
+   */
+  previewLines?: number;
+  /** STORY 17: the note's own stated count (the same preference, its own key). */
+  noteLines?: number;
+  /**
    * The camera's zoom, for the drag's screen→world conversion. Optional so a
    * render test needs no plane; the app always passes the real camera.
    */
@@ -431,6 +451,8 @@ export function GroundLayer({
   workspacePath = "",
   onNarrate,
   interactionMode = "idle",
+  previewLines = READING_PREVIEW_LINES,
+  noteLines = NOTE_PREVIEW_LINES,
   zoom = 1,
 }: GroundLayerProps) {
   // onConfigure and providersRev are the GroundLayer's own props; the cards
@@ -554,6 +576,8 @@ export function GroundLayer({
           providersRev={providersRev}
           workspacePath={workspacePath}
           onNarrate={onNarrate}
+          previewLines={previewLines}
+          noteLines={noteLines}
         />
       ))}
       {refusal !== null && (
@@ -645,6 +669,8 @@ function GroundCard({
   providersRev,
   workspacePath,
   onNarrate,
+  previewLines,
+  noteLines,
 }: {
   reference: GroundReference;
   reading: Reading | null;
@@ -699,6 +725,9 @@ function GroundCard({
   workspacePath?: string;
   /** STORY 16.16: the app's one narration sink (the cursor chip's state). */
   onNarrate?: (gesture: GestureNarration) => void;
+  /** STORY 17: the stated fold threshold, already bounded (preview + note). */
+  previewLines: number;
+  noteLines: number;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -989,10 +1018,23 @@ function GroundCard({
   // reading. The small face crops it with the SAME pure helper; the expanded
   // face shows every line the file holds.
   const shownNote = note === undefined || note === "" ? null : note;
-  // The small face is CROPPED by the pure helper; the expanded face is the
-  // stored text itself, untouched. Neither path reads anything.
+  // STORY 17 (shortlist items 7–9): the small face is cropped at the person's
+  // STATED threshold, and the fold's fade + "more" are drawn only when
+  // something is actually folded away. The expanded face is the stored text
+  // itself, untouched. Neither path reads anything.
   const bodyText =
-    shownText === null ? null : open ? shownText : previewText(shownText);
+    shownText === null
+      ? null
+      : open
+        ? shownText
+        : previewText(shownText, previewLines);
+  // A note and a reading fold independently (each has its own stated count),
+  // and either one puts the card's ONE verb on the face.
+  const noteFolded =
+    shownNote !== null && !open && previewOverflows(shownNote, noteLines);
+  const readingFolded =
+    shownText !== null && !open && previewOverflows(shownText, previewLines);
+  const folded = noteFolded || readingFolded;
   // STORY 16.14: the page's title is its "what this is" line; the image is the
   // card's own line above the reading (no image, no line). Both are copies
   // read from the map folder — nothing here fetches, on open or ever.
@@ -1202,7 +1244,17 @@ function GroundCard({
       className={`ground-reference${dragPos ? " dragging" : ""}${
         open ? " expanded" : ""
       }`}
-      style={{ left: x, top: y }}
+      style={
+        {
+          left: x,
+          top: y,
+          // STORY 17: the SAME stated counts the crop uses drive the DOM's
+          // clamp and the note's crop height — canvas.css reads these two
+          // variables, so a changed threshold re-crops without a reload.
+          "--preview-lines": previewLines,
+          "--note-lines": noteLines,
+        } as CSSProperties
+      }
       data-slug={reference.on}
     >
       {/* STORY 16.5 — the one new affordance: a small quiet handle on the
@@ -1299,7 +1351,7 @@ function GroundCard({
           // crops it (chips kept whole); the expanded face shows every line.
           <GroundNote
             text={shownNote}
-            maxLines={open ? null : NOTE_PREVIEW_LINES}
+            maxLines={open ? null : noteLines}
             cardNames={cardNames}
             wordSlugs={wordSlugs}
             goneWords={gone}
@@ -1329,6 +1381,26 @@ function GroundCard({
           // its kind and this one quiet line — never an empty box.
           <div className="ground-reading ground-refusal">
             {readingAbsenceLine(state, reading)}
+          </div>
+        )}
+        {/* STORY 17 (shortlist items 7–9) — THE FOLD. A small card whose note or
+            reading holds more than the person's stated lines ends in a SOFT
+            FADE and ONE small verb: "more" opens the card, exactly like a press
+            on the body, and it is never a number and never a count. A card that
+            fits its threshold draws neither, because there is nothing to fold.
+            The button's press is caught by the card's raw mousedown handler
+            (any button returns early), so this verb never starts a drag. */}
+        {folded && (
+          <div className="ground-fold">
+            <div className="ground-fade" aria-hidden="true" />
+            <button
+              type="button"
+              className="ground-more"
+              title="open the card"
+              onClick={onOpen}
+            >
+              more
+            </button>
           </div>
         )}
         {/* STORY 16.8 — the PULL, below the stored reading as a CONTINUATION

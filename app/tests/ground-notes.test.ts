@@ -534,7 +534,8 @@ describe("the card: the note above the reading, cropped, editable in place", () 
     // (Story 16.7 moved the face into `GroundNote`, which crops with the same
     // pure rule and keeps a mention's chip whole; `null` is the whole note.)
     expect(LAYER).toContain("<GroundNote");
-    expect(LAYER).toContain("maxLines={open ? null : NOTE_PREVIEW_LINES}");
+    // STORY 17: the note's crop reads the person's STATED count.
+    expect(LAYER).toContain("maxLines={open ? null : noteLines}");
     expect(LAYER).toContain("ground-note-edit");
     expect(LAYER).toContain("ground-note-done");
     expect(LAYER).toContain("ground-note-editor");

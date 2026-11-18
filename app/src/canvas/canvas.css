@@ -16,7 +16,18 @@
    follows in the type-system story rather than all at once (PROVISIONAL, the
    token values). The real reduce-motion path lives beside the new chip and bar
    at the end of this file: it REMOVES the motion, it does not merely shorten
-   it. */
+   it.
+
+   STORY 17 (shortlist items 7-9) — THE TYPE SYSTEM. Its tokens are stated HERE,
+   in the same :root as the motion contract, rather than in a second set
+   further down: ONE foreground colour is the ground map's only text colour,
+   and every text role is that colour at a different STRENGTH (the ink ladder).
+   Hierarchy is strength and size — headings are NOT bold (weight 400) and a
+   card's reading leads at 1.625. The only other colour is the existing warm
+   state accent. A second, COMPACT prose scale carries popovers and small
+   panels. The CONCEPT MAP's own surfaces are deliberately NOT restyled by this
+   story; they keep their rules until a story says otherwise. PROVISIONAL: the
+   token names, their strengths, the two scales and the threshold's bounds. */
 
 :root {
   --motion-fast: 120ms;
@@ -24,6 +35,31 @@
   --motion-slow: 260ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-soft: cubic-bezier(0.33, 0, 0.2, 1);
+
+  /* THE INK LADDER (story 17, shortlist item 7): one colour, named strengths.
+     Every ground foreground below is one of these — never a literal colour. */
+  --ink-rgb: 30 33 38;
+  --ink-strong: rgb(var(--ink-rgb) / 1);
+  --ink: rgb(var(--ink-rgb) / 0.8);
+  --ink-soft: rgb(var(--ink-rgb) / 0.55);
+  --ink-marker: rgb(var(--ink-rgb) / 0.66);
+  --ink-rule: rgb(var(--ink-rgb) / 0.14);
+  --ink-quote: rgb(var(--ink-rgb) / 0.72);
+  --ink-chip: rgb(var(--ink-rgb) / 0.08);
+  /* The ladder's faint end (placeholders, disabled verbs): the SAME ink, one
+     strength below --ink-soft. */
+  --ink-faint: rgb(var(--ink-rgb) / 0.3);
+  /* The one other colour on the map: the existing warm state accent. */
+  --state-accent: #a0522d;
+
+  /* THE TWO PROSE SCALES (story 17, shortlist item 8). A card's reading and
+     note read at the PROSE scale; a popover or small panel reads at the
+     COMPACT one — smaller, tighter, its headings level with its body. */
+  --prose-size: 12px;
+  --prose-leading: 1.625;
+  --note-size: 13px;
+  --compact-size: 11.5px;
+  --compact-leading: 1.45;
 }
 
 @keyframes fade-in {
@@ -5369,14 +5405,19 @@ body {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  /* STORY 17 (shortlist item 7): the gaps and padding give the PROSE scale's
+     six-line default room (12px at 1.625); the box itself stays FIXED (16.3),
+     so a stated count larger than the box shows what the box holds and the
+     fade says so. Hierarchy here is strength and size only: the name is
+     regular weight. */
+  gap: 5px;
   width: 300px;
   /* Tall enough for the title, the six-line preview, the footer AND the verbs
      row (which keeps its space while quiet, so hover never shifts the body). */
   height: 220px;
-  padding: 11px 13px 10px;
+  padding: 9px 13px 8px;
   background: rgba(255, 253, 248, 0.92);
-  border: 1px solid rgba(141, 136, 124, 0.22);
+  border: 1px solid var(--ink-rule);
   border-radius: 8px;
   box-shadow: 0 1px 5px rgba(40, 35, 25, 0.06);
   user-select: none;
@@ -5403,6 +5444,8 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  /* STORY 17: the fold's fade and its "more" verb are anchored to this box. */
+  position: relative;
 }
 
 .ground-reference.expanded .ground-body {
@@ -5410,12 +5453,15 @@ body {
   overscroll-behavior: contain;
 }
 
-/* The person's words: the concept map's word scale, same ink and weight. */
+/* The person's words: the concept map's word scale at the card's HEADING
+   strength — but regular weight (story 17: hierarchy is strength and size, so
+   nothing here is bold). */
 .ground-name {
   font-size: 17px;
-  font-weight: 500;
+  line-height: 1.2;
+  font-weight: 400;
   letter-spacing: -0.01em;
-  color: #1e2126;
+  color: var(--ink-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5429,7 +5475,7 @@ body {
   font-size: 11.5px;
   line-height: 1.35;
   font-style: italic;
-  color: #a09a8c;
+  color: var(--ink-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5475,7 +5521,7 @@ body {
    and never an error. */
 .ground-reading.ground-needs {
   font-style: italic;
-  color: #a09a8c;
+  color: var(--ink-soft);
 }
 
 /* STORY 16.15 — the creation bubble's THREE INTENTS: a file, a page, a video.
@@ -5493,14 +5539,14 @@ body {
   border-radius: 999px;
   background: none;
   font: inherit;
-  font-size: 11px;
-  color: #8d8779;
+  font-size: var(--compact-size);
+  color: var(--ink-marker);
   cursor: pointer;
 }
 
 .ground-bubble-intent.active {
   border-color: rgba(40, 35, 25, 0.42);
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 .ground-bubble-intent:disabled {
@@ -5512,7 +5558,7 @@ body {
    card's third line, never as a broken empty box. */
 .ground-reading.ground-refusal {
   font-style: italic;
-  color: #a09a8c;
+  color: var(--ink-soft);
 }
 
 /* The file's opening lines, read at add time and kept in the map folder. A
@@ -5520,9 +5566,11 @@ body {
    summary of it. On the SMALL face it is cropped to the preview's six lines
    (with an ellipsis); the expanded face shows every stored line and scrolls. */
 .ground-reading {
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: #6f6a5f;
+  /* STORY 17 (shortlist item 7): the card's reading is the PROSE scale — one
+     size, one leading, one ink, stated in :root. */
+  font-size: var(--prose-size);
+  line-height: var(--prose-leading);
+  color: var(--ink);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -5530,7 +5578,10 @@ body {
 .ground-body .ground-reading {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 6;
+  /* STORY 17: the SAME stated count the pure crop uses, read from the card's
+     own style. The helper already cut the text; this is the visual guard for a
+     line that wraps. */
+  -webkit-line-clamp: var(--preview-lines, 6);
   overflow: hidden;
 }
 
@@ -5544,6 +5595,66 @@ body {
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
+}
+
+/* STORY 17 (shortlist items 7–9) — THE FOLD'S FACE. A small card with more than
+   its stated lines ends in a SOFT FADE, never a hard cut, and ONE small verb:
+   "more" opens the card (the same move as a press on the body). The verb is
+   never a number and never a count; the fade is the fold's sign, so a card that
+   fits its threshold draws neither. The fade is the card's own paper, so it
+   reads as the page fading out rather than as a bar. */
+.ground-fold {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.ground-fade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 253, 248, 0) 0%,
+    rgba(255, 253, 248, 0.86) 62%,
+    rgba(255, 253, 248, 0.96) 100%
+  );
+}
+
+.ground-more {
+  position: relative;
+  margin: 0 0 1px;
+  padding: 0 0 0 8px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.2;
+  color: var(--ink-marker);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color var(--motion-fast) var(--ease-soft);
+}
+
+.ground-more:hover {
+  color: var(--ink-strong);
+}
+
+/* STORY 17: a crop that wraps the note fades at its own cut too, so neither
+   face of the card ends in a hard edge. The card's "more" opens the whole. */
+.ground-note.cropped {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 62%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
 }
 
 /* STORY 16.8 — the PULL: what the person asked to see more of, drawn as a
@@ -5562,9 +5673,9 @@ body {
 }
 
 .ground-pulled-text {
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: #6f6a5f;
+  font-size: var(--prose-size);
+  line-height: var(--prose-leading);
+  color: var(--ink);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -5573,7 +5684,7 @@ body {
   margin-top: 6px;
   font-size: 11.5px;
   font-style: italic;
-  color: #a09a8c;
+  color: var(--ink-soft);
 }
 
 .ground-pulled-dismiss {
@@ -5583,12 +5694,12 @@ body {
   background: none;
   font: inherit;
   font-size: 11.5px;
-  color: #8d8779;
+  color: var(--ink-marker);
   cursor: pointer;
 }
 
 .ground-pulled-dismiss:hover {
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 /* STORY 16.6 — the card's NOTE: the person's own words, above the reading and
@@ -5602,13 +5713,15 @@ body {
    chip is an INLINE button inside the person's sentence, and the legacy box
    would blockify each text run and chip onto its own line. */
 .ground-note {
-  max-height: 3em;
+  /* STORY 17: the note's crop is its OWN stated count (--note-lines), drawn at
+     the prose leading; the stored file keeps every line. */
+  max-height: calc(var(--note-lines, 2) * var(--prose-leading) * 1em);
   overflow: hidden;
   padding-bottom: 5px;
   font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #4c4a44;
+  font-size: var(--note-size);
+  line-height: var(--prose-leading);
+  color: var(--ink);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -5633,9 +5746,9 @@ body {
   outline: none;
   background: rgba(255, 255, 255, 0.6);
   font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #4c4a44;
+  font-size: var(--note-size);
+  line-height: var(--prose-leading);
+  color: var(--ink);
   white-space: pre-wrap;
   resize: none;
 }
@@ -5667,14 +5780,14 @@ body {
   line-height: inherit;
   white-space: nowrap;
   background: rgba(141, 136, 124, 0.13);
-  color: #3f4a52;
+  color: var(--ink-quote);
   box-shadow: inset 0 -1px 0 rgba(141, 136, 124, 0.35);
   cursor: pointer;
 }
 
 .ground-mention.card:hover {
   background: rgba(141, 136, 124, 0.22);
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 /* The concept/meta voice: the SAME serif italic the note speaks in, on a
@@ -5683,19 +5796,19 @@ body {
   font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
   font-style: italic;
   background: rgba(120, 104, 148, 0.13);
-  color: #5b4a72;
+  color: var(--ink-quote);
   box-shadow: inset 0 -1px 0 rgba(120, 104, 148, 0.35);
 }
 
 .ground-mention.word:hover {
   background: rgba(120, 104, 148, 0.22);
-  color: #3f3352;
+  color: var(--ink-strong);
 }
 
 /* A dangling target: muted, dashed, and a deliberate dead end. */
 .ground-mention.dangling {
   background: transparent;
-  color: #a09a8c;
+  color: var(--ink-soft);
   box-shadow: none;
   border: 1px dashed rgba(141, 136, 124, 0.4);
   cursor: default;
@@ -5708,12 +5821,24 @@ body {
   margin-left: 4px;
   font-size: 10px;
   font-style: italic;
-  color: #a09a8c;
+  color: var(--ink-soft);
 }
 
 .ground-mention.dangling:hover .ground-mention-missing,
 .ground-mention.dangling:focus-visible .ground-mention-missing {
   display: inline;
+}
+
+/* STORY 17 (shortlist item 8) — THE SECOND, COMPACT PROSE SCALE. A popover is
+   its OWN small surface, not a shrunken card: smaller type, tighter leading,
+   and its headings level with its body at regular weight. The class rides the
+   concept panel, the `@` picker and the creation bubble (the story's popovers);
+   the CONCEPT MAP's own surfaces are deliberately NOT restyled here and keep
+   their existing rules. */
+.ground-popover {
+  font-size: var(--compact-size);
+  line-height: var(--compact-leading);
+  font-weight: 400;
 }
 
 /* The `@` list, opened below the card so the note's own crop and scroll never
@@ -5750,16 +5875,16 @@ body {
   border-radius: 4px;
   background: none;
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--compact-size);
   text-align: left;
-  color: #4c4a44;
+  color: var(--ink);
   cursor: pointer;
 }
 
 .ground-mention-option:hover,
 .ground-mention-option.active {
   background: rgba(141, 136, 124, 0.14);
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 .ground-mention-option-label {
@@ -5774,14 +5899,14 @@ body {
   font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
   font-size: 10.5px;
   font-style: italic;
-  color: #a09a8c;
+  color: var(--ink-soft);
 }
 
 .ground-mention-empty {
   padding: 4px 6px;
-  font-size: 11.5px;
+  font-size: var(--compact-size);
   font-style: italic;
-  color: #a09a8c;
+  color: var(--ink-soft);
 }
 
 /* The concept's read-only panel: name, cropped memory, a quiet close. It is a
@@ -5803,16 +5928,19 @@ body {
 
 .ground-concept-name {
   font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
-  font-size: 15px;
+  /* STORY 17: a popover's heading is LEVEL with its body — regular weight, the
+     compact size. The popover does not shout a title a card would not. */
+  font-size: var(--compact-size);
+  font-weight: 400;
   font-style: italic;
-  color: #4a3f5c;
+  color: var(--ink-strong);
 }
 
 .ground-concept-memory {
   margin-top: 5px;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: #6f6a5f;
+  font-size: var(--compact-size);
+  line-height: var(--compact-leading);
+  color: var(--ink);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -5823,13 +5951,13 @@ body {
   border: none;
   background: none;
   font: inherit;
-  font-size: 11.5px;
-  color: #8d8779;
+  font-size: var(--compact-size);
+  color: var(--ink-marker);
   cursor: pointer;
 }
 
 .ground-concept-close:hover {
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 /* The meta footer: the file's NAME and, when it is not current, the state
@@ -5859,7 +5987,7 @@ body {
    an authored fact, not a map label. */
 .ground-handle {
   font-size: 11.5px;
-  color: #a09a8c;
+  color: var(--ink-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5875,20 +6003,20 @@ body {
 .ground-state {
   font-size: 11.5px;
   font-style: italic;
-  color: #a0522d;
+  color: var(--state-accent);
   white-space: nowrap;
 }
 
 .ground-state.missing,
 .ground-state.unreadable,
 .ground-state.unread {
-  color: #a09a8c;
+  color: var(--ink-soft);
 }
 
 /* A refusal's one sentence, in place: the old reading stays. */
 .ground-problem {
   font-size: 11.5px;
-  color: #a0522d;
+  color: var(--state-accent);
 }
 
 /* The two re-reads: quiet text buttons on the card, never a toolbar. They are
@@ -5917,16 +6045,16 @@ body {
   background: none;
   font: inherit;
   font-size: 11.5px;
-  color: #8d8779;
+  color: var(--ink-marker);
   cursor: pointer;
 }
 
 .ground-actions button:hover {
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 .ground-actions button:disabled {
-  color: #c9c3b6;
+  color: var(--ink-faint);
   cursor: default;
 }
 
@@ -5937,7 +6065,7 @@ body {
   font-size: 11.5px;
   line-height: 1.35;
   font-style: italic;
-  color: #a09a8c;
+  color: var(--ink-soft);
 }
 
 /* STORY 16.13 (shortlist item 3): the empty ground map's ONE muted sentence,
@@ -5950,7 +6078,7 @@ body {
   transform: translate(-50%, -50%);
   z-index: 4;
   font-size: 12.5px;
-  color: #a09a8c;
+  color: var(--ink-soft);
   pointer-events: none;
   user-select: none;
 }
@@ -5976,7 +6104,7 @@ body {
   box-shadow: 0 2px 10px rgba(40, 35, 25, 0.08);
   font-size: 12px;
   line-height: 1.4;
-  color: #4b473f;
+  color: var(--ink);
   animation: rise-in var(--motion-base) var(--ease-out);
 }
 
@@ -5991,14 +6119,14 @@ body {
   background: none;
   font: inherit;
   font-size: 12px;
-  color: #1e2126;
+  color: var(--ink-strong);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
 }
 
 .ground-toast-restore:hover {
-  color: #000;
+  color: var(--ink-strong);
 }
 
 .ground-toast-dismiss {
@@ -6008,12 +6136,12 @@ body {
   font: inherit;
   font-size: 13px;
   line-height: 1;
-  color: #a09a8c;
+  color: var(--ink-soft);
   cursor: pointer;
 }
 
 .ground-toast-dismiss:hover {
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 /* A refused unlink's one sentence, shown where the card stood (the card left
@@ -6054,7 +6182,7 @@ body {
   width: 100%;
   font: inherit;
   font-size: 12px;
-  color: #2c2a26;
+  color: var(--ink-strong);
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid #e4dfd4;
   border-radius: 4px;
@@ -6073,16 +6201,16 @@ body {
   background: none;
   font: inherit;
   font-size: 11.5px;
-  color: #8d8779;
+  color: var(--ink-marker);
   cursor: pointer;
 }
 
 .ground-selection-actions button:hover {
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 .ground-selection-actions button:disabled {
-  color: #c9c3b6;
+  color: var(--ink-faint);
   cursor: default;
 }
 
@@ -6162,7 +6290,7 @@ body {
   font: inherit;
   font-size: 11px;
   line-height: 1;
-  color: #8d8779;
+  color: var(--ink-marker);
   opacity: 0;
   pointer-events: none;
   cursor: pointer;
@@ -6182,7 +6310,7 @@ body {
 
 .ground-wire-mark:hover {
   border-color: #8d8779;
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 /* The two-step confirm, at the wire's midpoint (the card's inline ask, made
@@ -6207,7 +6335,7 @@ body {
 .ground-wire-confirm-question {
   font-size: 11.5px;
   line-height: 1.35;
-  color: #6f6a5f;
+  color: var(--ink);
 }
 
 .ground-wire-confirm-actions {
@@ -6221,16 +6349,16 @@ body {
   background: none;
   font: inherit;
   font-size: 11.5px;
-  color: #8d8779;
+  color: var(--ink-marker);
   cursor: pointer;
 }
 
 .ground-wire-confirm-actions button:hover {
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 .ground-wire-confirm-actions button:disabled {
-  color: #c9c3b6;
+  color: var(--ink-faint);
   cursor: default;
 }
 
@@ -6246,7 +6374,7 @@ body {
   border: 1px solid rgba(141, 136, 124, 0.22);
   border-radius: 5px;
   font-size: 11.5px;
-  color: #a0522d;
+  color: var(--state-accent);
   pointer-events: auto;
   cursor: pointer;
   animation: fade-in var(--motion-fast) var(--ease-out);
@@ -6310,13 +6438,13 @@ body {
   font-size: 10.5px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #b3ac9e;
+  color: var(--ink-soft);
 }
 
 .ground-bubble-name {
   font: inherit;
-  font-size: 12px;
-  color: #2c2a26;
+  font-size: var(--compact-size);
+  color: var(--ink-strong);
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid #e4dfd4;
   border-radius: 4px;
@@ -6326,15 +6454,15 @@ body {
 
 .ground-bubble-name::placeholder,
 .ground-bubble-url::placeholder {
-  color: #c4beb1;
+  color: var(--ink-faint);
 }
 
 /* STORY 16.14: the pasted address is the bubble's second source. Same quiet
    field as the name; the app stores the value verbatim. */
 .ground-bubble-url {
   font: inherit;
-  font-size: 11.5px;
-  color: #2c2a26;
+  font-size: var(--compact-size);
+  color: var(--ink-strong);
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid #e4dfd4;
   border-radius: 4px;
@@ -6343,8 +6471,8 @@ body {
 }
 
 .ground-bubble-file {
-  font-size: 11px;
-  color: #8a8477;
+  font-size: var(--compact-size);
+  color: var(--ink-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6352,9 +6480,9 @@ body {
 }
 
 .ground-bubble-problem {
-  font-size: 11px;
-  line-height: 1.4;
-  color: #a9522f;
+  font-size: var(--compact-size);
+  line-height: var(--compact-leading);
+  color: var(--state-accent);
 }
 
 .ground-bubble-actions {
@@ -6367,8 +6495,8 @@ body {
 .ground-bubble-add,
 .ground-bubble-cancel {
   font: inherit;
-  font-size: 11px;
-  color: #6b675e;
+  font-size: var(--compact-size);
+  color: var(--ink-marker);
   background: transparent;
   border: 1px solid #e4dfd4;
   border-radius: 4px;
@@ -6379,7 +6507,7 @@ body {
 .ground-bubble-pick:hover,
 .ground-bubble-add:hover,
 .ground-bubble-cancel:hover {
-  color: #1e2126;
+  color: var(--ink-strong);
   border-color: #cfc8ba;
 }
 
@@ -6429,8 +6557,9 @@ body {
 
 .ground-ask-title {
   font-size: 12.5px;
-  font-weight: 500;
-  color: #3b3d42;
+  /* STORY 17: a heading is regular weight; hierarchy comes from size and ink. */
+  font-weight: 400;
+  color: var(--ink-strong);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6443,12 +6572,12 @@ body {
   padding: 0 2px;
   font-size: 15px;
   line-height: 1;
-  color: #8d887c;
+  color: var(--ink-marker);
   cursor: pointer;
 }
 
 .ground-ask-close:hover {
-  color: #1e2126;
+  color: var(--ink-strong);
 }
 
 /* The provider facts, in one quiet stack: three labelled fields, no section
@@ -6465,7 +6594,7 @@ body {
   gap: 2px;
   font-size: 10.5px;
   letter-spacing: 0.02em;
-  color: #8d887c;
+  color: var(--ink-marker);
 }
 
 .ground-ask-field input,
@@ -6474,7 +6603,7 @@ body {
   width: 100%;
   font: inherit;
   font-size: 12px;
-  color: #1e2126;
+  color: var(--ink-strong);
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid #e4dfd4;
   border-radius: 4px;
@@ -6502,7 +6631,7 @@ body {
 .ground-ask-stop,
 .ground-ask-open {
   font-size: 11.5px;
-  color: #6f6a5f;
+  color: var(--ink);
   background: transparent;
   border: 1px solid #e4dfd4;
   border-radius: 4px;
@@ -6513,7 +6642,7 @@ body {
 .ground-ask-send:hover,
 .ground-ask-stop:hover,
 .ground-ask-open:hover {
-  color: #1e2126;
+  color: var(--ink-strong);
   border-color: #cfc8ba;
 }
 
@@ -6528,7 +6657,7 @@ body {
 .ground-ask-answer {
   font-size: 12.5px;
   line-height: 1.5;
-  color: #4a473f;
+  color: var(--ink);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   padding-top: 7px;
@@ -6539,18 +6668,18 @@ body {
    inside the text — it is never presented as complete. */
 .ground-ask-answer[data-state="stopped"],
 .ground-ask-answer[data-state="incomplete"] {
-  color: #6b665c;
+  color: var(--ink-marker);
 }
 
 .ground-ask-answer-mark {
-  color: #8d8779;
+  color: var(--ink-marker);
   font-style: italic;
 }
 
 /* One sentence, in place, when the turn did not produce an answer. */
 .ground-ask-problem {
   font-size: 11.5px;
-  color: #a0522d;
+  color: var(--state-accent);
 }
 
 
@@ -6565,7 +6694,7 @@ body {
   width: 100%;
   font: inherit;
   font-size: 12px;
-  color: #1e2126;
+  color: var(--ink-strong);
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid #e4dfd4;
   border-radius: 4px;
@@ -6583,18 +6712,18 @@ body {
   gap: 8px;
   flex-wrap: wrap;
   font-size: 10.5px;
-  color: #8d887c;
+  color: var(--ink-marker);
 }
 
 .ground-ask-ref {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #6f6a5f;
+  color: var(--ink);
 }
 
 .ground-ask-key-store {
   font-size: 10.5px;
   line-height: 1.4;
-  color: #8d887c;
+  color: var(--ink-marker);
 }
 
 .ask-provider-line {

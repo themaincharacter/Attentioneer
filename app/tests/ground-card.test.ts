@@ -250,7 +250,8 @@ describe("the expanded body shows the STORED reading and nothing else", () => {
     }
     // The expanded face is the same stored text, only uncropped.
     expect(code).toContain("previewText(");
-    expect(code).toContain("open ? shownText : previewText(shownText)");
+    // STORY 17: the crop reads the person's STATED count, never a constant.
+    expect(code).toContain("previewText(shownText, previewLines)");
   });
 
   test("the wheel on the body is kept off the plane's zoom", () => {

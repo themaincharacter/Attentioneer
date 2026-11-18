@@ -11,6 +11,7 @@ import {
   type TextHead,
 } from "../lib/fs";
 import { clipHead } from "../lib/headBounds";
+import { READING_PREVIEW_DEFAULT } from "../lib/readingPreference";
 import { canonicalText } from "../lib/serialize";
 import {
   EXTRACT_NO_TEXT,
@@ -137,11 +138,14 @@ export const READING_MAX_LINES = 64;
 export const READING_MAX_BYTES = 8 * 1024;
 
 /**
- * How many lines of the stored reading a SMALL card shows (story 16.3).
+ * How many lines of the stored reading a SMALL card shows (story 16.3) when
+ * the person has not stated a threshold (story 17). The DEFAULT now lives in
+ * lib/readingPreference.ts, with the preference's bounds; this name stays the
+ * module's own answer so the card has a face even with no config.
  * PROVISIONAL (ADR-0003's rendering seam): the crop is a look, not a rule —
  * the stored text keeps every line it took; only the card's face is cut.
  */
-export const READING_PREVIEW_LINES = 6;
+export const READING_PREVIEW_LINES = READING_PREVIEW_DEFAULT;
 
 /**
  * Which extractor produced a reading (story 16.4, ADR-0035 decision 4).
@@ -1136,4 +1140,24 @@ export function previewText(
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
   const crop = lines.slice(0, maxLines).join("\n");
   return lines.length > maxLines ? `${crop}…` : crop;
+}
+
+/**
+ * STORY 17 (shortlist items 7–9) — DOES THE CROP HAVE MORE BEHIND IT?
+ * True when the stored text is longer than the stated number of lines, i.e.
+ * when the small face is actually folding something away. The card uses it to
+ * decide whether to draw its fade and its "more" verb at all: a card that fits
+ * its threshold has no cut to apologise for. PURE and beside `previewText`, so
+ * the mark and the crop can never disagree about where the fold is.
+ */
+export function previewOverflows(
+  text: string,
+  maxLines: number = READING_PREVIEW_LINES,
+): boolean {
+  if (maxLines <= 0) return text !== "";
+  const lines = text.split(/\r?\n/);
+  // The final empty piece of a trailing newline is a terminator, not a line
+  // (the same rule `previewText` reads).
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  return lines.length > maxLines;
 }

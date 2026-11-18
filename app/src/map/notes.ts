@@ -5,6 +5,7 @@ import {
   removeFile,
   writeTextFile,
 } from "../lib/fs";
+import { NOTE_PREVIEW_DEFAULT } from "../lib/readingPreference";
 import { mapDir } from "./records";
 
 /**
@@ -64,11 +65,13 @@ export function notePath(workspacePath: string, slug: string): string {
 export const NOTE_MAX_BYTES = 16 * 1024;
 
 /**
- * How many lines of the note a SMALL card shows (PROVISIONAL, ADR-0003's
- * rendering seam): the person's words are visible without opening the card,
- * and only the FACE is cropped — the stored file keeps every line.
+ * How many lines of the note a SMALL card shows when the person has not stated
+ * a threshold (story 17 moves the DEFAULT to lib/readingPreference.ts, with the
+ * preference's bounds). PROVISIONAL, ADR-0003's rendering seam: the person's
+ * words are visible without opening the card, and only the FACE is cropped —
+ * the stored file keeps every line.
  */
-export const NOTE_PREVIEW_LINES = 2;
+export const NOTE_PREVIEW_LINES = NOTE_PREVIEW_DEFAULT;
 
 /** The one sentence a refused note answers. */
 export const NOTE_TOO_LONG = "that note is too long to keep.";

@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import appPackage from "../../package.json";
 import { ProvidersPanel } from "./ProvidersPanel";
+import { loadReadingPreference, saveReadingPreference } from "../lib/appConfig";
+import {
+  PREVIEW_LINES_CEILING,
+  PREVIEW_LINES_FLOOR,
+  type ReadingPreference,
+} from "../lib/readingPreference";
 import { loadTurnSettings, saveTurnSettings } from "../turn/provider";
 import {
   modelsForMove,
@@ -33,6 +39,12 @@ import {
  *                      and the always-on key-store sentence.
  *   - Turn defaults  — the provider:model a new ask starts from (the same
  *                      selection the ask panels carry).
+ *   - Reading        — STORY 17 (shortlist items 7–9): the STATED fold
+ *                      threshold — how many lines a ground card's face shows
+ *                      before its fade and "more". Its own section rather than
+ *                      a row under Turn defaults: it is about reading, not
+ *                      about the turn, and the check says a person must be
+ *                      able to see and change it.
  *   - Local model    — the idle minutes on a row that runs on this machine
  *                      (the row's own field; the shipped default is 10).
  *   - About          — the version and the one-line what-this-is.
@@ -48,6 +60,7 @@ import {
 export const SETTINGS_SECTIONS = [
   { id: "providers", label: "Providers" },
   { id: "defaults", label: "Turn defaults" },
+  { id: "reading", label: "Reading" },
   { id: "local", label: "Local model" },
   { id: "about", label: "About" },
 ] as const;
@@ -59,6 +72,7 @@ export function SettingsPanel({
   onSection,
   onClose,
   onChanged,
+  onReadingChanged,
 }: {
   /** The section on screen (the ask's shortcut opens Providers). */
   section: SettingsSection;
@@ -68,6 +82,12 @@ export function SettingsPanel({
   onClose: () => void;
   /** A provider row or the selection changed (the app re-reads its facts). */
   onChanged?: () => void;
+  /**
+   * STORY 17: the stated fold threshold changed, so the app re-reads it and
+   * every ground card re-crops behind the modal. Optional so a frame test
+   * needs no app chrome.
+   */
+  onReadingChanged?: () => void;
 }) {
   // Esc closes the whole modal. One listener, on the window, because the
   // modal's own controls are many and focus may be anywhere inside it.
@@ -129,6 +149,9 @@ export function SettingsPanel({
             {section === "providers" && <ProvidersPanel onChanged={onChanged} />}
             {section === "defaults" && (
               <TurnDefaults onSection={onSection} onChanged={onChanged} />
+            )}
+            {section === "reading" && (
+              <ReadingFold onReadingChanged={onReadingChanged} />
             )}
             {section === "local" && (
               <LocalModel onSection={onSection} onChanged={onChanged} />
@@ -253,6 +276,145 @@ function TurnDefaults({
           </label>
         </>
       )}
+      {sentence !== null && (
+        <div className="settings-note settings-note-problem" role="status">
+          {sentence}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * READING — STORY 17 (shortlist items 7–9): the STATED fold threshold.
+ *
+ * Two bounded counts — how many lines of a card's reading, and how many of its
+ * note, the face shows before it folds. They are the SAME numbers the crop and
+ * the CSS clamp read (lib/readingPreference.ts owns the bounds, the ground
+ * layer consumes them), so what is shown here is what is used; changing them
+ * re-crops every ground card behind this modal on the "keep" press, and the
+ * write is the config's one queued merge. It is a PREFERENCE, not a counter:
+ * nothing here counts lines read, time spent or cards opened, and the map
+ * shows no number at all — only its fade and its "more" verb.
+ *
+ * A value that is not a whole line in the stated bounds is refused in one
+ * sentence and NOTHING is written, so a typo can never become a stated
+ * threshold. PROVISIONAL (story 17): the section, the bounds and the wording.
+ */
+function ReadingFold({
+  onReadingChanged,
+}: {
+  onReadingChanged?: () => void;
+}) {
+  const [preference, setPreference] = useState<ReadingPreference | null>(null);
+  const [drafts, setDrafts] = useState<{
+    previewLines: string;
+    noteLines: string;
+  } | null>(null);
+  const [sentence, setSentence] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void loadReadingPreference().then((loaded) => {
+      if (!alive) return;
+      setPreference(loaded);
+      setDrafts({
+        previewLines: String(loaded.previewLines),
+        noteLines: String(loaded.noteLines),
+      });
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /** One field as a whole line count in the bounds, or null when it is not. */
+  function whole(value: string): number | null {
+    if (!/^\d+$/.test(value.trim())) return null;
+    const lines = Number(value.trim());
+    return lines >= PREVIEW_LINES_FLOOR && lines <= PREVIEW_LINES_CEILING
+      ? lines
+      : null;
+  }
+
+  async function keep(): Promise<void> {
+    if (preference === null || drafts === null || busy) return;
+    const previewLines = whole(drafts.previewLines);
+    const noteLines = whole(drafts.noteLines);
+    if (previewLines === null || noteLines === null) {
+      setSentence(
+        "preview lines are a whole number from " +
+          PREVIEW_LINES_FLOOR +
+          " to " +
+          PREVIEW_LINES_CEILING +
+          ".",
+      );
+      return;
+    }
+    setSentence(null);
+    setBusy(true);
+    try {
+      const saved = await saveReadingPreference({ previewLines, noteLines });
+      // What LANDED is what this block shows — never the typed string.
+      setPreference(saved);
+      setDrafts({
+        previewLines: String(saved.previewLines),
+        noteLines: String(saved.noteLines),
+      });
+      onReadingChanged?.();
+    } catch (error) {
+      const text = String(error).replace(/\s+/g, " ").trim();
+      setSentence(text === "" ? "the threshold could not be saved" : text);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (preference === null || drafts === null) {
+    return <div className="settings-note">reading the fold threshold…</div>;
+  }
+
+  const field = (label: string, key: "previewLines" | "noteLines", aria: string) => (
+    <label className="settings-field settings-field-inline">
+      <span>{label}</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={drafts[key]}
+        disabled={busy}
+        aria-label={aria}
+        onChange={(e) => {
+          const value = e.target.value;
+          setDrafts({ ...drafts, [key]: value });
+          if (sentence !== null) setSentence(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          void keep();
+        }}
+      />
+    </label>
+  );
+
+  return (
+    <div className="settings-block">
+      <p className="settings-prose">
+        How many lines a ground card's face shows before it folds. The cut ends
+        in a soft fade, and "more" opens the card. The number here is the number
+        the crop uses.
+      </p>
+      {field("reading lines", "previewLines", "preview lines for a card's reading")}
+      {field("note lines", "noteLines", "preview lines for a card's note")}
+      <button
+        type="button"
+        className="settings-save"
+        disabled={busy}
+        onClick={() => void keep()}
+      >
+        keep
+      </button>
       {sentence !== null && (
         <div className="settings-note settings-note-problem" role="status">
           {sentence}
