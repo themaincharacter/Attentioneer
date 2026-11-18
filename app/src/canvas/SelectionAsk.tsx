@@ -3,6 +3,10 @@ import {
   askQuestionRefusal,
   selectionWordsRefusal,
 } from "../map/asks";
+import {
+  nativeSelectionPresent,
+  type PaintedRect,
+} from "./selectionHighlight";
 import type { GroundAddResult } from "./useGround";
 
 /**
@@ -30,8 +34,26 @@ import type { GroundAddResult } from "./useGround";
  * it never zooms the map. No second model call happens here: asking is the
  * ordinary ask path, and this widget is gone by the time the card sends.
  *
+ * STORY 16.31 — THE HIGHLIGHT STAYS WHILE THE WIDGET IS OPEN. The user: "It
+ * does lose the highlight though whenever the widget pops up, which also means
+ * you lose the ability to right click and copy text." So the widget now does
+ * TWO things it did not do before. It opens WITHOUT taking focus and without
+ * clearing anything: the browser's own selection — and with it the OS's
+ * right-click copy — is left exactly as the person made it until they click
+ * into the field or type. And because a browser may still drop that selection
+ * (the field takes focus, the card re-renders), it paints the CAPTURED rects
+ * over the same words the moment the native highlight is gone, so what was
+ * asked about stays visible. Right-click copy works until the person types;
+ * after that the highlight is ours, and that is the accepted trade.
+ *
+ * THE PAINT IS NOT STATE ANYTHING ELSE OWNS. It is rendered from this widget and
+ * only from this widget, so ask, dismiss, the card's close and unmount each take
+ * it with them — there is no second thing to forget, and a highlight can never
+ * linger over words nobody asked about.
+ *
  * PROVISIONAL (ADR-0003's rendering seam): the widget's size, wording and the
- * way it hangs below the selection at screen size at every zoom.
+ * way it hangs below the selection at screen size at every zoom, and the
+ * painted highlight's wash.
  */
 
 /** The one ask verb, and the dismiss's accessible name (PROVISIONAL wording). */
@@ -56,6 +78,13 @@ interface SelectionAskProps {
   /** The camera's zoom, so the widget stays screen-size at every zoom. */
   zoom: number;
   /**
+   * STORY 16.31 — the chosen words' rectangles, captured ONCE at mouse-up and
+   * already in plane space. The widget never re-measures them: a rect measured
+   * later could describe different words, and a highlight over the wrong text is
+   * worse than none.
+   */
+  rects: readonly PaintedRect[];
+  /**
    * The words the person chose, already collapsed to one line. Handed back to
    * the writer with the question; the widget never edits them.
    */
@@ -70,6 +99,7 @@ export function SelectionAsk({
   x,
   y,
   zoom,
+  rects,
   words,
   onAskQuestion,
   onDismiss,
@@ -78,12 +108,32 @@ export function SelectionAsk({
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const fieldRef = useRef<HTMLInputElement>(null);
 
-  // The field is where the person's next words go, so it takes the eye at once.
+  // STORY 16.31 — THE FIELD DOES NOT TAKE FOCUS ON OPEN. Story 16.19 focused it
+  // on mount, and that is exactly what ate the native selection (and the
+  // right-click copy with it). An explicit click into the field is what moves
+  // focus now, and the mount only ever looks.
+
+  // STORY 16.31 — WHEN THE BROWSER'S HIGHLIGHT GOES, OURS APPEARS. One-way on
+  // purpose: the person's own selection is the first highlight and is left
+  // alone; if the browser drops it anyway, the captured words are painted over
+  // and stay painted until the widget closes. The mount check is not a detail —
+  // a browser can drop the selection as the widget appears, and then nothing
+  // must wait for an event to paint.
+  const [painted, setPainted] = useState(false);
   useEffect(() => {
-    fieldRef.current?.focus();
-  }, []);
+    if (painted) return;
+    function sync() {
+      if (!nativeSelectionPresent(window.getSelection())) setPainted(true);
+    }
+    sync();
+    document.addEventListener("selectionchange", sync);
+    document.addEventListener("focusin", sync);
+    return () => {
+      document.removeEventListener("selectionchange", sync);
+      document.removeEventListener("focusin", sync);
+    };
+  }, [painted]);
 
   // Esc dismisses without writing. Capture phase, so the card's own Esc (which
   // would close the reading under the widget) never sees the key first.
@@ -102,6 +152,12 @@ export function SelectionAsk({
   // because the plane's d3 handlers stop propagation on the way up.
   useEffect(() => {
     function onDown(e: MouseEvent) {
+      // STORY 16.31 — A RIGHT-CLICK IS NOT A PRESS AWAY. The OS's context menu
+      // is the whole point of "you lose the ability to right click and copy":
+      // dismissing on it (and clearing the selection under it) would take Copy
+      // away exactly when the person asked for it. Only a primary press
+      // dismisses; the right button keeps the words and the menu.
+      if (e.button !== 0) return;
       const root = rootRef.current;
       if (root !== null && e.target instanceof Node && root.contains(e.target)) {
         return;
@@ -157,60 +213,80 @@ export function SelectionAsk({
   }
 
   return (
-    <div
-      ref={rootRef}
-      className="selection-ask"
-      style={{
-        left: x,
-        top: y,
-        // The plane-inner is scaled by the camera; undo that so the field stays
-        // readable at every zoom, hanging from the selection's lower corner.
-        transform: `scale(${1 / zoom})`,
-        transformOrigin: "top left",
-      }}
-      role="group"
-      aria-label="ask about the chosen words"
-    >
-      <input
-        ref={fieldRef}
-        className="selection-ask-question"
-        value={question}
-        placeholder="your question"
-        aria-label="your question about the chosen words"
-        disabled={busy}
-        onChange={(e) => {
-          setQuestion(e.target.value);
-          if (problem !== null) setProblem(null);
+    <>
+      {/* STORY 16.31 — THE PAINTED HIGHLIGHT, in plane coordinates, over the
+          captured words only. It takes no presses (pointer-events: none), so a
+          press still lands on the reading under it. It exists only while this
+          widget is mounted, which is why no exit path needs a second clear. */}
+      {painted &&
+        rects.map((rect, index) => (
+          <div
+            key={"selection-highlight-" + index}
+            className="selection-highlight"
+            aria-hidden="true"
+            style={{
+              left: rect.x,
+              top: rect.y,
+              width: rect.width,
+              height: rect.height,
+            }}
+          />
+        ))}
+      <div
+        ref={rootRef}
+        className="selection-ask"
+        style={{
+          left: x,
+          top: y,
+          // The plane-inner is scaled by the camera; undo that so the field
+          // stays readable at every zoom, hanging from the selection's lower
+          // corner.
+          transform: `scale(${1 / zoom})`,
+          transformOrigin: "top left",
         }}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter") return;
-          e.preventDefault();
-          void ask();
-        }}
-      />
-      <button
-        type="button"
-        className="selection-ask-ask"
-        disabled={busy}
-        onClick={() => void ask()}
+        role="group"
+        aria-label="ask about the chosen words"
       >
-        {SELECTION_ASK_VERB}
-      </button>
-      <button
-        type="button"
-        className="selection-ask-dismiss"
-        aria-label={SELECTION_ASK_DISMISS}
-        title={SELECTION_ASK_DISMISS}
-        disabled={busy}
-        onClick={onDismiss}
-      >
-        ×
-      </button>
-      {problem !== null && (
-        <div className="selection-ask-problem" role="status">
-          {problem}
-        </div>
-      )}
-    </div>
+        <input
+          className="selection-ask-question"
+          value={question}
+          placeholder="your question"
+          aria-label="your question about the chosen words"
+          disabled={busy}
+          onChange={(e) => {
+            setQuestion(e.target.value);
+            if (problem !== null) setProblem(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            void ask();
+          }}
+        />
+        <button
+          type="button"
+          className="selection-ask-ask"
+          disabled={busy}
+          onClick={() => void ask()}
+        >
+          {SELECTION_ASK_VERB}
+        </button>
+        <button
+          type="button"
+          className="selection-ask-dismiss"
+          aria-label={SELECTION_ASK_DISMISS}
+          title={SELECTION_ASK_DISMISS}
+          disabled={busy}
+          onClick={onDismiss}
+        >
+          ×
+        </button>
+        {problem !== null && (
+          <div className="selection-ask-problem" role="status">
+            {problem}
+          </div>
+        )}
+      </div>
+    </>
   );
 }

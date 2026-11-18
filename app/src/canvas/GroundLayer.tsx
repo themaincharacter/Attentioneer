@@ -55,6 +55,10 @@ import { besidePlacement, type Point } from "./geometry";
 import { AskCard } from "./AskCard";
 import { CardNamePill } from "./CardNamePill";
 import { SelectionAsk, clearTextSelection } from "./SelectionAsk";
+import {
+  paintedHighlightRects,
+  type PaintedRect,
+} from "./selectionHighlight";
 import { SessionCard as SessionCardView } from "./SessionCard";
 import {
   type SessionCard as SessionCardRecord,
@@ -946,17 +950,30 @@ export function GroundLayer({
    * handed straight to the hook's one write path, and the only record that
    * appears is the ask card the widget's question makes.
    *
-   * THREE DISMISSALS, all of them clearing the browser's highlight: Esc, the
-   * card closing (the effect below), and asking. The widget is never mounted for
-   * an empty selection: `selectionWords` is the one collapse/refusal rule and a
-   * null answer means nothing opens. No second model call and no read happens
-   * anywhere in this block.
+   * EVERY DISMISSAL CLEARS THE BROWSER'S HIGHLIGHT: Esc, a primary press away,
+   * the card closing (the effect below), and asking. The widget is never mounted
+   * for an empty selection: `selectionWords` is the one collapse/refusal rule
+   * and a null answer means nothing opens. No second model call and no read
+   * happens anywhere in this block.
+   *
+   * STORY 16.31 — THE HIGHLIGHT STAYS WHILE THE WIDGET IS OPEN. Opening does NOT
+   * clear it (the user's correction: the widget appearing used to eat the
+   * selection and the right-click Copy with it), so this layer clears nothing at
+   * open and the widget paints over the captured rects if the browser drops the
+   * selection anyway. The paint lives inside the widget, so every dismissal here
+   * takes it with it; a scroll drops the paint rather than let it sit over other
+   * words. A right press is never a dismissal — Copy needs its menu.
    * ----------------------------------------------------------------------- */
   const [selectionAsk, setSelectionAsk] = useState<{
     source: string;
     words: string;
     x: number;
     y: number;
+    // STORY 16.31 — the chosen words' rectangles, captured ONCE with the words
+    // and carried unchanged to the widget. They are the paint's only input, and
+    // they are never re-measured: a later measurement could describe text
+    // nobody asked about.
+    rects: readonly PaintedRect[];
   } | null>(null);
   // STORY 16.19 — THE QUESTION THE WIDGET ASKED, waiting for its new card. The
   // token is a fresh number per ask, so the card's one-shot send can never
@@ -968,20 +985,30 @@ export function GroundLayer({
   } | null>(null);
   const askSeedToken = useRef(0);
 
-  /** Dismiss the widget AND its highlight: no selection is left behind. */
+  /**
+   * Dismiss the widget AND its highlight: no selection is left behind. The
+   * native selection is cleared here; the PAINTED one is the widget's own child
+   * and goes with this unmount (story 16.31).
+   */
   function dismissSelection(): void {
     setSelectionAsk(null);
     clearTextSelection();
   }
 
   /** The card captured a selection: mount the widget at it (never for none). */
-  function choseWords(source: string, raw: string, x: number, y: number): void {
+  function choseWords(
+    source: string,
+    raw: string,
+    x: number,
+    y: number,
+    rects: readonly PaintedRect[],
+  ): void {
     const words = selectionWords(raw);
     if (words === null) {
       dismissSelection();
       return;
     }
-    setSelectionAsk({ source, words, x, y });
+    setSelectionAsk({ source, words, x, y, rects });
   }
 
   /**
@@ -1032,6 +1059,25 @@ export function GroundLayer({
     setSelectionAsk(null);
     clearTextSelection();
   }, [openOn, references, selectionAsk]);
+
+  // STORY 16.31 — A SCROLL MOVES THE WORDS UNDER A PAINTED HIGHLIGHT, and the
+  // story's hard rule is that a highlight over the wrong text is worse than
+  // none. The rects were captured once and are never re-measured, so the paint
+  // is dropped the moment anything scrolls instead of guessing where the words
+  // went. (Pan and zoom do not land here: the plane moves by transform, and a
+  // painted rect in plane space rides the camera with its text.)
+  useEffect(() => {
+    if (selectionAsk === null || selectionAsk.rects.length === 0) return;
+    function onScroll() {
+      setSelectionAsk((prev) =>
+        prev === null || prev.rects.length === 0
+          ? prev
+          : { ...prev, rects: [] },
+      );
+    }
+    document.addEventListener("scroll", onScroll, true);
+    return () => document.removeEventListener("scroll", onScroll, true);
+  }, [selectionAsk]);
 
   const wordSlugs =
     concepts === null ? null : new Set(concepts.map((word) => word.slug));
@@ -1332,6 +1378,7 @@ export function GroundLayer({
           x={selectionAsk.x}
           y={selectionAsk.y}
           zoom={zoom}
+          rects={selectionAsk.rects}
           words={selectionAsk.words}
           onAskQuestion={askSelection}
           onDismiss={dismissSelection}
@@ -1484,7 +1531,13 @@ function GroundCard({
    * widget); it writes nothing and reads nothing, and a collapsed or
    * outside-the-reading selection is never reported.
    */
-  onSelectWords?: (source: string, raw: string, x: number, y: number) => void;
+  onSelectWords?: (
+    source: string,
+    raw: string,
+    x: number,
+    y: number,
+    rects: readonly PaintedRect[],
+  ) => void;
   /**
    * STORY 17.10 — the card it just made, so the LAYER (which owns which face is
    * open) can open it. A reference card does not hold the open-ask state.
@@ -1698,13 +1751,25 @@ function GroundCard({
    * widget follows the map at any zoom. The card writes nothing here: the layer
    * owns the widget, and the words are CONTEXT for a question, never content.
    *
+   * STORY 16.31 — THE RECTS ARE CAPTURED HERE, ONCE. The browser's own
+   * highlight is the first one and this capture never touches it; but a browser
+   * may drop that highlight as the widget appears, and then the widget paints
+   * these rectangles instead. They are taken now, with the words, and converted
+   * to plane space once — so the paint sits over the text it was captured from
+   * and no later measurement can move it onto other words.
+   *
+   * Only the PRIMARY button counts: a right-click over the chosen words must
+   * keep the native selection (and the OS's Copy with it) instead of being read
+   * as a second selection.
+   *
    * PROVISIONAL: the point (the range's lower-left, converted through the card's
    * own rect and the camera's zoom) and the widget hanging under it.
    */
   useEffect(() => {
     if (!open || onSelectWords === undefined) return;
     const report = onSelectWords;
-    function onMouseUp() {
+    function onMouseUp(e: MouseEvent) {
+      if (e.button !== 0) return;
       const el = readingRef.current;
       const selection = window.getSelection();
       if (el === null || selection === null) return;
@@ -1722,7 +1787,13 @@ function GroundCard({
               x: reference.x + (at.left - cardRect.left) / zoom,
               y: reference.y + (at.bottom - cardRect.top) / zoom,
             };
-      report(reference.on, raw, point.x, point.y);
+      const rects = paintedHighlightRects(
+        Array.from(range.getClientRects()),
+        cardRect,
+        { x: reference.x, y: reference.y },
+        zoom,
+      );
+      report(reference.on, raw, point.x, point.y, rects);
     }
     window.addEventListener("mouseup", onMouseUp);
     return () => window.removeEventListener("mouseup", onMouseUp);
@@ -1736,6 +1807,18 @@ function GroundCard({
     function onPressAway(e: MouseEvent) {
       const el = cardRef.current;
       if (el !== null && e.target instanceof Node && el.contains(e.target)) return;
+      // STORY 16.31 — THE WIDGET AT THIS READING'S SELECTION IS THIS CARD'S OWN
+      // TRANSIENT. A press into its field or its verbs is not a press away: the
+      // field has to be able to take a question, and the card closing under it
+      // would take the widget (and the highlight) with it before a letter was
+      // typed. The widget's own press-away rule still dismisses it on a press
+      // anywhere else.
+      if (
+        e.target instanceof Element &&
+        e.target.closest(".selection-ask") !== null
+      ) {
+        return;
+      }
       // Story 16.6: a press away is the note editor's SAVE (the story's rule —
       // click away or the done verb saves). Fire-and-forget: the write goes
       // through the app's queue, and a refusal shows its one sentence on the

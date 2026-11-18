@@ -1045,6 +1045,21 @@ body {
   }
 }
 
+/* STORY 16.31 — THE PAINTED HIGHLIGHT, when the browser's own selection is
+   gone. The user lost the highlight (and the right-click Copy with it) the
+   moment the widget appeared; this is the second highlight, painted over the
+   captured words only, in plane coordinates so it rides the camera. It takes no
+   presses: a press still lands on the reading beneath it. The wash is the one
+   PROVISIONAL thing here — quiet enough to read through, warm enough to see. */
+.selection-highlight {
+  position: absolute;
+  z-index: 7;
+  pointer-events: none;
+  border-radius: 2px;
+  background: rgba(214, 193, 128, 0.4);
+  box-shadow: 0 0 0 1px rgba(141, 136, 124, 0.08);
+}
+
 /* STORY 16.19 — THE QUESTION WIDGET A SELECTION OPENS. One quiet paper strip
    hanging under the chosen words: a field, the ask verb and a dismiss. It lives
    inside .plane-inner (so it follows the map) and counter-scales against the
