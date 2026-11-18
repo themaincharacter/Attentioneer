@@ -123,10 +123,24 @@ export type TurnResult =
  * What the panel and the port need from a transport: write one line, and be
  * told about the lines that carry one id. The real one wraps Tauri's invokes
  * and its `sidecar-line` event; a test wraps a script.
+ *
+ * STORY 18.3c ADDS ONE OPTIONAL FACT: `onClosed`, the channel saying it is
+ * gone. 18.3b proved the sidecar kills its children on every path IT can see;
+ * when the sidecar itself dies the window was told nothing and a run waited out
+ * its whole budget for an answer that could never come. A transport that can say
+ * "the pipe closed" says it here; a test's scripted transport may simply omit
+ * it, and every caller must treat its absence as "this transport cannot know".
  */
 export interface TurnTransport {
   send: (line: string) => Promise<void>;
   subscribe: (id: number, handler: (line: SidecarLine) => void) => () => void;
+  /**
+   * Hear the channel close (EOF, a failed write, a death): call `handler` once
+   * when no further line can arrive, and answer with the unsubscribe. Optional
+   * on purpose — the seam that needs it is a RUN, and a turn's own budget is
+   * the turn's affair.
+   */
+  onClosed?: (handler: () => void) => () => void;
 }
 
 /** The two messages every hand-written turn sends (story 1). */

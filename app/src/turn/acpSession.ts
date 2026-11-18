@@ -33,10 +33,17 @@ import type { SidecarStart } from "./sidecar";
  * run's own, and only "completed" is a result. The window invents no ending and
  * appends nothing it did not hear.
  *
- * WHAT THE WINDOW STILL CANNOT SEE: a sidecar that dies mid-run. The host owns
- * that child's lifetime; this seam has no death signal, so a run whose sidecar
- * vanishes settles only when the run's own budget ends it. That gap is 18.3b's
- * stated provisional, not a hidden fact.
+ * A SIDECAR THAT DIES MID-RUN IS SAID, NOT WAITED ON (story 18.3c). 18.3b's
+ * finding was that its kill-on-every-path proof ran from the SIDECAR's side; the
+ * window had no death signal, so a vanished child left the card on its last
+ * entry until the budget expired and then called it a timeout — a hang dressed
+ * as a timeout. The transport now says when the channel closes (`onClosed`),
+ * and this seam turns that into the SAME ending a normal run writes: the
+ * `failed` ending, one sentence, one `ended` entry, no new record shape. The
+ * next request starts a fresh child on demand — the host already reaps the dead
+ * one — so the seam stays usable and nothing here reports a health state.
+ * PROVISIONAL: the sentence, and that the seam silently restarts rather than
+ * telling the caller it is unhealthy.
  *
  * PROVISIONAL: the run numbers (one counter for both the request id and the run
  * number), the one sentence for a lane that cannot be asked, and the ending
@@ -46,6 +53,14 @@ import type { SidecarStart } from "./sidecar";
 /** The one sentence for a run request that could not even leave (PROVISIONAL). */
 export const SESSION_RUN_UNREACHABLE =
   "the run could not be asked for, so it was not started.";
+
+/**
+ * The one sentence for a channel that closed under a live run (story 18.3c,
+ * PROVISIONAL). It names what happened and nothing else: no stack, no exit
+ * code, no pid — the window did not see any of those. The card states it as
+ * "the run failed: the connection to the run ended".
+ */
+export const SESSION_RUN_CONNECTION_ENDED = "the connection to the run ended";
 
 /** How a run settled, as the sidecar said: the ending and its one sentence. */
 export interface SessionRunEnded {
@@ -103,15 +118,21 @@ export function startSessionRun(
   let settled = false;
   let run = 0;
   let unsubscribe: () => void = () => {};
+  /** Stop hearing the channel close once this run has ended. */
+  let stopClosing: () => void = () => {};
   let resolveEnded!: (ended: SessionRunEnded) => void;
   const ended = new Promise<SessionRunEnded>((resolve) => {
     resolveEnded = resolve;
   });
 
+  // THE ONE ENDING (18.3c's guard): a close that races a real ending finds
+  // `settled` already true and says nothing, so a run can never produce a
+  // second `ended` line. Both listeners are dropped on the way out.
   const finish = (ending: AcpEnding, sentence: string | null): void => {
     if (settled) return;
     settled = true;
     unsubscribe();
+    stopClosing();
     resolveEnded({ ending, sentence });
   };
 
@@ -174,6 +195,16 @@ export function startSessionRun(
         finish("failed", errorSentence(line.message));
       }
     });
+
+    // STORY 18.3c — THE CHANNEL'S CLOSE ENDS THIS RUN AT ONCE. A sidecar that
+    // died says nothing on the wire, so the transport's own close signal is the
+    // only notice we get; settling here means the card states the loss in the
+    // same second it happened, never after the budget. The request goes out
+    // only after this is in place, so even a send into a dead pipe is covered.
+    stopClosing =
+      transport.onClosed?.(() =>
+        finish("failed", SESSION_RUN_CONNECTION_ENDED),
+      ) ?? (() => {});
 
     try {
       await transport.send(

@@ -26,6 +26,7 @@ export class SidecarLines {
   private waiting: (() => void)[] = [];
   private closed = false;
   private handlers: ((line: string) => void)[] = [];
+  private closeHandlers: (() => void)[] = [];
 
   constructor(stream: ReadableStream<Uint8Array>) {
     const decoder = new TextDecoder();
@@ -44,12 +45,31 @@ export class SidecarLines {
       }
       this.closed = true;
       while (this.waiting.length > 0) this.waiting.shift()?.();
+      // STORY 18.3c — THE PIPE'S CLOSE, as a real reader sees it: the child's
+      // stdout ended, so no further line can arrive. A handler that asked
+      // after the fact is still told (that is the race a dying sidecar often
+      // loses).
+      const told = this.closeHandlers;
+      this.closeHandlers = [];
+      for (const handler of told) handler();
     })();
   }
 
   /** Every line as it arrives (the transport's subscription). */
   onLine(handler: (line: string) => void): void {
     this.handlers.push(handler);
+  }
+
+  /** Hear the stream end (once), exactly as the window's transport does. */
+  onClose(handler: () => void): () => void {
+    if (this.closed) {
+      handler();
+      return () => {};
+    }
+    this.closeHandlers.push(handler);
+    return () => {
+      this.closeHandlers = this.closeHandlers.filter((entry) => entry !== handler);
+    };
   }
 
   /** The next line, or a failure when the budget runs out. */
@@ -100,6 +120,11 @@ export function transportOf(child: ReturnType<typeof Bun.spawn>, lines: SidecarL
       return () => {
         if (waiting.get(id) === handler) waiting.delete(id);
       };
+    },
+    // 18.3c: the real pipe's close, so a test can kill the sidecar mid-run and
+    // watch the window's seam settle on the death rather than on the budget.
+    onClosed(handler) {
+      return lines.onClose(handler);
     },
   };
 }

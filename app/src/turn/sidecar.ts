@@ -115,6 +115,76 @@ function ensureListening(): Promise<unknown> {
 }
 
 /**
+ * STORY 18.3c — THE CHANNEL'S CLOSE, AS THE WINDOW CAN KNOW IT.
+ *
+ * 18.3b's finding was that kill-on-every-path was proven from the SIDECAR'S
+ * side: stdin closed, stdout closed, a cancel, an ending, a dead child. What it
+ * could not prove is the other direction — a sidecar that DIES mid-run says
+ * nothing, and the window sat on the run's last entry until the budget expired
+ * and called it a timeout. That is the hang-in-a-costume this story removes.
+ *
+ * THE WINDOW CANNOT SEE A PIPE, so it asks the host that owns the child. The
+ * host already reaps the sidecar and its `sidecar_status` (a `try_wait`) is
+ * the one honest answer to "is it still there", so while anyone is listening
+ * this asks — cheaply, and only while a run is live. A host that cannot answer
+ * is not a host that lost the child: an invoke that throws keeps the watch
+ * going rather than inventing a death.
+ *
+ * PROVISIONAL: the 250 ms cadence and the fact that the window polls at all.
+ * A later story could have the host announce the exit instead; until then the
+ * window asks, and a dead child settles a run well inside the second the story
+ * promises.
+ */
+export const SIDECAR_WATCH_MS = 250;
+
+/** The handlers waiting to hear the channel close (one run each). */
+const watchingChannel = new Set<() => void>();
+
+/** The one watch timer; it exists only while something is listening. */
+let channelWatch: ReturnType<typeof setInterval> | null = null;
+
+function stopChannelWatch(): void {
+  if (channelWatch === null) return;
+  clearInterval(channelWatch);
+  channelWatch = null;
+}
+
+/** Is the child the host owns still there? An unanswerable host is not a death. */
+async function childIsGone(): Promise<boolean> {
+  try {
+    const status = await invoke<SidecarStatus | null>("sidecar_status");
+    return status === null || !status.running;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Hear the close: register one handler, start the watch if it is the first, and
+ * answer with an unsubscribe that stops the watch when it is the last. Every
+ * handler is told ONCE and the set is emptied, so a housekeeping tick cannot
+ * announce the same death twice.
+ */
+function watchChannel(handler: () => void): () => void {
+  watchingChannel.add(handler);
+  if (channelWatch === null) {
+    channelWatch = setInterval(() => {
+      void childIsGone().then((gone) => {
+        if (!gone) return;
+        const told = [...watchingChannel];
+        watchingChannel.clear();
+        stopChannelWatch();
+        for (const listener of told) listener();
+      });
+    }, SIDECAR_WATCH_MS);
+  }
+  return () => {
+    watchingChannel.delete(handler);
+    if (watchingChannel.size === 0) stopChannelWatch();
+  };
+}
+
+/**
  * The real transport: start listening before the request leaves (so a fast
  * answer cannot outrun its subscriber), then write the line.
  */
@@ -130,6 +200,11 @@ export function createSidecarTransport(): TurnTransport {
       return () => {
         if (waiting.get(id) === handler) waiting.delete(id);
       };
+    },
+    // 18.3c: the seam that needs a close is a run's; a turn still ends by its
+    // own budget, so nothing here changes a turn's behaviour.
+    onClosed(handler) {
+      return watchChannel(handler);
     },
   };
 }
