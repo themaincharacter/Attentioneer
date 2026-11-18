@@ -10,7 +10,7 @@ import {
   type AskTurn,
 } from "../map/asks";
 import { assembleAskCardPacket, type AskPacketCard, type AskPacketReadback } from "../turn/packet";
-import { ASK_READ_MISSED } from "./contactRules";
+import { ASK_READ_MISSED, type AskCallsFacts } from "./contactRules";
 import type { GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
 import type { GestureNarration } from "./gestureWord";
@@ -369,6 +369,7 @@ export function AskCard({
   open,
   previewLines,
   hasProvider,
+  calls = null,
   onOpenSettings,
   onOpen,
   onClose,
@@ -434,6 +435,13 @@ export function AskCard({
    * usual. Absent on a render test that only cares about the thread.
    */
   hasProvider?: boolean | null;
+  /**
+   * STORY 17.13 — THE TWO CALLS a send will make, read from Settings (the task
+   * row/model and the manager row/model, or the same one, or none). The
+   * declaration names them before the send; absent on a render test that only
+   * cares about the thread, and null when the config has not answered.
+   */
+  calls?: AskCallsFacts | null;
   /**
    * Open Settings on its Providers section — the ONE verb the pre-send state
    * offers. Optional so a render test needs no modal; the layer always passes
@@ -1114,6 +1122,7 @@ export function AskCard({
                 packet !== null && (
                   <PacketSurface
                     declaration={packet.declaration}
+                    calls={calls}
                     messages={packet.messages}
                   />
                 )

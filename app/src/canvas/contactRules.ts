@@ -211,6 +211,86 @@ export const ASK_BYTES_CLOSE = "hide the bytes";
 export const ASK_BYTES_LABEL = "what leaves, message by message (verbatim)";
 
 /**
+ * STORY 17.13 — THE DECLARATION NAMES BOTH CALLS (ADR-0037 decision 1: "a
+ * turn's declaration names both"). An ask now spends two models — the task
+ * answers, the manager distils — so the surface in front of the person says
+ * which model does which, and says the distil step is CONDITIONAL: it runs only
+ * after a completed answer. It states ROLES and CONDITIONALITY, never a count,
+ * a cost or a time.
+ *
+ * THREE truths, three wordings, because the app can be in three states and one
+ * sentence cannot be true in all of them:
+ *   - two models: the task row/model, the manager row/model, and the condition;
+ *   - ONE model both: a single line, no invented distinction between roles;
+ *   - no manager: the card is made by a RULE (17.11's path), because that is
+ *     what will happen — a declaration never promises a second call that won't
+ *     be made.
+ *
+ * PURE: the facts are two named rows/models (or one, or none). No settings read,
+ * no I/O, no clock — so bun asserts every wording without a DOM.
+ *
+ * PROVISIONAL: the wording of every line and where the calls section sits in
+ * the declaration.
+ */
+
+/** One model a call is made to, named the way its settings row shows it. */
+export interface AskModelName {
+  /** The provider row's display name (the person's own label). */
+  row: string;
+  /** The model row's display name. */
+  model: string;
+}
+
+/** What a pre-send declaration can say about the ask's calls. */
+export interface AskCallsFacts {
+  /** The task model: always there when there is anything to declare. */
+  task: AskModelName;
+  /** The manager model, or null when no manager is configured at all. */
+  manager: AskModelName | null;
+}
+
+/** The parts of the calls section (PROVISIONAL wording). */
+export const ASK_CALLS_TASK = "the task model answers: ";
+export const ASK_CALLS_MANAGER =
+  "then the manager model distils the reply into a card: ";
+export const ASK_CALLS_CONDITION =
+  "the distil step runs only if the answer completes";
+export const ASK_CALLS_SAME = "one model does both: ";
+export const ASK_CALLS_NO_MANAGER =
+  "no manager model is configured, so the card will be made by a rule instead";
+
+/** A row and model as one name; a row that already says the model says it once. */
+function askModelWords(name: AskModelName): string {
+  const row = name.row.trim();
+  const model = name.model.trim();
+  if (row === "" && model === "") return "";
+  if (row === "" || row === model) return model === "" ? row : model;
+  if (model === "") return row;
+  return row + " / " + model;
+}
+
+/**
+ * THE CALLS SECTION, line by line (story 17.13). One array so the surface
+ * draws one quiet line per fact and the test reads the same values the person
+ * does. Same model both roles collapses to ONE line: the app makes two calls
+ * but there is no second model to name, and inventing a difference would be
+ * the quiet cost this app refuses.
+ */
+export function askCallsWords(calls: AskCallsFacts): string[] {
+  const task = askModelWords(calls.task);
+  if (calls.manager === null) {
+    return [ASK_CALLS_TASK + task, ASK_CALLS_NO_MANAGER];
+  }
+  const manager = askModelWords(calls.manager);
+  if (manager === task) return [ASK_CALLS_SAME + task];
+  return [
+    ASK_CALLS_TASK + task,
+    ASK_CALLS_MANAGER + manager,
+    ASK_CALLS_CONDITION,
+  ];
+}
+
+/**
  * THE PARTIAL'S ONE QUIET LINE (Epic 15 story 7b). A stopped, broken or
  * timed-out turn keeps the words it showed, and says in one sentence that they
  * were NOT recorded as an answer. A partial is never dressed as complete, and

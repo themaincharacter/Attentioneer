@@ -220,7 +220,6 @@ import { loadTurnSettings } from "../turn/provider";
 import { askSteps } from "../turn/steps";
 import {
   PROVIDER_SENTENCES,
-  managerSelection,
   resolveManager,
   resolveSelection,
 } from "../turn/providers";
@@ -4229,18 +4228,14 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       if (wholeBudget.steps < 2) return sent;
       const manager = resolveManager(current);
       if (manager.kind !== "resolved") {
-        return {
-          ...sent,
-          curator: {
-            left: false,
-            ending: "failed",
-            manager: managerSelection(current).modelId,
-            task: modelAuthorName(resolved.model.name, resolved.model.id),
-            raw: null,
-            read: null,
-            sentence: PROVIDER_SENTENCES.nothing,
-          },
-        };
+        // STORY 17.13 — NO MANAGER, THE RULE (17.11's path). The declaration
+        // told the person the card would be made by a rule instead of a second
+        // call, so this is the branch that keeps that sentence true: no
+        // curator facts ride back, and the completed reply becomes a card the
+        // way 17.11 wrote one (a rule's copy, provenance included). It is not
+        // a curator failure — no second call was made at all — so it is not
+        // the failure asymmetry's sentence either.
+        return sent;
       }
       let managerKey = "";
       try {

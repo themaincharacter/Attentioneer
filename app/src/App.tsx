@@ -82,8 +82,10 @@ import { loadTurnSettings } from "./turn/provider";
 import {
   formatProviderRef,
   PROVIDER_SENTENCES,
+  resolveManager,
   resolveSelection,
 } from "./turn/providers";
+import type { AskCallsFacts } from "./canvas/contactRules";
 import { TURN_SENTENCES, routeOf } from "./turn/turn";
 import { readProposal } from "./turn/proposal";
 import { readSecret, secretStatus, secretStatusWords } from "./lib/secret";
@@ -841,6 +843,15 @@ function App() {
   // and the app writes none of it.
   const [askContext, setAskContext] = useState<AskContext | null>(null);
   const [askProvider, setAskProvider] = useState<boolean | null>(null);
+  /**
+   * STORY 17.13 — THE TWO CALLS an ask card's send will make, read from the
+   * SAME config read as askProvider (ADR-0037 decision 1: the declaration
+   * names both). The task row/model are always there when anything resolves;
+   * the manager is null when no manager model resolves at all, so the card can
+   * say a rule will make the card instead of promising a second call.
+   * EPHEMERAL app state — never a record.
+   */
+  const [askCalls, setAskCalls] = useState<AskCallsFacts | null>(null);
   const [askIncluded, setAskIncluded] = useState<AskPointer[]>([]);
   const [askSent, setAskSent] = useState<AskSentView | null>(null);
   // WHICH PROVIDER, AND WHERE THE KEY LIVES (Epic 15 story 4): the selection's
@@ -2018,12 +2029,33 @@ function App() {
             : null,
         );
         setAskFallback(here ? null : NO_PROVIDER_SENTENCE);
+        // STORY 17.13 — the calls the declaration names, from the same read:
+        // the task row/model, and the manager row/model when one resolves (the
+        // empty manager pair is the explicit "same as the task model", so it
+        // resolves to the task's own name and the pure rules say it in ONE
+        // line). A manager that does not resolve is null: no second call.
+        if (resolved.kind === "resolved") {
+          const manager = resolveManager(settings);
+          setAskCalls({
+            task: {
+              row: resolved.provider.name,
+              model: resolved.model.name,
+            },
+            manager:
+              manager.kind === "resolved"
+                ? { row: manager.provider.name, model: manager.model.name }
+                : null,
+          });
+        } else {
+          setAskCalls(null);
+        }
       })
       .catch(() => {
         // An unreadable config is the same honest nothing: the fallback.
         setAskProvider(false);
         setAskProviderRef(null);
         setAskFallback(NO_PROVIDER_SENTENCE);
+        setAskCalls(null);
       });
     void secretStatus().then((store) =>
       setAskKeyStore(secretStatusWords(store)),
@@ -2102,6 +2134,7 @@ function App() {
       // clipboard route reads no target (ADR-0029 rule 3 stands for it).
       setAskProvider(null);
       setAskProviderRef(null);
+      setAskCalls(null);
       setAskContext(null);
       setAskIncluded([]);
       setAskSent(null);
@@ -4514,6 +4547,7 @@ function App() {
             // The one selection still lives in Settings; no per-ask selector
             // comes back here by design (story 17.7).
             hasProvider={askProvider}
+            calls={askCalls}
             onOpenSettings={() => openSettings("providers")}
             onMove={ground.move}
             onRefresh={ground.refresh}

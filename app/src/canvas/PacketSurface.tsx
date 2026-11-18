@@ -5,8 +5,10 @@ import {
   ASK_BYTES_CLOSE,
   ASK_BYTES_LABEL,
   ASK_BYTES_OPEN,
+  askCallsWords,
   askReadWords,
   packetDeclarationWords,
+  type AskCallsFacts,
 } from "./contactRules";
 
 /**
@@ -21,7 +23,9 @@ import {
  * declaration the packet itself returned, and both panels render this.
  *
  * WHAT IT SHOWS: every block with its exact byte size and the packet's total
- * (the declaration), then one verb that opens every message verbatim, before
+ * (the declaration), STORY 17.13's calls section when the caller knows the two
+ * models (who answers, who distils, and that the distil step waits for a
+ * completed answer), then one verb that opens every message verbatim, before
  * or after the send. The follow-up's one line rides after the readback when
  * the model named a block. It shows no counters, no token meters and no sizes
  * anywhere else: this is the only place a size is said.
@@ -31,11 +35,18 @@ import {
  */
 export function PacketSurface({
   declaration = null,
+  calls = null,
   messages = null,
   read = null,
 }: {
   /** The packet's blocks and sizes, or null when there is nothing to declare. */
   declaration?: AskPacketDeclaration | null;
+  /**
+   * STORY 17.13 — THE TWO CALLS a send will make, when the caller knows them:
+   * the task model and the manager model (or the same one, or none). Null
+   * means the caller cannot say, and the surface says nothing new.
+   */
+  calls?: AskCallsFacts | null;
   /** Every message that would leave (or did), verbatim; null hides the verb. */
   messages?: readonly TurnMessage[] | null;
   /** The one block a follow-up fetched, or null when none happened. */
@@ -47,6 +58,15 @@ export function PacketSurface({
       {declaration !== null && (
         <div className="ask-declaration">
           {packetDeclarationWords(declaration)}
+          {/* STORY 17.13 — THE CALLS, beside the blocks: one line per fact,
+              the same words the pure rules produced. The blocks above are
+              byte-identical to before this section arrived. */}
+          {calls !== null &&
+            askCallsWords(calls).map((line, index) => (
+              <div className="ask-calls-line" key={index}>
+                {line}
+              </div>
+            ))}
         </div>
       )}
       {messages !== null && (

@@ -38,6 +38,7 @@ import {
 } from "../map/readings";
 import type { Media } from "../map/media";
 import { askCardOf } from "../turn/context";
+import type { AskCallsFacts } from "./contactRules";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
 import {
@@ -517,6 +518,12 @@ interface GroundLayerProps {
    * `null` is not yet known, so nothing is claimed.
    */
   hasProvider?: boolean | null;
+  /**
+   * STORY 17.13 — THE TWO CALLS an ask card's send will make, read from the
+   * same Settings selection that hasProvider comes from. The card's declaration
+   * names them before the send; null means the config has not answered.
+   */
+  calls?: AskCallsFacts | null;
   /** Open Settings on Providers — the pre-send state's ONE verb. */
   onOpenSettings?: () => void;
   /** Move one reference to its dropped point (one line, on release). */
@@ -614,6 +621,7 @@ export function GroundLayer({
   onMakeSessionResult,
   onRemoveSession,
   hasProvider,
+  calls = null,
   onOpenSettings,
   onMove,
   onRefresh,
@@ -1019,6 +1027,7 @@ export function GroundLayer({
             onAskTurn={onAskTurn}
             onStopTurn={onStopAskTurn}
             hasProvider={hasProvider}
+            calls={calls}
             onOpenSettings={onOpenSettings}
             autoAsk={
               askSeed !== null && askSeed.slug === ask.on
