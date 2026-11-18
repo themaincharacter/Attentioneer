@@ -7,6 +7,7 @@ import {
   secretStatusWords,
   setSecret,
   type SecretStore,
+  type SecretWrite,
 } from "../lib/secret";
 import {
   MODEL_LIST_SENTENCES,
@@ -18,7 +19,10 @@ import {
   type FetchedModel,
 } from "../turn/modelList";
 import {
+  askProviderModels,
+  connectionSentence,
   createModelFetcher,
+  type EndpointAnswer,
   type ModelFetcher,
 } from "../turn/modelFetch";
 import { loadTurnSettings, saveTurnSettings } from "../turn/provider";
@@ -84,9 +88,63 @@ import { probeSpec } from "../turn/cliBridge";
  * A command or a local model has exactly one model already, so its row says why
  * it has no list instead of offering a verb that could only fail.
  *
+ * STORY 12 ADDS THE BASIC THINGS WHERE A PERSON LOOKS FOR THEM: the add form
+ * carries the key (optional, write-only, typed once and kept), the key line on
+ * a row is always on screen — never behind the edit toggle — and each endpoint
+ * row gets a test verb beside fetch models. Add writes the ROW first and the
+ * key second, so a store that refuses the key cannot lose a row that already
+ * exists; the refusal is one sentence and the row stays. Test is the same ask
+ * as fetch, said as one measured sentence, and it writes nothing.
+ *
  * PROVISIONAL (ADR-0003's rendering seam): the layout, the field order and the
  * wording of the refusals.
  */
+
+/**
+ * THE TWO WRITES OF ONE ADD (story 12), in the only order that is honest.
+ *
+ * WHY THE ROW FIRST: a key without a row is a leftover nobody can name, so the
+ * row is saved before anything is kept. WHY A REFUSED KEY DOES NOT ROLL IT BACK:
+ * the row is the thing the person authored and can still use; silently deleting
+ * it because a keychain said no would throw away their work. The sentence says
+ * exactly that, and nothing from the store is echoed into it.
+ */
+export const ADD_KEY_SENTENCES = {
+  kept: "the key is kept; it will not be shown again",
+  notKept: "the provider is kept; the key was not kept",
+} as const;
+
+export type AddWithKeyOutcome =
+  | { kind: "row-refused" }
+  | { kind: "added"; key: null }
+  | { kind: "added"; key: "kept" }
+  | { kind: "added"; key: "refused"; sentence: string };
+
+/**
+ * Save the row, then (only if there IS a key to keep) keep the key. The two
+ * writes are injected so a test can watch their ORDER without a window, a
+ * store or a config file.
+ */
+export async function addRowThenKey(
+  providerId: string,
+  key: string,
+  save: () => Promise<boolean>,
+  keep: (providerId: string, secret: string) => Promise<SecretWrite>,
+): Promise<AddWithKeyOutcome> {
+  if (!(await save())) return { kind: "row-refused" };
+  const secret = key.trim();
+  if (secret === "") return { kind: "added", key: null };
+  const kept = await keep(providerId, secret);
+  if (kept.kind === "refused") {
+    return {
+      kind: "added",
+      key: "refused",
+      sentence: ADD_KEY_SENTENCES.notKept,
+    };
+  }
+  return { kind: "added", key: "kept" };
+}
+
 /**
  * The shipped llama.cpp preset the local form starts from (PROVISIONAL flags,
  * localSpecs.ts): command, argv, readiness line and idle window. The model
@@ -194,6 +252,18 @@ export function ProvidersPanel({
   const [keyFor, setKeyFor] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
 
+  // THE ADD FORM'S OPTIONAL KEY (story 12): the same write-only rule as the
+  // row's — typed here, written after the row exists, never filled from the
+  // store and never shown again. It is cleared whatever happens, because a
+  // draft that failed to be kept is not a thing to keep in memory either.
+  const [addKey, setAddKey] = useState("");
+
+  // THE TEST VERB'S STATE (story 12): which row is being asked, and the one
+  // sentence it answered. Separate from the fetch's checklist because a test
+  // never grows a list — it is a read that says how long the read took.
+  const [testing, setTesting] = useState<string | null>(null);
+  const [testNotes, setTestNotes] = useState<Record<string, string>>({});
+
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -298,7 +368,19 @@ export function ProvidersPanel({
       return;
     }
     setSentence(null);
-    if (!(await commit(read.row))) return;
+    // THE ROW FIRST, THE KEY SECOND (story 12). The key field is here because
+    // at the moment a person composes a provider, the one credential it needs
+    // should not be somewhere else. A refused key leaves the row standing.
+    // Only an endpoint row has a key: a command's sign-in is its own argv,
+    // so a value typed before switching kinds is not carried across.
+    const outcome = await addRowThenKey(
+      read.row.id,
+      read.row.kind === "http" ? addKey : "",
+      () => commit(read.row),
+      setSecret,
+    );
+    setAddKey("");
+    if (outcome.kind === "row-refused") return;
     setName("");
     setBaseUrl("");
     setModelId("");
@@ -312,6 +394,20 @@ export function ProvidersPanel({
     setOkPattern("");
     setLocalModel("");
     setProbe(null);
+    if (outcome.key === "refused") {
+      setSentence(outcome.sentence);
+      return;
+    }
+    if (outcome.key === "kept") {
+      // The panel now knows a key is set, and the store may have changed (a
+      // fallback file created on first use), so both are re-asked.
+      setKeys((current) => ({ ...current, [read.row.id]: true }));
+      setStore(await secretStatus());
+      setSentence(ADD_KEY_SENTENCES.kept);
+      // Validate where the person just typed: the same test verb, one
+      // sentence, so a wrong key is learned now rather than at send time.
+      if (read.row.kind === "http") await runTest(read.row);
+    }
   }
 
   /** The local preset, back into the add form (the person then names a model). */
@@ -499,9 +595,15 @@ export function ProvidersPanel({
     }
     setSentence(null);
     if (await write(withProvider(settings, read.row))) {
-      // A row whose URL just changed has no checklist yet: the old list is
-      // dropped rather than offered against the new endpoint.
+      // A row whose URL just changed has no checklist and no test sentence
+      // yet: both were about the OLD endpoint, so they are dropped rather
+      // than shown against the new one. The test verb is still there to ask.
       clearFetched(row.id);
+      setTestNotes((current) => {
+        const next = { ...current };
+        delete next[row.id];
+        return next;
+      });
       setEditing(null);
     }
   }
@@ -563,8 +665,7 @@ export function ProvidersPanel({
     setFetching(row.id);
     setFetchNotes((current) => ({ ...current, [row.id]: "" }));
     try {
-      const key = await readSecret(row.id);
-      const answer = await fetchModels({ baseUrl: row.baseUrl, apiKey: key });
+      const answer = (await askEndpoint(row)).result;
       if (answer.kind === "models") {
         const offered = offerFetchedModels(row, answer.ids);
         setLists((current) => ({ ...current, [row.id]: offered }));
@@ -591,6 +692,43 @@ export function ProvidersPanel({
       }));
     } finally {
       setFetching(null);
+    }
+  }
+
+  /**
+   * THE ONE ASK (story 12). Both verbs come through here: the key is read at
+   * the press — never held, never shown — and handed to the same sidecar GET
+   * the fetch has always used. One place means the test cannot drift into a
+   * second idea of what "reach the endpoint" means.
+   */
+  async function askEndpoint(row: HttpProviderRow): Promise<EndpointAnswer> {
+    const key = await readSecret(row.id);
+    return await askProviderModels(fetchModels, {
+      baseUrl: row.baseUrl,
+      apiKey: key,
+    });
+  }
+
+  /**
+   * TEST THE CONNECTION (story 12): one press, one GET, ONE sentence. It adds
+   * nothing, changes no row, and schedules nothing — a test is a read. The
+   * same https/loopback rule that gates a fetch gates this, because a URL the
+   * app would not ask is not one it should try.
+   */
+  async function runTest(row: HttpProviderRow): Promise<void> {
+    if (testing !== null) return;
+    const problem = modelsFetchProblem(row);
+    if (problem !== null) {
+      setTestNotes((current) => ({ ...current, [row.id]: problem }));
+      return;
+    }
+    setTesting(row.id);
+    setTestNotes((current) => ({ ...current, [row.id]: "" }));
+    try {
+      const sentence = connectionSentence(await askEndpoint(row));
+      setTestNotes((current) => ({ ...current, [row.id]: sentence }));
+    } finally {
+      setTesting(null);
     }
   }
 
@@ -699,6 +837,11 @@ export function ProvidersPanel({
         delete next[row.id];
         return next;
       });
+      setTestNotes((current) => {
+        const next = { ...current };
+        delete next[row.id];
+        return next;
+      });
       if (editing === row.id) setEditing(null);
       if (keyFor === row.id) {
         setKeyFor(null);
@@ -714,11 +857,14 @@ export function ProvidersPanel({
       setSentence(kept.sentence);
       return;
     }
-    setSentence("the key is kept; it will not be shown again");
+    setSentence(ADD_KEY_SENTENCES.kept);
     setKeyDraft("");
     setKeyFor(null);
     setStore(await secretStatus());
     setKeys((current) => ({ ...current, [row.id]: true }));
+    // A key that was just kept is worth one test: the person learns now
+    // whether the endpoint accepts it, without hunting for the verb.
+    if (row.kind === "http") await runTest(row);
   }
 
   async function choose(providerId: string, modelId: string): Promise<void> {
@@ -1012,52 +1158,63 @@ export function ProvidersPanel({
             <div className="providers-actions">
               {provider.kind === "http" && (
                 <>
+                  {/* THE KEY LINE IS ALWAYS ON THE ROW (story 12): no edit
+                      toggle hides it. Its state is one of two sentences and
+                      its verb names the one action — set, or replace. The
+                      store sentence sits beside the field a person is pasting
+                      into, because that is the moment they wonder where it
+                      goes; it is the SAME sentence the panel shows above. */}
                   <span className="providers-key-state">
                     {keys[provider.id] === true ? "a key is set" : "no key is set"}
                   </span>
                   {keyFor === provider.id ? (
-                <>
-                  <input
-                    className="providers-key-input"
-                    type="password"
-                    value={keyDraft}
-                    spellCheck={false}
-                    autoComplete="off"
-                    aria-label="the key to keep"
-                    placeholder="the key (never shown again)"
-                    onChange={(e) => setKeyDraft(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="providers-key-save"
-                    disabled={busy}
-                    onClick={() => void keepKey(provider)}
-                  >
-                    keep it
-                  </button>
-                  <button
-                    type="button"
-                    className="providers-key-cancel"
-                    onClick={() => {
-                      setKeyFor(null);
-                      setKeyDraft("");
-                    }}
-                  >
-                    cancel
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="providers-key-set"
-                  onClick={() => {
-                    setKeyFor(provider.id);
-                    setKeyDraft("");
-                  }}
-                >
-                    set a key
-                  </button>
-                )}
+                    <>
+                      <input
+                        className="providers-key-input"
+                        type="password"
+                        value={keyDraft}
+                        spellCheck={false}
+                        autoComplete="off"
+                        aria-label="the key to keep"
+                        placeholder="the key (never shown again)"
+                        onChange={(e) => setKeyDraft(e.target.value)}
+                      />
+                      {store !== null && (
+                        <span className="providers-key-store">
+                          {secretStatusWords(store)}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="providers-key-save"
+                        disabled={busy}
+                        onClick={() => void keepKey(provider)}
+                      >
+                        keep it
+                      </button>
+                      <button
+                        type="button"
+                        className="providers-key-cancel"
+                        onClick={() => {
+                          setKeyFor(null);
+                          setKeyDraft("");
+                        }}
+                      >
+                        cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="providers-key-set"
+                      onClick={() => {
+                        setKeyFor(provider.id);
+                        setKeyDraft("");
+                      }}
+                    >
+                      {keys[provider.id] === true ? "replace key" : "set a key"}
+                    </button>
+                  )}
                 </>
               )}
               {/* FETCH IS FOR AN ENDPOINT ONLY: the provider publishes a list;
@@ -1077,6 +1234,19 @@ export function ProvidersPanel({
                 <span className="providers-fetch-none">
                   {modelsFetchProblem(provider)}
                 </span>
+              )}
+              {/* THE TEST VERB (story 12): the same GET as fetch models, said
+                  as one measured sentence. It is the quick check, not a
+                  picker: it grows no list and changes no row. */}
+              {provider.kind === "http" && (
+                <button
+                  type="button"
+                  className="providers-test"
+                  disabled={testing !== null || fetching !== null || busy}
+                  onClick={() => void runTest(provider)}
+                >
+                  {testing === provider.id ? "testing…" : "test"}
+                </button>
               )}
               {provider.kind === "cli" && (
                 <button
@@ -1205,6 +1375,15 @@ export function ProvidersPanel({
                 </div>
               )}
 
+            {/* ONE SENTENCE FOR THE TEST (story 12): how long it took and what
+                it offered, or the same scrubbed refusal a fetch would say. */}
+            {provider.kind === "http" &&
+              (testNotes[provider.id] ?? "") !== "" && (
+                <div className="providers-test-note" role="status">
+                  {testNotes[provider.id]}
+                </div>
+              )}
+
             {/* One more model on this row, refused if it shares an id with one
                 already there (two rows with one id would resolve two ways). */}
             {provider.kind === "http" && (
@@ -1270,6 +1449,27 @@ export function ProvidersPanel({
                   onChange={(e) => setBaseUrl(e.target.value)}
                 />
               </label>
+              {/* THE KEY, IN THE FORM ITSELF (story 12). Optional: a local
+                  endpoint may need none. Write-only like the row's — the
+                  field is never filled from the store, and what is typed is
+                  written only AFTER the row exists. */}
+              <label className="providers-field">
+                <span>the key (kept; never shown again)</span>
+                <input
+                  type="password"
+                  value={addKey}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="optional"
+                  aria-label="the key to keep with the new provider"
+                  onChange={(e) => setAddKey(e.target.value)}
+                />
+              </label>
+              {store !== null && (
+                <span className="providers-key-store">
+                  {secretStatusWords(store)}
+                </span>
+              )}
               <div className="providers-add-model">
                 <label className="providers-field">
                   <span>model id</span>

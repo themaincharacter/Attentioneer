@@ -51,6 +51,52 @@ export type ModelFetcher = (
 /** The window's fetch ids. Separate from the turns' so one can never collide. */
 let nextModelFetchId = 1;
 
+/**
+ * ONE ASK OF AN ENDPOINT, AND HOW LONG IT TOOK (story 12's test verb).
+ *
+ * WHY THIS IS HERE AND NOT A SECOND FETCH: "test" and "fetch models" are the
+ * same question — GET {baseUrl}/models with this row's key — asked for
+ * different reasons. Two implementations would drift into two ideas of what a
+ * provider answered, so the test verb calls THIS, the fetch verb calls THIS,
+ * and only the words differ. The clock is injected so a test can pin the
+ * sentence without sleeping.
+ */
+export type EndpointAnswer = {
+  /** What the one GET answered (the list, or one sentence). */
+  result: ModelFetchResult;
+  /** Wall time for that answer, in whole milliseconds, never negative. */
+  elapsedMs: number;
+};
+
+/**
+ * Ask once and measure. It adds nothing: the caller decides what the answer
+ * means, and a test is a read like any other.
+ */
+export async function askProviderModels(
+  fetcher: ModelFetcher,
+  provider: ModelListProvider,
+  now: () => number = Date.now,
+): Promise<EndpointAnswer> {
+  const started = now();
+  const result = await fetcher(provider);
+  const elapsedMs = Math.max(0, Math.round(now() - started));
+  return { result, elapsedMs };
+}
+
+/**
+ * The test verb's ONE sentence. A success says the endpoint answered and what
+ * it offered — no list, no verdict, no second sentence; a failure is the
+ * existing scrubbed sentence, unchanged, because the panel already knows how
+ * to say a refusal and a second vocabulary would only be a second opinion.
+ */
+export function connectionSentence(answer: EndpointAnswer): string {
+  if (answer.result.kind === "models") {
+    const { offered } = answer.result;
+    return `the endpoint answered in ${answer.elapsedMs} ms and offered ${offered} models`;
+  }
+  return answer.result.sentence;
+}
+
 export interface ModelFetchOptions {
   /** The panel's own budget (a test uses a short one). */
   timeoutMs?: number;

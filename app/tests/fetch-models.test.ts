@@ -30,7 +30,11 @@ import {
   truncationSentence,
   withTickedModels,
 } from "../src/turn/modelList";
-import { fetchModelIds } from "../src/turn/modelFetch";
+import {
+  askProviderModels,
+  connectionSentence,
+  fetchModelIds,
+} from "../src/turn/modelFetch";
 import {
   EMPTY_SETTINGS,
   PROVIDER_SENTENCES,
@@ -621,6 +625,54 @@ describe("the sidecar's fetch of a real /models", () => {
       ids: ["gpt-4o", "gpt-4o-mini"],
       offered: 2,
     });
+  });
+
+  /* STORY 15.12: the TEST verb is the same GET, asked through the same
+     plumbing, said as one sentence. Three outcomes here, against the same
+     stub: answered, refused, and no answer in time. */
+
+  /** The panel's test verb, at this layer: one ask, one measured sentence. */
+  async function testVerb(timeoutMs?: number): Promise<string> {
+    const answer = await askProviderModels(
+      (provider) =>
+        timeoutMs === undefined
+          ? fetchModelIds(transport, provider)
+          : fetchModelIds(transport, provider, { timeoutMs }),
+      PROVIDER,
+    );
+    return connectionSentence(answer);
+  }
+
+  test("the endpoint answered: one sentence, the ms and the count", async () => {
+    mode = "ok";
+    const sentence = await testVerb();
+    expect(sentence).toMatch(
+      /^the endpoint answered in \d+ ms and offered 2 models$/,
+    );
+    expect(sentence).not.toContain(KEY);
+    expect(lastRequest?.method).toBe("GET");
+    expect(lastRequest?.url).toBe(`${PROVIDER.baseUrl}/models`);
+    expect(lastRequest?.authorization).toBe(`Bearer ${KEY}`);
+  });
+
+  test("a refused key: the existing scrubbed sentence, once", async () => {
+    mode = "401";
+    const sentence = await testVerb();
+    expect(sentence).toBe("the provider answered 401 (the key was refused)");
+    expect(sentence.split("\n")).toHaveLength(1);
+    expect(sentence).not.toContain(KEY);
+  });
+
+  test("a failing provider: the same one sentence, no timing machinery", async () => {
+    mode = "500";
+    expect(await testVerb()).toBe(
+      "the provider answered 500 (the provider failed)",
+    );
+  });
+
+  test("no answer: the existing timeout sentence, not a second wording", async () => {
+    mode = "slow";
+    expect(await testVerb(80)).toBe(MODEL_LIST_SENTENCES.timeout);
   });
 
   test("nothing was written: the folder is byte-identical", () => {

@@ -6863,6 +6863,81 @@ body {
   color: #8a5a3a;
 }
 
+/* WHERE THE KEY GOES, SAID WHERE IT IS ASKED (story 15.12): the same words as
+   the panel's top line, repeated beside the field a person is pasting into. */
+.providers-key-store {
+  flex-basis: 100%;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #8d887c;
+}
+
+/* THE TEST'S ONE SENTENCE (story 15.12): how long the endpoint took and what
+   it offered, or the scrubbed refusal. A reading, so it stays quiet. */
+.providers-test-note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #3b3d42;
+  padding-top: 2px;
+}
+
+/* THE SHIPPED SPECS' ROWS (story 15.12). These classes had no rules at all, so
+   the name, the command and the note collapsed into one run of text —
+   "Claude Codeclaudeversion and print mode…". A flex row with a gap gives
+   each its own place; the command stays monospaced because it is typed, not
+   read. The person's own row header and model list already had their gaps
+   (.providers-row-head, .providers-model) and keep them. */
+.providers-shipped {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+}
+
+.providers-shipped-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.providers-shipped-name {
+  font-weight: 500;
+  color: #3b3d42;
+}
+
+.providers-shipped-command {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: #6f6a5f;
+}
+
+.providers-shipped-notes {
+  flex: 1 1 160px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #8d887c;
+}
+
+.providers-shipped-add {
+  font-size: 11px;
+  color: #6f6a5f;
+  background: transparent;
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.providers-shipped-add:hover {
+  color: #1e2126;
+}
+
+.providers-shipped-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 
 /* ---------------------------------------------------------------- *
  * SETTINGS (story 15.10). The app's one configuration modal: a quiet
