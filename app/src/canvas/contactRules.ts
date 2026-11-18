@@ -232,6 +232,35 @@ export const ASK_BYTES_CLOSE = "hide the bytes";
 export const ASK_BYTES_LABEL = "what leaves, message by message (verbatim)";
 
 /**
+ * STORY 16.27 — THE CARD'S ONE QUIET DISCLOSURE (PROVISIONAL wording).
+ *
+ * The declaration — every block with its size, both calls, the live page line
+ * and the exact-bytes reader — is not the card's face. It is what the machinery
+ * knows, one verb away, and the verb is the ONLY way in: a send never opens it.
+ * The face therefore states no size at all; the numbers live where the person
+ * asked for them.
+ *
+ * Two wordings for the SAME disclosure, because the truth changes with the
+ * send: before it, these are the bytes that WILL go; after it, the bytes that
+ * DID. The open state is a native disclosure (the summary is the verb), so the
+ * text never has to say "press to open" and no state is invented here.
+ */
+export const ASK_DECLARATION_VERB = "what will be sent";
+export const ASK_DECLARATION_VERB_SENT = "what was sent";
+
+/**
+ * STORY 16.27 — THE FOOTER'S ONE OVERFLOW VERB (PROVISIONAL wording). The
+ * primary action stays in the footer (send, or stop while a turn runs); every
+ * other verb the card owns lives one press further in, so the face does not
+ * read as a row of buttons. The three are the SAME verbs as before: a fork, a
+ * remove, a close.
+ */
+export const ASK_OVERFLOW_VERB = "more";
+export const ASK_OVERFLOW_FORK = "fork";
+export const ASK_OVERFLOW_REMOVE = "remove";
+export const ASK_OVERFLOW_CLOSE = "close";
+
+/**
  * STORY 17.13 — THE DECLARATION NAMES BOTH CALLS (ADR-0037 decision 1: "a
  * turn's declaration names both"). An ask now spends two models — the task
  * answers, the manager distils — so the surface in front of the person says
@@ -333,6 +362,17 @@ export function askPartialWords(ending: AskEnding): string {
 /** The follow-up's quiet line: it asked for ONE block and got it. */
 export function askReadWords(name: string): string {
   return "it asked for one block by name; the follow-up brought: " + name;
+}
+
+/**
+ * STORY 16.27 — THE RETRIEVAL OFFER, AS A VERB. After a turn whose follow-up
+ * fetched a block, the card used to show the whole askReadWords sentence on
+ * its face; the sentence stays (inside the declaration, where the readback
+ * lives) and the face offers the act instead. The name is the follow-up's own
+ * block, never a count and never an internal key. PROVISIONAL wording.
+ */
+export function askReadMoreWords(name: string): string {
+  return "read more of " + name;
 }
 
 /** A READ of a name this view did not carry: one sentence, the answer stands. */

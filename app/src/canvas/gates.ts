@@ -513,6 +513,19 @@ export const CONTENT_CLASSES = [
   "ask-card-problem",
   "ask-card-footer",
   "ask-card-open",
+  // STORY 16.27: the card's ONE quiet disclosure (its summary verb, its body
+  // and the full wired-in list inside it), the retrieval verb, and the footer's
+  // ONE overflow (its summary and the three verbs inside). All of them live
+  // inside the card, which is content already; listed for the same
+  // belt-and-braces reason — a press on any of them must never fall through to
+  // the plane's pan, creation or a card drag.
+  "ask-card-declaration",
+  "ask-card-declaration-body",
+  "ask-card-context-full",
+  "ask-card-read-more",
+  "ask-card-overflow",
+  "ask-card-overflow-body",
+  "ask-card-overflow-fork",
   // Epic 10 story 3's ghost: the ONLY ghost element inside the plane is the
   // opened preview's faint diamond at the target. It is read-only by
   // construction (pointer-events: none), and it exists only inside the

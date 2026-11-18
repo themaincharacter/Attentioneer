@@ -7783,6 +7783,9 @@ body {
   gap: 6px;
 }
 
+/* STORY 16.27 — the per-turn fork is STILL HERE, just not drawn on every line:
+   a hover or a Tab reveals it. The footer's overflow is the always-visible
+   fork (it branches at the end); this one keeps the precise branch point. */
 .ask-turn-fork {
   align-self: flex-start;
   padding: 0;
@@ -7792,9 +7795,16 @@ body {
   font-size: 10.5px;
   color: var(--ink-faint);
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease-soft);
 }
 
-.ask-turn-fork:hover {
+.ask-turn-cell:hover .ask-turn-fork,
+.ask-turn-cell:focus-within .ask-turn-fork,
+.ask-turn-fork:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
   color: var(--ink-marker);
 }
 
@@ -7872,6 +7882,118 @@ body {
   font-size: 12px;
   line-height: 1.625;
   color: var(--ink-faint);
+}
+
+/* STORY 16.27 — THE CARD QUIETS DOWN: one quiet disclosure and one overflow.
+   Neither is a new surface and neither holds a second copy: the declaration is
+   the SAME PacketSurface, the full wired-in list is the SAME names, and the
+   three verbs are the same fork/remove/close. Both are native <details>, so
+   the summary IS the verb and the closed face states no size at all. */
+.ask-card-declaration,
+.ask-card-overflow {
+  position: relative;
+}
+
+.ask-card-declaration > summary,
+.ask-card-overflow > summary {
+  list-style: none;
+  width: fit-content;
+  font-size: 11.5px;
+  color: var(--ink-marker);
+  cursor: pointer;
+}
+
+.ask-card-declaration > summary::-webkit-details-marker,
+.ask-card-overflow > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ask-card-declaration > summary::marker,
+.ask-card-overflow > summary::marker {
+  content: "";
+}
+
+.ask-card-declaration > summary:hover,
+.ask-card-declaration > summary:focus-visible,
+.ask-card-overflow > summary:hover,
+.ask-card-overflow > summary:focus-visible {
+  color: var(--ink-strong);
+  outline: none;
+}
+
+.ask-card-declaration-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 4px;
+}
+
+/* The full wired-in list, inside the declaration: the face keeps one
+   truncated line, this keeps every name and wraps. */
+.ask-card-context-full {
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(141, 136, 124, 0.9);
+  overflow-wrap: anywhere;
+}
+
+/* The retrieval offer as a verb (story 16.27): the readback sentence lives in
+   the declaration; the face offers the act. */
+.ask-card-read-more {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+.ask-card-read-more:hover,
+.ask-card-read-more:focus-visible {
+  color: var(--ink-marker);
+  outline: none;
+}
+
+/* The overflow's three verbs, opened upward from the footer so they never
+   push the card's column wider. */
+.ask-card-overflow-body {
+  position: absolute;
+  right: 0;
+  bottom: 140%;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 84px;
+  padding: 4px 7px;
+  background: rgba(255, 253, 248, 0.98);
+  border: 1px solid rgba(141, 136, 124, 0.3);
+  border-radius: 5px;
+  box-shadow: 0 1px 6px rgba(40, 35, 25, 0.08);
+}
+
+.ask-card-overflow-body button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink-marker);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ask-card-overflow-body button:hover,
+.ask-card-overflow-body button:focus-visible {
+  color: var(--ink-strong);
+  outline: none;
+}
+
+.ask-card-overflow-body button:disabled {
+  color: var(--ink-faint);
+  cursor: default;
 }
 
 .ask-card-ask {

@@ -18,7 +18,17 @@ import {
   type AskPacketCard,
   type AskPacketReadback,
 } from "../turn/packet";
-import { ASK_READ_MISSED, type AskCallsFacts } from "./contactRules";
+import {
+  ASK_DECLARATION_VERB,
+  ASK_DECLARATION_VERB_SENT,
+  ASK_OVERFLOW_CLOSE,
+  ASK_OVERFLOW_FORK,
+  ASK_OVERFLOW_REMOVE,
+  ASK_OVERFLOW_VERB,
+  ASK_READ_MISSED,
+  askReadMoreWords,
+  type AskCallsFacts,
+} from "./contactRules";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
 import { attachGroundCardDrag } from "./groundDrag";
@@ -147,6 +157,22 @@ const ASK_PILL_RULES: PillNameRules = {
  * layer owns the bytes (the record line and the conversation, read before the
  * unlink) and this component only presses the verb — it never touches a file.
  *
+ * STORY 16.27 — THE CARD QUIETS DOWN. The user, from a screenshot: "The ask
+ * card is very noisy. Not sure why it needs to state all the bytes numbers
+ * and stuff." The face now carries its name, what it is, the thread, the
+ * question field and one short provenance line; the DECLARATION — every block
+ * with its size, both calls, the live page line, the exact-bytes reader — is
+ * behind ONE quiet disclosure, closed by default and never opened by a send.
+ * The full wired-in list rides behind the same verb. No size is rendered on
+ * the face, ever. The retrieval offer is a VERB ("read more of <name>") and
+ * the readback sentence lives in the declaration with the rest. The footer
+ * keeps the primary action (send, or stop while a turn runs) and ONE overflow
+ * verb holding fork, remove and close; a turn's fork is revealed on hover.
+ * The honest sentences (17.7b's hit lines, 17.11's no-card line) stand only
+ * when they happen, now outside the thread rather than in the next message's
+ * place. Nothing was removed from what a person CAN open — only from what is
+ * shown by default.
+ *
  * PROVISIONAL (ADR-0003's rendering seam): the card's size, the crop, the
  * scrollbox height and slack, the role marks, the stopped/incomplete wording,
  * story 17.5's divider and missing-parent lines and the fork chooser's look,
@@ -154,7 +180,9 @@ const ASK_PILL_RULES: PillNameRules = {
  * rule and the rename field, story 17.6's dangling sentence, its wording and its place
  * on the "what this is" line, story 17.7b's fact lines' placement and the
  * pre-send state's wording (the sentence is reused, not new), and — STORY
- * 17.9 — the context line's wording and the dangling-wire sentence.
+ * 17.9 — the context line's wording and the dangling-wire sentence, and —
+ * STORY 16.27 — the disclosure verb's wording, the overflow verb and its three
+ * items, the read-more verb, and where the full provenance list sits.
  */
 
 /** The quiet line an ask card with no turns shows (PROVISIONAL wording). */
@@ -579,6 +607,14 @@ export function AskCard({
   const [busy, setBusy] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  /**
+   * STORY 16.27 — THE DECLARATION'S OWN DISCLOSURE. A native <details> holds
+   * it and its summary IS the one quiet verb; the ref exists for the ONE other
+   * way in — the retrieval verb a finished follow-up offers ("read more of
+   * <name>") — so that press opens the same disclosure instead of showing a
+   * second copy of the readback on the face.
+   */
+  const declarationRef = useRef<HTMLDetailsElement>(null);
   // Whether the body still follows the newest line. A person scrolling up
   // turns it off until they reach the bottom again (the story's rule).
   const pinnedRef = useRef(true);
@@ -679,6 +715,16 @@ export function AskCard({
       e.stopPropagation();
       if (forking !== null) {
         setForking(null);
+        return;
+      }
+      // STORY 16.27 — the card's own disclosures are natives, so Esc closes
+      // the nearest OPEN one before it collapses the whole card: one press,
+      // one thing, the same rule the fork's field keeps.
+      const opened = cardRef.current?.querySelectorAll("details[open]");
+      if (opened !== undefined && opened.length > 0) {
+        opened.forEach((el) => {
+          (el as HTMLDetailsElement).open = false;
+        });
         return;
       }
       onClose();
@@ -945,6 +991,66 @@ export function AskCard({
     // line (the same idiom the Ask Move uses): no second stop is sent.
   }
 
+  /**
+   * STORY 16.27 — THE DECLARATION'S OTHER DOOR. The retrieval verb opens the
+   * SAME disclosure the summary opens; it never draws a second readback.
+   */
+  function openDeclaration(): void {
+    const el = declarationRef.current;
+    if (el !== null) el.open = true;
+  }
+
+  /**
+   * STORY 16.27 — THE ONE OVERFLOW VERB. The footer keeps the primary action
+   * (send, or stop while a turn runs) and this; fork, remove and close live one
+   * press in, in a native disclosure, so the face is not a row of verbs and
+   * every verb the card had is still here. The overflow's fork branches at the
+   * END of the card's own conversation; the per-turn verb still sits with a
+   * chosen turn (revealed on hover, never drawn on every line by default).
+   */
+  function overflowVerbs() {
+    return (
+      <details className="ask-card-overflow">
+        <summary
+          className="ask-card-overflow-verb"
+          title="fork, remove or close this card"
+        >
+          {ASK_OVERFLOW_VERB}
+        </summary>
+        <div className="ask-card-overflow-body">
+          {onForkTurn !== undefined && (
+            <button
+              type="button"
+              className="ask-card-overflow-fork"
+              disabled={busy || running || ownTurns === 0}
+              title={
+                ownTurns === 0
+                  ? "there is no turn to fork yet"
+                  : "fork this card at its end"
+              }
+              onClick={() => startFork(ownTurns)}
+            >
+              {ASK_OVERFLOW_FORK}
+            </button>
+          )}
+          {onRemove !== undefined && (
+            <button
+              type="button"
+              className="ask-card-remove"
+              disabled={busy || running}
+              onClick={() => void removeCard()}
+            >
+              {ASK_OVERFLOW_REMOVE}
+            </button>
+          )}
+          <button type="button" className="ask-card-close" onClick={onClose}>
+            {ASK_OVERFLOW_CLOSE}
+          </button>
+        </div>
+      </details>
+    );
+  }
+
   const recorded = askPendingInRecord(turns, pending);
   const pendingQuestion =
     pending !== null && pending.question !== "" && !recorded.question
@@ -960,6 +1066,11 @@ export function AskCard({
   // nothing. Clamped to the array in hand: a record's count is read, not
   // trusted to be larger than the parent's file.
   const carriedCount = Math.max(0, Math.min(carried, turns.length));
+  // STORY 16.27 — HOW MANY TURNS ARE THIS CARD'S OWN. The overflow's fork
+  // branches at the END of the card's own conversation (it carries every own
+  // turn); the per-turn verb still sits with a chosen turn, now revealed on
+  // hover rather than drawn on every line.
+  const ownTurns = Math.max(0, turns.length - carriedCount);
 
   // The small face's ONE turn: the newest thing said — a pending answer, else a
   // pending question, else the record's last line. Never the first line, and
@@ -1035,20 +1146,19 @@ export function AskCard({
             ? askDanglingLine(ask.anchorName ?? null)
             : askKindLine(anchorName)}
       </div>
-      {/* STORY 17.9 — WHAT THIS CARD HAS WIRED INTO IT, by name above the
-          thread. The list is the RESOLVED wires; a gone wire is said once and
-          never repaired. An empty context says so in one quiet line and the
-          card still sends. */}
-      {open && (
+      {/* STORY 17.9 — WHAT THIS CARD HAS WIRED INTO IT. STORY 16.27 keeps it as
+          ONE short line above the thread (the face) and moves the FULL list into
+          the declaration, where the same press that shows the bytes shows every
+          wire. The line truncates; nothing is dropped, only shortened. A gone
+          wire is still SAID here (it is news when it happens), once, never
+          repaired. When nothing is wired the face says nothing at all — the one
+          quiet sentence lives in the declaration with the rest of the list. */}
+      {open && (context.length > 0 || contextMissing) && (
         <div className="ask-card-context">
-          {context.length > 0 ? (
+          {context.length > 0 && (
             <div className="ask-card-context-line">
               {ASK_CONTEXT_LABEL}
               {context.map((card) => card.name).join(" · ")}
-            </div>
-          ) : contextMissing ? null : (
-            <div className="ask-card-context-line quiet">
-              {ASK_CONTEXT_EMPTY}
             </div>
           )}
           {contextMissing && (
@@ -1152,13 +1262,7 @@ export function AskCard({
                 />
               </div>
             )}
-            {/* STORY 17.7b — WHAT THE TURN HIT, beside the turn it belongs to:
-                one quiet line each, the existing sentences, no count. */}
-            {hit !== null && <AskTurnFactsLine result={hit} />}
-            {/* STORY 17.11 — NO ARTIFACT, SAID IN ONE LINE. A rule-made card
-                needs no notice; a stopped, broken, timed-out or empty turn
-                does, and the words that did arrive stay above it. */}
-            {noCard !== null && <AskNoCardLine line={noCard} />}
+
           </div>
         ) : smallTurn === null ? (
           <div className="ask-card-empty">{ASK_EMPTY_SENTENCE}</div>
@@ -1188,6 +1292,14 @@ export function AskCard({
           </div>
         )}
       </div>
+      {/* STORY 16.27 — THE HONEST SENTENCES STAND OUTSIDE THE THREAD. Story
+          17.7b's two facts and 17.11's no-card line describe the turn that just
+          happened; they now sit between the thread and the composer instead of
+          in the place the reader expects the next message. They still appear
+          ONLY when they happen — a clean turn renders nothing — and never
+          pre-emptively. Two quiet lines, the existing sentences, no counts. */}
+      {open && hit !== null && <AskTurnFactsLine result={hit} />}
+      {open && noCard !== null && <AskNoCardLine line={noCard} />}
       {problem !== null && (
         <div className="ask-card-problem" role="status">
           {problem}
@@ -1201,31 +1313,21 @@ export function AskCard({
               The selector this replaced is gone by design — one selection
               lives in Settings (story 17.7). */}
           {hasProvider === false ? (
-            <>
-              <div className="ask-unconfigured">
-                <div className="ask-fallback">{PROVIDER_SENTENCES.nothing}</div>
-                {onOpenSettings !== undefined && (
-                  <div className="ask-card-actions">
-                    <button
-                      type="button"
-                      className="ask-configure"
-                      onClick={onOpenSettings}
-                    >
-                      open settings
-                    </button>
-                  </div>
-                )}
-              </div>
+            <div className="ask-unconfigured">
+              <div className="ask-fallback">{PROVIDER_SENTENCES.nothing}</div>
               <div className="ask-card-actions">
-                <button
-                  type="button"
-                  className="ask-card-close"
-                  onClick={onClose}
-                >
-                  close
-                </button>
+                {onOpenSettings !== undefined && (
+                  <button
+                    type="button"
+                    className="ask-configure"
+                    onClick={onOpenSettings}
+                  >
+                    open settings
+                  </button>
+                )}
+                {overflowVerbs()}
               </div>
-            </>
+            </div>
           ) : (
             <>
               <textarea
@@ -1247,26 +1349,61 @@ export function AskCard({
                   void send();
                 }}
               />
-              {/* THE DECLARATION AND THE READBACK, the shared PacketSurface: before
-                  the send every block with its exact size and the total, then one
-                  verb that opens the bytes; after it, what actually left. The
-                  anchored card's crops and the thread are already here, so nothing
-                  is read to declare this. */}
-              {sent === null ? (
-                packet !== null && (
-                  <PacketSurface
-                    declaration={packet.declaration}
-                    livePages={pageUrls}
-                    calls={calls}
-                    messages={packet.messages}
-                  />
-                )
-              ) : (
-                <PacketSurface
-                  declaration={sent.declaration ?? null}
-                  messages={sent.messages}
-                  read={sent.read}
-                />
+              {/* STORY 16.27 — THE DECLARATION IS ONE QUIET VERB AWAY. It is
+                  the SAME shared PacketSurface as before (every block and its
+                  exact size, both calls, the live page line, the exact-bytes
+                  reader), simply not on the face: a native disclosure, closed
+                  by default, opened by the person and never by a send. The full
+                  wired-in list sits behind the same verb — the face keeps only
+                  its one truncated line. */}
+              <details className="ask-card-declaration" ref={declarationRef}>
+                <summary className="ask-card-declaration-verb">
+                  {sent === null ? ASK_DECLARATION_VERB : ASK_DECLARATION_VERB_SENT}
+                </summary>
+                <div className="ask-card-declaration-body">
+                  {context.length > 0 ? (
+                    <div className="ask-card-context-full">
+                      {context.map((card, index) => (
+                        <div key={index}>{card.name}</div>
+                      ))}
+                    </div>
+                  ) : contextMissing ? null : (
+                    <div className="ask-card-context-line quiet">
+                      {ASK_CONTEXT_EMPTY}
+                    </div>
+                  )}
+                  {sent === null
+                    ? packet !== null && (
+                        <PacketSurface
+                          declaration={packet.declaration}
+                          livePages={pageUrls}
+                          calls={calls}
+                          messages={packet.messages}
+                        />
+                      )
+                    : (
+                        <PacketSurface
+                          declaration={sent.declaration ?? null}
+                          messages={sent.messages}
+                          read={sent.read}
+                        />
+                      )}
+                </div>
+              </details>
+              {/* STORY 16.27 — THE RETRIEVAL OFFER IS A VERB. When the turn's
+                  one follow-up brought a block, its sentence stays in the
+                  declaration's readback and the face offers the act: press it
+                  and the same disclosure opens on what came back. No `READ:`
+                  line and no size on the face. */}
+              {sent !== null && sent.read !== null && (
+                <button
+                  type="button"
+                  className="ask-card-read-more"
+                  title="read what the follow-up brought"
+                  onClick={openDeclaration}
+                >
+                  {askReadMoreWords(sent.read)}
+                </button>
               )}
               <div className="ask-card-actions">
                 <button
@@ -1287,26 +1424,10 @@ export function AskCard({
                     stop
                   </button>
                 )}
-                {/* STORY 17.8 — the card's remove, beside close: immediate,
-                    reversible through the one toast. While a turn runs there is
-                    nothing to remove yet (the words are still arriving). */}
-                {onRemove !== undefined && (
-                  <button
-                    type="button"
-                    className="ask-card-remove"
-                    disabled={busy || running}
-                    onClick={() => void removeCard()}
-                  >
-                    remove
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="ask-card-close"
-                  onClick={onClose}
-                >
-                  close
-                </button>
+                {/* STORY 16.27 — every other verb (fork, remove, close) is
+                    behind the one overflow summary, so the footer reads as the
+                    primary action and one quiet word. */}
+                {overflowVerbs()}
               </div>
             </>
           )}
