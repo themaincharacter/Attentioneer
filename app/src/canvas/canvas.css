@@ -5400,6 +5400,28 @@ body {
   text-overflow: ellipsis;
 }
 
+/* STORY 16.13 (shortlist items 3 and 10): the card's SECOND line — what this
+   is. A file reading is the copy kept from its file; a selection is a copy of
+   text from another card; a reference with no reading says so. Quiet, and never
+   a badge or a status colour. */
+.ground-kind {
+  font-size: 11.5px;
+  line-height: 1.35;
+  font-style: italic;
+  color: #a09a8c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* STORY 16.13 (shortlist item 3): the reading's slot when there is no text to
+   show. The same quiet body ink so a refused/absent reading still reads as a
+   card's third line, never as a broken empty box. */
+.ground-reading.ground-refusal {
+  font-style: italic;
+  color: #a09a8c;
+}
+
 /* The file's opening lines, read at add time and kept in the map folder. A
    quiet body size, line breaks verbatim: this is what the file said, not a
    summary of it. On the SMALL face it is cropped to the preview's six lines
@@ -5796,8 +5818,7 @@ body {
   opacity: 1;
 }
 
-.ground-actions button,
-.ground-confirm-actions button {
+.ground-actions button {
   padding: 0;
   border: none;
   background: none;
@@ -5807,38 +5828,99 @@ body {
   cursor: pointer;
 }
 
-.ground-actions button:hover,
-.ground-confirm-actions button:hover {
+.ground-actions button:hover {
   color: #1e2126;
 }
 
-.ground-actions button:disabled,
-.ground-confirm-actions button:disabled {
+.ground-actions button:disabled {
   color: #c9c3b6;
   cursor: default;
 }
 
-/* The delete's TWO-STEP, inline on the card (story 16.3): the first press on
-   "remove" replaces the verbs with this ask, and the second press removes.
-   Any other press or Esc backs out. The words say what actually goes — the
-   reference AND its reading. There is no undo until the history story. */
-.ground-confirm {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-top: 4px;
-  border-top: 1px solid rgba(141, 136, 124, 0.16);
-}
-
-.ground-confirm-question {
+/* STORY 16.13 (shortlist item 2): the verbs a card cannot offer say WHY in one
+   quiet line where they would have been — a selection has no file behind it.
+   It is not a disabled button and it never suggests another action. */
+.ground-quiet {
   font-size: 11.5px;
   line-height: 1.35;
-  color: #6f6a5f;
+  font-style: italic;
+  color: #a09a8c;
 }
 
-.ground-confirm-actions {
+/* STORY 16.13 (shortlist item 3): the empty ground map's ONE muted sentence,
+   centred in screen space. No verb, no illustration, no border, no call to
+   action — absence is a sentence. */
+.ground-empty {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  font-size: 12.5px;
+  color: #a09a8c;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* STORY 16.13 (shortlist item 1): the toast that makes a delete reversible.
+   Bottom-centre, screen space, outside the plane. One sentence, Restore and a
+   quiet x; no countdown, no progress bar, no ticker. */
+.ground-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 44px;
+  transform: translateX(-50%);
+  z-index: 30;
   display: flex;
+  align-items: baseline;
   gap: 10px;
+  max-width: min(520px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 7px 10px 7px 14px;
+  background: rgba(255, 253, 248, 0.97);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.08);
+  font-size: 12px;
+  line-height: 1.4;
+  color: #4b473f;
+  animation: rise-in 160ms ease-out;
+}
+
+.ground-toast-sentence {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ground-toast-restore {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: #1e2126;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ground-toast-restore:hover {
+  color: #000;
+}
+
+.ground-toast-dismiss {
+  padding: 0 2px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #a09a8c;
+  cursor: pointer;
+}
+
+.ground-toast-dismiss:hover {
+  color: #1e2126;
 }
 
 /* A refused unlink's one sentence, shown where the card stood (the card left

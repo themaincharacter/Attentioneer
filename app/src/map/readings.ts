@@ -482,6 +482,22 @@ export async function storeSelectionText(
 }
 
 /**
+ * STORY 16.13 — RESTORE one reading's text EXACTLY: the bytes the delete read
+ * into memory before it unlinked the file go back verbatim, with no cap, no
+ * trim and no extractor run. This is the one path that writes a reading text
+ * without a read; the caller is putting back what was there, not taking it.
+ */
+export async function restoreReadingText(
+  workspacePath: string,
+  on: string,
+  text: string,
+  io: ReadingIo = READING_IO,
+): Promise<void> {
+  await io.createDirAll(readingsDir(workspacePath));
+  await io.writeTextFile(readingTextPath(workspacePath, on), text);
+}
+
+/**
  * The ABSOLUTE path a reading's file lives at, for a stat or a re-read. A
  * `path` is joined to the workspace; a LEGACY absolute `path` value is used
  * as it stands (story 1 wrote absolute paths under `path`, and the no-
@@ -561,15 +577,26 @@ export function readingStateWord(state: ReadingState): string | null {
     case "current":
       return null;
     case "changed":
-      return "the file has changed since this reading";
+      // STORY 16.13 (shortlist item 10): the state now says WHAT THE WORDS ON
+      // SCREEN ARE. The reading is the copy taken when the card was added, so
+      // a file that moved or changed has not emptied the card.
+      return "the file has changed since this reading; this is the copy kept when it was added";
     case "missing":
-      return "the file is missing";
+      return "the file is gone; this is the copy kept when it was added";
     case "unreadable":
       return "the file cannot be read";
     case "unread":
       return "no reading taken yet";
   }
 }
+
+/**
+ * STORY 16.13 (shortlist item 11) — a REFUSED REFRESH says what still stands:
+ * the old reading is untouched, so the person is told the words on screen are
+ * still theirs rather than left with a bare error. PROVISIONAL wording.
+ */
+export const REFRESH_UNCHANGED =
+  "the file could not be read; the reading you have is unchanged.";
 
 /** The one quiet sentence per refusal code (the bubble shows it). */
 export const READING_REFUSALS: Readonly<Record<HeadRefusalCode | "absent", string>> = {

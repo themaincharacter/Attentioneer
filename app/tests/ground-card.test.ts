@@ -12,11 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import {
-  deleteConfirmed,
-  deleteStepAfter,
-  GroundLayer,
-} from "../src/canvas/GroundLayer";
+import { DELETE_IS_IMMEDIATE, GroundLayer } from "../src/canvas/GroundLayer";
 import { CONTENT_CLASSES } from "../src/canvas/gates";
 import {
   GROUND_REMOVAL_REFUSAL,
@@ -58,7 +54,8 @@ import {
  *   - the delete runs in ONE fixed order (ground line, readings line, text
  *     file), leaves malformed lines and other references byte-identical, and
  *     a refused unlink answers one sentence without repairing anything;
- *   - the inline confirm is two-step, and any other press backs out.
+ *   - the delete is IMMEDIATE (story 16.13 removed the two-step confirm);
+ *     the toast's Restore is the guard, pinned in ground-restore.test.ts.
  *
  * PROVISIONAL (ADR-0003's rendering seam): the card's sizes, the six-line
  * crop, the delete's wording and the open/close behaviour.
@@ -228,7 +225,10 @@ describe("the small card crops; the stored text is untouched", () => {
         ...inertVerbs,
       }),
     );
-    expect(stale).toContain("the file is missing");
+    // STORY 16.13 (shortlist item 10): missing now names the kept copy too.
+    expect(stale).toContain(
+      "the file is gone; this is the copy kept when it was added",
+    );
   });
 });
 
@@ -411,43 +411,41 @@ describe("the delete: one fixed order, malformed lines byte-identical", () => {
   });
 });
 
-describe("the confirm is two-step, and any other press backs out", () => {
-  test("only the ask's own remove confirms", () => {
-    expect(deleteStepAfter("ask")).toBe("asking");
-    expect(deleteConfirmed("asking")).toBe(true);
-    // A second press that is NOT the confirm (the card, a click away, Esc)
-    // cancels: the state goes back to idle and nothing is removed.
-    expect(deleteStepAfter("elsewhere")).toBe("idle");
-    expect(deleteConfirmed("idle")).toBe(false);
-    // Idle -> ask -> elsewhere -> idle: the two-step never chains a delete.
-    expect(deleteConfirmed(deleteStepAfter("elsewhere"))).toBe(false);
-  });
-
-  test("the words say what goes, inline on the card, with a cancel", () => {
-    expect(LAYER).toContain("remove this reference and its reading?");
-    expect(LAYER).toContain("deleteStepAfter(\"elsewhere\")");
+describe("the delete is immediate; the toast is the only guard", () => {
+  test("one press removes: there is no asking step left", () => {
+    // STORY 16.13 (shortlist item 1): the two-step confirm is REMOVED, and the
+    // guard moved to the toast's Restore (ground-restore.test.ts). The delete
+    // press calls the one write path without a confirming state.
+    expect(DELETE_IS_IMMEDIATE).toBe(true);
+    expect(LAYER).not.toContain("remove this reference and its reading?");
+    expect(LAYER).not.toContain("ground-confirm");
+    expect(LAYER).not.toContain('step === "asking"');
+    expect(LAYER).not.toMatch(/window\.confirm|confirm\(/);
+    // The press still reaches the one write path, and the card still owns its
+    // own refusal sentence while the card is there.
+    expect(LAYER).toContain("void removeCard()");
+    expect(LAYER).toContain("await onRemove(reference)");
     expect(LAYER).toContain('e.key !== "Escape"');
     expect(LAYER).toContain('document.addEventListener("mousedown"');
-    expect(LAYER).toContain("ground-confirm-remove");
-    expect(LAYER).toContain("ground-confirm-cancel");
-    // The confirm REPLACES the actions row rather than sitting beside it.
-    expect(LAYER).toContain('step === "asking" ? (');
-    expect(LAYER).not.toMatch(/window\.confirm|confirm\(/);
   });
 
-  test("the two-step's parts are content to the plane's gate", () => {
+  test("the card's parts are content to the plane's gate, the confirm's are gone", () => {
     for (const name of [
       "ground-body",
       "ground-footer",
       "ground-remove",
+      "ground-removal-problem",
+    ]) {
+      expect(CONTENT_CLASSES).toContain(name as never);
+    }
+    for (const gone of [
       "ground-confirm",
       "ground-confirm-question",
       "ground-confirm-actions",
       "ground-confirm-remove",
       "ground-confirm-cancel",
-      "ground-removal-problem",
     ]) {
-      expect(CONTENT_CLASSES).toContain(name as never);
+      expect(CONTENT_CLASSES).not.toContain(gone as never);
     }
   });
 });
@@ -464,8 +462,7 @@ describe("the negative space: nothing counts, scores or nudges", () => {
   test("the new card strings say nothing and count nothing", () => {
     const seen = [
       "remove",
-      "cancel",
-      "remove this reference and its reading?",
+      "point at a file…",
       GROUND_REMOVAL_REFUSAL,
     ];
     for (const text of seen) {

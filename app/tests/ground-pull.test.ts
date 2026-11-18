@@ -543,7 +543,16 @@ describe("the pull is VIEW STATE: the hook holds it, no writer sees it", () => {
       HOOK.indexOf("const snapshot = "),
     );
     expect(reload).not.toContain("pullReading");
-    expect(HOOK).not.toMatch(/setInterval|setTimeout|EventSource|watch\(/);
+    // A pull never polls. STORY 16.13's toast window is the ONE one-shot timer
+    // in the hook; it holds no watcher, no interval and no background read.
+    expect(HOOK).not.toMatch(/setInterval|EventSource|watch\(/);
+    expect(HOOK.match(/setTimeout\(/g)?.length ?? 0).toBe(1);
+    const toastWindow = HOOK.slice(
+      HOOK.indexOf("THE TOAST'S WINDOW"),
+      HOOK.indexOf("const restore = useCallback"),
+    );
+    expect(toastWindow).toContain("RESTORE_WINDOW_MS");
+    expect(toastWindow).toContain("setTimeout(");
   });
 
   test("the layer holds no bridge: the button is the ONLY pull call site", () => {

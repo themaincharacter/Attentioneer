@@ -253,10 +253,14 @@ describe("story 16.2: the card says when the reading went stale, plainly", () =>
   });
 
   test("changed, missing and unreadable each say one quiet, exact line", () => {
+    // STORY 16.13 (shortlist item 10): a missing or changed reading now says
+    // WHAT THE WORDS ON SCREEN ARE — the copy kept when it was added.
     expect(render("changed")).toContain(
-      "the file has changed since this reading",
+      "the file has changed since this reading; this is the copy kept when it was added",
     );
-    expect(render("missing")).toContain("the file is missing");
+    expect(render("missing")).toContain(
+      "the file is gone; this is the copy kept when it was added",
+    );
     expect(render("unreadable")).toContain("the file cannot be read");
     // A changed reading still SHOWS the lines it took.
     expect(render("changed")).toContain("first line");
@@ -264,7 +268,8 @@ describe("story 16.2: the card says when the reading went stale, plainly", () =>
 
   test("no reading line is unread, and the card offers a pick, not a re-read", () => {
     const html = render("unread", false);
-    expect(html).toContain("no reading taken yet");
+    // STORY 16.13 (shortlist item 3): the absence is the card's third line.
+    expect(html).toContain("no reading was taken yet.");
     expect(html).not.toContain(">refresh<");
     expect(html).toContain("point at a file…");
   });

@@ -38,7 +38,8 @@ const GOLDEN_INPUT: AskPacketInput = {
   question: "what does this reach say about rain?",
   card: {
     name: "rain",
-    state: "the file has changed since this reading",
+    state:
+      "the file has changed since this reading; this is the copy kept when it was added",
     reading: "first line\nsecond line",
     note: "my note",
   },
@@ -66,7 +67,7 @@ const GOLDEN = [
   "",
   "## rain",
   "",
-  "state: the file has changed since this reading",
+  "state: the file has changed since this reading; this is the copy kept when it was added",
   "",
   "reading, first lines:",
   "first line",

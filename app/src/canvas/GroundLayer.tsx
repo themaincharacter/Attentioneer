@@ -77,12 +77,18 @@ import type { TurnPort } from "../turn/turn";
  * the DRAG (one `x | y` write on release through the app's queue), and the two
  * person-pressed re-reads (refresh, point at another file).
  *
- * STORY 16.3's DELETE is a two-step, INLINE confirm on the card: the first
- * press on `remove` asks ("remove this reference and its reading?"), the
- * second removes, and any other press or Esc backs out. The layer hands the
+ * STORY 16.3's DELETE was a two-step inline confirm; STORY 16.13 REMOVES it
+ * (shortlist item 1): `remove` deletes at once and the app's toast is the only
+ * guard, with Restore writing the same bytes back. The layer still hands the
  * one write path (`useGround.remove`) — the card never touches a file. When a
  * refused unlink answers its one sentence the card is already gone, so the
- * sentence is shown where it stood. There is no undo until the history story.
+ * sentence is shown where it stood.
+ *
+ * STORY 16.13 also gives every card a THREE-LINE GRAMMAR (shortlist item 3):
+ * the name, one quiet line saying what this is, then the reading — or, when
+ * there is no stored text, the refusal/state sentence in the reading's place.
+ * A selection's verbs are not silently absent: one quiet line says why there
+ * is nothing to refresh or point at (shortlist item 2).
  *
  * STORY 16.5 adds ONE small affordance and no meaning: a quiet link handle on
  * the card's edge, hover-revealed like the verbs. A drag from it onto another
@@ -136,21 +142,13 @@ import type { TurnPort } from "../turn/turn";
  * person's words or a fact the map already holds.
  */
 
-/** The card's inline-delete step: view state, never a record. */
-export type GroundDeleteStep = "idle" | "asking";
-
 /**
- * One press on a card's delete (story 16.3): pressing `remove` only ASKS, and
- * any other press backs out. PURE so the two-step is not the DOM's only truth.
+ * STORY 16.13 (shortlist item 1) — the card's delete is IMMEDIATE. The two-step
+ * confirm is gone; the toast's Restore is the only guard, and a second delete
+ * commits the first. Kept as a constant (not a function) so nothing can quietly
+ * reintroduce a confirming press.
  */
-export function deleteStepAfter(action: "ask" | "elsewhere"): GroundDeleteStep {
-  return action === "ask" ? "asking" : "idle";
-}
-
-/** Does a press at this step actually remove? Only the ask's own remove does. */
-export function deleteConfirmed(step: GroundDeleteStep): boolean {
-  return step === "asking";
-}
+export const DELETE_IS_IMMEDIATE = true;
 
 /**
  * Which card's pull leaves view when the open card changes (story 16.8).
@@ -193,6 +191,66 @@ export function readingProvenance(
   if (source === null) return readingFileName(reading.from);
   const name = cardNames.get(source);
   return name === undefined ? SELECTION_MISSING_SOURCE : "from " + name;
+}
+
+/**
+ * STORY 16.13 (shortlist items 3 and 10) — WHAT THIS IS, the card's second line.
+ * A file reading is the copy kept from that file; a selection is a copy of
+ * text taken from another card (the source named when the map still has it);
+ * a reference with no reading says exactly that. PURE, so the sentence is not
+ * the JSX's only truth. PROVISIONAL wording.
+ */
+export function readingKind(
+  reading: Reading | null,
+  cardNames: ReadonlyMap<string, string>,
+): string {
+  if (reading === null) return "a reference with no reading";
+  const source = selectionSourceSlug(reading);
+  if (source !== null) {
+    const name = cardNames.get(source);
+    return name === undefined
+      ? "a copy of text selected from a card that is gone"
+      : "a copy of text selected from " + name;
+  }
+  return "the reading kept from " + readingFileName(reading.from);
+}
+
+/**
+ * STORY 16.13 (shortlist item 3) — the THIRD line when the reading text is not
+ * here: a refused or absent reading still renders as a card, and this sentence
+ * says what happened instead of leaving a broken box. It never claims a kept
+ * copy that is not on disk. PURE. PROVISIONAL wording.
+ */
+export function readingAbsenceLine(state: ReadingState): string {
+  switch (state) {
+    case "missing":
+      return "the file is gone, and no copy was kept.";
+    case "unreadable":
+      return "the file cannot be read, and no copy was kept.";
+    case "unread":
+      return "no reading was taken yet.";
+    case "changed":
+      return "the file has changed, and no copy was kept.";
+    case "current":
+      return "the reading text is not here.";
+  }
+}
+
+/**
+ * STORY 16.13 (shortlist item 3) — a ground map with no references says so in
+ * ONE muted sentence: no verb, no illustration, no call to action. The sentence
+ * replaces the plane's ordinary hint, so the empty map offers nothing to do.
+ * PROVISIONAL wording.
+ */
+export const GROUND_EMPTY_SENTENCE = "nothing on this map yet";
+
+/** The empty map's one quiet line (mounted in screen space by App). */
+export function GroundEmpty() {
+  return (
+    <div className="ground-empty" role="status">
+      {GROUND_EMPTY_SENTENCE}
+    </div>
+  );
 }
 
 interface GroundLayerProps {
@@ -571,10 +629,6 @@ function GroundCard({
   const [dragPos, setDragPos] = useState<Point | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  // STORY 16.3 — the delete's confirm is VIEW state, like the expanded face
-  // (which the layer now owns so a mention can open a card): neither is a
-  // record, and a reopened workspace mounts this card closed.
-  const [step, setStep] = useState<GroundDeleteStep>("idle");
   // STORY 16.7 — the picker and the concept panel are VIEW state too. The
   // picker holds the trigger's range so an insertion replaces exactly the typed
   // `@query`; the panel holds the word the person just opened.
@@ -754,15 +808,9 @@ function GroundCard({
           void onMove(reference.on, point.x, point.y);
           return;
         }
-        // A press that never moved backs the delete's ask out, or OPENS the
-        // card: the expanded face shows the stored reading. A drag never opens
-        // (the drop above returns first).
-        if (step === "asking") {
-          setStep(deleteStepAfter("elsewhere"));
-          return;
-        }
-        // The press opens THIS card through the layer's view state, so a
-        // mention can open another one the same way.
+        // A press that never moved OPENS the card: the expanded face shows
+        // the stored reading. A drag never opens (the drop above returns
+        // first). STORY 16.13: there is no delete ask left to back out of.
         onOpen();
       };
       window.addEventListener("mousemove", onMouseMove);
@@ -773,13 +821,11 @@ function GroundCard({
     return () => el.removeEventListener("mousedown", handleMouseDown);
   });
 
-  // Click away / Esc closes (and cancels the delete's ask). Capture so a plane
-  // press that d3 handles still counts as a press away. While the confirm is
-  // asking this listener is live even before the card was expanded, and so is
-  // the concept panel: a word chip can be read on the SMALL card too (story
-  // 16.7), where the panel is a view that a press away closes.
+  // Click away / Esc closes. Capture so a plane press that d3 handles still
+  // counts as a press away. The concept panel keeps the listener live on the
+  // SMALL card too (story 16.7), where it is a view that a press away closes.
   useEffect(() => {
-    if (!open && step === "idle" && panel === null) return;
+    if (!open && panel === null) return;
     function onPressAway(e: MouseEvent) {
       const el = cardRef.current;
       if (el !== null && e.target instanceof Node && el.contains(e.target)) return;
@@ -788,7 +834,6 @@ function GroundCard({
       // through the app's queue, and a refusal shows its one sentence on the
       // card. An abandoned edit (Esc) never reaches here.
       if (editingRef.current) void saveNoteDraft();
-      setStep("idle");
       // Story 16.7: the picker and the concept panel are view state of an open
       // card, so a press away closes them with it. Nothing is written by that.
       // Story 15.1: the ask panel is the same kind of view — closing the card
@@ -819,10 +864,6 @@ function GroundCard({
         setAsking(false);
         return;
       }
-      if (step === "asking") {
-        setStep("idle");
-        return;
-      }
       onClose();
     }
     document.addEventListener("mousedown", onPressAway, true);
@@ -831,7 +872,7 @@ function GroundCard({
       document.removeEventListener("mousedown", onPressAway, true);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open, step, panel, asking]);
+  }, [open, panel, asking]);
 
   // The expanded body scrolls the STORED reading; the plane's wheel zoom must
   // not steal the scroll. Passive: this only stops the plane, never the page.
@@ -857,6 +898,9 @@ function GroundCard({
   // stored text itself, untouched. Neither path reads anything.
   const bodyText =
     shownText === null ? null : open ? shownText : previewText(shownText);
+  // STORY 16.13: when the body carries the absence line, the footer does not
+  // repeat a state word that would claim a kept copy which is not on disk.
+  const showStateWord = word !== null && bodyText !== null;
   // Story 16.12: a selection has no source file, so the FILE verbs (refresh,
   // re-point, read more) have nothing to act on; its bytes are already here.
   const fileReading = reading !== null && reading.form !== "selection";
@@ -1022,17 +1066,19 @@ function GroundCard({
     await run(() => onRepoint(reference.on, picked));
   }
 
+  /**
+   * STORY 16.13 (shortlist item 1): delete is IMMEDIATE. One press removes; the
+   * toast's Restore is the only guard, so there is no confirming step to wait
+   * for. A refusal that kept the card shows on the card; the refused-unlink
+   * sentence is the layer's, because the card is gone with its records.
+   */
   async function removeCard() {
-    if (busy || !deleteConfirmed(step)) return;
+    if (busy) return;
     setBusy(true);
     setProblem(null);
     const result = await onRemove(reference);
-    // A refusal that kept the card (the write itself failed) shows here; the
-    // refused-unlink sentence is the layer's, because the card is gone with
-    // its records.
     if (!result.ok && result.recordsRemoved !== true) {
       setBusy(false);
-      setStep("idle");
       setProblem(result.message);
     }
   }
@@ -1042,7 +1088,7 @@ function GroundCard({
       ref={cardRef}
       className={`ground-reference${dragPos ? " dragging" : ""}${
         open ? " expanded" : ""
-      }${step === "asking" ? " confirming" : ""}`}
+      }`}
       style={{ left: x, top: y }}
       data-slug={reference.on}
     >
@@ -1057,6 +1103,10 @@ function GroundCard({
         title="drag to link"
       />
       <div className="ground-name">{reference.name}</div>
+      {/* STORY 16.13 (shortlist items 3 and 10): the card's second line says
+          WHAT THIS IS — the copy kept from a file, a copy of text selected from
+          another card, or a reference with no reading. Never a broken box. */}
+      <div className="ground-kind">{readingKind(reading, cardNames)}</div>
       <div className="ground-body" ref={bodyRef}>
         {/* STORY 16.6: the note sits ABOVE the reading, in the person's own
             voice. Small: a two-line crop cut by `previewText`. Expanded: the
@@ -1135,12 +1185,19 @@ function GroundCard({
             onOpenWord={(slug) => void openWord(slug)}
           />
         ) : null}
-        {bodyText !== null && (
+        {bodyText !== null ? (
           // Story 16.12: on the EXPANDED card this is the selection surface;
           // the ref is what tells a selection inside the reading from one
           // anywhere else on the map.
           <div className="ground-reading" ref={readingRef}>
             {bodyText}
+          </div>
+        ) : (
+          // STORY 16.13 (shortlist item 3): the reading's slot still says what
+          // happened. A refused or absent reading leaves a card with its name,
+          // its kind and this one quiet line — never an empty box.
+          <div className="ground-reading ground-refusal">
+            {readingAbsenceLine(state)}
           </div>
         )}
         {/* STORY 16.8 — the PULL, below the stored reading as a CONTINUATION
@@ -1166,7 +1223,7 @@ function GroundCard({
             {provenance}
           </div>
         )}
-        {word !== null && (
+        {showStateWord && (
           <div className={`ground-state ${state}`}>{word}</div>
         )}
       </div>
@@ -1228,32 +1285,7 @@ function GroundCard({
           </div>
         </div>
       )}
-      {step === "asking" ? (
-        <div className="ground-confirm">
-          <div className="ground-confirm-question">
-            remove this reference and its reading?
-          </div>
-          <div className="ground-confirm-actions">
-            <button
-              type="button"
-              className="ground-confirm-remove"
-              disabled={busy}
-              onClick={() => void removeCard()}
-            >
-              remove
-            </button>
-            <button
-              type="button"
-              className="ground-confirm-cancel"
-              disabled={busy}
-              onClick={() => setStep(deleteStepAfter("elsewhere"))}
-            >
-              cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="ground-actions">
+      <div className="ground-actions">
           {/* STORY 16.12 — the ONE selection affordance: it exists while a
               selection sits inside the expanded reading and vanishes when it
               collapses. It only PROPOSES the name field (onMouseDown keeps the
@@ -1323,7 +1355,9 @@ function GroundCard({
             </button>
           )}
           {/* Story 16.12: a selection has no file to re-read or re-point, so
-              neither verb is drawn for it — its bytes are the map's own. */}
+              neither verb is drawn for it — its bytes are the map's own. STORY
+              16.13 (shortlist item 2): the missing verbs are not silent; one
+              quiet line here says why there is nothing behind them. */}
           {fileReading && (
             <button
               type="button"
@@ -1344,16 +1378,21 @@ function GroundCard({
               {reading === null ? "point at a file…" : "point at another file…"}
             </button>
           ) : null}
+          {reading !== null && reading.form === "selection" && (
+            <div className="ground-quiet">
+              this is a copy; there is no file to refresh or point at.
+            </div>
+          )}
           <button
             type="button"
             className="ground-remove"
             disabled={busy}
-            onClick={() => setStep(deleteStepAfter("ask"))}
+            onClick={() => void removeCard()}
           >
             remove
           </button>
         </div>
-      )}
+
       {/* STORY 16.7 — the `@` list, while the editor asks. It opens below the
           CARD (so the note's own crop and scroll never clip it), takes no focus
           of its own, and closes on Esc, on a pick, or when the trigger goes.

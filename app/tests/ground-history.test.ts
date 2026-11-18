@@ -337,14 +337,15 @@ describe("authored moves only: the look leaves no line", () => {
     expect(existsSync(historyPath(workspace))).toBe(false);
   });
 
-  test("the hook appends from the nine authored write paths, no more", () => {
+  test("the hook appends from the ten authored write paths, no more", () => {
     // The only call form the verbs use; the definition is not a call site.
-    // Story 16.12 adds the selection card as the ninth authored write path.
+    // Story 16.12 added the selection card as the ninth authored write path;
+    // story 16.13 adds the restore as the tenth (a silent restore is a bug).
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(9);
+    expect(calls.length).toBe(10);
   });
 
-  test("the mirror and the history own the same nine verbs", () => {
+  test("the mirror and the history own the same ten verbs", () => {
     const verbs = [
       "create",
       "createSelection",
@@ -355,6 +356,8 @@ describe("authored moves only: the look leaves no line", () => {
       "link",
       "unlink",
       "setNote",
+      // STORY 16.13: a restore is an authored move, and it logs its own line.
+      "restore",
     ];
     for (const verb of verbs) {
       const start = HOOK.indexOf("const " + verb + " = useCallback");
@@ -542,8 +545,11 @@ describe("the delete cascade logs its links", () => {
     expect(events[2]).toEqual(linkRemoveEvent(5, "rain-gauge", "soil"));
     expect(events[3]).toEqual(linkRemoveEvent(5, "soil", "rain-gauge"));
     // The cascade in the hook uses the same filter (the links it removed).
-    expect(HOOK).toContain("const cascaded = linksRef.current.filter(");
-    expect(HOOK).toContain("cardRemovalEvents(Date.now(), on, cascaded)");
+    // STORY 16.13 keeps each line's index beside it, so Restore can put it
+    // back, so the hook maps the entries back to links for the log.
+    expect(HOOK).toContain("const cascaded = linksRef.current");
+    expect(HOOK).toContain("cardRemovalEvents(");
+    expect(HOOK).toContain("cascaded.map((entry) => entry.link)");
     // The link record itself still holds the untouched third pair.
     const stored = await loadGroundLinks(workspace, fsTextIo);
     expect(stored.links).toEqual(links);

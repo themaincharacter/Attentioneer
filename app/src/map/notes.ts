@@ -194,6 +194,24 @@ export async function saveNote(
 }
 
 /**
+ * STORY 16.13 — RESTORE one note's file EXACTLY: the bytes the delete read into
+ * memory go back verbatim. This is deliberately NOT `saveNote`: a note of only
+ * spaces must come back as itself (saveNote would call it silence and remove
+ * it), and a restored note was already accepted when the person wrote it.
+ * PROVISIONAL with the note's record shape; the caller only restores a note it
+ * just removed.
+ */
+export async function restoreNote(
+  workspacePath: string,
+  slug: string,
+  text: string,
+  io: NoteIo = NOTE_IO,
+): Promise<void> {
+  await io.createDirAll(notesDir(workspacePath));
+  await io.writeTextFile(notePath(workspacePath, slug), text);
+}
+
+/**
  * REMOVE one note's file. A missing file is a quiet no-op (the bridge answers
  * Ok for NotFound), so deleting a card that never had a note stays one pass.
  * A refused unlink throws: the caller answers its one sentence, exactly like

@@ -249,7 +249,11 @@ describe("the render paths ask the ONE rule", () => {
       expect(planeHint(level)).not.toContain("shelf");
     }
     // ONE rule words it: the app passes it and the plane renders it verbatim.
-    expect(APP).toContain("hint={planeHint(level)}");
+    // STORY 16.13 (shortlist item 3) adds the ONE exception: an empty ground
+    // map says one muted sentence and nothing else, so its ordinary hint
+    // (which offers a verb) is suppressed while there is nothing on it.
+    expect(APP).toContain("planeHint(level)");
+    expect(APP).toContain('level === "ground" && ground.loaded && ground.references.length === 0');
     expect(PLANE).toContain('<div className="plane-hint">{hint}</div>');
   });
 

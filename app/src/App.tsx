@@ -59,7 +59,8 @@ import { GhostPanel } from "./canvas/GhostPanel";
 import { GhostPreview } from "./canvas/GhostPreview";
 import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
-import { GroundLayer } from "./canvas/GroundLayer";
+import { GroundEmpty, GroundLayer } from "./canvas/GroundLayer";
+import { GroundToast } from "./canvas/GroundToast";
 import { createTurnPort } from "./turn/sidecar";
 import { loadTurnSettings } from "./turn/provider";
 import {
@@ -3955,7 +3956,14 @@ function App() {
         intents={intents}
         onPlaneDoubleClick={handlePlaneDoubleClick}
         gestureMode={gestureMode}
-        hint={planeHint(level)}
+        hint={
+          // STORY 16.13 (shortlist item 3): an empty ground map says ONE muted
+          // sentence and nothing else, so the ordinary hint (which offers a
+          // verb) is suppressed while there is nothing on it.
+          level === "ground" && ground.loaded && ground.references.length === 0
+            ? ""
+            : planeHint(level)
+        }
         lassoArmed={selectorOpen && lassoArmed}
         boxArmed={veilArmed}
         drawArmed={drawArmed}
@@ -4745,6 +4753,26 @@ function App() {
           <GhostDiamond at={ghostPoint} />
         )}
       </CanvasPlane>
+
+      {/* STORY 16.13 (shortlist item 3): an empty ground map says so in one
+          muted sentence, centred in screen space — no verb, no illustration.
+          The sentence lives in GroundLayer (the empty state's seam) and App
+          mounts it outside the plane so it does not pan or zoom. */}
+      {level === "ground" &&
+        ground.loaded &&
+        ground.references.length === 0 && <GroundEmpty />}
+
+      {/* STORY 16.13 (shortlist item 1): the ONE toast that makes a delete
+          reversible. It sits bottom-centre in screen space, outside the plane;
+          one toast, one pending restore, and a second delete commits the first
+          (useGround's pendingRestoreAfter). */}
+      {(ground.restorable !== null || ground.restoreNotice !== null) && (
+        <GroundToast
+          notice={ground.restoreNotice}
+          onRestore={() => void ground.restore()}
+          onDismiss={ground.dismissRestore}
+        />
+      )}
 
       {/* THE MAKE PANEL (Epic 12 story 3): the person's own contact write, in
           ONE Move — name the artifact, write the text, press make. The minted

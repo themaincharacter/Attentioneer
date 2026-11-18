@@ -92,6 +92,15 @@ export type HistoryEvent =
       readonly slug: string;
     }
   | {
+      // STORY 16.13 (shortlist item 1): a delete is reversible, so the log
+      // records the RESTORE too. A silent restore would break the one promise
+      // the log makes: every authored move is on it. PROVISIONAL name/payload.
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "card.restore";
+      readonly slug: string;
+    }
+  | {
       readonly v: 1;
       readonly t: number;
       readonly type: "reading.take" | "reading.refresh";
@@ -158,6 +167,16 @@ export function cardMoveEvent(
 /** A card was removed (its own record only; the cascade is separate lines). */
 export function cardRemoveEvent(t: number, slug: string): HistoryEvent {
   return { v: HISTORY_VERSION, t, type: "card.remove", slug };
+}
+
+/**
+ * STORY 16.13 — the card CAME BACK through the toast's Restore: the same slug
+ * and point, logged as its own move. The links the restore re-adds are their
+ * own lines (links are their own records), so the log reads remove → restore →
+ * link.adds, never a deletion that quietly undid itself.
+ */
+export function cardRestoreEvent(t: number, slug: string): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "card.restore", slug };
 }
 
 /** The source was read at creation: the storage form and the file's size. */
@@ -305,6 +324,10 @@ export function parseHistoryEvent(line: string): HistoryEvent | null {
     case "card.remove": {
       const slug = stringField(record, "slug");
       return slug === null ? null : cardRemoveEvent(t, slug);
+    }
+    case "card.restore": {
+      const slug = stringField(record, "slug");
+      return slug === null ? null : cardRestoreEvent(t, slug);
     }
     case "reading.take":
     case "reading.refresh": {

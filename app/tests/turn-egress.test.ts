@@ -552,7 +552,7 @@ describe("the packet the panel declares is the packet the send carries", () => {
     const context: AskContext = {
       card: {
         name: "rain",
-        state: "the file is missing",
+        state: "the file is gone; this is the copy kept when it was added",
         reading: "the card's head",
         note: "my note",
       },
@@ -605,7 +605,9 @@ describe("the packet the panel declares is the packet the send carries", () => {
     // The previews and the card's state rode; the unincluded reach did not.
     expect(result.ask.packet).toContain("the card's head");
     expect(result.ask.packet).toContain("x head");
-    expect(result.ask.packet).toContain("the file is missing");
+    expect(result.ask.packet).toContain(
+      "the file is gone; this is the copy kept when it was added",
+    );
     expect(result.ask.packet).not.toContain("never included");
   });
 

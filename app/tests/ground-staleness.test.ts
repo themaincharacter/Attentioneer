@@ -168,10 +168,14 @@ describe("the five states are computed from metadata, never stored", () => {
 
   test("the state word is quiet, exact and never a text claim", () => {
     expect(readingStateWord("current")).toBeNull();
+    // STORY 16.13 (shortlist item 10): the kept-copy clause is part of the
+    // state word, so a person is told what the words on screen are.
     expect(readingStateWord("changed")).toBe(
-      "the file has changed since this reading",
+      "the file has changed since this reading; this is the copy kept when it was added",
     );
-    expect(readingStateWord("missing")).toBe("the file is missing");
+    expect(readingStateWord("missing")).toBe(
+      "the file is gone; this is the copy kept when it was added",
+    );
     expect(readingStateWord("unreadable")).toBe("the file cannot be read");
     expect(readingStateWord("unread")).toBe("no reading taken yet");
     for (const word of ["changed", "missing", "unreadable", "unread"] as const) {

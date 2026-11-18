@@ -239,7 +239,10 @@ describe("the card's crops are the existing ones", () => {
       { workspacePath: WS, card: cardFacts({ state: "missing" }), included: [] },
       fake().deps,
     );
-    expect(changed.card.state).toBe("the file is missing");
+    // STORY 16.13: the state sentence gained what the on-screen words are.
+    expect(changed.card.state).toBe(
+      "the file is gone; this is the copy kept when it was added",
+    );
   });
 
   test("a card with no reading offers no card retrieval", async () => {

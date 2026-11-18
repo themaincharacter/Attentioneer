@@ -75,7 +75,7 @@ function codeOnly(text: string): string {
 
 const CARD: AskPacketCard = {
   name: "rain",
-  state: "the file is missing",
+  state: "the file is gone; this is the copy kept when it was added",
   reading: "first line\nsecond line",
   note: "my note",
 };
@@ -92,7 +92,7 @@ const GOLDEN = [
   "",
   "## rain",
   "",
-  "state: the file is missing",
+  "state: the file is gone; this is the copy kept when it was added",
   "",
   "reading, first lines:",
   "first line",
@@ -458,7 +458,9 @@ describe("the declaration and readback are ONE shared piece", () => {
     expect(context.sources.map((entry) => entry.name)).toEqual(["rain"]);
     // The reading crop is the card's six lines; the note's is two.
     expect(context.card.reading).toBe("a\nb\nc\nd\ne\nf…");
-    expect(context.card.state).toBe("the file has changed since this reading");
+    expect(context.card.state).toBe(
+      "the file has changed since this reading; this is the copy kept when it was added",
+    );
   });
 
   test("the included-reaches reader keeps the card block identical", async () => {

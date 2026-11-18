@@ -345,20 +345,27 @@ export const CONTENT_CLASSES = [
   "ground-refresh",
   "ground-repoint",
   "ground-problem",
-  // Story 16.3: the card's cropped/scrollable body, its meta footer, the
-  // inline two-step delete (its ask, its two verbs) and the refused unlink's
-  // one sentence shown where the card stood. All content, for the same
-  // belt-and-braces reason: a press on any of them never pans the plane,
-  // creates anything or starts a gesture.
+  // Story 16.3: the card's cropped/scrollable body, its meta footer, its one
+  // remove verb and the refused unlink's one sentence shown where the card
+  // stood. All content, for the same belt-and-braces reason: a press on any of
+  // them never pans the plane, creates anything or starts a gesture.
   "ground-body",
   "ground-footer",
   "ground-remove",
-  "ground-confirm",
-  "ground-confirm-question",
-  "ground-confirm-actions",
-  "ground-confirm-remove",
-  "ground-confirm-cancel",
   "ground-removal-problem",
+  // STORY 16.13 (shortlist items 1–3, 10–11): the card's second line (what
+  // this is), the reading slot's refusal line, the quiet line that explains a
+  // hidden verb, and the empty map's one sentence. The toast itself sits OUTSIDE
+  // the plane (screen space, like the level control), but it is listed too for
+  // the same belt-and-braces reason.
+  "ground-kind",
+  "ground-refusal",
+  "ground-quiet",
+  "ground-empty",
+  "ground-toast",
+  "ground-toast-sentence",
+  "ground-toast-restore",
+  "ground-toast-dismiss",
   // Story 16.5: the LINK HANDLE on the card's edge, the wires' layer (each
   // wire, its line, its hover band, the midpoint remove mark, the two-step
   // confirm and its one refusal sentence). All content: a press on any of them

@@ -498,6 +498,8 @@ describe("the hook queues the mirror after every ground write", () => {
     "link",
     "unlink",
     "setNote",
+    // STORY 16.13: a restore is a tenth authored write and re-derives the map.
+    "restore",
   ];
 
   for (const verb of verbs) {
@@ -514,15 +516,19 @@ describe("the hook queues the mirror after every ground write", () => {
         // Story 16.12: a selection's write path delegates its saves to
         // `writeSelectionCard` (text first, lines last) and then mirrors.
         body.lastIndexOf("await writeSelectionCard"),
+        // Story 16.13: a restore delegates its five writes to
+        // `restoreGroundCard` (pieces first, reference last) and then mirrors.
+        body.lastIndexOf("await restoreGroundCard"),
       );
       expect(writeAt).toBeGreaterThan(-1);
       expect(writeAt).toBeLessThan(mirrorAt);
     });
   }
 
-  test("exactly nine call sites (one per write path, not on load)", () => {
-    // Story 16.12 adds the selection card as the ninth authored write path.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(9);
+  test("exactly ten call sites (one per write path, not on load)", () => {
+    // Story 16.12 added the selection card as the ninth authored write path;
+    // story 16.13 adds restore as the tenth (a restore re-derives the mirror).
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(10);
   });
 
   test("opening never writes the mirror", () => {

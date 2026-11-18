@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fileMeta as fsFileMeta, removeFile, type FileMetaAnswer } from "../lib/fs";
+import {
+  fileMeta as fsFileMeta,
+  readTextFile as fsReadTextFile,
+  removeFile,
+  type FileMetaAnswer,
+} from "../lib/fs";
 import { createWriteQueue } from "../lib/writeQueue";
 import {
   cardAddEvent,
   cardMoveEvent,
   cardRemovalEvents,
+  cardRestoreEvent,
   historyWriteTask,
   linkAddEvent,
   linkRemoveEvent,
@@ -38,6 +44,7 @@ import {
 } from "../map/groundLinks";
 import {
   READING_REFUSALS,
+  REFRESH_UNCHANGED,
   loadReadings,
   loadReadingTexts,
   readingAbsolutePath,
@@ -45,6 +52,7 @@ import {
   readingFor,
   readingTextPath,
   refreshReading,
+  restoreReadingText,
   resolveReadingState,
   saveReadings,
   selectionReading,
@@ -59,7 +67,9 @@ import {
 import {
   NOTE_IO,
   loadNotes,
+  notePath,
   removeNote,
+  restoreNote,
   saveNote,
   type NoteIo,
 } from "../map/notes";
@@ -245,6 +255,17 @@ export interface GroundView {
    * dropped and never repaired into an event.
    */
   malformedHistory: readonly string[];
+  /**
+   * STORY 16.13 — the ONE pending deletion the toast can put back, with the
+   * bytes it read before unlinking. View state only; a second delete replaces
+   * it (committing the first), and the toast's window or its × clears it.
+   */
+  restorable: RemovedCard | null;
+  /**
+   * STORY 16.13 — one sentence when a restore only partly came back. It rides
+   * the toast in place of the Restore verb; a full restore leaves it null.
+   */
+  restoreNotice: string | null;
   /** The map folder's ground records have been read once. */
   loaded: boolean;
   /** Add one reference from a picked text file (the one create write). */
@@ -306,6 +327,14 @@ export interface GroundView {
   pull: (on: string) => Promise<GroundAddResult>;
   /** Forget one card's pulled text. View state only — nothing is written. */
   dismissPull: (on: string) => void;
+  /**
+   * STORY 16.13 — put the pending deletion back, SAME BYTES, and log the move.
+   * A partial restore answers one sentence naming what came back and what did
+   * not; either way the pending restore is spent (one toast, one restore).
+   */
+  restore: () => Promise<GroundAddResult>;
+  /** Close the toast: commits the pending deletion and forgets its bytes. */
+  dismissRestore: () => void;
 }
 
 /** The view without its verbs: what the load and every write render. */
@@ -322,6 +351,8 @@ type GroundLoaded = Omit<
   | "setNote"
   | "pull"
   | "dismissPull"
+  | "restore"
+  | "dismissRestore"
 >;
 
 const EMPTY: GroundLoaded = {
@@ -340,6 +371,8 @@ const EMPTY: GroundLoaded = {
   mirrorNotice: null,
   historyNotice: null,
   malformedHistory: [],
+  restorable: null,
+  restoreNotice: null,
   loaded: false,
 };
 
@@ -348,6 +381,12 @@ export interface GroundRemovalIo {
   saveGround: typeof saveGround;
   saveReadings: typeof saveReadings;
   removeFile: (path: string) => Promise<void>;
+  /**
+   * STORY 16.13: the delete READS the removed texts into memory BEFORE it
+   * unlinks anything, so Restore can write the same bytes back. A null answer
+   * (no file) is a quiet absence, never a failure.
+   */
+  readTextFile: (path: string) => Promise<string | null>;
 }
 
 /** The real bridges, bound once so this module stays importable in tests. */
@@ -355,7 +394,38 @@ const GROUND_REMOVAL_IO: GroundRemovalIo = {
   saveGround,
   saveReadings,
   removeFile,
+  readTextFile: fsReadTextFile,
 };
+
+/** One link the cascade took, with where it sat in file order. */
+export interface RemovedLink {
+  link: GroundLink;
+  index: number;
+}
+
+/**
+ * STORY 16.13 (shortlist item 1) — WHAT A DELETE KEEPS IN MEMORY so the toast's
+ * Restore can put the SAME BYTES back: the card's record and point, its reading
+ * line, the reading text and the note exactly as the files held them, and every
+ * link the cascade took with its file position. None of this is written
+ * anywhere; it lives in the hook until the toast closes (or a second delete
+ * commits it).
+ */
+export interface RemovedCard {
+  reference: GroundReference;
+  /** Where the line sat in file order, so Restore can put it back there. */
+  referenceIndex: number;
+  reading: Reading | null;
+  readingIndex: number;
+  /** The reading text file's bytes, read before the unlink; null if none. */
+  readingText: string | null;
+  /** The note file's bytes, read before its unlink; null if there was none. */
+  note: string | null;
+  /** Every link naming the card, both directions, in file order. */
+  links: readonly RemovedLink[];
+  /** The computed reading state at delete time (view state, never a record). */
+  state: ReadingState;
+}
 
 /** What a delete left behind: the two files' next lines, and its sentence. */
 export interface GroundRemoval {
@@ -367,6 +437,11 @@ export interface GroundRemoval {
    * exactly as it is — no partial silent repair, no second attempt.
    */
   refusal: string | null;
+  /**
+   * STORY 16.13: the card as it was, for Restore. null only if the reference
+   * was not on the map when the delete ran (nothing was kept from it).
+   */
+  removed: RemovedCard | null;
 }
 
 /** The one sentence a refused unlink answers (PROVISIONAL wording). */
@@ -397,6 +472,25 @@ export async function removeGroundRecords(
   malformedReadings: readonly string[],
   io: GroundRemovalIo = GROUND_REMOVAL_IO,
 ): Promise<GroundRemoval> {
+  // STORY 16.13 — READ BEFORE ANY UNLINK. The bytes the files hold right now
+  // (not the load's copy, which may be older) are what Restore must put back;
+  // reading them here, before step 1, is the whole guarantee.
+  const referenceIndex = references.findIndex((reference) => reference.on === on);
+  const reference = referenceIndex >= 0 ? references[referenceIndex] : null;
+  const readingIndex = readings.findIndex((reading) => reading.on === on);
+  const reading = readingIndex >= 0 ? readings[readingIndex] : null;
+  let readingText: string | null = null;
+  let note: string | null = null;
+  try {
+    readingText = await io.readTextFile(readingTextPath(workspacePath, on));
+  } catch {
+    readingText = null;
+  }
+  try {
+    note = await io.readTextFile(notePath(workspacePath, on));
+  } catch {
+    note = null;
+  }
   const nextReferences = withGroundRemoved(references, on);
   await io.saveGround(workspacePath, nextReferences, malformedGround);
   const nextReadings = withReadingRemoved(readings, on);
@@ -407,7 +501,26 @@ export async function removeGroundRecords(
   } catch {
     refusal = GROUND_REMOVAL_REFUSAL;
   }
-  return { references: nextReferences, readings: nextReadings, refusal };
+  return {
+    references: nextReferences,
+    readings: nextReadings,
+    refusal,
+    removed:
+      reference === null
+        ? null
+        : {
+            reference,
+            referenceIndex,
+            reading,
+            readingIndex: reading === null ? -1 : readingIndex,
+            readingText,
+            note,
+            // The caller adds the links it takes, because its cascade has them.
+            links: [],
+            // The caller records the state it computed at load.
+            state: "unread",
+          },
+  };
 }
 
 /**
@@ -453,6 +566,203 @@ export async function removeGroundNote(
   } catch {
     return GROUND_NOTE_REMOVAL_REFUSAL;
   }
+}
+
+/**
+ * STORY 16.13 (shortlist item 1) — THE TOAST'S WINDOW, provisional. It is the
+ * stated span after which the deletion stops being restorable; there is no
+ * countdown, no progress bar and no ticker, and one toast is all there is.
+ */
+export const RESTORE_WINDOW_MS = 10_000;
+
+/** One pending restore can exist; a second delete COMMITS the first. */
+export function pendingRestoreAfter(
+  previous: RemovedCard | null,
+  next: RemovedCard | null,
+): RemovedCard | null {
+  // The newest deletion is the only one the toast can put back. Keeping the
+  // older one too would be an undo stack, which the story deliberately leaves
+  // out (the shortlist's item 1 is a toast, not a history UI).
+  return next ?? previous;
+}
+
+/** The bridges a restore needs; a test passes its own fakes. */
+export interface GroundRestoreIo {
+  saveGround: typeof saveGround;
+  saveReadings: typeof saveReadings;
+  saveGroundLinks: typeof saveGroundLinks;
+  restoreReadingText: typeof restoreReadingText;
+  restoreNote: typeof restoreNote;
+}
+
+/** The real bridges, bound once so this module stays importable in tests. */
+const GROUND_RESTORE_IO: GroundRestoreIo = {
+  saveGround,
+  saveReadings,
+  saveGroundLinks,
+  restoreReadingText,
+  restoreNote,
+};
+
+/** What a restore did: the next records, what came back, what did not. */
+export interface GroundRestoreResult {
+  references: GroundReference[];
+  readings: Reading[];
+  links: GroundLink[];
+  /** True when the card's own ground line went back (the card is on the map). */
+  restoredReference: boolean;
+  /** The links whose lines went back (the hook logs their own moves). */
+  restoredLinks: readonly GroundLink[];
+  /** One sentence when a write failed; null when everything came back. */
+  refusal: string | null;
+  cameBack: readonly string[];
+  didNot: readonly string[];
+}
+
+/** Put one item back at its old file position (clamped, never out of range). */
+function insertAt<T>(items: readonly T[], index: number, item: T): T[] {
+  const at = index < 0 || index > items.length ? items.length : index;
+  return [...items.slice(0, at), item, ...items.slice(at)];
+}
+
+/** Join labels the way a sentence does: "a, b and c". */
+function joinLabels(labels: readonly string[]): string {
+  if (labels.length <= 1) return labels[0] ?? "";
+  return labels.slice(0, -1).join(", ") + " and " + labels[labels.length - 1];
+}
+
+/**
+ * ONE sentence for a PARTIAL restore (story 16.13): what came back and what did
+ * not. PURE, so the wording is not the handler's only truth. PROVISIONAL.
+ */
+export function restoreSentence(
+  cameBack: readonly string[],
+  didNot: readonly string[],
+): string | null {
+  if (didNot.length === 0) return null;
+  const missing = joinLabels(didNot);
+  if (cameBack.length === 0) {
+    return missing.charAt(0).toUpperCase() + missing.slice(1) + " did not come back.";
+  }
+  const back = joinLabels(cameBack);
+  return (
+    back.charAt(0).toUpperCase() +
+    back.slice(1) +
+    " came back, but " +
+    missing +
+    " did not."
+  );
+}
+
+/**
+ * STORY 16.13 — PUT THE SAME BYTES BACK, in the delete's reverse safety order:
+ *
+ *   1. the reading text (exactly the bytes read before the unlink);
+ *   2. the note (exactly the bytes read before its unlink);
+ *   3. the reading line, at its old file position;
+ *   4. every link the cascade took, at its old file position;
+ *   5. the reference line LAST, so a crash can never leave a reference whose
+ *      reading is not there.
+ *
+ * Every write is attempted even after an earlier one fails, so the one
+ * sentence can name BOTH what came back and what did not. The caller owns the
+ * queue and the in-memory views; this function writes the files and reports.
+ */
+export async function restoreGroundCard(
+  workspacePath: string,
+  removed: RemovedCard,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+  links: readonly GroundLink[],
+  malformedGround: readonly string[],
+  malformedReadings: readonly string[],
+  malformedLinks: readonly string[],
+  io: GroundRestoreIo = GROUND_RESTORE_IO,
+): Promise<GroundRestoreResult> {
+  const slug = removed.reference.on;
+  const cameBack: string[] = [];
+  const didNot: string[] = [];
+  let nextReferences = [...references];
+  let nextReadings = [...readings];
+  let nextLinks = [...links];
+  let restoredReference = false;
+  const restoredLinks: GroundLink[] = [];
+
+  // 1. the reading text, byte for byte.
+  if (removed.reading !== null && removed.readingText !== null) {
+    try {
+      await io.restoreReadingText(workspacePath, slug, removed.readingText);
+      cameBack.push("the reading text");
+    } catch {
+      didNot.push("the reading text");
+    }
+  }
+  // 2. the note, byte for byte.
+  if (removed.note !== null) {
+    try {
+      await io.restoreNote(workspacePath, slug, removed.note);
+      cameBack.push("the note");
+    } catch {
+      didNot.push("the note");
+    }
+  }
+  // 3. the reading line, back where it sat.
+  if (removed.reading !== null) {
+    const without = nextReadings.filter((reading) => reading.on !== slug);
+    const candidate = insertAt(without, removed.readingIndex, removed.reading);
+    try {
+      await io.saveReadings(workspacePath, candidate, malformedReadings);
+      nextReadings = candidate;
+      cameBack.push("the reading");
+    } catch {
+      didNot.push("the reading");
+    }
+  }
+  // 4. every link the cascade took, back where each line sat.
+  if (removed.links.length > 0) {
+    const candidate = [...nextLinks];
+    for (const entry of [...removed.links].sort((a, b) => a.index - b.index)) {
+      const pair = entry.link;
+      const already = candidate.some(
+        (link) => link.from === pair.from && link.to === pair.to,
+      );
+      if (!already) {
+        candidate.splice(Math.min(entry.index, candidate.length), 0, pair);
+      }
+    }
+    try {
+      await io.saveGroundLinks(workspacePath, candidate, malformedLinks);
+      nextLinks = candidate;
+      restoredLinks.push(...removed.links.map((entry) => entry.link));
+      cameBack.push("the links");
+    } catch {
+      didNot.push("the links");
+    }
+  }
+  // 5. the reference LAST: the card returns once its pieces are there.
+  {
+    const without = nextReferences.filter((reference) => reference.on !== slug);
+    const candidate = insertAt(without, removed.referenceIndex, removed.reference);
+    try {
+      await io.saveGround(workspacePath, candidate, malformedGround);
+      nextReferences = candidate;
+      restoredReference = true;
+      cameBack.push("the reference");
+    } catch {
+      didNot.push("the reference");
+    }
+  }
+
+  return {
+    references: nextReferences,
+    readings: nextReadings,
+    links: nextLinks,
+    restoredReference,
+    restoredLinks,
+    refusal: restoreSentence(cameBack, didNot),
+    cameBack,
+    didNot,
+  };
 }
 
 /** The bridges a selection's creation needs; a test passes its own fakes. */
@@ -592,6 +902,11 @@ export function useGround(workspacePath: string): GroundView {
   // loader kept but could not read. Neither is a record: the file holds those.
   const historyNoticeRef = useRef<string | null>(null);
   const malformedHistoryRef = useRef<string[]>([]);
+  // STORY 16.13: the ONE pending restore and the one sentence a partial
+  // restore answers. Both are VIEW state — the removed bytes are held here, in
+  // memory, and written nowhere until Restore puts them back.
+  const restorableRef = useRef<RemovedCard | null>(null);
+  const restoreNoticeRef = useRef<string | null>(null);
   // One queue for the ground family's files: an add's ground line must land
   // after its own readings line, never under a stale one; the link and the
   // cascade share it so no link write can land under a stale list.
@@ -670,6 +985,10 @@ export function useGround(workspacePath: string): GroundView {
     // Story 16.10: the history's failure sentence and the kept raw lines.
     historyNotice: historyNoticeRef.current,
     malformedHistory: malformedHistoryRef.current,
+    // STORY 16.13: the toast's one pending restore, held in memory until the
+    // window ends, its × is pressed, or a second delete commits it.
+    restorable: restorableRef.current,
+    restoreNotice: restoreNoticeRef.current,
     loaded: true,
   });
 
@@ -749,6 +1068,9 @@ export function useGround(workspacePath: string): GroundView {
     pulledRef.current = {};
     mirrorNoticeRef.current = null;
     historyNoticeRef.current = null;
+    // Story 16.13: a restore belongs to the workspace its bytes came from.
+    restorableRef.current = null;
+    restoreNoticeRef.current = null;
     queueRef.current = createWriteQueue();
     if (workspacePath === "") {
       referencesRef.current = [];
@@ -762,6 +1084,8 @@ export function useGround(workspacePath: string): GroundView {
       notesRef.current = {};
       orphanNotesRef.current = [];
       malformedHistoryRef.current = [];
+      restorableRef.current = null;
+      restoreNoticeRef.current = null;
       setState(EMPTY);
       return;
     }
@@ -1003,7 +1327,9 @@ export function useGround(workspacePath: string): GroundView {
           }
           const taken = await refreshReading(workspacePath, reading);
           if (taken.kind === "refused") {
-            outcome = { ok: false, message: taken.message };
+            // STORY 16.13 (shortlist item 11): a refused refresh says what
+            // STILL STANDS — the old reading is untouched and still on screen.
+            outcome = { ok: false, message: REFRESH_UNCHANGED };
             return;
           }
           const nextReadings = writtenReading(taken.reading);
@@ -1110,6 +1436,9 @@ export function useGround(workspacePath: string): GroundView {
       };
       return queueRef.current
         .push(async () => {
+          // The computed state at delete time is what the restored card shows;
+          // it is view state, never a record (story 16.2's rule).
+          const previousState = statesRef.current[on] ?? "unread";
           const removal = await removeGroundRecords(
             workspacePath,
             on,
@@ -1130,10 +1459,11 @@ export function useGround(workspacePath: string): GroundView {
           // queued pass, every link that NAMES this slug leaves the link file —
           // in BOTH directions, so the app never manufactures an orphan.
           // Story 16.10 remembers exactly which links this pass takes, so their
-          // passing can be logged as its own lines.
-          const cascaded = linksRef.current.filter(
-            (link) => link.from === on || link.to === on,
-          );
+          // passing can be logged as its own lines. Story 16.13 also keeps each
+          // line's FILE POSITION, so Restore can put it back where it was.
+          const cascaded = linksRef.current
+            .map((link, index) => ({ link, index }))
+            .filter(({ link }) => link.from === on || link.to === on);
           linksRef.current = await removeGroundLinksNaming(
             workspacePath,
             on,
@@ -1153,6 +1483,23 @@ export function useGround(workspacePath: string): GroundView {
           const pulled = { ...pulledRef.current };
           delete pulled[on];
           pulledRef.current = pulled;
+          // STORY 16.13 — THE TOAST'S ONE PENDING RESTORE. The bytes were read
+          // before the unlink; the links and the computed state are added here,
+          // where the cascade and the load's state live. A second delete
+          // REPLACES this snapshot (committing the first, exactly one toast).
+          const removedCard: RemovedCard | null =
+            removal.removed === null
+              ? null
+              : {
+                  ...removal.removed,
+                  links: cascaded,
+                  state: previousState,
+                };
+          restorableRef.current = pendingRestoreAfter(
+            restorableRef.current,
+            removedCard,
+          );
+          restoreNoticeRef.current = null;
           setState(snapshot());
           const refusal = removal.refusal ?? noteRefusal;
           outcome =
@@ -1166,7 +1513,13 @@ export function useGround(workspacePath: string): GroundView {
           // Story 16.10: the removal itself, then one line per link the
           // cascade took — links are their own records, so their passing is
           // its own move, and the count is in the lines, never in the UI.
-          queueHistory(() => cardRemovalEvents(Date.now(), on, cascaded));
+          queueHistory(() =>
+            cardRemovalEvents(
+              Date.now(),
+              on,
+              cascaded.map((entry) => entry.link),
+            ),
+          );
           // The card's files (and the cascade) have moved: the mirror follows
           // in the same queue, whether or not a later unlink refused.
           queueMirror();
@@ -1367,6 +1720,126 @@ export function useGround(workspacePath: string): GroundView {
     setState(snapshot());
   }, []);
 
+  // STORY 16.13 — THE TOAST'S WINDOW. When it ends, the deletion is committed:
+  // the held bytes are dropped and nothing can put the card back. No countdown
+  // is drawn; the span is stated once in the story and lived with.
+  useEffect(() => {
+    if (state.restorable === null) return;
+    const timer = setTimeout(() => {
+      restorableRef.current = null;
+      setState((current) => ({ ...current, restorable: null }));
+    }, RESTORE_WINDOW_MS);
+    return () => clearTimeout(timer);
+  }, [state.restorable]);
+
+  /**
+   * STORY 16.13 — RESTORE. Through the same queue as every write, the held
+   * bytes go back (reading text, note, reading line, links, reference last),
+   * and the log records the SECOND move: `card.restore` plus one `link.add`
+   * per link that came back. A partial restore answers one sentence naming what
+   * came back and what did not; either way the pending restore is spent.
+   */
+  const restore = useCallback((): Promise<GroundAddResult> => {
+    const pending = restorableRef.current;
+    if (pending === null) {
+      return Promise.resolve({
+        ok: false,
+        message: "there is nothing to restore.",
+      });
+    }
+    const slug = pending.reference.on;
+    let outcome: GroundAddResult = {
+      ok: false,
+      message: "nothing came back.",
+    };
+    return queueRef.current
+      .push(async () => {
+        const restored = await restoreGroundCard(
+          workspacePath,
+          pending,
+          referencesRef.current,
+          readingsRef.current,
+          linksRef.current,
+          malformedGroundRef.current,
+          malformedReadingsRef.current,
+          malformedLinksRef.current,
+        );
+        referencesRef.current = restored.references;
+        readingsRef.current = restored.readings;
+        linksRef.current = restored.links;
+        // The in-memory views follow the writes that actually landed: a piece
+        // whose file refused must not be shown as if it were back.
+        if (
+          pending.readingText !== null &&
+          restored.cameBack.includes("the reading text")
+        ) {
+          textsRef.current = {
+            ...textsRef.current,
+            [slug]: pending.readingText,
+          };
+        }
+        if (pending.note !== null && restored.cameBack.includes("the note")) {
+          notesRef.current = { ...notesRef.current, [slug]: pending.note };
+        }
+        if (restored.restoredReference) {
+          // The reading's state only returns with its LINE; a line that did not
+          // come back leaves the card unread, never a state claiming a reading
+          // that is not on disk. If the text alone failed, the state word and
+          // the absence line still tell the truth about the copy.
+          statesRef.current = {
+            ...statesRef.current,
+            [slug]:
+              pending.reading !== null &&
+              !restored.cameBack.includes("the reading")
+                ? "unread"
+                : pending.state,
+          };
+        }
+        restorableRef.current = null;
+        restoreNoticeRef.current = restored.refusal;
+        setState(snapshot());
+        outcome =
+          restored.refusal === null
+            ? { ok: true }
+            : { ok: false, message: restored.refusal };
+        // Story 16.10: a restore is an AUTHORED move, and a silent one would be
+        // a bug. Its links are their own records, so each coming back is its
+        // own line too; a restore that did not put the card back logs nothing,
+        // because there is no card to name.
+        if (restored.restoredReference) {
+          const links = restored.restoredLinks;
+          queueHistory(() => [
+            cardRestoreEvent(Date.now(), slug),
+            ...links.map((link) =>
+              linkAddEvent(Date.now(), link.from, link.to),
+            ),
+          ]);
+        }
+        // A partial restore can still have moved the reading, the note or the
+        // links; the derived index follows any piece that came back.
+        if (restored.cameBack.length > 0) queueMirror();
+      })
+      .then(() => outcome)
+      .catch(() => ({
+        ok: false,
+        message: "the map folder could not take the card back.",
+      }));
+  }, [workspacePath]);
+
+  /** CLOSE THE TOAST: the pending deletion is committed and forgotten. */
+  const dismissRestore = useCallback((): void => {
+    if (restorableRef.current === null && restoreNoticeRef.current === null) {
+      return;
+    }
+    restorableRef.current = null;
+    restoreNoticeRef.current = null;
+    setState((current) => ({
+      ...current,
+      restorable: null,
+      restoreNotice: null,
+    }));
+  }, []);
+
   return {
     references: state.references,
     readings: state.readings,
@@ -1383,6 +1856,8 @@ export function useGround(workspacePath: string): GroundView {
     mirrorNotice: state.mirrorNotice,
     historyNotice: state.historyNotice,
     malformedHistory: state.malformedHistory,
+    restorable: state.restorable,
+    restoreNotice: state.restoreNotice,
     loaded: state.loaded,
     create,
     createSelection,
@@ -1395,5 +1870,7 @@ export function useGround(workspacePath: string): GroundView {
     setNote,
     pull,
     dismissPull,
+    restore,
+    dismissRestore,
   };
 }
