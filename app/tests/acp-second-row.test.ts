@@ -444,7 +444,13 @@ describe("a second row id rides the whole lane unchanged", () => {
  * ------------------------------------------------------------------ */
 
 describe("no tool is named in a module that runs, renders or records a run", () => {
-  const DATA = new Set([join(APP, "src", "turn", "acpSpecs.ts")]);
+  // TWO DATA FILES may name a product: the ACP rows, and (story 15.13) the
+  // provider catalogue, whose whole job is to name providers. The constraint
+  // is about the modules that RUN, RENDER or RECORD a run, not about data.
+  const DATA = new Set([
+    join(APP, "src", "turn", "acpSpecs.ts"),
+    join(APP, "src", "turn", "providerCatalog.ts"),
+  ]);
 
   function sources(dir: string, out: string[] = []): string[] {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {

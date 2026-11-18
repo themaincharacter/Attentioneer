@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   forgetSecret,
   keyExists,
@@ -48,6 +48,15 @@ import {
 } from "../turn/providers";
 import { CLI_SPECS, type CliSpec } from "../turn/cliSpecs";
 import {
+  CUSTOM_CATALOG_ID,
+  CUSTOM_FILL,
+  PROVIDER_CATALOG,
+  catalogEntry,
+  catalogFill,
+  catalogLabel,
+  type ProviderCatalogFill,
+} from "../turn/providerCatalog";
+import {
   DEFAULT_LOCAL_IDLE_MINUTES,
   LOCAL_SPECS,
   type LocalSpec,
@@ -95,6 +104,15 @@ import { probeSpec } from "../turn/cliBridge";
  * key second, so a store that refuses the key cannot lose a row that already
  * exists; the refusal is one sentence and the row stays. Test is the same ask
  * as fetch, said as one measured sentence, and it writes nothing.
+ *
+ * STORY 13 ADDS A PICKER, NOT A REQUEST: a known provider can be picked from a
+ * short catalogue (providerCatalog.ts), which fills name, base URL and an
+ * example model and puts the caret in the key field. A pick is DATA ONLY — no
+ * request, no validation, no automatic add — and "a custom endpoint" is
+ * today's empty form, first-class. DeepSeek Harness's catalogue is the shape;
+ * Slashspace's "add your own OpenAI-compatible API providers"
+ * paste-and-validate flow is the feel. Every entry is marked unverified until
+ * a person's account answers.
  *
  * PROVISIONAL (ADR-0003's rendering seam): the layout, the field order and the
  * wording of the refusals.
@@ -258,6 +276,15 @@ export function ProvidersPanel({
   // draft that failed to be kept is not a thing to keep in memory either.
   const [addKey, setAddKey] = useState("");
 
+  // WHICH CATALOGUE ENTRY THE ADD FORM CAME FROM (story 13). "custom" is
+  // today's empty form; any other value names one of the data entries. It
+  // drives only what the picker shows — the fields are the truth.
+  const [catalogId, setCatalogId] = useState(CUSTOM_CATALOG_ID);
+
+  // THE KEY FIELD, so a pick can put the caret where the person pastes. Focus
+  // is the whole bridge between the list and the key: no read, no request.
+  const keyFieldRef = useRef<HTMLInputElement>(null);
+
   // THE TEST VERB'S STATE (story 12): which row is being asked, and the one
   // sentence it answered. Separate from the fetch's checklist because a test
   // never grows a list — it is a read that says how long the read took.
@@ -318,6 +345,34 @@ export function ProvidersPanel({
         ? withSelection(withProvider(settings, row), row.id, row.models[0].id)
         : withProvider(settings, row);
     return await write(selected);
+  }
+
+  /**
+   * PICK A KNOWN PROVIDER (story 13). The catalogue is DATA and this function
+   * is all a pick does: fill the four text fields with the entry's name, base
+   * URL and example model, then focus the key field so the next paste lands
+   * where it belongs. Choosing "a custom endpoint" clears the fill back to
+   * today's empty form. NO request, NO validation, NO add — the person's press
+   * on add is still the only thing that writes a row.
+   *
+   * The key draft is cleared on a pick: a credential pasted for one endpoint is
+   * not carried to another.
+   */
+  function pickCatalog(entryId: string): void {
+    setCatalogId(entryId);
+    const entry = catalogEntry(entryId);
+    applyCatalogFill(entry === null ? CUSTOM_FILL : catalogFill(entry));
+    setAddKey("");
+    setSentence(null);
+    if (entry !== null) keyFieldRef.current?.focus();
+  }
+
+  /** Put a fill into the form's fields. Editable afterwards, like any input. */
+  function applyCatalogFill(fill: ProviderCatalogFill): void {
+    setName(fill.name);
+    setBaseUrl(fill.baseUrl);
+    setModelId(fill.modelId);
+    setModelName(fill.modelName);
   }
 
   /** The row the add form describes, or the one sentence it is refused with. */
@@ -381,6 +436,7 @@ export function ProvidersPanel({
     );
     setAddKey("");
     if (outcome.kind === "row-refused") return;
+    setCatalogId(CUSTOM_CATALOG_ID);
     setName("");
     setBaseUrl("");
     setModelId("");
@@ -881,6 +937,10 @@ export function ProvidersPanel({
   const selectedModels =
     selected === null ? [] : modelsForMove(selected, {});
 
+  // The catalogue entry the picker currently names, if any. Null means the
+  // custom endpoint, which carries no note.
+  const pickedCatalog = catalogEntry(catalogId);
+
   return (
     <div className="providers-panel" role="group" aria-label="providers">
       {/* ALWAYS VISIBLE: which store keeps keys on THIS machine. The fallback
@@ -934,6 +994,29 @@ export function ProvidersPanel({
         settings.providers.map((provider) => (
           <div className="providers-row" key={provider.id}>
             <div className="providers-row-head">
+              {/* THE ROW'S KEY STATE AS A DOT, beside the name (story 13's
+                  reference shape): set or missing, nothing it cannot know. A
+                  command or a local model has no key of this kind, so it gets
+                  no dot rather than a green claim. */}
+              {provider.kind === "http" && (
+                <span
+                  className={
+                    "providers-state-dot " +
+                    (keys[provider.id] === true ? "is-set" : "is-missing")
+                  }
+                  role="img"
+                  aria-label={
+                    keys[provider.id] === true
+                      ? "a key is set"
+                      : "no key is set"
+                  }
+                  title={
+                    keys[provider.id] === true
+                      ? "a key is set"
+                      : "no key is set"
+                  }
+                />
+              )}
               <span className="providers-name">{provider.name}</span>
               <span className="providers-id">{provider.id}</span>
             </div>
@@ -1419,6 +1502,35 @@ export function ProvidersPanel({
               <option value="local">a model on this machine</option>
             </select>
           </label>
+          {/* PICK A KNOWN PROVIDER (story 13): the catalogue is DATA. A pick
+              fills the fields below and focuses the key field; "a custom
+              endpoint" is today's empty form. Nothing is requested or added. */}
+          {kind === "http" && (
+            <>
+              <label className="providers-field">
+                <span>a known provider, or a custom endpoint</span>
+                <select
+                  value={catalogId}
+                  aria-label="a known provider, or a custom endpoint"
+                  onChange={(e) => pickCatalog(e.target.value)}
+                >
+                  <option value={CUSTOM_CATALOG_ID}>a custom endpoint</option>
+                  <optgroup label="a known provider">
+                    {PROVIDER_CATALOG.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {catalogLabel(entry)}
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+              </label>
+              {pickedCatalog !== null && (
+                <div className="providers-note">
+                  {pickedCatalog.note} {pickedCatalog.source}.
+                </div>
+              )}
+            </>
+          )}
           <label className="providers-field">
             <span>name</span>
             <input
@@ -1462,6 +1574,7 @@ export function ProvidersPanel({
                   autoComplete="off"
                   placeholder="optional"
                   aria-label="the key to keep with the new provider"
+                  ref={keyFieldRef}
                   onChange={(e) => setAddKey(e.target.value)}
                 />
               </label>
