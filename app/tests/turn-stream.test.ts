@@ -282,7 +282,7 @@ describe("streaming is real and ordered", () => {
       onPart: (text) => seen.push(text),
     });
     expect(result).toEqual({ kind: "answer", text: "the answer is 4" });
-    // Each callback is the accumulation so far, not a delta: the panel can
+    // Each callback is the accumulation so far, not a delta: the ask card can
     // render it directly.
     expect(seen).toEqual([
       "the ",
@@ -492,23 +492,24 @@ describe("the budget bites in words and does not fetch", () => {
 
 });
 
-describe("the panel shows arrival, stop and the ceiling", () => {
-  test("the card's ask streams, marks a partial, and says the limit in words", () => {
-    const panel = readFileSync(
-      join(APP_DIR, "src", "canvas", "AskSidecarPanel.tsx"),
+describe("the ask card shows arrival and stop; the ceiling is still a sentence", () => {
+  test("the card's ask streams, marks a partial, and the limit still bites in words", () => {
+    const card = readFileSync(
+      join(APP_DIR, "src", "canvas", "AskCard.tsx"),
       "utf8",
     );
-    // The answer arrives: parts update the same text the result settles.
-    expect(panel).toContain("onPart:");
-    expect(panel).toContain("setAnswer(text)");
+    // The answer arrives: parts update the pending line the result settles.
+    expect(card).toContain("askPartPending(current, text)");
     // A stopped (or broken) partial is marked, never shown as complete.
-    expect(panel).toContain("stopped mid-answer");
-    expect(panel).toContain("the answer broke off");
-    expect(panel).toContain('data-state={answerState}');
-    // The ceiling's sentence is rendered, and there is no counter beside it.
-    expect(panel).toContain("setReached(answered.reached)");
-    expect(panel).toContain("{reached}");
-    expect(panel).not.toMatch(/steps\s*\//);
+    expect(card).toContain("ASK_STOPPED_MARK");
+    expect(card).toContain("ASK_INCOMPLETE_MARK");
+    expect(card).toContain("ask-turn-mark");
+    // The ceiling's sentence is still the pure one, never a counter; the
+    // turn's result still carries it. FINDING 17.7: the ask card does NOT
+    // render that sentence (the retired panel did); see the story report.
+    expect(STEP_LIMIT_SENTENCE).toContain("reading limit");
+    expect(card).not.toContain("reached");
+    expect(card).not.toMatch(/steps\s*\//);
   });
 });
 

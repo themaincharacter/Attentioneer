@@ -590,9 +590,9 @@ function App() {
   // `map/readings.txt` and `map/readings/<slug>.md` whenever the workspace
   // opens, and written through its own per-file queue. The concept map's
   // reload never touches it (the maps are separate, ADR-0032).
-  // STORY 17.1: the ground hook also owns the ask cards' records; the turn
-  // port is the SAME one the card's embedded ask panel uses, so an ask card
-  // reuses the existing card-ask path rather than growing a second one.
+  // STORY 17.1: the ground hook also owns the ask cards' records. Story 17.7
+  // retired the card's embedded panel, so this is the ONE turn port every ask
+  // card sends through — the existing card-ask path, not a second one.
   const ground = useGround(workspace?.path ?? "", turnPort);
 
   // The step's run (Epic 8 story 3, ADR-0022): an EPHEMERAL read of the ACTIVE
@@ -827,9 +827,6 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection>("providers");
-  // Bumped whenever the rows are re-read, so an open card ask reloads its
-  // selector after Settings changed them.
-  const [providersRev, setProvidersRev] = useState(0);
   // STORY 17 (shortlist items 7–9): the person's STATED fold threshold. The app
   // holds the current value so every ground card re-crops when Settings writes
   // a new one; the defaults stand until the config answers, and nothing here
@@ -1983,7 +1980,6 @@ function App() {
    * store's sentence is the one line the Ask panel always shows.
    */
   const refreshProviderFacts = useCallback(() => {
-    setProvidersRev((revision) => revision + 1);
     void loadTurnSettings()
       .then((settings) => {
         const resolved = resolveSelection(settings);
@@ -4412,9 +4408,6 @@ function App() {
             onPull={ground.pull}
             onDismissPull={ground.dismissPull}
             onLink={ground.link}
-            onAsk={turnPort}
-            onConfigure={() => openSettings("providers")}
-            providersRev={providersRev}
             workspacePath={workspace.path}
             onNarrate={narrate}
             interactionMode={gestureMode}

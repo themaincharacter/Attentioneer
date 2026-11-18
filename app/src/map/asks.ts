@@ -59,7 +59,7 @@ import { ASK_RECORD_FILE, ASK_TURNS_DIR, mapDir } from "./records";
  * tail, the divider and missing-parent wording, the choice that a fork carries
  * one level only, and — STORY 17.6's addition — the optional `anchorName` tail:
  * the name the anchor had, so a dangling anchor can be SAID by name and never
- * repaired. Story 17.7 retires the embedded panel and 17.8 puts asks in the
+ * repaired. Story 17.7 retired the embedded panel and 17.8 puts asks in the
  * mirror and the history — neither is written here.
  */
 

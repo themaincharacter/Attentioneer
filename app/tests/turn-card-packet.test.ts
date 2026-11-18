@@ -14,9 +14,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AskSidecarPanel } from "../src/canvas/AskSidecarPanel";
+import { AskCard } from "../src/canvas/AskCard";
 import { PacketSurface } from "../src/canvas/PacketSurface";
 import {
+  askCardOf,
   cardAskContext,
   fetchAskBlock,
   readAskContext,
@@ -25,14 +26,12 @@ import {
 } from "../src/turn/context";
 import {
   ASK_PACKET_BOUND,
+  assembleAskCardPacket,
   assembleCardPacket,
   type AskPacketCard,
 } from "../src/turn/packet";
-import {
-  askTurnPacket,
-  type PacketTurnAnswer,
-  type TurnPort,
-} from "../src/turn/turn";
+import { ASK_THREAD_BOUND } from "../src/map/asks";
+import { askTurnPacket } from "../src/turn/turn";
 import {
   parseRequestLine,
   type SidecarLine,
@@ -43,17 +42,20 @@ import type { Reading } from "../src/map/readings";
 /**
  * Story 15.3b — THE CARD'S ASK USES THE PACKET.
  *
- * The ground card's ask… used to send the bare hand-written question while the
- * Ask Move sent the honest packet; one entry point must not be poorer than the
+ * The embedded panel is gone (story 17.7); its anchored packet lives on in the
+ * ask card. The ask used to send the bare hand-written question while the Ask
+ * Move sent the honest packet; one entry point must not be poorer than the
  * other. These tests pin the story's hard constraints:
  *   - the same assembler, ONE anchored block: the card, never a reach, never a
  *     link (a link is wordless wiring, not context);
  *   - the frozen bytes (a golden), with no counts or sizes in the text;
  *   - the declaration's sizes are the bytes' own, and it names every block;
  *   - ONE retrieval, only of the card's own block, on one exact READ line;
- *   - the declaration and readback are ONE shared piece both panels render;
- *   - a folder snapshot proves the card ask writes nothing and records nothing
- *     (no PRISM, no history line, no mirror rewrite).
+ *   - the declaration and readback are ONE shared piece the Ask Move's panel
+ *     and the ask card render;
+ *   - a folder snapshot proves the bare packet/retrieval path writes nothing
+ *     and records nothing; the ask card's own send and its ONE PRISM (17.4)
+ *     are tested beside it, in ground-ask-moves.
  *
  * PROVISIONAL: the card packet's golden bytes, the shared surface's layout and
  * the follow-up's wording (the story marks them so).
@@ -343,9 +345,9 @@ describe("ONE retrieval: the card's own block, never chained", () => {
  * ------------------------------------------------------------------ */
 
 describe("the declaration and readback are ONE shared piece", () => {
-  test("both panels render the same PacketSurface; neither keeps a copy", () => {
+  test("both ask surfaces render the same PacketSurface; neither keeps a copy", () => {
     const ask = source("canvas/AskPanel.tsx");
-    const card = source("canvas/AskSidecarPanel.tsx");
+    const card = source("canvas/AskCard.tsx");
     for (const panel of [ask, card]) {
       expect(panel).toContain('from "./PacketSurface"');
       expect(panel).toContain("<PacketSurface");
@@ -360,15 +362,19 @@ describe("the declaration and readback are ONE shared piece", () => {
     }
   });
 
-  test("the card panel declares exactly the packet it would send", () => {
-    const card = source("canvas/AskSidecarPanel.tsx");
-    // One packet, built once, handed to the declaration AND to the turn.
-    expect(card).toContain("const packet = assembleCardPacket({");
+  test("the ask card's declaration and its send share the one packet", () => {
+    const card = source("canvas/AskCard.tsx");
+    // The card declares the packet it composes; the hook composes the SAME
+    // packet at send time from the same anchor facts and thread.
+    expect(card).toContain("assembleAskCardPacket(");
     expect(card).toContain("declaration={packet.declaration}");
     expect(card).toContain("messages={packet.messages}");
-    expect(card).toContain("turn.sendPacket(");
-    expect(card).toContain("packet,");
-    // No reach, no link and no record path anywhere in the panel's CODE.
+    expect(card).toContain("onAskTurn(ask.on, asked");
+    const hook = source("canvas/useGround.ts");
+    expect(hook).toContain("assembleAskCardPacket(");
+    expect(hook).toContain("turn.sendPacket(");
+    expect(hook).toContain("packet,");
+    // No reach, no link and no record path anywhere in the card's CODE.
     const code = codeOnly(card);
     for (const forbidden of [
       "included",
@@ -386,18 +392,7 @@ describe("the declaration and readback are ONE shared piece", () => {
     }
   });
 
-  test("the panel renders the declaration and the bytes verb before send", () => {
-    const port: TurnPort = {
-      ask: async () => ({ kind: "answer", text: "" }),
-      sendPacket: async (): Promise<PacketTurnAnswer> => ({
-        result: { kind: "answer", text: "" },
-        messages: [],
-        read: null,
-        missed: null,
-      }),
-      start: async () => ({ kind: "running" }),
-      stop: async () => {},
-    };
+  test("the ask card renders the declaration and the bytes verb before send", () => {
     const facts: AskCardFacts = {
       name: CARD.name,
       state: "missing",
@@ -406,26 +401,37 @@ describe("the declaration and readback are ONE shared piece", () => {
       note: CARD.note,
     };
     const html = renderToStaticMarkup(
-      createElement(AskSidecarPanel, {
-        card: facts,
-        workspacePath: "/ws",
-        turn: port,
+      createElement(AskCard, {
+        ask: {
+          on: "rain-question",
+          name: "Rain question",
+          x: 0,
+          y: 0,
+          anchor: "rain",
+        },
+        anchorName: CARD.name,
+        anchor: askCardOf(facts),
+        turns: [],
+        open: true,
+        previewLines: 6,
+        onOpen: () => {},
         onClose: () => {},
+        onAskTurn: async () => ({ ok: true }),
       }),
     );
     const declaredAt = html.indexOf("will go:");
-    const sendAt = html.indexOf("ground-ask-send");
+    const sendAt = html.indexOf("ask-card-send");
     const bytesAt = html.indexOf("the exact bytes");
     expect(declaredAt).toBeGreaterThan(-1);
     expect(bytesAt).toBeGreaterThan(declaredAt);
     expect(sendAt).toBeGreaterThan(bytesAt);
     // The declared total is the packet's own bytes, named exactly once.
-    const context = cardAskContext(facts);
-    const packet = assembleCardPacket({
-      question: "",
-      card: context.card,
-      retrievable: context.retrievable,
-    });
+    const packet = assembleAskCardPacket(
+      askCardOf(facts),
+      [],
+      "",
+      ASK_THREAD_BOUND,
+    );
     expect(html).toContain(packet.declaration.total + " bytes in all");
     expect(html).toContain("the card");
     expect(html).toContain(CARD.name);

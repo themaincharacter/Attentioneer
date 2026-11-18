@@ -438,7 +438,7 @@ export interface GroundView {
   ) => Promise<GroundAddResult>;
   /**
    * STORY 17.2 — STOP the running ask turn: the existing turn port's stop, so
-   * the card's one stop verb is the same stop the embedded panel uses. VIEW
+   * the card's one stop verb is the same stop the Ask Move uses. VIEW
    * STATE only; what arrived is kept by the card, marked a partial, and the
    * record still writes the person's line and no answer line.
    */
@@ -2702,7 +2702,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         onPart === undefined ? {} : { onPart },
       );
       // The bytes that left, handed back so the card's surface can open them
-      // after the send exactly as the embedded panel's readback does. The
+      // after the send exactly as the Ask Move's readback does. The
       // ENDING rides beside them (story 7b): a cancel is a stop, a timeout is
       // the budget, a break is a failure — none of them is an answer.
       return {
@@ -3001,7 +3001,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
-   * STORY 17.2 — THE CARD'S STOP. The same port the embedded panel stops; the
+   * STORY 17.2 — THE CARD'S STOP. The same port the Ask Move's panel stops; the
    * AskCard marks what arrived as a partial, and the record still holds the
    * person's line alone (an answer line is only ever a finished answer).
    */

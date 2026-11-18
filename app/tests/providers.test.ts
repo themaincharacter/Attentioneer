@@ -530,20 +530,18 @@ describe("the sidecar's wire is unchanged and the config holds no key", () => {
   });
 
   test("the UI never displays a key: no password field, only its existence", () => {
-    for (const path of ["canvas/AskSidecarPanel.tsx", "canvas/ProvidersPanel.tsx"]) {
-      const code = codeOf(source(path));
-      expect({ path, password: /type="password"/.test(code) }).toEqual({
-        path,
-        // The providers panel's key entry IS a password input, deliberately:
-        // what it never does is FILL it from the store. The card's ask has no
-        // key field at all.
-        password: path === "canvas/ProvidersPanel.tsx",
-      });
-    }
-    expect(codeOf(source("canvas/AskSidecarPanel.tsx"))).not.toContain("password");
-    // The store's sentence is shown by both surfaces that can send.
-    expect(source("canvas/AskSidecarPanel.tsx")).toContain("secretStatusWords");
+    // STORY 17.7: the embedded panel is gone. The ask card has no key field and
+    // no key-store sentence; it sends through the hook, which reads the secret
+    // at send time. Providers/Settings is the only key surface now.
+    const card = codeOf(source("canvas/AskCard.tsx"));
+    expect(card).not.toContain("password");
+    expect(card).not.toContain("readSecret");
+    const providers = codeOf(source("canvas/ProvidersPanel.tsx"));
+    // The providers panel's key entry IS a password input, deliberately: what
+    // it never does is FILL it from the store.
+    expect(providers).toMatch(/type="password"/);
     expect(source("canvas/ProvidersPanel.tsx")).toContain("secretStatusWords");
+    expect(source("canvas/AskPanel.tsx")).toContain("keyStore");
   });
 
   test("the status sentence names the store, always", () => {

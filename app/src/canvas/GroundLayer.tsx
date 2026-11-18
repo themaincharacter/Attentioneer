@@ -49,7 +49,6 @@ import { isGestureArmed, type GestureMode } from "./gates";
 import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import type { Point } from "./geometry";
 import { AskCard } from "./AskCard";
-import { AskSidecarPanel } from "./AskSidecarPanel";
 import { GroundConceptPanel, GroundNote } from "./GroundNote";
 import {
   applyMention,
@@ -61,7 +60,6 @@ import {
   type MentionChoice,
 } from "./MentionPicker";
 import { askAnchorOf, askThreadOf, type GroundAddResult } from "./useGround";
-import type { TurnPort } from "../turn/turn";
 
 /**
  * The ground map's own layer (story 16.1; story 16.2 made the row live; story
@@ -439,24 +437,6 @@ interface GroundLayerProps {
    */
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
   /**
-   * THE ASK (Epic 15 story 1): the app's turn port, handed to the expanded
-   * card's `ask…` verb. Optional so a render test needs no sidecar; the app
-   * passes the real one. The turn is NOT a move — nothing on this map is
-   * written by asking, and the panel keeps its own view state.
-   */
-  onAsk?: TurnPort;
-  /**
-   * Open Settings on its Providers section (story 15.10). The card's ask keeps
-   * only a selector and this shortcut — the rows are edited in Settings, never
-   * inline. Optional so a render test needs no app chrome.
-   */
-  onConfigure?: () => void;
-  /**
-   * Bumped by the app when Settings changed the rows, so the open card's ask
-   * re-reads its selector (a row added or removed is never stale on screen).
-   */
-  providersRev?: number;
-  /**
    * The workspace root, for the ONE cross-map read (story 16.7): the concept
    * map's word index, read-only, so a word mention can be drawn live or
    * dangling and the picker can offer the vocabulary. Optional so a render
@@ -513,9 +493,6 @@ export function GroundLayer({
   onPull,
   onDismissPull,
   onLink,
-  onAsk,
-  onConfigure,
-  providersRev = 0,
   workspacePath = "",
   onNarrate,
   interactionMode = "idle",
@@ -523,8 +500,6 @@ export function GroundLayer({
   noteLines = NOTE_PREVIEW_LINES,
   zoom = 1,
 }: GroundLayerProps) {
-  // onConfigure and providersRev are the GroundLayer's own props; the cards
-  // below receive them so an open card ask can open Settings and reload.
   const readingsBySlug = new Map(readings.map((reading) => [reading.on, reading]));
   const mediaBySlug = new Map(media.map((entry) => [entry.on, entry]));
   // STORY 16.7 — WHICH card is expanded is the LAYER's view state, not each
@@ -681,9 +656,6 @@ export function GroundLayer({
           onPull={onPull}
           onDismissPull={onDismissPull}
           onLink={onLink}
-          onAsk={onAsk}
-          onConfigure={onConfigure}
-          providersRev={providersRev}
           workspacePath={workspacePath}
           onNarrate={onNarrate}
           previewLines={previewLines}
@@ -844,9 +816,6 @@ function GroundCard({
   onPull,
   onDismissPull,
   onLink,
-  onAsk,
-  onConfigure,
-  providersRev,
   workspacePath,
   onNarrate,
   previewLines,
@@ -902,13 +871,11 @@ function GroundCard({
   onPull?: (on: string) => Promise<GroundAddResult>;
   onDismissPull?: (on: string) => void;
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
-  /** The app's turn port for the expanded card's `ask…` verb (story 15.1). */
-  onAsk?: TurnPort;
-  /** Open Settings on Providers (story 15.10): the ask's only configure door. */
-  onConfigure?: () => void;
-  /** Bumped when Settings changed the rows (the ask re-reads its selector). */
-  providersRev?: number;
-  /** The workspace root, for the card ask's ONE follow-up read (story 3b). */
+  /**
+   * The workspace root, for the ONE cross-map read (story 16.7) and the
+   * image's own file (story 16.15). The ask card reads its own source through
+   * the hook, never through this prop.
+   */
   workspacePath?: string;
   /** STORY 16.16: the app's one narration sink (the cursor chip's state). */
   onNarrate?: (gesture: GestureNarration) => void;
@@ -941,10 +908,6 @@ function GroundCard({
   // locally (view state, never a record), exactly like a chip whose target was
   // gone before the workspace opened.
   const [gone, setGone] = useState<readonly string[]>([]);
-  // STORY 15.1 — the ask panel is VIEW state too: opening it writes nothing,
-  // closing it forgets the answer, and the turn itself never touches the map.
-  // It exists only on the OPEN card.
-  const [asking, setAsking] = useState(false);
   // STORY 16.12 — THE SELECTION is view state of the OPEN card: the exact text
   // the person selected in its reading, and the PROPOSED name once they press
   // `ask about this`. Nothing is created until they confirm; a collapse, a
@@ -977,7 +940,6 @@ function GroundCard({
     if (open) return;
     setPicker(null);
     setPanel(null);
-    setAsking(false);
     // Story 16.12: a closed card cannot offer a selection it no longer shows.
     setSelected(null);
     setNaming(null);
@@ -1085,9 +1047,6 @@ function GroundCard({
       // press there begins text selection, never a card drag — the small card
       // stays a crop (there is nothing to select on it).
       if (open && (e.target as HTMLElement).closest(".ground-reading")) return;
-      // Story 15.1: the ask panel is a surface, not the card's body — a press
-      // on its labels, its head or its answer must not start a card drag.
-      if ((e.target as HTMLElement).closest(".ground-ask-panel")) return;
       // While a gesture is armed every plane press stands still — the card's
       // drag included (ADR-0016's gate).
       if (isGestureArmed(interactionMode)) return;
@@ -1154,12 +1113,8 @@ function GroundCard({
       if (editingRef.current) void saveNoteDraft();
       // Story 16.7: the picker and the concept panel are view state of an open
       // card, so a press away closes them with it. Nothing is written by that.
-      // Story 15.1: the ask panel is the same kind of view — closing the card
-      // forgets the answer, and no turn is left behind (its stop is the panel's
-      // timeout; nothing here writes).
       setPicker(null);
       setPanel(null);
-      setAsking(false);
       onClose();
     }
     function onKey(e: KeyboardEvent) {
@@ -1176,12 +1131,6 @@ function GroundCard({
         setPanel(null);
         return;
       }
-      // Story 15.1: Esc closes the ASK panel first, leaving the card (and its
-      // reading) where the person was looking.
-      if (asking) {
-        setAsking(false);
-        return;
-      }
       onClose();
     }
     document.addEventListener("mousedown", onPressAway, true);
@@ -1190,7 +1139,7 @@ function GroundCard({
       document.removeEventListener("mousedown", onPressAway, true);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open, panel, asking]);
+  }, [open, panel]);
 
   // The expanded body scrolls the STORED reading; the plane's wheel zoom must
   // not steal the scroll. Passive: this only stops the plane, never the page.
@@ -1780,7 +1729,8 @@ function GroundCard({
           {/* STORY 17.1 — THE ASK VERB: a card about this reference. It only
               PROPOSES a name (the person edits or accepts it); the confirm is
               the one write, and the reference card itself is never touched.
-              The card's own ask panel stays until story 17.7 retires it. */}
+              Story 17.7 retired the embedded panel: this is the ground map's
+              ONLY ask-shaped verb. */}
           {open && onCreateAsk !== undefined && askNaming === null && (
             <button
               type="button"
@@ -1829,20 +1779,6 @@ function GroundCard({
                 {shownNote === null ? "add a note…" : "edit the note…"}
               </button>
             )
-          )}
-          {/* STORY 15.1 — the ask verb, on the EXPANDED card only: the app's
-              first turn of its own. The anchored card's NAME is shown by the
-              panel; nothing else from the map is sent (story 3 adds the
-              packet). A turn is not a move: no record, no history, no mirror. */}
-          {open && onAsk !== undefined && (
-            <button
-              type="button"
-              className="ground-ask-open"
-              disabled={busy}
-              onClick={() => setAsking(true)}
-            >
-              ask…
-            </button>
           )}
           {/* STORY 16.8 — the ONE pull verb, on the EXPANDED card only. It is
               the button's press and nothing else: no read on open, no watcher,
@@ -1930,28 +1866,10 @@ function GroundCard({
           onClose={() => setPanel(null)}
         />
       )}
-      {/* STORY 15.1 / 3b — the card's ask panel, beside the card it is
-          anchored on. It shows the card's name, and its turn carries the SAME
-          packet the Ask Move carries, anchored on ONE block: this card. The
-          card's LINKS never ride — a link is wordless wiring, not context.
-          View state only: closing it leaves the card exactly as it was, and a
-          card ask writes no record (it is not a Move). */}
-      {open && asking && onAsk !== undefined && (
-        <AskSidecarPanel
-          card={{
-            name: reference.name,
-            state,
-            reading,
-            readingText: text ?? null,
-            note: note ?? null,
-          }}
-          workspacePath={workspacePath ?? ""}
-          turn={onAsk}
-          onConfigure={onConfigure}
-          providersRev={providersRev}
-          onClose={() => setAsking(false)}
-        />
-      )}
+      {/* STORY 17.7 — THE EMBEDDED PANEL IS GONE. The expanded card's one
+          ask-shaped verb is `ask about this` above: it makes an ask card beside
+          this one, and THAT card owns the turn, the declaration, the readback
+          and the stop. There is no second way to ask on the ground map. */}
     </div>
   );
 }

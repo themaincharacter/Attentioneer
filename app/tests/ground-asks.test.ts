@@ -725,4 +725,19 @@ describe("the ask path reuses the existing card-ask turn (story 17.3 adds the th
       expect(CONTENT_CLASSES).toContain(name);
     }
   });
+
+  test("the embedded panel is retired: one ask-shaped verb, no second surface", () => {
+    // STORY 17.7: the card keeps `ask about this` and nothing else ask-shaped;
+    // the ask card owns the turn, the declaration and the readback.
+    expect(LAYER).toContain("ask about this");
+    expect(LAYER).not.toContain("ask…");
+    expect(LAYER).not.toContain("AskSidecarPanel");
+    expect(LAYER).not.toContain("ground-ask-panel");
+    expect(LAYER).not.toMatch(/\bonAsk\b/);
+    expect(APP).not.toContain("onAsk={turnPort}");
+    expect(APP).not.toContain("providersRev");
+    // The surviving ask surface still mounts the shared packet declaration.
+    expect(source("canvas/AskCard.tsx")).toContain("<PacketSurface");
+    expect(APP).toContain("onAskTurn={ground.askTurn}");
+  });
 });

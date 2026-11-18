@@ -212,8 +212,8 @@ describe("the Providers section keeps the one implementation", () => {
     expect(html).toContain("asking where keys live");
   });
 
-  test("the ask panels have no provider form: Settings is the only editor", () => {
-    const card = codeOf(source("canvas/AskSidecarPanel.tsx"));
+  test("the ask surfaces have no provider form: Settings is the only editor", () => {
+    const card = codeOf(source("canvas/AskCard.tsx"));
     const ask = codeOf(source("canvas/AskPanel.tsx"));
     const app = codeOf(source("App.tsx"));
     for (const panel of [card, ask]) {
@@ -241,17 +241,18 @@ describe("a row added in Settings is the row an ask offers", () => {
     expect(providerOptions(settings)).toEqual([
       { id: "local-llama", label: "Local llama" },
     ]);
-    // The card's ask maps the same options; Settings' Turn defaults does too.
-    expect(source("canvas/AskSidecarPanel.tsx")).toContain(
-      "providerOptions(settings)",
-    );
+    // Settings' Turn defaults is now the only selector: the embedded panel's
+    // per-ask selector retired with it (17.7), so an ask card sends with the
+    // one default selection.
     expect(source("canvas/SettingsPanel.tsx")).toContain(
       "providerOptions(settings)",
     );
-    // The selector's value is the shared selection, so a new ask starts there.
-    expect(source("canvas/AskSidecarPanel.tsx")).toContain(
-      "value={settings?.providerId ?? \"\"}",
+    expect(source("canvas/SettingsPanel.tsx")).toContain(
+      "value={settings.providerId}",
     );
+    const card = codeOf(source("canvas/AskCard.tsx"));
+    expect(card).not.toContain("providerOptions");
+    expect(card).not.toContain("settings.providerId");
   });
 
   test("the default selection is what a new ask resolves", () => {
@@ -328,12 +329,17 @@ describe("with nothing configured an ask is a sentence and a shortcut", () => {
     expect(html).toContain("configure");
   });
 
-  test("the card's ask has the same one-sentence branch, no inline form", () => {
-    const card = source("canvas/AskSidecarPanel.tsx");
-    expect(card).toContain('resolveSelection(settings).kind !== "resolved"');
-    expect(card).toContain("{PROVIDER_SENTENCES.nothing}");
-    expect(card).toContain("open settings");
-    expect(card).toContain("onConfigure");
+  test("the ask card has no provider branch: the hook refuses with one sentence", () => {
+    // STORY 17.7 finding: the panel's dedicated "nothing configured — open
+    // settings" branch retired with it. The ask card still sends; the hook
+    // refuses the turn with PROVIDER_SENTENCES.nothing and the card shows it.
+    const card = codeOf(source("canvas/AskCard.tsx"));
+    expect(card).not.toContain("resolveSelection");
+    expect(card).not.toContain("onConfigure");
+    expect(card).not.toContain("open settings");
+    expect(card).toContain("ask-card-problem");
+    const hook = codeOf(source("canvas/useGround.ts"));
+    expect(hook).toContain("PROVIDER_SENTENCES.nothing");
   });
 });
 

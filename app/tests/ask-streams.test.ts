@@ -534,11 +534,14 @@ describe("the Ask panel shows arrival and keeps a marked partial", () => {
     expect(html).not.toContain("not recorded as an answer");
   });
 
-  test("the card ask panel is untouched", () => {
-    const panel = source("canvas/AskSidecarPanel.tsx");
-    expect(panel).toContain("onPart:");
-    expect(panel).not.toContain("askPartialWords");
-    expect(panel).not.toContain("askOutcomeOf");
+  test("the ask card keeps the panel's arrival without its record vocabulary", () => {
+    // STORY 17.7: the embedded panel is gone; the ask card is the ground map's
+    // one ask surface. Its pending line streams the SAME parts, while the
+    // panel's partial sentence and ending vocabulary stay with the Ask Move.
+    const card = source("canvas/AskCard.tsx");
+    expect(card).toContain("askPartPending(current, text)");
+    expect(card).not.toContain("askPartialWords");
+    expect(card).not.toContain("askOutcomeOf");
   });
 });
 

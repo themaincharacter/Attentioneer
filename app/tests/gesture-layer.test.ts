@@ -310,7 +310,9 @@ describe("the motion contract (shortlist item 6)", () => {
 
   test("the ground styles use the tokens, and no ad-hoc duration survives there", () => {
     const start = CSS.indexOf("Story 16.1 — the GROUND map's own layer");
-    const end = CSS.indexOf("STORY 15.1 — THE ASK PANEL");
+    // STORY 17.7: the embedded panel's block is gone; the ground styles now
+    // end where its retirement note begins.
+    const end = CSS.indexOf("STORY 17.7 — the embedded ask panel");
     const ground = CSS.slice(start, end);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);

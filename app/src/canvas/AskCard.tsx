@@ -50,7 +50,7 @@ import type { GroundAddResult } from "./useGround";
  * most recent whole turns under a stated bound, then the instruction and the
  * bound. Before the send the card DECLARES every block with its exact size and
  * opens the exact bytes through the shared PacketSurface — the same verb the
- * embedded panel uses; after it, the same surface opens what left. The bound's
+ * Ask Move uses; after it, the same surface opens what left. The bound's
  * numbers live in map/asks.ts; this file only passes them and draws what the
  * packet declares.
  *
@@ -551,7 +551,7 @@ export function AskCard({
       // leaves the turn to its existing timeout.
     }
     // The stop stays pressed until the turn's own line settles the pending
-    // line (the same idiom the embedded panel uses): no second stop is sent.
+    // line (the same idiom the Ask Move uses): no second stop is sent.
   }
 
   const recorded = askPendingInRecord(turns, pending);
