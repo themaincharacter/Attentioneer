@@ -6403,9 +6403,34 @@ body {
 
 .ground-reference:hover .ground-link-handle,
 .ground-reference:focus-within .ground-link-handle,
-.ground-reference.expanded .ground-link-handle {
+.ground-reference.expanded .ground-link-handle,
+.ask-card:hover .ground-link-handle,
+.ask-card:focus-within .ground-link-handle,
+.ask-card.expanded .ground-link-handle,
+.session-card:hover .ground-link-handle,
+.session-card:focus-within .ground-link-handle,
+.session-card.expanded .ground-link-handle {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* STORY 17.9 — the context line above an ask card's thread: the wired cards by
+   name, or one quiet line saying nothing is wired in. No count, no chip. */
+.ask-card-context {
+  padding: 0 2px 6px;
+  font-size: 11px;
+  color: rgba(141, 136, 124, 0.9);
+}
+
+.ask-card-context-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ask-card-context-line.quiet,
+.ask-card-context-missing {
+  opacity: 0.75;
 }
 
 .ground-link-handle:hover {

@@ -52,6 +52,7 @@ const BAR = source("canvas/ArmedBar.tsx");
 const WORDS = source("canvas/gestureWord.ts");
 const APP = source("App.tsx");
 const LAYER = source("canvas/GroundLayer.tsx");
+const LINK_DRAG = source("canvas/linkDrag.ts");
 const PLANE = source("canvas/CanvasPlane.tsx");
 
 /** Every gesture the chip can narrate, in the table's own order. */
@@ -245,10 +246,12 @@ describe("the chip clears, and renders nothing it cannot place", () => {
     expect(CHIP).toContain('window.addEventListener("blur"');
     expect(CHIP).toContain('window.addEventListener("mouseup", onClear)');
     expect(CHIP).toContain("onClear");
-    // The card's drag and the link drag clear on release...
+    // The card's drag and the link drag clear on release... STORY 17.9 moved
+    // the wiring drag into ONE helper the three card kinds share.
     expect(LAYER).toContain("onNarrate?.(GESTURE_IDLE)");
     expect(LAYER).toContain('onNarrate?.({ kind: "moving", name: reference.name })');
-    expect(LAYER).toContain('onNarrate?.({ kind: "wiring" })');
+    expect(LINK_DRAG).toContain('onNarrate?.({ kind: "wiring" })');
+    expect(LINK_DRAG).toContain("onNarrate?.(GESTURE_IDLE)");
     // ...and so do the plane's pan/zoom and the pen's stroke.
     expect(PLANE).toContain("onNarrateRef.current?.(GESTURE_IDLE)");
     expect(PLANE).toContain("planeGestureWord");

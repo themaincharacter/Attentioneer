@@ -392,15 +392,6 @@ export interface AskRequest {
 export interface InFlightAsk {
   /** The anchor reference's slug — or, on an ask card's turn, the CARD's slug. */
   on: string;
-  /**
-   * THE ANCHOR, NAMED STRUCTURALLY (Epic 17 story 4) — PROVISIONAL, the one
-   * record-shape addition of the story. An ASK CARD's turn rides no pointer
-   * (`pointer` is null: the anchored card is the material), so the reference
-   * the conversation is about is named in the `ask` Change instead, by slug.
-   * Absent on the concept map's Ask, whose pointer is named at the top of the
-   * line: that route's record is byte-identical to before the story.
-   */
-  anchor?: string;
   /** The workspace root the intake's attachment rule resolves against. */
   workspacePath: string;
   /** The reach the question rides, or null for none. */
@@ -704,9 +695,9 @@ function askChange(ask: InFlightAsk): AskChange {
       ask.pointer === null
         ? null
         : pointerKey(ask.on, ask.pointer.form, ask.pointer.value),
-    // PROVISIONAL (story 17.4): the anchor rides only the ask card's turn. A
-    // slug is structure; no word, preview or content size ever rides with it.
-    ...(ask.anchor === undefined ? {} : { anchor: ask.anchor }),
+    // STORY 17.9 — NO ANCHOR ON A NEW MOVE. The user's correction made the
+    // WIRES the context, so the inclusion set is the record's fact and the old
+    // `anchor` field is read-only legacy (old lines still parse and display).
     outcome: "no-response",
     included: ask.included,
     responseSize: null,
@@ -794,17 +785,18 @@ export async function abandonAsk(
 
 /**
  * The one thing an ask card's turn must name structurally: the card the Move
- * belongs to (the PRISM's `on`), the reference the card is about (the
- * Change's `anchor`) and the inclusion set (the anchor's natural key, or null
- * when nothing pointer-identified rode — an anchor that is gone has no key, and
- * a card with no reading has no pointer to name).
+ * belongs to (the PRISM's `on`) and the inclusion set (the WIRED context
+ * cards' readings' natural keys, or null when nothing pointer-identified rode).
+ * STORY 17.9 retired the anchor as the mechanism: new lines never write it.
  */
 export interface AskCardTurn {
   /** The ask card's slug — the node the Move is made in. */
   on: string;
-  /** The anchored reference's slug, exactly as `map/asks.txt` names it. */
-  anchor: string;
-  /** The inclusion set's pointer natural keys, or null for none. */
+  /**
+   * The inclusion set's pointer natural keys — the natural keys of the WIRED
+   * context cards' readings (story 17.9), or null for none. No anchor: the
+   * wires are the context.
+   */
   included: string[] | null;
 }
 
@@ -821,7 +813,6 @@ export function askCardInFlight(
 ): InFlightAsk {
   return {
     on: turn.on,
-    anchor: turn.anchor,
     workspacePath,
     pointer: null,
     included: turn.included,

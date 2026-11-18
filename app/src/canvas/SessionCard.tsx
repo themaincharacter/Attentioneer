@@ -11,6 +11,9 @@ import {
   type SessionEntry,
 } from "../map/sessions";
 import type { GroundAddResult } from "./useGround";
+import type { GestureMode } from "./gates";
+import { startGroundLinkDrag } from "./linkDrag";
+import type { GestureNarration } from "./gestureWord";
 import {
   allowOnceOption,
   refuseOption,
@@ -179,6 +182,9 @@ export function SessionCard({
   onRefuse,
   onMakeResult,
   onRemove,
+  onLink,
+  interactionMode = "idle",
+  onNarrate,
 }: {
   session: SessionCardRecord;
   /** The bound row's display name, or null when this build does not ship it. */
@@ -221,6 +227,16 @@ export function SessionCard({
    * A run in flight refuses: the transcript is still being written.
    */
   onRemove?: () => Promise<GroundAddResult>;
+  /**
+   * STORY 17.9 — WIRE this session card to another card (the source side): a
+   * session card's completed run is context for an ask card, so it needs the
+   * same small edge handle the other cards have.
+   */
+  onLink?: (from: string, to: string) => Promise<GroundAddResult>;
+  /** The gesture gate, so a wiring drag never starts under an armed tool. */
+  interactionMode?: GestureMode;
+  /** The one sentence a wiring drag speaks; absent in a render test. */
+  onNarrate?: (gesture: GestureNarration) => void;
 }) {
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -260,6 +276,26 @@ export function SessionCard({
     el.addEventListener("wheel", onWheel, { passive: true });
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
+
+  // STORY 17.9 — THE WIRING HANDLE, the reference card's raw-listener idiom
+  // (d3-zoom stops mousedown at the plane). A release on any ground card draws
+  // the one ordered pair; the layer owns the write and its refusal.
+  useEffect(() => {
+    const el = cardRef.current;
+    if (el === null) return;
+    function handleMouseDown(e: MouseEvent) {
+      if (e.button !== 0) return;
+      if (!(e.target as HTMLElement).closest(".ground-link-handle")) return;
+      e.stopPropagation();
+      startGroundLinkDrag(e, session.on, {
+        interactionMode,
+        onLink,
+        onNarrate,
+      });
+    }
+    el.addEventListener("mousedown", handleMouseDown);
+    return () => el.removeEventListener("mousedown", handleMouseDown);
+  }, [session.on, interactionMode, onLink, onNarrate]);
 
   // Opening starts AT THE NEWEST ENTRY again.
   useEffect(() => {
@@ -371,6 +407,16 @@ export function SessionCard({
     >
       <div className="session-card-name">{session.name}</div>
       <div className="session-card-kind">{sessionKindLine(toolName)}</div>
+      {/* STORY 17.9 — a session card can be wired into an ask card; its last
+          completed run is what it lends. */}
+      {onLink !== undefined && (
+        <button
+          type="button"
+          className="ground-link-handle"
+          title="wire this card to another"
+          aria-label="wire this card to another"
+        />
+      )}
       <div className="session-card-body" ref={bodyRef} onScroll={trackScroll}>
         {open ? (
           entries.length === 0 ? (

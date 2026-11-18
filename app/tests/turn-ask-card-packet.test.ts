@@ -184,13 +184,15 @@ const GOLDEN_SHORT = [
   "",
   "This view is one view of a map that is larger than it; it is not the map. Every block above is headed by its own name, exactly as written after the two hashes.",
   "",
-  "One of those blocks is the conversation so far: what has already been said in this conversation, and context, not material. The anchored card is the material.",
+  "The cards above are the cards wired into this question: they are what it is about, and their readings are the material.",
+  "",
+  "One of those blocks is the conversation so far: what has already been said in this conversation, and context, not material. The cards are the material.",
   "",
   "You may ask for one block in full: write, on a line of its own, exactly",
   "",
   "READ: <name>",
   "",
-  "with the name written exactly as the block's heading. The anchored card is the only block you may ask for, and you may ask for it at most once. If what you need is not here, do not ask for it: answer from what this view gives you, and say plainly what you could not see.",
+  "with the name written exactly as the block's heading. You may ask for one of the cards above at most once. If what you need is not here, do not ask for it: answer from what this view gives you, and say plainly what you could not see.",
   "",
   "## the bound",
   "",
@@ -199,12 +201,12 @@ const GOLDEN_SHORT = [
 
 describe("the ask card's packet is the card AND the thread", () => {
   test("the assembled text is pinned, byte for byte", () => {
-    const packet = assembleAskCardPacket(CARD, SHORT_THREAD, QUESTION);
+    const packet = assembleAskCardPacket([CARD], SHORT_THREAD, QUESTION);
     expect(packet.text).toBe(GOLDEN_SHORT);
   });
 
   test("the blocks ride in the story's order", () => {
-    const packet = assembleAskCardPacket(CARD, SHORT_THREAD, QUESTION);
+    const packet = assembleAskCardPacket([CARD], SHORT_THREAD, QUESTION);
     expect(packet.declaration.blocks.map((block) => block.kind)).toEqual([
       "question",
       "card",
@@ -215,7 +217,7 @@ describe("the ask card's packet is the card AND the thread", () => {
   });
 
   test("a first question has no thread block and says nothing about turns", () => {
-    const packet = assembleAskCardPacket(CARD, [], QUESTION);
+    const packet = assembleAskCardPacket([CARD], [], QUESTION);
     expect(packet.declaration.blocks.map((block) => block.kind)).toEqual([
       "question",
       "card",
@@ -233,7 +235,7 @@ describe("the ask card's packet is the card AND the thread", () => {
         ? person("person line " + String(index) + " " + "w".repeat(220))
         : answer("answer line " + String(index) + " " + "w".repeat(230)),
     );
-    const packet = assembleAskCardPacket(CARD, long, QUESTION);
+    const packet = assembleAskCardPacket([CARD], long, QUESTION);
     const thread = packet.blocks.find((block) => block.kind === "thread");
     if (thread === undefined) throw new Error("the thread block did not ride");
     // The qualitative sentence, and NEVER a count, a size or a token number:
@@ -261,7 +263,7 @@ describe("the ask card's packet is the card AND the thread", () => {
   });
 
   test("the TEXT carries no counts, sizes or token numbers", () => {
-    const packet = assembleAskCardPacket(CARD, SHORT_THREAD, QUESTION);
+    const packet = assembleAskCardPacket([CARD], SHORT_THREAD, QUESTION);
     // The fixture's words avoid digits, so any digit would be a count or size.
     expect(packet.text).not.toMatch(/[0-9]/);
     expect(packet.text).not.toMatch(/\bbytes?\b|\btokens?\b|\bchars?\b/i);
@@ -274,7 +276,7 @@ describe("the ask card's packet is the card AND the thread", () => {
 
 describe("the declaration names every block with the bytes actually sent", () => {
   test("each size is its block's own bytes; the total is the one message's", () => {
-    const packet = assembleAskCardPacket(CARD, SHORT_THREAD, QUESTION);
+    const packet = assembleAskCardPacket([CARD], SHORT_THREAD, QUESTION);
     for (const [index, line] of packet.declaration.blocks.entries()) {
       expect(line.kind).toBe(packet.blocks[index]!.kind);
       expect(line.name).toBe(packet.blocks[index]!.name);
@@ -287,7 +289,7 @@ describe("the declaration names every block with the bytes actually sent", () =>
   });
 
   test("the thread's declaration line is the block's size, said plainly", () => {
-    const packet = assembleAskCardPacket(CARD, SHORT_THREAD, QUESTION);
+    const packet = assembleAskCardPacket([CARD], SHORT_THREAD, QUESTION);
     const thread = packet.declaration.blocks.find(
       (block) => block.kind === "thread",
     );
@@ -303,7 +305,7 @@ describe("the declaration names every block with the bytes actually sent", () =>
   });
 
   test("the bytes the surface opens ARE the bytes the turn sends", () => {
-    const packet = assembleAskCardPacket(CARD, SHORT_THREAD, QUESTION);
+    const packet = assembleAskCardPacket([CARD], SHORT_THREAD, QUESTION);
     expect(packet.messages).toHaveLength(1);
     expect(packet.messages[0]!.role).toBe("user");
     expect(packet.messages[0]!.content).toBe(packet.text);
@@ -352,7 +354,7 @@ function scripted(answers: readonly string[]) {
 const PROVIDER = { baseUrl: "http://x", model: "m", apiKey: "sk-never-logged" };
 
 function threadPacket(asked: readonly string[] = ["rain"]) {
-  return assembleAskCardPacket(CARD, SHORT_THREAD, QUESTION, ASK_THREAD_BOUND, asked);
+  return assembleAskCardPacket([CARD], SHORT_THREAD, QUESTION, ASK_THREAD_BOUND, asked);
 }
 
 describe("the READ set is the anchored block alone", () => {
@@ -445,7 +447,7 @@ function renderCard() {
     createElement(AskCard, {
       ask: ASK,
       anchorName: "rain",
-      anchor: CARD,
+      context: [CARD],
       turns: SHORT_THREAD,
       open: true,
       previewLines: 6,
@@ -458,7 +460,7 @@ function renderCard() {
 describe("the card shows the declaration and the bytes verb BEFORE the send", () => {
   test("the thread's block, its size and the total are on screen before send", () => {
     const html = renderCard();
-    const packet = assembleAskCardPacket(CARD, SHORT_THREAD, "");
+    const packet = assembleAskCardPacket([CARD], SHORT_THREAD, "");
     const thread = packet.declaration.blocks.find(
       (block) => block.kind === "thread",
     );
@@ -484,8 +486,9 @@ describe("the card shows the declaration and the bytes verb BEFORE the send", ()
       expect(text).toContain("ASK_THREAD_BOUND");
     }
     // The thread is the record the card already shows, in file order; the
-    // anchor's block is the same already-cropped description of the card.
-    expect(card).toContain("assembleAskCardPacket(anchor, turns, question, ASK_THREAD_BOUND)");
+    // WIRED cards' blocks are the same already-cropped descriptions (17.9).
+    expect(card).toContain("assembleAskCardPacket(");
+    expect(card).toContain("context,");
     // STORY 17.5: the hook hands the assembler the COMPOSED thread (a fork's
     // carried prefix read from the parent, then its own turns) through the one
     // pure helper, so the bound is applied to the whole thread in one place.
@@ -499,7 +502,7 @@ describe("the card shows the declaration and the bytes verb BEFORE the send", ()
     expect(surface).not.toContain("lastTurns");
   });
 
-  test("the card's old small face still renders without an anchor prop", () => {
+  test("a card with NO context still composes and says nothing is wired in", () => {
     const html = renderToStaticMarkup(
       createElement(AskCard, {
         ask: ASK,
@@ -512,7 +515,10 @@ describe("the card shows the declaration and the bytes verb BEFORE the send", ()
       }),
     );
     expect(html).toContain("is the gauge calibrated?");
-    expect(html).not.toContain("will go:");
+    expect(html).toContain("nothing is wired into this question.");
+    // It still sends: the question and the thread, with no card block.
+    expect(html).toContain("will go:");
+    expect(html).not.toContain("the card \u201c");
   });
 });
 

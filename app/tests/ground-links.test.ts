@@ -261,7 +261,9 @@ describe("the cascade writes in the same pass, after the reference's own removal
     const remove = hook.slice(hook.indexOf("const remove = useCallback"));
     expect(remove).toContain("removeGroundRecords(");
     const groundAt = remove.indexOf("removeGroundRecords(");
-    const linksAt = remove.indexOf("removeGroundLinksNaming(");
+    // STORY 17.9 keeps a context wire dangling, so the cascade filters the list
+    // and writes it through the same one link writer rather than the old helper.
+    const linksAt = remove.indexOf("saveGroundLinks(");
     expect(groundAt).toBeGreaterThan(-1);
     expect(linksAt).toBeGreaterThan(groundAt);
     // The cascade is inside the same queued write, not a second path.

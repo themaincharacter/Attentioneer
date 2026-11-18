@@ -337,11 +337,12 @@ export async function sendAskOut(
  * THE ENDING FORMS THE RECORD, exactly as story 15.7b settled: a completed
  * turn is `answered` with the response's exact size and decode, and a stop, a
  * break or the turn's budget is the existing no-response, even when the card
- * still shows a partial. The anchored reference is named in the Change by its
- * slug (pointer is null: the anchored card is the material), the inclusion set
- * is the anchor's natural key when the packet carried it, and NOT ONE WORD of
- * the question, the answer or the thread is written here — the conversation
- * file keeps those, and its answer line names this PRISM's id.
+ * still shows a partial. Since STORY 17.9 the WIRED context cards are the
+ * material and their readings' natural keys are the inclusion set; the legacy
+ * `anchor` field is NOT written on a new line (old lines still parse and
+ * display). NOT ONE WORD of the question, the answer or the thread is written
+ * here — the conversation file keeps those, and its answer line names this
+ * PRISM's id.
  *
  * The caller appends this BEFORE the conversation line, because the answer
  * line carries the Move's id (PROVISIONAL ordering, the story's own note).
@@ -349,14 +350,16 @@ export async function sendAskOut(
 export function appendAskCardMove(
   workspacePath: string,
   on: string,
-  anchor: string,
   included: string[] | null,
   ending: AskEnding,
   answer: string | null,
 ): Promise<Prism | null> {
   return enqueue(async () => {
+    // STORY 17.9 — NO ANCHOR. The Move names the ask card and the WIRED
+    // context's inclusion set; the old `anchor` field is legacy and new lines
+    // do not carry it (old lines still parse and display).
     const moved = await recordAskCardTurn(
-      askCardInFlight(workspacePath, { on, anchor, included }),
+      askCardInFlight(workspacePath, { on, included }),
       ending,
       answer,
       askContactDeps(workspacePath),

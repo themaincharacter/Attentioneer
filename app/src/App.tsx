@@ -4385,6 +4385,8 @@ function App() {
           <GroundWires
             links={ground.links}
             references={ground.references}
+            asks={ground.asks}
+            sessions={ground.sessions}
             onRemoveLink={ground.unlink}
           />
         )}
@@ -4459,6 +4461,7 @@ function App() {
             onPull={ground.pull}
             onDismissPull={ground.dismissPull}
             onLink={ground.link}
+            links={ground.links}
             workspacePath={workspace.path}
             onNarrate={narrate}
             interactionMode={gestureMode}

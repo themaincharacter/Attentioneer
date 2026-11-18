@@ -506,7 +506,6 @@ describe("the turn's order is a stated contract", () => {
     const moved = await recordAskCardTurn(
       askCardInFlight("/w", {
         on: "gauge-question",
-        anchor: "rain-gauge",
         included: null,
       }),
       "answered",
@@ -520,7 +519,6 @@ describe("the turn's order is a stated contract", () => {
     const written = await writeAskTurn(
       workspace,
       "gauge-question",
-      "rain-gauge",
       null,
       "quasar lantern meadow",
       {

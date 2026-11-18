@@ -450,7 +450,7 @@ describe("the delete: the note goes with the card, in the queue", () => {
     const remove = HOOK.slice(HOOK.indexOf("const remove = useCallback"));
     const groundAt = remove.indexOf("removeGroundRecords(");
     const noteAt = remove.indexOf("removeGroundNote(");
-    const linksAt = remove.indexOf("removeGroundLinksNaming(");
+    const linksAt = remove.indexOf("saveGroundLinks(");
     expect(groundAt).toBeGreaterThan(-1);
     expect(noteAt).toBeGreaterThan(groundAt);
     expect(linksAt).toBeGreaterThan(noteAt);

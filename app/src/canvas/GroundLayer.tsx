@@ -36,7 +36,6 @@ import {
 } from "../map/readings";
 import type { Media } from "../map/media";
 import { askCardOf } from "../turn/context";
-import type { AskPacketCard } from "../turn/packet";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
 import {
@@ -46,6 +45,8 @@ import {
   type GroundDragState,
 } from "./groundDrag";
 import { isGestureArmed, type GestureMode } from "./gates";
+import { startGroundLinkDrag } from "./linkDrag";
+import type { GroundLink } from "../map/groundLinks";
 import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import {
   BESIDE_OFFSET_X,
@@ -73,7 +74,12 @@ import {
   pickerCommand,
   type MentionChoice,
 } from "./MentionPicker";
-import { askAnchorOf, askThreadOf, type GroundAddResult } from "./useGround";
+import {
+  askAnchorOf,
+  askContextFactsOf,
+  askThreadOf,
+  type GroundAddResult,
+} from "./useGround";
 
 /**
  * The ground map's own layer (story 16.1; story 16.2 made the row live; story
@@ -500,6 +506,12 @@ interface GroundLayerProps {
    */
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
   /**
+   * STORY 17.9 — every readable ground link, in FILE ORDER. An ask card's
+   * context is the links whose TARGET is that card; the records arrive loaded,
+   * and nothing here writes or repairs a wire.
+   */
+  links?: readonly GroundLink[];
+  /**
    * The workspace root, for the ONE cross-map read (story 16.7): the concept
    * map's word index, read-only, so a word mention can be drawn live or
    * dangling and the picker can offer the vocabulary. Optional so a render
@@ -569,6 +581,7 @@ export function GroundLayer({
   onPull,
   onDismissPull,
   onLink,
+  links = [],
   workspacePath = "",
   onNarrate,
   interactionMode = "idle",
@@ -702,23 +715,36 @@ export function GroundLayer({
     name: acpRowLabel(spec),
   }));
   /**
-   * STORY 17.3 — the anchored card's block facts, as the packet reads them.
-   * Built from ALREADY-LOADED state through the same pure crop the send uses
+   * STORY 17.3 — the card's block facts, as the packet reads them. Built from
+   * ALREADY-LOADED state through the same pure crop the send uses
    * (turn/context.ts's askCardOf), so the declaration the card shows and the
-   * bytes the turn sends are composed from one description of the anchor. A
-   * DANGLING anchor keeps its slug as the block's name and rides no preview
-   * (story 17.6 states it; nothing is repaired here).
+   * bytes the turn sends are composed from one description. STORY 17.9 makes
+   * the wires the input; the legacy anchor field is display only.
    */
-  const anchorCardOf = (ask: AskCardRecord): AskPacketCard => {
-    const anchor =
-      references.find((reference) => reference.on === ask.anchor) ?? null;
-    return askCardOf({
-      name: anchor === null ? ask.anchor : anchor.name,
-      state: anchor === null ? null : states[anchor.on] ?? null,
-      reading: anchor === null ? null : readingsBySlug.get(anchor.on) ?? null,
-      readingText: anchor === null ? null : texts[anchor.on] ?? null,
-      note: anchor === null ? null : notes[anchor.on] ?? null,
+  /**
+   * STORY 17.9 — WHAT IS WIRED INTO THIS ASK CARD, resolved once per render
+   * from the loaded map: the reference/ask/session cards whose link targets
+   * this card, each as the block the packet sends, and whether a wire dangles.
+   * The anchor FIELD is not read here; it is legacy display only.
+   */
+  const askContextOf = (ask: AskCardRecord) => {
+    const resolved = askContextFactsOf({
+      ask: ask.on,
+      links,
+      references,
+      asks,
+      askTurns,
+      sessions,
+      sessionEntries,
+      readings,
+      texts,
+      notes,
+      states,
     });
+    return {
+      cards: resolved.facts.map(askCardOf),
+      dangling: resolved.dangling.length > 0,
+    };
   };
   const wordSlugs =
     concepts === null ? null : new Set(concepts.map((word) => word.slug));
@@ -796,12 +822,16 @@ export function GroundLayer({
         // carries it, or "gone" with the name the record remembers. Nothing
         // here looks for a replacement, rewrites the anchor or merges asks.
         const anchorView = askAnchorOf(ask, references);
+        // STORY 17.9 — THE WIRES ARE THE CONTEXT: what is connected INTO this
+        // card supplies its packet, never the legacy anchor field.
+        const contextView = askContextOf(ask);
         return (
           <AskCard
             key={ask.on}
             ask={ask}
             anchorName={anchorView.name}
-            anchor={anchorCardOf(ask)}
+            context={contextView.cards}
+            contextMissing={contextView.dangling}
             turns={thread.turns}
             carried={thread.carried.length}
             forkMissing={thread.missing}
@@ -852,6 +882,9 @@ export function GroundLayer({
                 ? undefined
                 : () => onRemoveAsk(ask.on)
             }
+            onLink={onLink}
+            interactionMode={interactionMode}
+            onNarrate={onNarrate}
           />
         );
       })}
@@ -923,6 +956,9 @@ export function GroundLayer({
                 ? undefined
                 : () => onRemoveSession(session.on)
             }
+            onLink={onLink}
+            interactionMode={interactionMode}
+            onNarrate={onNarrate}
           />
         );
       })}
@@ -1202,39 +1238,16 @@ function GroundCard({
       // It must be handled BEFORE the generic button check below, because it
       // is a button whose press starts a gesture of its own.
       if ((e.target as HTMLElement).closest(".ground-link-handle")) {
-        if (isGestureArmed(interactionMode) || onLink === undefined) return;
-        e.preventDefault();
-        // STORY 16.16 (shortlist item 4): the wiring drag is a gesture with a
-        // sentence of its own, and the chip says it until the release. The
-        // report is view state — the wire itself is still one write, below.
-        onNarrate?.({ kind: "wiring" });
-        let cancelled = false;
-        const finish = () => {
-          window.removeEventListener("mouseup", onLinkUp);
-          window.removeEventListener("keydown", onLinkKey);
-          onNarrate?.(GESTURE_IDLE);
-        };
-        const onLinkKey = (ev: KeyboardEvent) => {
-          if (ev.key !== "Escape") return;
-          cancelled = true;
-          finish();
-        };
-        const onLinkUp = (ev: MouseEvent) => {
-          finish();
-          if (cancelled) return;
-          // Element-under-pointer, never nearest-card math: the drag names the
-          // card it was actually released on (the ring-bind idiom, ADR-0016).
-          const under = document.elementFromPoint(ev.clientX, ev.clientY);
-          const card =
-            under instanceof Element
-              ? under.closest(".ground-reference")
-              : null;
-          const slug = card === null ? null : card.getAttribute("data-slug");
-          if (slug === null || slug === reference.on) return;
-          void onLink(reference.on, slug);
-        };
-        window.addEventListener("mouseup", onLinkUp);
-        window.addEventListener("keydown", onLinkKey);
+        // STORY 17.9: the drag lives in ONE helper now (linkDrag.ts), so an ask
+        // card and a session card offer the same gesture and their release can
+        // land on any ground card. Story 16.16's sentence still rides it.
+        if (startGroundLinkDrag(e, reference.on, {
+          interactionMode,
+          onLink,
+          onNarrate,
+        })) {
+          return;
+        }
         return;
       }
 

@@ -197,13 +197,17 @@ import type { Prism } from "../map/prisms";
 import { appendAskCardMove, appendSessionRun } from "../contacts/prismLog";
 import { askOutcomeOf, type AskEnding } from "../contacts/ask";
 import {
-  cardAskContext,
+  askCardsContext,
   fetchAskBlock,
+  type AskCardFacts,
   type AskContext,
 } from "../turn/context";
 import {
+  ASK_CONTEXT_BOUND,
   assembleAskCardPacket,
+  selectAskContextCards,
   type AskPacket,
+  type AskPacketCard,
   type AskPacketReadback,
 } from "../turn/packet";
 import { loadTurnSettings } from "../turn/provider";
@@ -1921,24 +1925,193 @@ export function askAnchorOf(
 }
 
 /**
- * THE ANCHOR'S NATURAL KEY (Epic 17 story 4), PURE: the inclusion set an ask
- * card's turn logs. The packet rides the ANCHORED card's block, so the thing
- * included is that card's reading — named by the pointer key of the reading's
- * form and value (on + form + value, the map's own citation vocabulary).
- *
- * NULL MEANS NOTHING POINTER-IDENTIFIED RODE: an anchor the map no longer
- * carries has no key, and a card with no reading has no pointer to name (its
- * block carried the name and state only). PROVISIONAL: the story allows the
- * anchor's natural key; the case where there is no reading is stated here, not
- * invented into a synthetic key.
+ * THE CONTEXT'S WIRES (Epic 17 story 9, PURE): the cards whose link TARGETS
+ * this ask card, in file order, deduped. The user's correction is the whole
+ * rule: a card's context is what is wired INTO it, not a field on its record.
+ * A wire whose source card is gone is DANGLING — reported here so the card can
+ * SAY it, never repaired by inventing a card or deleting the line.
  */
-export function askAnchorInclusion(
-  anchor: string | null,
-  reading: Reading | null,
+export interface AskContextWires {
+  /** Source slugs that resolve to a card, in wire-file order. */
+  sources: string[];
+  /** Source slugs whose card the map does not carry. */
+  dangling: string[];
+}
+
+export function askContextSources(
+  ask: string,
+  links: readonly GroundLink[],
+  known: Iterable<string>,
+): AskContextWires {
+  const knownSet = new Set(known);
+  const sources: string[] = [];
+  const dangling: string[] = [];
+  const seen = new Set<string>();
+  for (const link of links) {
+    if (link.to !== ask) continue;
+    if (seen.has(link.from)) continue;
+    seen.add(link.from);
+    if (knownSet.has(link.from)) sources.push(link.from);
+    else dangling.push(link.from);
+  }
+  return { sources, dangling };
+}
+
+/**
+ * WHAT A WIRED ASK OR SESSION CARD SAYS when it has no finished words to lend
+ * (story 17.9, PROVISIONAL wording). A wire is still a wire: the card rides,
+ * and its block says this one line rather than pretending it contributed
+ * nothing. A completed run that left no words says the last one.
+ */
+export const ASK_CONTEXT_NO_ANSWER =
+  "no answer has finished in this card yet, so nothing rides with it.";
+export const ASK_CONTEXT_NO_RUN =
+  "no run has finished in this card yet, so nothing rides with it.";
+export const ASK_CONTEXT_RUN_UNFINISHED =
+  "the last run in this card did not finish, so nothing rides with it.";
+export const ASK_CONTEXT_RUN_EMPTY =
+  "the last run in this card finished without words, so nothing rides with it.";
+
+/** What the resolver is handed: the loaded map, never a reader. */
+export interface AskContextFactsInput {
+  ask: string;
+  links: readonly GroundLink[];
+  references: readonly GroundReference[];
+  asks: readonly AskCard[];
+  askTurns: Readonly<Record<string, readonly AskTurn[]>>;
+  sessions?: readonly SessionCard[];
+  sessionEntries?: Readonly<Record<string, readonly SessionEntry[]>>;
+  readings: readonly Reading[];
+  texts: Readonly<Record<string, string>>;
+  notes: Readonly<Record<string, string>>;
+  states: Readonly<Record<string, ReadingState>>;
+}
+
+/** The wired cards' facts and the wires that dangle. */
+export interface AskContextFacts {
+  facts: AskCardFacts[];
+  dangling: string[];
+}
+
+/**
+ * RESOLVE an ask card's context from the WIRES (Epic 17 story 9, PURE). Every
+ * link whose target is this ask card contributes what its source card HAS:
+ *
+ *   - a REFERENCE card: name, state, reading crop and note crop (the existing
+ *     card-ask renderer);
+ *   - an ASK card: its most recent COMPLETED answer, whole, read from the
+ *     composed thread at this moment (never copied into a record);
+ *   - a SESSION card: its most recent COMPLETED run's text, whole entries;
+ *   - a card with none of those: the same block plus its one quiet line.
+ *
+ * A wire whose source is gone is DANGLING and is returned, not repaired.
+ */
+export function askContextFactsOf(
+  input: AskContextFactsInput,
+): AskContextFacts {
+  const sessions = input.sessions ?? [];
+  const sessionEntries = input.sessionEntries ?? {};
+  const known = [
+    ...input.references.map((reference) => reference.on),
+    ...input.asks.map((ask) => ask.on),
+    ...sessions.map((session) => session.on),
+  ];
+  const wired = askContextSources(input.ask, input.links, known);
+  const facts: AskCardFacts[] = [];
+  for (const source of wired.sources) {
+    const reference = input.references.find((entry) => entry.on === source);
+    if (reference !== undefined) {
+      facts.push({
+        on: reference.on,
+        name: reference.name,
+        state: input.states[reference.on] ?? null,
+        reading: readingFor(input.readings, reference.on),
+        readingText: input.texts[reference.on] ?? null,
+        note: input.notes[reference.on] ?? null,
+      });
+      continue;
+    }
+    const ask = input.asks.find((entry) => entry.on === source);
+    if (ask !== undefined) {
+      const thread = askThreadOf(ask, input.asks, input.askTurns).turns;
+      let answer: string | undefined;
+      for (let index = thread.length - 1; index >= 0; index -= 1) {
+        const turn = thread[index]!;
+        if (turn.role === "answer") {
+          answer = turn.text;
+          break;
+        }
+      }
+      facts.push({
+        on: ask.on,
+        name: ask.name,
+        state: null,
+        reading: null,
+        readingText: null,
+        note: null,
+        ...(answer === undefined
+          ? { empty: ASK_CONTEXT_NO_ANSWER }
+          : { answer }),
+      });
+      continue;
+    }
+    const session = sessions.find((entry) => entry.on === source);
+    if (session === undefined) {
+      // The known set and this loop are built from the same records; a miss
+      // here would be a programming error, and the wire stays said as dangling
+      // rather than silently dropped.
+      wired.dangling.push(source);
+      continue;
+    }
+    const result = sessionRunResult(sessionEntries[session.on] ?? []);
+    const fields: {
+      result?: string;
+      empty?: string;
+    } = {};
+    if (result.ending === "completed") {
+      if (result.text === "") fields.empty = ASK_CONTEXT_RUN_EMPTY;
+      else fields.result = result.text;
+    } else if (result.ending === null) {
+      fields.empty = ASK_CONTEXT_NO_RUN;
+    } else {
+      fields.empty = ASK_CONTEXT_RUN_UNFINISHED;
+    }
+    facts.push({
+      on: session.on,
+      name: session.name,
+      state: null,
+      reading: null,
+      readingText: null,
+      note: null,
+      ...fields,
+    });
+  }
+  return { facts, dangling: wired.dangling };
+}
+
+/**
+ * THE CONTEXT'S NATURAL KEYS (Epic 17 story 9, PURE): the inclusion set a
+ * sending turn logs — each INCLUDED card's reading named by the pointer key of
+ * its form and value (on + form + value, the map's own citation vocabulary).
+ *
+ * NULL MEANS NOTHING POINTER-IDENTIFIED RODE: a card with no reading has no
+ * pointer to name, and a session or ask card lends words, not a reading. A card
+ * dropped by the context bound never reaches this function: the packet's own
+ * selection is what is passed here, so the record names only what rode.
+ */
+export function askContextInclusion(
+  cards: readonly AskPacketCard[],
+  readings: readonly Reading[],
 ): string[] | null {
-  if (anchor === null || reading === null) return null;
-  if (!isPointerForm(reading.form)) return null;
-  return [pointerKey(anchor, reading.form, reading.from)];
+  const keys: string[] = [];
+  for (const card of cards) {
+    if (card.on === undefined) continue;
+    const reading = readingFor(readings, card.on);
+    if (reading === null) continue;
+    if (!isPointerForm(reading.form)) continue;
+    keys.push(pointerKey(card.on, reading.form, reading.from));
+  }
+  return keys.length === 0 ? null : keys;
 }
 
 /** The real bridges, bound once so the hook's path is the tested one. */
@@ -2089,17 +2262,18 @@ export interface AskTurnWrite {
 export async function writeAskTurn(
   workspacePath: string,
   slug: string,
-  anchor: string,
   included: string[] | null,
   question: string,
   sent: AskTurnSend,
   io: AskTurnWriteIo = ASK_TURN_WRITE_IO,
 ): Promise<AskTurnWrite> {
+  // STORY 17.9 — NO ANCHOR ON A NEW TURN. The Move's `included` set is the
+  // wired context's natural keys; the legacy `anchor` field is never written
+  // by this path again (old lines still parse and display it).
   const prism = sent.left
     ? await io.appendMove(
         workspacePath,
         slug,
-        anchor,
         included,
         sent.ending,
         sent.result.kind === "answer" ? sent.result.text : null,
@@ -2926,6 +3100,16 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   const sessionsRef = useRef<SessionCard[]>([]);
   const sessionEntriesRef = useRef<Record<string, readonly SessionEntry[]>>({});
   const malformedSessionsRef = useRef<string[]>([]);
+  /**
+   * STORY 17.9 — every slug a WIRE may name: the three card families on the
+   * ground map. A wire into an ask card may come from a reference, an ask or a
+   * session, and an orphan is measured against all three.
+   */
+  const knownCardSlugs = (): string[] => [
+    ...referencesRef.current.map((reference) => reference.on),
+    ...asksRef.current.map((ask) => ask.on),
+    ...sessionsRef.current.map((session) => session.on),
+  ];
   const sessionRunningRef = useRef<string[]>([]);
   const sessionRunsRef = useRef<Record<string, SessionRunHandle>>({});
   // STORY 18.4: a pending permission ask per card. VIEW STATE — the run WAITS
@@ -3126,11 +3310,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     ),
     links: linksRef.current,
     // Recomputed on every write (story 16.5): a cascade can leave the file
-    // with fewer links but never with one the app itself orphaned.
-    orphanLinks: orphanGroundLinks(
-      linksRef.current,
-      referencesRef.current.map((reference) => reference.on),
-    ),
+    // with fewer links but never with one the app itself orphaned. STORY 17.9:
+    // a wire may now name an ASK or SESSION card too (anything a wire touches
+    // is context), so either end may be any card family's slug.
+    orphanLinks: orphanGroundLinks(linksRef.current, knownCardSlugs()),
     malformedGround: malformedGroundRef.current,
     malformedReadings: malformedReadingsRef.current,
     malformedLinks: malformedLinksRef.current,
@@ -3186,10 +3369,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       referencesRef.current.map((reference) => reference.on),
     ),
     links: linksRef.current,
-    orphanLinks: orphanGroundLinks(
-      linksRef.current,
-      referencesRef.current.map((reference) => reference.on),
-    ),
+    orphanLinks: orphanGroundLinks(linksRef.current, knownCardSlugs()),
     malformedGround: malformedGroundRef.current,
     malformedReadings: malformedReadingsRef.current,
     malformedLinks: malformedLinksRef.current,
@@ -4465,50 +4645,51 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       if (ask === undefined) {
         return Promise.resolve({ ok: false, message: ASK_MISSING_REFUSAL });
       }
-      // The anchored card's facts as the app already holds them. A DANGLING
-      // anchor is legal (story 17.6 states it): the packet rides the slug and
-      // claims no reading, and nothing here repairs or refuses the record.
-      const anchor =
-        referencesRef.current.find((reference) => reference.on === ask.anchor) ??
-        null;
-      const facts = {
-        name: anchor === null ? ask.anchor : anchor.name,
-        state:
-          anchor === null ? null : statesRef.current[anchor.on] ?? null,
-        reading:
-          anchor === null
-            ? null
-            : readingFor(readingsRef.current, anchor.on),
-        readingText:
-          anchor === null ? null : textsRef.current[anchor.on] ?? null,
-        note: anchor === null ? null : notesRef.current[anchor.on] ?? null,
-      };
-      const context = cardAskContext(facts);
-      // STORY 17.3 — THE PACKET CARRIES THE CARD AND THE THREAD: the anchored
-      // card's blocks as before, then the conversation so far under the stated
-      // bound (the newest WHOLE turns that fit a turn count and a byte budget).
-      // The thread is read from the SAME record the card renders, and the READ
-      // set stays the anchor's own block, so retrieval can never reach a turn.
+      // THE CONTEXT IS THE WIRES (story 17.9, the user's correction): every
+      // card wired INTO this ask card contributes what it has. The record's
+      // `anchor` field is legacy and IS NOT READ HERE; a card with no wires
+      // still sends, with nothing in its context.
+      const contextFacts = askContextFactsOf({
+        ask: slug,
+        links: linksRef.current,
+        references: referencesRef.current,
+        asks: asksRef.current,
+        askTurns: askTurnsRef.current,
+        sessions: sessionsRef.current,
+        sessionEntries: sessionEntriesRef.current,
+        readings: readingsRef.current,
+        texts: textsRef.current,
+        notes: notesRef.current,
+        states: statesRef.current,
+      });
+      const wired = askCardsContext(contextFacts.facts);
+      const context = wired.context;
+      // STORY 17.3 — THE PACKET CARRIES THE CARDS AND THE THREAD: the wired
+      // cards' blocks under the context bound, then the conversation so far
+      // under its own bound (the newest WHOLE turns that fit). The thread is
+      // read from the SAME record the card renders. The READ set is the
+      // INCLUDED cards' names, so retrieval can name a wired card and never a
+      // turn or an unwired card.
       //
       // STORY 17.5 — A FORK SENDS ITS WHOLE COMPOSED THREAD: the carried prefix
       // (read from the parent's file HERE, at send time, never copied) then the
-      // fork's own turns. The ONE bound is applied to that composed thread by
-      // `assembleAskCardPacket`, so it can never bite twice or per part, and a
-      // missing parent simply composes the fork's own turns — the card still
+      // fork's own turns. The thread bound is applied to that composed thread
+      // by `assembleAskCardPacket`, so it can never bite twice or per part, and
+      // a missing parent simply composes the fork's own turns — the card still
       // sends.
       const packet = assembleAskCardPacket(
-        context.card,
+        wired.cards,
         askThreadOf(ask, asksRef.current, askTurnsRef.current).turns,
         question,
         ASK_THREAD_BOUND,
         context.retrievable,
       );
-      // THE ANCHOR'S NATURAL KEY (story 17.4): the packet rides the ANCHORED
-      // card's block, so the inclusion set names that reading's pointer — null
-      // when the anchor is gone or the card has no reading to name.
-      const inclusion = askAnchorInclusion(
-        anchor === null ? null : anchor.on,
-        facts.reading,
+      // THE INCLUDED CARDS' NATURAL KEYS (story 17.9): only the cards the
+      // packet's own bound kept contribute a reading's pointer key. The PRISM
+      // no longer names an anchor at all.
+      const inclusion = askContextInclusion(
+        selectAskContextCards(wired.cards, ASK_CONTEXT_BOUND).cards,
+        readingsRef.current,
       );
       let outcome: GroundAddResult = {
         ok: false,
@@ -4524,7 +4705,6 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             const recorded = await writeAskTurn(
               workspacePath,
               slug,
-              ask.anchor,
               inclusion,
               question,
               sent,
@@ -4842,19 +5022,27 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           // THE CASCADE (story 16.5): AFTER the reference's own removal (the
           // existing card-delete order above is untouched) and in the same
           // queued pass, every link that NAMES this slug leaves the link file —
-          // in BOTH directions, so the app never manufactures an orphan.
-          // Story 16.10 remembers exactly which links this pass takes, so their
-          // passing can be logged as its own lines. Story 16.13 also keeps each
-          // line's FILE POSITION, so Restore can put it back where it was.
+          // in BOTH directions. Story 16.10 remembers exactly which links this
+          // pass takes, so their passing can be logged as its own lines; story
+          // 16.13 keeps each line's FILE POSITION for Restore.
+          //
+          // STORY 17.9 — EXCEPT THE CONTEXT WIRES: a wire from this card INTO
+          // an ask card is that ask card's context, and the user's correction
+          // says a deleted context card is SAID, not repaired. So that one
+          // wire STAYS, dangling; the ask card says a card wired into it is
+          // gone, and restoring this card makes the same wire resolve again.
+          const askSlugs = new Set(asksRef.current.map((ask) => ask.on));
+          const keepable = (link: GroundLink): boolean =>
+            link.from === on && link.to !== on && askSlugs.has(link.to);
           const cascaded = linksRef.current
             .map((link, index) => ({ link, index }))
-            .filter(({ link }) => link.from === on || link.to === on);
-          linksRef.current = await removeGroundLinksNaming(
-            workspacePath,
-            on,
-            linksRef.current,
-            malformedLinksRef.current,
+            .filter(({ link }) => (link.from === on || link.to === on) && !keepable(link));
+          const nextLinks = linksRef.current.filter(
+            (link) =>
+              (!(link.from === on || link.to === on) || keepable(link)),
           );
+          await saveGroundLinks(workspacePath, nextLinks, malformedLinksRef.current);
+          linksRef.current = nextLinks;
           const texts = { ...textsRef.current };
           delete texts[on];
           textsRef.current = texts;
@@ -4938,11 +5126,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    */
   const link = useCallback(
     (from: string, to: string): Promise<GroundAddResult> => {
-      const refusal = groundLinkRefusal(
-        from,
-        to,
-        referencesRef.current.map((reference) => reference.on),
-      );
+      // STORY 17.9: a wire may end on any ground card, because anything a wire
+      // touches is context for an ask card. The draw's existing guard is reused
+      // with the three families' slugs, so a self-link still refuses.
+      const refusal = groundLinkRefusal(from, to, knownCardSlugs());
       if (refusal !== null) {
         return Promise.resolve({ ok: false, message: refusal });
       }

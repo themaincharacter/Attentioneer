@@ -284,16 +284,16 @@ export interface AskChange {
   /** The pointer the question rides (its natural key), or null for none. */
   pointer: string | null;
   /**
-   * THE ANCHOR, NAMED STRUCTURALLY (Epic 17 story 4) — PROVISIONAL, the one
-   * record-shape addition of the story. An ASK CARD's turn rides no pointer
-   * (`pointer` is null: there is no pointer line; the anchored card is the
-   * material), so the reference the ask is about is named here instead, by its
-   * slug, exactly as `map/asks.txt`'s own `anchor` field names it. The union
-   * stays CLOSED TO CONTENT: a slug is structure, and no words, previews or
-   * content sizes ride with it. Absent on the concept map's Ask, which names
-   * its pointer at the top of the line (the two routes never share a line).
-   * The name and position of this field are provisional (story 17.4's own
-   * note), not a settled record shape.
+   * THE ANCHOR, NAMED STRUCTURALLY — READ-ONLY LEGACY (Epic 17 story 4, retired
+   * by story 17.9's correction). An ask card's turn USED to ride no pointer and
+   * named the reference it was about here; the user's correction made the
+   * WIRES the context, so a new Move never writes this field and the inclusion
+   * set (`included`) is the record's fact. Old lines still PARSE and DISPLAY
+   * it exactly as written, and an untouched old line keeps its bytes. The
+   * retirement is PROVISIONALLY REVERSIBLE: if the person wants an anchor field
+   * back, the parser and the serializer are still here and only the writers
+   * would change. The union stays CLOSED TO CONTENT: a slug is structure, and
+   * no words, previews or content sizes ride with it.
    */
   anchor?: string;
   outcome: AskOutcome;
@@ -420,9 +420,10 @@ export const CHANGE_KEYS: Readonly<Record<ChangeKind, readonly string[]>> = {
 /**
  * The OPTIONAL keys of each Change kind (the union stays closed: required plus
  * these, and nothing else). Today ONE field is optional in the whole union:
- * the `ask` Change's `anchor`, the ask card's structural name for the
- * reference it is about (Epic 17 story 4, PROVISIONAL). A concept map Ask
- * omits it and its line is byte-identical to before the story.
+ * the `ask` Change's `anchor` — READ-ONLY LEGACY since story 17.9 retired the
+ * anchor as the context mechanism (old lines parse and display; new Moves never
+ * write it). The retirement is PROVISIONALLY REVERSIBLE, which is why the field
+ * stays declared rather than rejected. A concept map Ask never carried it.
  */
 export const CHANGE_OPTIONAL_KEYS: Readonly<
   Record<ChangeKind, readonly string[]>

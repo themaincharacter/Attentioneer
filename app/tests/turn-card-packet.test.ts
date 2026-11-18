@@ -410,7 +410,7 @@ describe("the declaration and readback are ONE shared piece", () => {
           anchor: "rain",
         },
         anchorName: CARD.name,
-        anchor: askCardOf(facts),
+        context: [askCardOf(facts)],
         turns: [],
         open: true,
         previewLines: 6,
@@ -427,7 +427,7 @@ describe("the declaration and readback are ONE shared piece", () => {
     expect(sendAt).toBeGreaterThan(bytesAt);
     // The declared total is the packet's own bytes, named exactly once.
     const packet = assembleAskCardPacket(
-      askCardOf(facts),
+      [askCardOf(facts)],
       [],
       "",
       ASK_THREAD_BOUND,

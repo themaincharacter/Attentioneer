@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  askAnchorInclusion,
+  askContextInclusion,
   askEndingOf,
   writeAskTurn,
   type AskTurnSend,
@@ -143,9 +143,9 @@ function harness(): Harness {
         () => TAKEN,
         move,
       ),
-    appendMove: async (workspacePath, on, anchor, included, ending, answer) => {
+    appendMove: async (workspacePath, on, included, ending, answer) => {
       const moved = await recordAskCardTurn(
-        askCardInFlight(workspacePath, { on, anchor, included }),
+        askCardInFlight(workspacePath, { on, included }),
         ending,
         answer,
         deps,
@@ -203,13 +203,13 @@ describe("two answered turns and a stopped one: three lines, in order", () => {
     const workspace = freshWorkspace();
     const h = harness();
     const one = await writeAskTurn(
-      workspace, ASK, ANCHOR, INCLUDED, Q1, answered(A1), h.io,
+      workspace, ASK, INCLUDED, Q1, answered(A1), h.io,
     );
     const two = await writeAskTurn(
-      workspace, ASK, ANCHOR, INCLUDED, Q2, answered(A2), h.io,
+      workspace, ASK, INCLUDED, Q2, answered(A2), h.io,
     );
     const three = await writeAskTurn(
-      workspace, ASK, ANCHOR, INCLUDED, Q3, stopped("stopped before the end"), h.io,
+      workspace, ASK, INCLUDED, Q3, stopped("stopped before the end"), h.io,
     );
 
     // THREE sending turns, THREE appended lines — counted, not inferred.
@@ -255,31 +255,31 @@ describe("two answered turns and a stopped one: three lines, in order", () => {
     expect(two.prism?.id).toBe("prism-2");
   });
 
-  test("the Change names the anchor by slug and rides no pointer", async () => {
-    const workspace = freshWorkspace();
-    const h = harness();
-    await writeAskTurn(workspace, ASK, ANCHOR, INCLUDED, Q1, answered(A1), h.io);
-    const change = h.prisms()[0]!.changes[0]!;
-    if (change.kind !== "ask") throw new Error("unreachable");
-    expect(change.anchor).toBe(ANCHOR);
-    expect(change.pointer).toBeNull();
-    // The inclusion set: the anchor's natural key, never its bytes.
-    expect(change.included).toEqual(INCLUDED);
-    // The closed union gained ONLY the anchor: nothing content-shaped.
-    expect(Object.keys(change).sort()).toEqual(
-      [...CHANGE_KEYS.ask, ...CHANGE_OPTIONAL_KEYS.ask].sort(),
-    );
-  });
-
-  test("a gone anchor is still named, and the inclusion set is null", async () => {
+  test("the Change names NO anchor (17.9) and rides no pointer", async () => {
     const workspace = freshWorkspace();
     const h = harness();
     await writeAskTurn(
-      workspace, ASK, "a-card-that-went", null, Q1, answered(A1), h.io,
+      workspace, ASK, INCLUDED, Q1, answered(A1), h.io);
+    const change = h.prisms()[0]!.changes[0]!;
+    if (change.kind !== "ask") throw new Error("unreachable");
+    expect(change.anchor).toBeUndefined();
+    expect(change.pointer).toBeNull();
+    // The inclusion set: the WIRED cards' natural keys, never their bytes.
+    expect(change.included).toEqual(INCLUDED);
+    // The closed union still PARSES the legacy anchor, but no new line writes
+    // it: the keys present are the required set only.
+    expect(Object.keys(change).sort()).toEqual([...CHANGE_KEYS.ask].sort());
+  });
+
+  test("a card with no wired context records no inclusion and no anchor", async () => {
+    const workspace = freshWorkspace();
+    const h = harness();
+    await writeAskTurn(
+      workspace, ASK, null, Q1, answered(A1), h.io,
     );
     const change = h.prisms()[0]!.changes[0]!;
     if (change.kind !== "ask") throw new Error("unreachable");
-    expect(change.anchor).toBe("a-card-that-went");
+    expect(change.anchor).toBeUndefined();
     expect(change.included).toBeNull();
   });
 });
@@ -288,9 +288,12 @@ describe("not one word of the thread reaches the record", () => {
   test("every word of every question and answer is absent from the log", async () => {
     const workspace = freshWorkspace();
     const h = harness();
-    await writeAskTurn(workspace, ASK, ANCHOR, INCLUDED, Q1, answered(A1), h.io);
-    await writeAskTurn(workspace, ASK, ANCHOR, INCLUDED, Q2, answered(A2), h.io);
-    await writeAskTurn(workspace, ASK, ANCHOR, INCLUDED, Q3, stopped("stopped"), h.io);
+    await writeAskTurn(
+      workspace, ASK, INCLUDED, Q1, answered(A1), h.io);
+    await writeAskTurn(
+      workspace, ASK, INCLUDED, Q2, answered(A2), h.io);
+    await writeAskTurn(
+      workspace, ASK, INCLUDED, Q3, stopped("stopped"), h.io);
     const log = JSON.stringify(h.prisms());
     for (const word of threadWords([Q1, A1, Q2, A2, Q3, PARTIAL])) {
       expect(log.toLowerCase()).not.toContain(word.toLowerCase());
@@ -329,9 +332,12 @@ describe("the join: the answer line names the Move, the person's line does not",
   test("each answer line's move is the PRISM's id, in order", async () => {
     const workspace = freshWorkspace();
     const h = harness();
-    const one = await writeAskTurn(workspace, ASK, ANCHOR, INCLUDED, Q1, answered(A1), h.io);
-    const two = await writeAskTurn(workspace, ASK, ANCHOR, INCLUDED, Q2, answered(A2), h.io);
-    const three = await writeAskTurn(workspace, ASK, ANCHOR, INCLUDED, Q3, stopped("stopped"), h.io);
+    const one = await writeAskTurn(
+      workspace, ASK, INCLUDED, Q1, answered(A1), h.io);
+    const two = await writeAskTurn(
+      workspace, ASK, INCLUDED, Q2, answered(A2), h.io);
+    const three = await writeAskTurn(
+      workspace, ASK, INCLUDED, Q3, stopped("stopped"), h.io);
 
     const turns = (await loadTurns(workspace, ASK, askIo)).turns;
     expect(turns.map((turn) => turn.role)).toEqual([
@@ -373,7 +379,8 @@ describe("the join: the answer line names the Move, the person's line does not",
       reached: null,
       missed: null,
     };
-    const recorded = await writeAskTurn(workspace, ASK, ANCHOR, INCLUDED, Q1, sent, h.io);
+    const recorded = await writeAskTurn(
+      workspace, ASK, INCLUDED, Q1, sent, h.io);
     expect(recorded.prism).toBeNull();
     expect(h.writes()).toBe(0);
     expect(h.prisms()).toEqual([]);
@@ -421,20 +428,22 @@ describe("the ending vocabulary, and the closing of the union", () => {
     expect(askEndingOf({ kind: "error", sentence: "s" })).toBe("failed");
   });
 
-  test("the anchor's natural key, or null when there is nothing to name", () => {
+  test("the CONTEXT's natural keys, or null when nothing pointer-identified rode", () => {
     const reading: Reading = {
       on: ANCHOR,
       form: "path",
       from: "notes/gauge.md",
       taken: TAKEN,
     };
-    expect(askAnchorInclusion(ANCHOR, reading)).toEqual(INCLUDED);
-    // The anchor is gone (or the card was never seeded): no key.
-    expect(askAnchorInclusion(null, reading)).toBeNull();
-    expect(askAnchorInclusion(ANCHOR, null)).toBeNull();
+    // STORY 17.9: the included set is the keys of the WIRED cards' readings.
+    const card = { name: "rain", state: null, reading: null, note: null, on: ANCHOR };
+    expect(askContextInclusion([card], [reading])).toEqual(INCLUDED);
+    // No card with a reading rode: no key.
+    expect(askContextInclusion([], [reading])).toBeNull();
+    expect(askContextInclusion([card], [])).toBeNull();
     // A selection reading is not a pointer: nothing pointer-identified rode.
     expect(
-      askAnchorInclusion(ANCHOR, { ...reading, form: "selection" }),
+      askContextInclusion([card], [{ ...reading, form: "selection" }]),
     ).toBeNull();
   });
 

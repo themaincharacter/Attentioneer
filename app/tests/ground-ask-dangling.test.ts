@@ -462,7 +462,7 @@ describe("the card says it in ONE quiet line, named", () => {
     expect(html).toContain("ask-card-reanchor");
     // One quiet line, never an error, a colour or a modal.
     expect(html).not.toContain("ask-card-problem");
-    expect(html).not.toMatch(/error|danger|red|modal/i);
+    expect(html).not.toMatch(/\berror\b|danger|\bred\b|\bmodal\b/i);
     // No counts or timestamps ride the sentence.
     expect(askDanglingLine("Rain gauge")).not.toMatch(/\d/);
   });
@@ -504,7 +504,7 @@ describe("the card says it in ONE quiet line, named", () => {
 describe("a gone anchor still sends, and its PRISM records the null inclusion", () => {
   test("the packet composes with the thread and no anchor block", () => {
     const packet = assembleAskCardPacket(
-      anchorFacts("rain-gauge"),
+      [anchorFacts("rain-gauge")],
       [turn("person", "who mends the copper wire")],
       "and the wire?",
     );
@@ -537,9 +537,9 @@ describe("a gone anchor still sends, and its PRISM records the null inclusion", 
     const io: AskTurnWriteIo = {
       appendExchange: (ws, slug, q, a, _io, _now, move = null) =>
         appendExchange(ws, slug, q, a, askIo, () => TAKEN, move),
-      appendMove: async (ws, on, anchor, included, ending, answer) => {
+      appendMove: async (ws, on, included, ending, answer) => {
         const moved = await recordAskCardTurn(
-          askCardInFlight(ws, { on, anchor, included }),
+          askCardInFlight(ws, { on, included }),
           ending,
           answer,
           deps,
@@ -550,7 +550,6 @@ describe("a gone anchor still sends, and its PRISM records the null inclusion", 
     const wrote = await writeAskTurn(
       workspace,
       ask.on,
-      ask.anchor,
       null,
       "does the gauge still read",
       {
@@ -566,7 +565,8 @@ describe("a gone anchor still sends, and its PRISM records the null inclusion", 
     const change = prisms[0]!.changes[0]!;
     expect(change.kind).toBe("ask");
     if (change.kind === "ask") {
-      expect(change.anchor).toBe("rain-gauge");
+      // STORY 17.9: legacy anchor is parse-only; a new Move never writes it.
+      expect(change.anchor).toBeUndefined();
       expect(change.included).toBeNull();
       expect(change.outcome).toBe("answered");
     }

@@ -11,6 +11,9 @@ import {
 } from "../map/asks";
 import { assembleAskCardPacket, type AskPacketCard, type AskPacketReadback } from "../turn/packet";
 import { ASK_READ_MISSED } from "./contactRules";
+import type { GestureMode } from "./gates";
+import { startGroundLinkDrag } from "./linkDrag";
+import type { GestureNarration } from "./gestureWord";
 import { previewOverflows, previewText } from "../map/readings";
 import { PacketSurface } from "./PacketSurface";
 import { STEP_LIMIT_SENTENCE } from "../turn/steps";
@@ -48,14 +51,16 @@ import type { GroundAddResult } from "./useGround";
  * The card's wheel never zooms the plane: the scrollbox stops the event where
  * it starts, so the body scrolls and the camera stands still.
  *
- * WHAT IT SENDS (story 17.3) is the packet assembled around the ANCHORED
- * reference AND this card's conversation: the card's blocks as before, then the
- * most recent whole turns under a stated bound, then the instruction and the
- * bound. Before the send the card DECLARES every block with its exact size and
- * opens the exact bytes through the shared PacketSurface — the same verb the
- * Ask Move uses; after it, the same surface opens what left. The bound's
- * numbers live in map/asks.ts; this file only passes them and draws what the
- * packet declares.
+ * WHAT IT SENDS (story 17.3; corrected by story 17.9) is the packet assembled
+ * from the cards WIRED INTO this one — the user's correction: "you can link
+ * them together to help give the llm context". Every incoming wire contributes
+ * what its card has (a reference its crops and note, an ask its newest answer,
+ * a session its newest completed run), bounded as WHOLE cards; the conversation
+ * so far rides under its own stated bound, then the instruction and the bound.
+ * An ask card with NOTHING wired in still sends. Before the send the card
+ * DECLARES every block with its exact size and opens the exact bytes through
+ * the shared PacketSurface — the same verb the Ask Move uses; after it, the
+ * same surface opens what left.
  *
  * A DANGLING ANCHOR IS SAID, NOT REPAIRED (story 17.6). When the anchored
  * reference is gone the card's second line states what it was about — by the
@@ -100,12 +105,24 @@ import type { GroundAddResult } from "./useGround";
  * scrollbox height and slack, the role marks, the stopped/incomplete wording,
  * story 17.5's divider and missing-parent lines and the fork/re-anchor
  * chooser's look, story 17.6's dangling sentence, its wording and its place
- * on the "what this is" line, and story 17.7b's fact lines' placement and the
- * pre-send state's wording (the sentence is reused, not new).
+ * on the "what this is" line, story 17.7b's fact lines' placement and the
+ * pre-send state's wording (the sentence is reused, not new), and — STORY
+ * 17.9 — the context line's wording and the dangling-wire sentence.
  */
 
 /** The quiet line an ask card with no turns shows (PROVISIONAL wording). */
 export const ASK_EMPTY_SENTENCE = "no question asked yet";
+
+/**
+ * STORY 17.9 — WHAT THE CARD SAYS IT HAS. The user's correction: the cards
+ * WIRED INTO an ask card are its context, so the expanded card lists them by
+ * name above the thread (never a count), or says in one quiet line that nothing
+ * is wired in — and a card with no context still sends.
+ */
+export const ASK_CONTEXT_LABEL = "wired in: ";
+export const ASK_CONTEXT_EMPTY = "nothing is wired into this question.";
+export const ASK_CONTEXT_DANGLING =
+  "a card wired into this question is gone; the wire is not repaired.";
 
 /** What a stopped turn's partial says (PROVISIONAL wording, story 7's idiom). */
 export const ASK_STOPPED_MARK = " — stopped mid-answer";
@@ -318,7 +335,8 @@ function AskTurnLine({
 export function AskCard({
   ask,
   anchorName,
-  anchor,
+  context = [],
+  contextMissing = false,
   turns,
   carried = 0,
   forkMissing = false,
@@ -334,6 +352,9 @@ export function AskCard({
   onForkTurn,
   onReanchor,
   onRemove,
+  onLink,
+  interactionMode = "idle",
+  onNarrate,
 }: {
   ask: AskCardRecord;
   /**
@@ -344,13 +365,19 @@ export function AskCard({
    */
   anchorName: string | null;
   /**
-   * STORY 17.3 — the anchored card's block facts, ALREADY CROPPED (name, state,
-   * reading crop, note crop): the same block the card ask sends today. Optional
-   * so a render test that does not care about the declaration needs nothing;
-   * the layer always passes it, dangling anchor included (the slug then stands
-   * in the name and no preview rides).
+   * STORY 17.9 — THE CARDS WIRED INTO THIS ONE, in wire order, ALREADY
+   * CROPPED: every reference's block (name, state, reading crop, note crop), an
+   * ask card's last completed answer, a session card's last completed run, or
+   * the one line saying it has nothing to lend. The user's correction: the
+   * wires ARE the context, never a field. Optional so a render test that does
+   * not care about the declaration needs nothing; [] simply means no context.
    */
-  anchor?: AskPacketCard;
+  context?: readonly AskPacketCard[];
+  /**
+   * STORY 17.9 — a wire whose source card is gone. The card SAYS it, once, and
+   * never repairs the wire or invents a card.
+   */
+  contextMissing?: boolean;
   /**
    * STORY 17.5 — THE COMPOSED THREAD, in order: a fork's carried prefix (read
    * from the parent, never copied) and then the card's own turns. A card that
@@ -420,6 +447,17 @@ export function AskCard({
    * verbatim on Restore. Optional so a render test needs no write path.
    */
   onRemove?: () => Promise<GroundAddResult>;
+  /**
+   * STORY 17.9 — WIRE this ask card to another card (the source side). The
+   * handle is the same small edge affordance a reference card has; a release on
+   * another card draws one ordered pair. Optional so a render test needs no
+   * layer.
+   */
+  onLink?: (from: string, to: string) => Promise<GroundAddResult>;
+  /** The gesture gate, so a wiring drag never starts under an armed tool. */
+  interactionMode?: GestureMode;
+  /** The one sentence a wiring drag speaks; absent in a render test. */
+  onNarrate?: (gesture: GestureNarration) => void;
 }) {
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState<AskPending | null>(null);
@@ -456,10 +494,15 @@ export function AskCard({
    */
   const [hit, setHit] = useState<GroundAddResult | null>(null);
   const running = pending !== null && pending.ending === "running";
-  const packet =
-    anchor === undefined
-      ? null
-      : assembleAskCardPacket(anchor, turns, question, ASK_THREAD_BOUND);
+  // STORY 17.9 — the SAME assembler the hook sends: the wired cards, the
+  // thread, the question. The context bound is the assembler's; the card only
+  // supplies what is wired.
+  const packet = assembleAskCardPacket(
+    context,
+    turns,
+    question,
+    ASK_THREAD_BOUND,
+  );
 
   // ESC CLOSES THE CARD'S EDITOR — never the map. Capture phase, so the key is
   // consumed before the plane's or app's own bubble handlers can act on it. A
@@ -486,6 +529,23 @@ export function AskCard({
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
   }, [open, onClose, forking, reanchorTo]);
+
+  // STORY 17.9 — THE WIRING HANDLE. The same raw-listener idiom the reference
+  // card uses (d3-zoom stops mousedown at the plane): a press on the handle
+  // starts a draw whose release names the card under the pointer. Any other
+  // press is the card's own (open, drag or a verb).
+  useEffect(() => {
+    const el = cardRef.current;
+    if (el === null) return;
+    function handleMouseDown(e: MouseEvent) {
+      if (e.button !== 0) return;
+      if (!(e.target as HTMLElement).closest(".ground-link-handle")) return;
+      e.stopPropagation();
+      startGroundLinkDrag(e, ask.on, { interactionMode, onLink, onNarrate });
+    }
+    el.addEventListener("mousedown", handleMouseDown);
+    return () => el.removeEventListener("mousedown", handleMouseDown);
+  }, [ask.on, interactionMode, onLink, onNarrate]);
 
   // THE CARD'S WHEEL NEVER ZOOMS THE PLANE. The scrollbox (and the card) stop
   // the event where it starts; passive, because this only stops the plane and
@@ -713,6 +773,39 @@ export function AskCard({
           ? askDanglingLine(ask.anchorName ?? null)
           : askKindLine(anchorName)}
       </div>
+      {/* STORY 17.9 — WHAT THIS CARD HAS WIRED INTO IT, by name above the
+          thread. The list is the RESOLVED wires; a gone wire is said once and
+          never repaired. An empty context says so in one quiet line and the
+          card still sends. */}
+      {open && (
+        <div className="ask-card-context">
+          {context.length > 0 ? (
+            <div className="ask-card-context-line">
+              {ASK_CONTEXT_LABEL}
+              {context.map((card) => card.name).join(" · ")}
+            </div>
+          ) : contextMissing ? null : (
+            <div className="ask-card-context-line quiet">
+              {ASK_CONTEXT_EMPTY}
+            </div>
+          )}
+          {contextMissing && (
+            <div className="ask-card-context-missing">
+              {ASK_CONTEXT_DANGLING}
+            </div>
+          )}
+        </div>
+      )}
+      {/* STORY 17.9 — THE WIRING HANDLE: an ask card is wired INTO, and may
+          also be a wire's source (an ask's answer is context for another ask). */}
+      {onLink !== undefined && (
+        <button
+          type="button"
+          className="ground-link-handle"
+          title="wire this card to another"
+          aria-label="wire this card to another"
+        />
+      )}
       <div className="ask-card-body" ref={bodyRef} onScroll={trackScroll}>
         {open ? (
           <div className="ask-card-thread">

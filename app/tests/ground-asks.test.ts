@@ -688,7 +688,9 @@ describe("the ask path reuses the existing card-ask turn (story 17.3 adds the th
     // the ask card's assembler is the thread-bearing one — same card block,
     // same port, same ceiling.
     expect(HOOK).toContain("assembleAskCardPacket(");
-    expect(HOOK).toContain("cardAskContext(");
+    // STORY 17.9: the context is the WIRED cards, so the multi-card builder
+    // replaced the single anchored card's context.
+    expect(HOOK).toContain("askCardsContext(");
     expect(HOOK).toContain("turn.sendPacket(");
     // The app hands the hook the ONE turn port the card panel uses.
     expect(APP).toContain('useGround(workspace?.path ?? "", turnPort)');

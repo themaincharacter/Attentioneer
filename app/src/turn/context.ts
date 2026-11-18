@@ -77,6 +77,22 @@ export interface AskCardFacts {
   readingText: string | null;
   /** The person's note (already read by the ground layer), or null. */
   note: string | null;
+  /**
+   * STORY 17.9 — the slug the card carries, when the app knows it. It is used
+   * only to name the card's reading in the PRISM's inclusion set and to match
+   * the wire's source; the packet never renders it.
+   */
+  on?: string;
+  /** STORY 17.9 — an ASK card's most recent completed answer, whole, or null. */
+  answer?: string | null;
+  /** STORY 17.9 — a SESSION card's most recent completed run's text, or null. */
+  result?: string | null;
+  /**
+   * STORY 17.9 — the one line a wired card with no material says. Present
+   * exactly when the card is an ask or session card with nothing to lend; a
+   * reference with no reading and no note keeps the packet's generic sentence.
+   */
+  empty?: string | null;
 }
 
 /** One reach the person included, as the pointer cites it. */
@@ -144,7 +160,22 @@ export function askCardOf(card: AskCardFacts): AskPacketCard {
   const state = card.state === null ? null : readingStateWord(card.state);
   const reading = cropped(card.readingText, READING_PREVIEW_LINES);
   const note = cropped(card.note, NOTE_PREVIEW_LINES);
-  return { name: card.name, state, reading, note };
+  const built: AskPacketCard = { name: card.name, state, reading, note };
+  // STORY 17.9 — WHAT THE WIRED CARD HAS: a slug (never rendered), an ask
+  // card's completed answer, a session card's completed run, or the one line
+  // saying it has nothing to lend. Absent fields stay absent, so a reference's
+  // block is byte-identical to before the story.
+  if (card.on !== undefined) built.on = card.on;
+  if (card.answer !== undefined && card.answer !== null) {
+    built.answer = card.answer;
+  }
+  if (card.result !== undefined && card.result !== null) {
+    built.result = card.result;
+  }
+  if (card.empty !== undefined && card.empty !== null) {
+    built.empty = card.empty;
+  }
+  return built;
 }
 
 /** A crop of a text, or null when there is nothing to ride (never an empty one). */
@@ -238,6 +269,44 @@ export function cardAskContext(card: AskCardFacts): AskContext {
     reaches: [],
     retrievable: source === null ? [] : [source.name],
     sources: source === null ? [] : [source],
+  };
+}
+
+/**
+ * THE ASK CARD'S CONTEXT (Epic 17 story 9; the user's correction): the cards
+ * WIRED INTO the ask card, each as its own packet block. No IO, no reach: every
+ * fact is already in the app's loaded state, and the wires are the only
+ * selection rule. The packet's own bound is applied by `assembleAskCardPacket`,
+ * so this function only says what the wired cards HAVE.
+ *
+ * THE ONE READ IS ANY INCLUDED CARD: every wired card's name is offered (a card
+ * with no fuller text simply fetches nothing), and the sources locate the
+ * fuller text for the cards that have a reading. A card that is not wired never
+ * appears here, so it can never be read.
+ */
+export function askCardsContext(cards: readonly AskCardFacts[]): {
+  cards: AskPacketCard[];
+  context: AskContext;
+} {
+  const packetCards = cards.map(askCardOf);
+  const sources: AskRetrievalSource[] = [];
+  cards.forEach((card, index) => {
+    if (card.reading === null) return;
+    sources.push({ name: packetCards[index]!.name, reading: card.reading });
+  });
+  return {
+    cards: packetCards,
+    context: {
+      // The panel's single-card field is not what an ask card's turn uses; it
+      // is filled with the first card so the shared type stays honest, and no
+      // caller of the ask-card route reads it.
+      card:
+        packetCards[0] ??
+        { name: "", state: null, reading: null, note: null },
+      reaches: [],
+      retrievable: [...new Set(packetCards.map((card) => card.name))],
+      sources,
+    },
   };
 }
 

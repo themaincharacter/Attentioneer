@@ -45,8 +45,15 @@ export interface WireGeometry {
   angle: number;
 }
 
+/** Any ground card a wire may run to: its slug and its point (PROVISIONAL box). */
+export interface WireCard {
+  on: string;
+  x: number;
+  y: number;
+}
+
 /** A card's world center (the card's left/top is its top-left corner). */
-export function cardCenter(reference: GroundReference): { x: number; y: number } {
+export function cardCenter(reference: WireCard): { x: number; y: number } {
   return {
     x: reference.x + GROUND_CARD_W / 2,
     y: reference.y + GROUND_CARD_H / 2,
@@ -83,8 +90,8 @@ function edgePoint(
  * still exists; this is a rendering decision, not a write).
  */
 export function wireGeometry(
-  from: GroundReference,
-  to: GroundReference,
+  from: WireCard,
+  to: WireCard,
 ): WireGeometry | null {
   const fc = cardCenter(from);
   const tc = cardCenter(to);
@@ -109,6 +116,13 @@ interface GroundWiresProps {
   links: readonly GroundLink[];
   /** The cards the wires run between (orphans are reported, never drawn). */
   references: readonly GroundReference[];
+  /**
+   * STORY 17.9 — a wire may now run to or from an ASK or SESSION card too: the
+   * user's correction makes anything a wire touches context for an ask card, so
+   * those endpoints are drawn exactly like a reference's (same line, no label).
+   */
+  asks?: readonly WireCard[];
+  sessions?: readonly WireCard[];
   /** Remove one exact ordered pair; the cards stay (the person's press). */
   onRemoveLink: (from: string, to: string) => Promise<GroundAddResult>;
 }
@@ -116,10 +130,16 @@ interface GroundWiresProps {
 export function GroundWires({
   links,
   references,
+  asks = [],
+  sessions = [],
   onRemoveLink,
 }: GroundWiresProps) {
-  const bySlug = new Map(
-    references.map((reference) => [reference.on, reference]),
+  const bySlug = new Map<string, WireCard>(
+    [
+      ...references.map((reference) => [reference.on, reference] as const),
+      ...asks.map((ask) => [ask.on, ask] as const),
+      ...sessions.map((session) => [session.on, session] as const),
+    ],
   );
   return (
     <div className="ground-wires">

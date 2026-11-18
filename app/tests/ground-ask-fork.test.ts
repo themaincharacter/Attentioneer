@@ -285,7 +285,6 @@ describe("NO COPY: the prefix is read from the parent", () => {
     const wrote = await writeAskTurn(
       workspace,
       fork.on,
-      fork.anchor,
       null,
       "who mends the copper wire",
       {
@@ -451,7 +450,7 @@ describe("a missing parent is stated, never repaired", () => {
   test("it can still send: the composed thread makes a full packet", () => {
     const view = askThreadOf(FORK, [FORK], { [FORK.on]: own });
     const packet = assembleAskCardPacket(
-      anchorFacts("Rain gauge"),
+      [anchorFacts("Rain gauge")],
       view.turns,
       "and the wire?",
     );
@@ -489,7 +488,7 @@ describe("the ONE bound applies to the WHOLE composed thread", () => {
     // The story's own bound is 8/4 KiB; a TIGHTER stated bound makes the
     // whole-thread arithmetic legible: three turns from the END of the whole.
     const packet = assembleAskCardPacket(
-      anchorFacts("Rain gauge"),
+      [anchorFacts("Rain gauge")],
       composed,
       "next?",
       { turns: 3, bytes: 4096 },
@@ -559,7 +558,7 @@ describe("re-anchoring is ONE field's change", () => {
       [FORK.on]: [turn("person", "own question")],
     });
     const packet = assembleAskCardPacket(
-      anchorFacts(anchor.name),
+      [anchorFacts(anchor.name)],
       view.turns,
       "and now?",
     );
@@ -570,7 +569,7 @@ describe("re-anchoring is ONE field's change", () => {
 });
 
 describe("the fork's turn is its OWN Move", () => {
-  test("the PRISM's on is the fork's slug and its Change names the fork's anchor", async () => {
+  test("the PRISM's on is the fork's slug and its Change names NO anchor (17.9)", async () => {
     const workspace = freshWorkspace();
     const FORK: AskCardRecord = {
       on: "fork",
@@ -599,9 +598,9 @@ describe("the fork's turn is its OWN Move", () => {
     const io: AskTurnWriteIo = {
       appendExchange: (ws, slug, q, a, _io, _now, move = null) =>
         appendExchange(ws, slug, q, a, askIo, () => TAKEN, move),
-      appendMove: async (ws, on, anchor, included, ending, answer) => {
+      appendMove: async (ws, on, included, ending, answer) => {
         const moved = await recordAskCardTurn(
-          askCardInFlight(ws, { on, anchor, included }),
+          askCardInFlight(ws, { on, included }),
           ending,
           answer,
           deps,
@@ -612,7 +611,6 @@ describe("the fork's turn is its OWN Move", () => {
     const wrote = await writeAskTurn(
       workspace,
       FORK.on,
-      FORK.anchor,
       null,
       "the well's water",
       {
@@ -629,7 +627,8 @@ describe("the fork's turn is its OWN Move", () => {
     const change = prisms[0]!.changes[0]!;
     expect(change.kind).toBe("ask");
     if (change.kind === "ask") {
-      expect(change.anchor).toBe("old-well");
+      // STORY 17.9: new Moves never write the legacy anchor field.
+      expect(change.anchor).toBeUndefined();
       expect(change.pointer).toBeNull();
       expect(change.included).toBeNull();
       expect(change.outcome).toBe("answered");

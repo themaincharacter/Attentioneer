@@ -121,27 +121,65 @@ export const ASK_PACKET_THREAD_OMITTED =
   "earlier turns in this conversation are not included.";
 
 /**
- * THE ASK CARD'S INSTRUCTION (story 17.3): the same paragraph, extended to say
- * that the conversation so far is CONTEXT and the anchored card is the
- * MATERIAL, and that the ONE read is the anchored block's — never the thread's.
- * The extension only appears when the thread block actually rode: a first
- * question has no conversation to point at, and the packet never claims a block
- * it does not carry.
+ * WHAT THE CONTEXT BOUND SAYS WHEN IT BIT (story 17.9, PROVISIONAL and
+ * qualitative on purpose): the cards wired into the question are its context,
+ * and when the stated bound drops some of them the block says so in one
+ * sentence. No count and no byte figure ever rides here; the person's
+ * declaration carries the exact sizes.
  */
-export function askCardInstruction(threadRides: boolean): string {
+export const ASK_PACKET_CONTEXT_OMITTED =
+  "more of the cards wired into this question are not included.";
+
+/**
+ * THE ASK CARD'S INSTRUCTION (story 17.3; corrected by story 17.9): the same
+ * paragraph, extended to say that the WIRED cards are the MATERIAL and the
+ * conversation so far is CONTEXT, and that the ONE read is an INCLUDED card's —
+ * never the thread's. The extension only appears when the block actually rode:
+ * a first question has no conversation to point at, and a card with no wires
+ * says so plainly. The packet never claims a block it does not carry.
+ */
+export function askCardInstruction(options: {
+  /** Whether the conversation's block rode. */
+  threadRides: boolean;
+  /** Whether at least one wired card's block rode. */
+  contextRides: boolean;
+  /** Whether cards were wired but none fit the stated bound. */
+  contextOmitted: boolean;
+}): string {
   const lines = [...INSTRUCTION_OPEN];
-  if (threadRides) {
+  // THE CORRECTION (story 17.9): the cards WIRED INTO this question are what it
+  // is about. The old anchor field is not the mechanism any more, so the
+  // instruction never claims a card that did not ride.
+  if (options.contextRides) {
+    lines.push("");
+    lines.push(
+      "The cards above are the cards wired into this question: they are what it is about, and their readings are the material.",
+    );
+  } else if (options.contextOmitted) {
+    lines.push("");
+    lines.push(
+      "Cards are wired into this question, but none of them fit this view. Answer from what this view gives you, and say plainly what you could not see.",
+    );
+  } else {
+    lines.push("");
+    lines.push(
+      "No card is wired into this question: answer from what this view gives you, and say plainly what you could not see.",
+    );
+  }
+  if (options.threadRides) {
     lines.push("");
     lines.push(
       "One of those blocks is " +
         ASK_PACKET_THREAD_NAME +
-        ": what has already been said in this conversation, and context, not material. The anchored card is the material.",
+        ": what has already been said in this conversation, and context, not material. The cards are the material.",
     );
   }
   lines.push(...INSTRUCTION_READ);
   lines.push("");
   lines.push(
-    "with the name written exactly as the block's heading. The anchored card is the only block you may ask for, and you may ask for it at most once. If what you need is not here, do not ask for it: answer from what this view gives you, and say plainly what you could not see.",
+    options.contextRides
+      ? "with the name written exactly as the block's heading. You may ask for one of the cards above at most once. If what you need is not here, do not ask for it: answer from what this view gives you, and say plainly what you could not see."
+      : "with the name written exactly as the block's heading. There is no card block in this view to ask for. If what you need is not here, do not ask for it: answer from what this view gives you, and say plainly what you could not see.",
   );
   return lines.join("\n");
 }
@@ -159,6 +197,32 @@ export interface AskPacketCard {
   reading: string | null;
   /** The note's bounded preview (the person's words), or null. */
   note: string | null;
+  /**
+   * STORY 17.9 — AN ASK CARD'S CONTEXT: its most recent COMPLETED answer,
+   * verbatim and whole. The user's correction says anything a wire touches
+   * lends its context, so a chain of answers can feed the next question. The
+   * words already live in the ask card's conversation; this is a reading of
+   * that record at send time, never a copy written anywhere.
+   */
+  answer?: string;
+  /**
+   * STORY 17.9 — A SESSION CARD'S CONTEXT: the text entries of its most recent
+   * COMPLETED run, whole entries only. A run that never completed contributes
+   * nothing (see `empty`), never a partial dressed as a result.
+   */
+  result?: string;
+  /**
+   * STORY 17.9 — WHAT A WIRED CARD SAYS when it has no material to give: one
+   * line rather than a silent absence. A reference with no reading and no note
+   * keeps the old generic sentence; an ask or session card says its own fact.
+   */
+  empty?: string;
+  /**
+   * The card's slug, present when the app assembled it. It is NEVER rendered
+   * and never sent: the hook uses it to name the context card's reading in the
+   * PRISM's inclusion set.
+   */
+  on?: string;
 }
 
 /** One included reach: its citation and its target's bounded preview. */
@@ -288,9 +352,28 @@ function cardText(card: AskPacketCard): string {
     lines.push(card.note);
     lines.push("");
   }
-  if (card.reading === null && card.note === null) {
+  // STORY 17.9 — a wired ASK card lends its last completed answer, whole; a
+  // wired SESSION card lends its last completed run's words, whole. The
+  // labels say what the words are, never how many there are.
+  if (card.answer !== undefined) {
+    lines.push("the most recent completed answer:");
+    lines.push(card.answer);
+    lines.push("");
+  }
+  if (card.result !== undefined) {
+    lines.push("the most recent completed run:");
+    lines.push(card.result);
+    lines.push("");
+  }
+  if (
+    card.reading === null &&
+    card.note === null &&
+    card.answer === undefined &&
+    card.result === undefined
+  ) {
     lines.push(
-      "no reading and no note ride with this card — its name and its state are all it says here.",
+      card.empty ??
+        "no reading and no note ride with this card — its name and its state are all it says here.",
     );
   }
   return lines.join("\n").replace(/\n+$/, "");
@@ -441,55 +524,118 @@ function packetOf(
 }
 
 /**
- * ASSEMBLE the ASK CARD's packet (Epic 17 story 3): the person's question, the
- * anchored card — exactly the blocks a card ask sends today — then THE THREAD
- * SO FAR, the same instruction extended to name the conversation as context,
- * and the bound. The thread is chosen by `lastTurns` under `bound`: the most
- * recent WHOLE turns that fit a turn count and a byte budget, in conversation
- * order; when the bound bit, the block says so in one qualitative sentence.
+ * THE CONTEXT'S STATED BOUND (story 17.9, PROVISIONAL like the thread's): the
+ * smaller of a card count and a byte budget, WHOLE CARDS ONLY. The user's
+ * correction made the wires the context; this bound keeps that context a view.
+ */
+export const ASK_CONTEXT_BOUND = { cards: 4, bytes: 8 * 1024 } as const;
+
+/** The context bound's two numbers (PROVISIONAL). */
+export interface AskContextBound {
+  cards: number;
+  bytes: number;
+}
+
+/** What the context bound selected: the whole cards that fit, and whether it bit. */
+export interface AskContextSelection {
+  cards: AskPacketCard[];
+  omitted: boolean;
+}
+
+/**
+ * SELECT the wired cards that ride (PURE, story 17.9): from the start of the
+ * wire order, WHOLE cards only, while both the card count and the byte budget
+ * allow. A card that does not fit is never cut and never followed by a later
+ * one, so the context is always a prefix of the wires. `omitted` says the bound
+ * bit, never by how much.
+ */
+export function selectAskContextCards(
+  cards: readonly AskPacketCard[],
+  bound: AskContextBound = ASK_CONTEXT_BOUND,
+): AskContextSelection {
+  const selected: AskPacketCard[] = [];
+  let bytes = 0;
+  for (const card of cards) {
+    if (selected.length >= bound.cards) break;
+    const size = utf8ByteLength(cardText(card));
+    if (size > bound.bytes - bytes) break;
+    selected.push(card);
+    bytes += size;
+  }
+  return { cards: selected, omitted: selected.length < cards.length };
+}
+
+/**
+ * ASSEMBLE the ASK CARD's packet (Epic 17 story 3; story 17.9 rebuilds it):
+ * the person's question, the cards WIRED INTO the ask card — each one whole,
+ * under the context bound — then THE THREAD SO FAR, the instruction extended
+ * to name the conversation as context, and the bound. The context is chosen by
+ * `selectAskContextCards` under the stated bound; the thread by `lastTurns`
+ * under its own, and the two bounds are separate and both declared.
  *
- * ONE RETRIEVAL, AND ONLY OF THE ANCHORED BLOCK. The readable set is the
- * anchor's name alone: the thread's block is a block the model can SEE, never
- * one it can ask for in full, so a "READ: the conversation so far" is refused
- * by the same rule that refuses any other name the packet did not offer. The
- * thread is context; the anchored card is the material.
+ * ONE RETRIEVAL, OF THE INCLUDED CARDS. The readable set is the names of the
+ * cards that actually rode: the thread's block is a block the model can SEE,
+ * never one it can ask for in full, so a "READ: the conversation so far" is
+ * refused by the same rule that refuses any other name the packet did not
+ * offer. The thread is context; the wired cards are the material.
  */
 export function assembleAskCardPacket(
-  anchorCtx: AskPacketCard,
+  contextCards: readonly AskPacketCard[],
   thread: readonly AskTurn[],
   question: string,
-  bound: AskThreadBound = ASK_THREAD_BOUND,
+  threadBound: AskThreadBound = ASK_THREAD_BOUND,
   asked?: readonly string[],
+  contextBound: AskContextBound = ASK_CONTEXT_BOUND,
 ): AskPacket {
+  // THE CORRECTION (story 17.9): the context is the LIST of cards wired into
+  // the ask card, never one anchor field. The context bound is applied here,
+  // to WHOLE cards, before a single byte is declared.
+  const context = selectAskContextCards(contextCards, contextBound);
   const blocks: AskPacketBlock[] = [
     {
       kind: "question",
       name: "the question",
       text: ASK_PACKET_QUESTION_HEADING + "\n\n" + question,
     },
-    {
-      kind: "card",
-      name: anchorCtx.name,
-      text: cardText(anchorCtx),
-    },
   ];
+  context.cards.forEach((card, index) => {
+    let text = cardText(card);
+    // The bound's own numbers never ride: when it bit, the LAST included card
+    // says so in one qualitative sentence. With no card included the
+    // instruction carries the same fact (there is no block to hang it on).
+    if (context.omitted && index === context.cards.length - 1) {
+      text += "\n\n" + ASK_PACKET_CONTEXT_OMITTED;
+    }
+    blocks.push({ kind: "card", name: card.name, text });
+  });
   // A conversation that has said nothing yet has no thread block to declare:
-  // the first question carries the card and the bound, and says nothing about
+  // the first question carries the cards and the bound, and says nothing about
   // turns that do not exist.
   if (thread.length > 0) {
     blocks.push({
       kind: "thread",
       name: ASK_PACKET_THREAD_NAME,
-      text: threadText(thread, bound),
+      text: threadText(thread, threadBound),
     });
   }
   blocks.push({
     kind: "instruction",
     name: "the instruction",
-    text: askCardInstruction(thread.length > 0),
+    text: askCardInstruction({
+      threadRides: thread.length > 0,
+      contextRides: context.cards.length > 0,
+      contextOmitted: context.omitted && context.cards.length === 0,
+    }),
   });
   blocks.push({ kind: "bound", name: "the bound", text: boundText() });
-  return packetOf(blocks, asked, new Set<string>([anchorCtx.name]));
+  // THE READ SET IS THE INCLUDED CARDS' NAMES (story 17.9): any one card that
+  // actually rode may be asked for; a card that is not wired, or was dropped by
+  // the bound, is refused exactly as a non-included block always was.
+  return packetOf(
+    blocks,
+    asked,
+    new Set<string>(context.cards.map((card) => card.name)),
+  );
 }
 
 /**
