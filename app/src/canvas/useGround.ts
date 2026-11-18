@@ -54,6 +54,24 @@ import {
   type AskTurn,
 } from "../map/asks";
 import {
+  SESSION_BUSY_SENTENCE,
+  SESSION_MISSING_REFUSAL,
+  SESSION_NO_TOOL_REFUSAL,
+  SESSION_TRANSCRIPT_REFUSAL,
+  addSession,
+  appendSessionEntries,
+  bindSessionTool as bindSessionToolRecord,
+  loadSessionTranscript,
+  loadSessionTranscripts,
+  loadSessions,
+  saveSessions,
+  sessionRefusal,
+  type SessionCard,
+  type SessionEntry,
+  type SessionIo,
+  type SessionPermissionReply,
+} from "../map/sessions";
+import {
   addGroundReference,
   loadGround,
   moveGroundReference,
@@ -61,6 +79,18 @@ import {
   withGroundRemoved,
   type GroundReference,
 } from "../map/ground";
+import {
+  startAcpRun,
+  type AcpPermissionAsk,
+  type AcpPermissionReply,
+  type AcpProgressEntry,
+  type AcpRunHandle,
+  type AcpRunResult,
+} from "../turn/acpRun";
+// 18.2 keeps its spawner seam in the transport module; the run's options name
+// it, so the hook's option type takes it from there.
+import type { AcpSpawner } from "../turn/acp";
+import { shippedAcpSpec, type AcpSpec } from "../turn/acpSpecs";
 import {
   GROUND_LINK_IO,
   addGroundLink,
@@ -363,6 +393,28 @@ export interface GroundView {
    * over). Computed from the load's listing and every write that can make one.
    */
   orphanAskTurns: readonly string[];
+  /**
+   * STORY 18.3 — every SESSION card, in FILE ORDER: the ground map's third
+   * record family (`map/sessions.txt`), beside the references and the ask
+   * cards. A session card names ONE tool row and holds that row's run; it has
+   * no reading, no note, no anchor and no conversation of its own.
+   */
+  sessions: readonly SessionCard[];
+  /**
+   * Each session card's TRANSCRIPT, keyed by slug — `map/sessions/<slug>.jsonl`,
+   * one progress entry per line in ARRIVAL order (append-only). An absent file
+   * is no entries (a card made but never run), never an invented one.
+   */
+  sessionEntries: Readonly<Record<string, readonly SessionEntry[]>>;
+  /** Unreadable `map/sessions.txt` lines, preserved and surfaced. */
+  malformedSessions: readonly string[];
+  /**
+   * STORY 18.3 — the session cards with a LIVE run right now. VIEW STATE, never
+   * a record: the handle lives in the hook and the slug leaves this list when
+   * the run settles, so the card's stop verb (and its one running sentence) can
+   * never outlive the run.
+   */
+  sessionRunning: readonly string[];
   readings: readonly Reading[];
   /**
    * Each media-bearing card's line (story 16.14): the page's title and its
@@ -529,6 +581,38 @@ export interface GroundView {
    * is SAID, never adopted and never deleted.
    */
   removeAsk: (slug: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 18.3 — MAKE A SESSION CARD at a point: ONE `map/sessions.txt` line
+   * binding a name, a point and ONE tool row (by id — never a key, never a
+   * command). No reading, no note, no media and no transcript: a card that has
+   * never run has nothing to say yet. A blank name or a row this build does not
+   * ship refuses with one sentence before anything is queued.
+   */
+  createSession: (
+    name: string,
+    tool: string,
+    x: number,
+    y: number,
+  ) => Promise<GroundAddResult>;
+  /**
+   * STORY 18.3 — BIND one session card to another tool row: ONE field's change
+   * (the record's `tool`), so a card whose row is gone can run again. A card
+   * already running refuses, and a row this build does not ship is not bound.
+   */
+  bindSessionTool: (slug: string, tool: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 18.3 — RUN one session card: the row's 18.2 lifecycle, with every
+   * progress entry appended to the transcript as it arrives. ONE RUN PER CARD:
+   * a second press answers one sentence. A card whose row is gone answers one
+   * sentence and starts nothing (the card offers the choice again).
+   */
+  runSession: (slug: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 18.3 — STOP the live run: the run's own cancel (session/cancel, then
+   * the child), so what arrived stays and the ending is the run's own. A press
+   * with nothing running does nothing at all.
+   */
+  stopSession: (slug: string) => Promise<void>;
   /** Add one reference from a picked text file (the one create write). */
   create: (
     name: string,
@@ -630,6 +714,10 @@ type GroundLoaded = Omit<
   | "forkAskAt"
   | "reanchorAskTo"
   | "removeAsk"
+  | "createSession"
+  | "bindSessionTool"
+  | "runSession"
+  | "stopSession"
   | "create"
   | "createSelection"
   | "createPage"
@@ -653,6 +741,10 @@ const EMPTY: GroundLoaded = {
   askTurns: {},
   malformedAsks: [],
   orphanAskTurns: [],
+  sessions: [],
+  sessionEntries: {},
+  malformedSessions: [],
+  sessionRunning: [],
   readings: [],
   media: [],
   orphanMedia: [],
@@ -1535,13 +1627,19 @@ export async function writeAskCard(
   x: number,
   y: number,
   io: AskCardIo = ASK_CARD_IO,
+  /**
+   * STORY 18.3: the THIRD family in the shared slug space. Optional and last so
+   * an older caller (and an older test) keeps the two-family reading; the hook
+   * always passes all three.
+   */
+  sessions: readonly SessionCard[] = [],
 ): Promise<AskCardRecords> {
   // STORY 17.6: the name the anchor has at this moment rides the record. The
   // reference is READ for its name only — never written, never repaired.
   const source = references.find((reference) => reference.on === sourceSlug);
   const addition = addAsk(
     asks,
-    sharedSlugs(references, asks),
+    sharedSlugs(references, asks, sessions),
     name.trim(),
     x,
     y,
@@ -1575,6 +1673,8 @@ export async function writeForkAsk(
   x: number,
   y: number,
   io: AskCardIo = ASK_CARD_IO,
+  /** STORY 18.3: the third family, as in `writeAskCard`. */
+  sessions: readonly SessionCard[] = [],
 ): Promise<AskCardRecords | null> {
   const parent = asks.find((ask) => ask.on === parentSlug);
   if (parent === undefined) return null;
@@ -1586,7 +1686,7 @@ export async function writeForkAsk(
   );
   const addition = forkAsk(
     asks,
-    sharedSlugs(references, asks),
+    sharedSlugs(references, asks, sessions),
     parent,
     carry,
     name.trim(),
@@ -1860,6 +1960,369 @@ export async function writeAskTurn(
     prism === null ? null : prism.id,
   );
   return { prism, turns: recorded.turns, sentence: recorded.sentence };
+}
+
+/* ------------------------------------------------------------------------- *
+ * STORY 18.3 — THE SESSION CARD: one record line, one append-only transcript,
+ * and ONE RUN through 18.2's lifecycle.
+ *
+ * The record is `map/sessions.txt` + `map/sessions/<slug>.jsonl` (map/
+ * sessions.ts). This section is the SEAM between that record and 18.2's run:
+ *
+ *   - CREATE: one queued write of the `sessions.txt` line, with the slug
+ *     minted in the SHARED space (ground + asks + sessions). No reading, no
+ *     note, no media, no link, no mirror and no history (18.5 owns the mirror
+ *     and the log) — the record is the whole move.
+ *   - RUN: the row is resolved from the rows this build ships, the run starts
+ *     through `startAcpRun` (the 18.2 lifecycle: spawn, initialize, session/new,
+ *     one prompt, stream, cancel, close), and EVERY progress entry the run
+ *     reports is written to the transcript as it arrives, in arrival order,
+ *     WHOLE LINES ONLY. The transcript is never buffered until the end and
+ *     never rewritten: a crash loses the last entry, never an earlier one.
+ *   - STOP: the run's own cancel — the 18.2 rule, unchanged: the child is
+ *     killed on every exit path, and the ending is written by the run itself.
+ *   - ENDING: only "completed" is a result. Stopped keeps what arrived and says
+ *     so; failed carries the run's ONE sentence; timed-out says its budget ran
+ *     out. No percentage, no step count and no spinner that outlives the run.
+ *   - NO KEY: a tool row grants one only through an explicit `env` entry, and
+ *     the key is read from the store at run time and handed to that one spawn.
+ *     It never enters a record, a transcript line or a sentence. The card's
+ *     declaration (`acpDeclaration`, 18.2) names the ROW, never the value.
+ *
+ * ONE RUN PER CARD AT A TIME. The live handles are held here (view state, never
+ * a record): a second press answers ONE sentence, and the handle is dropped
+ * when the run settles, so no spinner can outlive its run.
+ *
+ * PROVISIONAL: the prompt below, the permission policy (refuse — 18.4 owns
+ * "who decides"), and the mapping from a run report to a transcript kind.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * THE ONE PROMPT a card's run sends (PROVISIONAL). 18.3's card has no prompt
+ * field: the run is the row, the session directory and this small read-only
+ * ask, and handing MAP CONTEXT over is 18.4's work. It asks for words and
+ * changes nothing, so the shipped row's failure is about the key and not about
+ * what it was asked to do.
+ */
+export const SESSION_PROMPT =
+  "list the files in this directory and say in one sentence what this folder is for. change nothing.";
+
+/**
+ * STORY 18.3 — CAN THIS RUNTIME START A PROCESS AT ALL? 18.2's run spawns a
+ * child and makes a directory under the temp root, which only the Bun runtime
+ * can do; the app's WINDOW (a WebView) cannot, so a press there must say so in
+ * one sentence instead of failing halfway through a run. The probe is a pure
+ * function of the thing it is asked about, so a test can ask it both ways; the
+ * run's real home is a process that can spawn (the tests' runtime today, the
+ * sidecar when a later story moves the lane there).
+ */
+export function sessionRuntimeReady(
+  runtime: { Bun?: { spawn?: unknown } } = globalThis as {
+    Bun?: { spawn?: unknown };
+  },
+): boolean {
+  return typeof runtime.Bun?.spawn === "function";
+}
+
+/** The one sentence a window that cannot start a process answers (PROVISIONAL). */
+export const SESSION_NO_RUNTIME_SENTENCE =
+  "this window cannot start a process, so the run was not started.";
+
+/** One object, or no (a wire payload is never trusted to have a shape). */
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** The first non-empty string of the candidates, or the fallback. */
+function firstText(candidates: readonly string[], fallback: string): string {
+  for (const candidate of candidates) {
+    if (candidate.trim() !== "") return candidate;
+  }
+  return fallback;
+}
+
+/** One line naming a permission's subject, never its params. */
+function permissionName(toolCall: unknown): string {
+  const call = asRecord(toolCall);
+  return firstText(
+    [typeof call.title === "string" ? call.title : ""],
+    "a permission",
+  );
+}
+
+/**
+ * HOW THE RUN'S REPLY READS IN THE RECORD (PURE): the option the caller picked
+ * is looked up in what the server offered, so the transcript says what actually
+ * crossed the wire — allowed, refused, or cancelled when no option was picked.
+ */
+function permissionReplyOf(entry: {
+  reply: { outcome: string; optionId?: string };
+  options: readonly { optionId: string; kind: string }[];
+}): SessionPermissionReply {
+  if (entry.reply.outcome !== "selected") return "cancelled";
+  const optionId = entry.reply.optionId ?? "";
+  const option = entry.options.find((candidate) => candidate.optionId === optionId);
+  if (option === undefined) return "cancelled";
+  if (option.kind.startsWith("allow")) return "allowed";
+  if (option.kind.startsWith("reject")) return "refused";
+  return "cancelled";
+}
+
+/**
+ * ONE RUN REPORT AS ONE TRANSCRIPT ENTRY (PURE), or `null` when the report is
+ * not one of the six kinds the card can state. A thought, a plan and a transport
+ * diagnostic are not dressed as the agent's words: the ending carries the run's
+ * one sentence, and the transcript holds what the person watched.
+ *
+ * The timestamp is handed in, so a test can pin it and the record carries the
+ * writer's clock rather than this function's.
+ */
+export function sessionEntryOf(
+  entry: AcpProgressEntry,
+  t: string,
+): SessionEntry | null {
+  switch (entry.kind) {
+    case "started":
+      // The declaration (which names a provider row, never a key) is the
+      // CARD's, computed from the row; the record keeps only that it began.
+      return { kind: "started", t };
+    case "session":
+      return { kind: "session", id: entry.sessionId };
+    case "update": {
+      if (entry.updateKind === "agent_message_chunk") {
+        return entry.text === ""
+          ? null
+          : { kind: "text", text: entry.text };
+      }
+      if (
+        entry.updateKind === "tool_call" ||
+        entry.updateKind === "tool_call_update"
+      ) {
+        const update = asRecord(entry.update);
+        return {
+          kind: "tool",
+          name: firstText(
+            [
+              typeof update.title === "string" ? update.title : "",
+              typeof update.name === "string" ? update.name : "",
+              typeof update.toolName === "string" ? update.toolName : "",
+            ],
+            "a tool call",
+          ),
+          status: typeof update.status === "string" ? update.status : "",
+        };
+      }
+      // A thought or a plan is progress the card does not pretend to read.
+      return null;
+    }
+    case "permission":
+      return {
+        kind: "permission",
+        name: permissionName(entry.toolCall),
+        reply: permissionReplyOf(entry),
+      };
+    case "problem":
+      // A transport diagnostic is not one of the six kinds; a run that cannot
+      // go on ends, and the ending's one sentence is what the card states.
+      return null;
+    case "ended": {
+      const ended: SessionEntry = { kind: "ended", ending: entry.ending, t };
+      if (entry.sentence !== null) ended.sentence = entry.sentence;
+      return ended;
+    }
+  }
+}
+
+/**
+ * THE RUN'S PERMISSION POLICY (PROVISIONAL, and deliberately the smallest one):
+ * every request is REFUSED — the first option whose kind is a reject, or no
+ * option at all when the server offered none, which reads as cancelled. WHO
+ * decides (and the Allow/Reject surface) is story 18.4's; this story only
+ * carries the answer to the wire and says what it was.
+ */
+export function sessionPermissionReply(
+  ask: AcpPermissionAsk,
+): AcpPermissionReply {
+  const reject =
+    ask.options.find((option) => option.kind === "reject_once") ??
+    ask.options.find((option) => option.kind.startsWith("reject"));
+  return { optionId: reject === undefined ? null : reject.optionId };
+}
+
+/** What a run wrote and how it ended, once its child is dead. */
+export interface SessionRunDone {
+  result: AcpRunResult;
+  /** Every transcript entry this run wrote, in order (the ending is last). */
+  entries: readonly SessionEntry[];
+  /** One sentence when the transcript could not be written; null when it could. */
+  notice: string | null;
+}
+
+/** A live run: its handle (for the stop) and its one settle promise. */
+export interface SessionRunStart {
+  handle: AcpRunHandle;
+  done: Promise<SessionRunDone>;
+}
+
+/** What a run needs from the app, all injectable for a test. */
+export interface SessionRunOptions {
+  /** The key for ONE provider row, read at run time and never logged. */
+  readKey?: (providerId: string) => Promise<string>;
+  /** The child's spawner (a test's fake, or Bun's). */
+  spawn?: AcpSpawner;
+  /** The environment it may inherit FROM; only PATH/HOME are read. */
+  environment?: Record<string, string | undefined>;
+  /** The temp root a session directory is made under. */
+  sessionRoot?: string;
+  /** A caller's own deadline, shorter than the row's budget. */
+  timeoutMs?: number;
+  /** The writer's clock, so a test can pin the record's timestamps. */
+  now?: () => string;
+  /** Each entry as it is written, for the view that watches the run. */
+  onEntry?: (entry: SessionEntry) => void;
+  /** The transcript bridges (a test's fake, or the map's own files). */
+  transcriptIo?: SessionIo;
+}
+
+/**
+ * START ONE RUN and write its transcript AS IT ARRIVES. The progress sequence
+ * is mapped to whole entries (`sessionEntryOf`), and each entry is appended
+ * through ONE serialized chain, so file order is arrival order even when two
+ * reports land in the same tick. The chain is awaited by `done`, so a caller
+ * that awaits it sees every entry the run wrote — the run's result always has
+ * its ending line on disk.
+ *
+ * The child is killed by the run itself on every ending (18.2's rule survives
+ * here untouched); this function owns no process and no timer.
+ */
+export function beginSessionRun(
+  workspacePath: string,
+  row: AcpSpec,
+  slug: string,
+  options: SessionRunOptions = {},
+): SessionRunStart {
+  const now = options.now ?? (() => new Date().toISOString());
+  const written: SessionEntry[] = [];
+  let chain: Promise<void> = Promise.resolve();
+  let notice: string | null = null;
+
+  const record = (entry: AcpProgressEntry): void => {
+    const line = sessionEntryOf(entry, now());
+    if (line === null) return;
+    written.push(line);
+    // ONE append at a time: the previous write must settle before the next
+    // line is added, so two entries can never land out of order or interleave.
+    chain = chain
+      .then(async () => {
+        await appendSessionEntries(
+          workspacePath,
+          slug,
+          [line],
+          options.transcriptIo,
+        );
+      })
+      .catch(() => {
+        notice = SESSION_TRANSCRIPT_REFUSAL;
+      });
+    options.onEntry?.(line);
+  };
+
+  const handle = startAcpRun(row, SESSION_PROMPT, {
+    // The key is read NOW, from the one row the tool declares, and handed
+    // straight to the spawn — never rendered, never kept in state.
+    readKey: options.readKey ?? ((providerId: string) => readSecret(providerId)),
+    replyToPermission: sessionPermissionReply,
+    ...(options.spawn === undefined ? {} : { spawn: options.spawn }),
+    ...(options.environment === undefined
+      ? {}
+      : { environment: options.environment }),
+    ...(options.sessionRoot === undefined
+      ? {}
+      : { sessionRoot: options.sessionRoot }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    onProgress: record,
+  });
+
+  const done: Promise<SessionRunDone> = handle.result.then(async (result) => {
+    // The run has settled; the last append must land before the caller reads.
+    await chain;
+    return { result, entries: [...written], notice };
+  });
+
+  return { handle, done };
+}
+
+/** The bridges a session card's creation needs; a test passes its own fakes. */
+export interface SessionCardIo {
+  saveSessions: typeof saveSessions;
+}
+
+/** The real bridges, bound once so the hook's path is the tested one. */
+const SESSION_CARD_IO: SessionCardIo = { saveSessions };
+
+/** What making a session card produced: the next lines and the new card. */
+export interface SessionCardRecords {
+  sessions: SessionCard[];
+  session: SessionCard;
+}
+
+/**
+ * STORY 18.3 — WRITE ONE SESSION CARD, in the house order: the `sessions.txt`
+ * line only, with the slug minted against ALL THREE families' slugs (the run
+ * of the story's slug-space proof). The tool row is NAMED by id — never a key,
+ * never a command — and nothing else is written: a card that has never run has
+ * no transcript to invent. PURE apart from the bridge it is handed.
+ */
+export async function writeSessionCard(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  asks: readonly AskCard[],
+  sessions: readonly SessionCard[],
+  malformedSessions: readonly string[],
+  name: string,
+  tool: string,
+  x: number,
+  y: number,
+  io: SessionCardIo = SESSION_CARD_IO,
+): Promise<SessionCardRecords> {
+  const addition = addSession(
+    sessions,
+    sharedSlugs(references, asks, sessions),
+    name.trim(),
+    x,
+    y,
+    tool,
+  );
+  await io.saveSessions(workspacePath, addition.sessions, malformedSessions);
+  return { sessions: addition.sessions, session: addition.session };
+}
+
+/** The bridges a re-bind needs; a test passes its own fakes. */
+export interface SessionBindIo {
+  saveSessions: typeof saveSessions;
+}
+
+const SESSION_BIND_IO: SessionBindIo = { saveSessions };
+
+/**
+ * BIND one session card to another row: ONE field's change, ONE write. A slug
+ * the file does not carry answers `null` (the caller's one sentence) and never
+ * appends a card; the transcript and the point are untouched.
+ */
+export async function bindSessionCard(
+  workspacePath: string,
+  sessions: readonly SessionCard[],
+  malformedSessions: readonly string[],
+  slug: string,
+  tool: string,
+  io: SessionBindIo = SESSION_BIND_IO,
+): Promise<SessionCard[] | null> {
+  const next = bindSessionToolRecord(sessions, slug, tool);
+  if (next === null) return null;
+  await io.saveSessions(workspacePath, next, malformedSessions);
+  return next;
 }
 
 /** The bridges a page card's creation needs; a test passes its own fakes. */
@@ -2304,6 +2767,15 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   // STORY 17.8: conversations whose ask card is gone. The load's one folder
   // listing computes them; a refused unlink adds the one it could not take.
   const orphanAskTurnsRef = useRef<string[]>([]);
+  // STORY 18.3: the session cards, their transcripts and the runs that are
+  // LIVE right now. The first three are the map folder's records; the handles
+  // and the running list are VIEW STATE — a run belongs to the card it started
+  // from and is dropped the moment it settles.
+  const sessionsRef = useRef<SessionCard[]>([]);
+  const sessionEntriesRef = useRef<Record<string, readonly SessionEntry[]>>({});
+  const malformedSessionsRef = useRef<string[]>([]);
+  const sessionRunningRef = useRef<string[]>([]);
+  const sessionRunsRef = useRef<Record<string, AcpRunHandle>>({});
   const readingsRef = useRef<Reading[]>([]);
   // Story 16.14: the media lines and their READ thumbnail sources. Both are
   // view mirrors of the map folder — the thumb's bytes live in map/media/.
@@ -2347,13 +2819,23 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
 
   const reload = useCallback(async () => {
     if (workspacePath === "") return;
-    const [ground, asks, readings, groundLinks, history, loadedMedia] =
-      await Promise.all([
+    const [
+      ground,
+      asks,
+      loadedSessions,
+      readings,
+      groundLinks,
+      history,
+      loadedMedia,
+    ] = await Promise.all([
         loadGround(workspacePath),
         // STORY 17.1: the ask cards' lines are read with the workspace, like
         // every other record family. Their conversations are read below, one
         // per card, once — nothing watches or re-reads.
         loadAsks(workspacePath),
+        // STORY 18.3: the session cards' lines read here too; their transcripts
+        // are read below, one per card, once. Opening writes nothing.
+        loadSessions(workspacePath),
         loadReadings(workspacePath),
         loadGroundLinks(workspacePath),
         // Story 16.10: a READ only — opening is a look, so a missing history is
@@ -2365,7 +2847,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       ]);
     const slugs = ground.references.map((reference) => reference.on);
     const askSlugs = asks.asks.map((ask) => ask.on);
-    const [texts, metas, loadedNotes, thumbs, loadedAskTurns] =
+    // STORY 18.3: the session cards' transcripts, one read per card below.
+    const sessionSlugs = loadedSessions.sessions.map((session) => session.on);
+    const [texts, metas, loadedNotes, thumbs, loadedAskTurns, loadedSessionEntries] =
       await Promise.all([
         loadReadingTexts(workspacePath, slugs),
         metasOf(workspacePath, readings.readings),
@@ -2380,6 +2864,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         // an empty conversation, never an invented one. STORY 17.8 adds the
         // folder's ONE listing, which also names an ORPHAN conversation.
         loadAskConversations(workspacePath, askSlugs),
+        // STORY 18.3: one read per session card's transcript, in arrival
+        // order. An absent file is no entries — a card made but never run.
+        loadSessionTranscripts(workspacePath, sessionSlugs),
       ]);
     const states = statesOf(
       ground.references,
@@ -2404,6 +2891,17 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     // STORY 17.8: a conversation with no ask card is kept and SAID, never
     // adopted into a card and never deleted.
     orphanAskTurnsRef.current = loadedAskTurns.orphans;
+    // STORY 18.3: the session cards and their transcripts follow the same rule
+    // as the ask cards' — the map folder alone is the truth, read once, and an
+    // absent transcript is no entries rather than an invented one.
+    sessionsRef.current = loadedSessions.sessions;
+    malformedSessionsRef.current = loadedSessions.malformed;
+    const sessionEntries: Record<string, readonly SessionEntry[]> = {};
+    for (const slug of sessionSlugs) {
+      sessionEntries[slug] =
+        loadedSessionEntries[slug]?.entries ?? [];
+    }
+    sessionEntriesRef.current = sessionEntries;
     readingsRef.current = readings.readings;
     mediaRef.current = loadedMedia.media;
     malformedMediaRef.current = loadedMedia.malformed;
@@ -2433,6 +2931,12 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     // STORY 17.8: computed from the load's listing and every write that can
     // make one, never stored as a record.
     orphanAskTurns: orphanAskTurnsRef.current,
+    // STORY 18.3: the session cards, their transcripts and the live runs. The
+    // last is VIEW STATE: a slug leaves the list when its run settles.
+    sessions: sessionsRef.current,
+    sessionEntries: sessionEntriesRef.current,
+    malformedSessions: malformedSessionsRef.current,
+    sessionRunning: sessionRunningRef.current,
     readings: readingsRef.current,
     media: mediaRef.current,
     thumbs: thumbsRef.current,
@@ -2561,6 +3065,19 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     pulledRef.current = {};
     mirrorNoticeRef.current = null;
     historyNoticeRef.current = null;
+    // STORY 18.3: a run belongs to the card it started from, and that card
+    // belongs to the workspace it was made in. Leaving the workspace CANCELS
+    // every live run (the run's own cancel — session/cancel, then the child, so
+    // no orphan process is left behind); the new workspace starts with none.
+    for (const handle of Object.values(sessionRunsRef.current)) {
+      try {
+        handle.cancel();
+      } catch {
+        // A run already settled has nothing to cancel.
+      }
+    }
+    sessionRunsRef.current = {};
+    sessionRunningRef.current = [];
     // Story 16.13: a restore belongs to the workspace its bytes came from
     // (story 17.8's ask-card restore rides the same one).
     restorableRef.current = null;
@@ -2573,6 +3090,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       askTurnsRef.current = {};
       malformedAsksRef.current = [];
       orphanAskTurnsRef.current = [];
+      sessionsRef.current = [];
+      sessionEntriesRef.current = {};
+      malformedSessionsRef.current = [];
+      sessionRunningRef.current = [];
+      sessionRunsRef.current = {};
       readingsRef.current = [];
       mediaRef.current = [];
       malformedMediaRef.current = [];
@@ -2619,7 +3141,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             trimmed,
             x,
             y,
-            sharedSlugs(referencesRef.current, asksRef.current),
+            // STORY 18.3 — ALL THREE FAMILIES: the third is the session cards,
+            // so a new reference can never twin one of them either.
+            sharedSlugs(referencesRef.current, asksRef.current, sessionsRef.current),
           );
           const taken = await takeReading(
             workspacePath,
@@ -2731,7 +3255,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             text,
             new Date().toISOString(),
             undefined,
-            { taken: sharedSlugs(referencesRef.current, asksRef.current) },
+            // STORY 18.3 — ALL THREE FAMILIES now: ground, asks and sessions.
+            { taken: sharedSlugs(referencesRef.current, asksRef.current, sessionsRef.current) },
           );
           referencesRef.current = written.references;
           readingsRef.current = written.readings;
@@ -2809,7 +3334,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             read,
             new Date().toISOString(),
             undefined,
-            { taken: sharedSlugs(referencesRef.current, asksRef.current) },
+            // STORY 18.3 — ALL THREE FAMILIES now: ground, asks and sessions.
+            { taken: sharedSlugs(referencesRef.current, asksRef.current, sessionsRef.current) },
           );
           if (created.kind === "refused") {
             outcome = { ok: false, message: created.message };
@@ -2897,7 +3423,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             read,
             new Date().toISOString(),
             undefined,
-            { taken: sharedSlugs(referencesRef.current, asksRef.current) },
+            // STORY 18.3 — ALL THREE FAMILIES now: ground, asks and sessions.
+            { taken: sharedSlugs(referencesRef.current, asksRef.current, sessionsRef.current) },
           );
           if (created.kind === "refused") {
             outcome = { ok: false, message: created.message };
@@ -3057,6 +3584,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             name,
             x,
             y,
+            undefined,
+            // STORY 18.3 — the third family: a new ask can never twin a card.
+            sessionsRef.current,
           );
           asksRef.current = written.asks;
           setState(snapshot());
@@ -3115,6 +3645,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             name,
             x,
             y,
+            undefined,
+            // STORY 18.3 — the third family: a fork can never twin a card.
+            sessionsRef.current,
           );
           if (written === null) {
             outcome = { ok: false, message: ASK_MISSING_REFUSAL };
@@ -3280,6 +3813,206 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     },
     [workspacePath],
   );
+
+  /**
+   * STORY 18.3 — MAKE A SESSION CARD. One queued write of `map/sessions.txt`;
+   * no reading, no note, no media, no link and NO transcript (a card that has
+   * never run has nothing to say). The tool row is NAMED by id, and a row this
+   * build does not ship cannot be bound: the bubble offers only shipped rows,
+   * and a card that could never run is not made. The slug is minted in the
+   * SHARED space — ground, asks and sessions — so a third family can never coil
+   * a twin.
+   *
+   * No mirror and no history: 18.5 owns both, and this story deliberately
+   * writes only the record. The map folder is the truth either way.
+   */
+  const createSession = useCallback(
+    (
+      name: string,
+      tool: string,
+      x: number,
+      y: number,
+    ): Promise<GroundAddResult> => {
+      const refusal = sessionRefusal(name);
+      if (refusal !== null) return Promise.resolve({ ok: false, message: refusal });
+      if (shippedAcpSpec(tool) === null) {
+        return Promise.resolve({ ok: false, message: SESSION_NO_TOOL_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const written = await writeSessionCard(
+            workspacePath,
+            referencesRef.current,
+            asksRef.current,
+            sessionsRef.current,
+            malformedSessionsRef.current,
+            name,
+            tool,
+            x,
+            y,
+          );
+          sessionsRef.current = written.sessions;
+          sessionEntriesRef.current = {
+            ...sessionEntriesRef.current,
+            [written.session.on]: [],
+          };
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 18.3 — BIND a card whose tool row is gone to another row: ONE field's
+   * change, ONE queued write, and the transcript and the point are untouched.
+   * A card that is running refuses (the run must not change under it), and a
+   * row this build does not ship is not bound.
+   */
+  const bindSessionTool = useCallback(
+    (slug: string, tool: string): Promise<GroundAddResult> => {
+      if (!sessionsRef.current.some((session) => session.on === slug)) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      if (sessionRunsRef.current[slug] !== undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
+      }
+      if (shippedAcpSpec(tool) === null) {
+        return Promise.resolve({ ok: false, message: SESSION_NO_TOOL_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const next = await bindSessionCard(
+            workspacePath,
+            sessionsRef.current,
+            malformedSessionsRef.current,
+            slug,
+            tool,
+          );
+          if (next === null) {
+            outcome = { ok: false, message: SESSION_MISSING_REFUSAL };
+            return;
+          }
+          sessionsRef.current = next;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 18.3 — RUN one session card. The row's 18.2 lifecycle starts here,
+   * and EVERY progress entry is appended to the transcript the moment it
+   * arrives (whole lines, in arrival order), so the card watches the run from
+   * the file it is writing.
+   *
+   * ONE RUN PER CARD AT A TIME: the live handles are view state, and a second
+   * press answers one sentence rather than starting a second child. The slug
+   * leaves the running list the instant the run settles — a stopped or failed
+   * run can never leave its stop verb (or a spinner) standing.
+   *
+   * The result says only whether the RECORD could keep up: the ENDING is the
+   * transcript's own `ended` line, which the card reads back from the file, so
+   * the view and a reopen show the same bytes.
+   */
+  const runSession = useCallback(
+    (slug: string): Promise<GroundAddResult> => {
+      const session = sessionsRef.current.find((entry) => entry.on === slug);
+      if (session === undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      if (sessionRunsRef.current[slug] !== undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
+      }
+      const row = shippedAcpSpec(session.tool);
+      if (row === null) {
+        return Promise.resolve({ ok: false, message: SESSION_NO_TOOL_REFUSAL });
+      }
+      // A runtime that cannot spawn says so BEFORE anything is written: no
+      // half-run, no "started" line, and no spinner left waiting on a process
+      // this window could never make.
+      if (!sessionRuntimeReady()) {
+        return Promise.resolve({
+          ok: false,
+          message: SESSION_NO_RUNTIME_SENTENCE,
+        });
+      }
+      const started = beginSessionRun(workspacePath, row, slug, {
+        // The view follows each entry as the run reports it. The file is the
+        // record; this is the same arrival order, one render behind the write.
+        onEntry: (entry) => {
+          const current = sessionEntriesRef.current[slug] ?? [];
+          sessionEntriesRef.current = {
+            ...sessionEntriesRef.current,
+            [slug]: [...current, entry],
+          };
+          setState(snapshot());
+        },
+      });
+      sessionRunsRef.current = {
+        ...sessionRunsRef.current,
+        [slug]: started.handle,
+      };
+      sessionRunningRef.current = [...sessionRunningRef.current, slug];
+      setState(snapshot());
+      return started.done
+        .then(async (done): Promise<GroundAddResult> => {
+          const runs = { ...sessionRunsRef.current };
+          delete runs[slug];
+          sessionRunsRef.current = runs;
+          sessionRunningRef.current = sessionRunningRef.current.filter(
+            (running) => running !== slug,
+          );
+          // Read the transcript BACK from the file: the card then shows the
+          // same bytes a reopen would, never a second in-memory truth.
+          const transcript = await loadSessionTranscript(workspacePath, slug);
+          sessionEntriesRef.current = {
+            ...sessionEntriesRef.current,
+            [slug]: transcript.entries,
+          };
+          setState(snapshot());
+          return done.notice === null
+            ? { ok: true }
+            : { ok: false, message: done.notice };
+        })
+        .catch(() => ({
+          ok: false,
+          message: SESSION_TRANSCRIPT_REFUSAL,
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 18.3 — STOP the live run. The run's OWN cancel (18.2): session/cancel
+   * first, a short grace, then the child — killed on that path like every other.
+   * What arrived stays, and the ending the run writes says it was stopped. A
+   * press with nothing running writes nothing at all.
+   */
+  const stopSession = useCallback(async (slug: string): Promise<void> => {
+    const handle = sessionRunsRef.current[slug];
+    if (handle === undefined) return;
+    handle.cancel();
+  }, []);
 
   /**
    * STORY 17.1 — ASK ONE QUESTION inside an ask card. STORY 17.3 makes the
@@ -4187,6 +4920,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     askTurns: state.askTurns,
     malformedAsks: state.malformedAsks,
     orphanAskTurns: state.orphanAskTurns,
+    sessions: state.sessions,
+    sessionEntries: state.sessionEntries,
+    malformedSessions: state.malformedSessions,
+    sessionRunning: state.sessionRunning,
     readings: state.readings,
     media: state.media,
     thumbs: state.thumbs,
@@ -4214,6 +4951,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     forkAskAt,
     reanchorAskTo,
     removeAsk,
+    createSession,
+    bindSessionTool,
+    runSession,
+    stopSession,
     create,
     createSelection,
     createPage,

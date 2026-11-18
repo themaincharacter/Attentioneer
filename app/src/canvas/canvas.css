@@ -7554,3 +7554,235 @@ body {
 .ground-ask-card {
   font-style: italic;
 }
+
+/* ------------------------------------------------------------------------- *
+ * STORY 18.3 — THE SESSION CARD (canvas/SessionCard.tsx).
+ *
+ * The ask card's sibling on the ground map: the same grammar (name, what this
+ * is, the crop) on the same paper. The small face is the newest entry's crop;
+ * the expanded face is the transcript, newest at the bottom, with the run's
+ * declaration and its run/stop verbs pinned under it. One quiet line per entry
+ * kind — words, a tool's name and status, a permission's name and reply, the
+ * run's own beats and its ending — and NEVER a bar, a percentage or a count.
+ *
+ * PROVISIONAL (ADR-0003's rendering seam): the size, the crop and the running
+ * sentence's look.
+ * ------------------------------------------------------------------------- */
+.session-card {
+  position: absolute;
+  pointer-events: auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 300px;
+  height: 200px;
+  padding: 9px 13px 8px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid var(--ink-rule);
+  border-radius: 8px;
+  box-shadow: 0 1px 5px rgba(40, 35, 25, 0.06);
+  user-select: none;
+  cursor: pointer;
+  animation: fade-in var(--motion-base) var(--ease-out);
+}
+
+.session-card.expanded {
+  z-index: 6;
+  width: 500px;
+  height: 400px;
+  padding: 14px 16px 12px;
+  cursor: default;
+}
+
+.session-card-name {
+  font-size: 17px;
+  color: var(--ink-strong);
+}
+
+.session-card-kind {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--ink-marker);
+}
+
+.session-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+
+.session-card.expanded .session-card-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* THE TRANSCRIPT: one entry per line, arrival order, newest at the bottom. */
+.session-card-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.session-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.session-entry-text {
+  font-size: var(--prose-size);
+  line-height: var(--prose-leading);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.session-entry-name {
+  font-size: var(--prose-size);
+  line-height: var(--prose-leading);
+  color: var(--ink-strong);
+}
+
+.session-entry-status {
+  font-size: var(--compact-size);
+  line-height: var(--compact-leading);
+  color: var(--ink-soft);
+}
+
+/* The run's own beats and its ENDING: one quiet line, never a meter. */
+.session-entry.quiet {
+  font-size: 11.5px;
+  line-height: 1.5;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+/* An ending states how the run went — a stopped, failed or timed-out run is
+   never dressed as a result, so its line keeps the body's ink. */
+.session-entry.ended {
+  color: var(--ink-marker);
+}
+
+.session-card-empty {
+  font-size: 12px;
+  line-height: 1.625;
+  color: var(--ink-faint);
+}
+
+/* The small face crops TEXT at the person's stated count; a tool's name or an
+   ending is one line already and is never cut. */
+.session-card:not(.expanded) .session-entry-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--preview-lines, 6);
+  overflow: hidden;
+}
+
+.session-card-run {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(141, 136, 124, 0.16);
+}
+
+/* THE DECLARATION FOR THE NEXT RUN: 18.2's one sentence (which names a
+   provider row, never a key), quiet, above the verb it describes. */
+.session-card-declaration {
+  font-size: 10.5px;
+  line-height: 1.45;
+  font-style: italic;
+  color: var(--ink-faint);
+  max-height: 48px;
+  overflow-y: auto;
+}
+
+/* A card whose row is gone STATES it and offers the choice again. */
+.session-card-missing {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.session-card-missing-sentence {
+  font-size: 11.5px;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.session-card-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.session-card-pick,
+.ground-bubble-tool {
+  max-width: 240px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink-strong);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.ground-bubble-session {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.session-card-actions button,
+.session-card-open {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink-marker);
+  cursor: pointer;
+}
+
+.session-card-actions button:hover,
+.session-card-open:hover {
+  color: var(--ink-strong);
+}
+
+.session-card-actions button:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+}
+
+/* While a run is live the card says so in ONE sentence and offers its stop.
+   It is read from the live-run list, so it disappears with the run — there is
+   no spinner here to outlive anything. */
+.session-running {
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+.session-card-problem {
+  font-size: 11.5px;
+  color: var(--ink-marker);
+}
+
+.session-card-footer {
+  display: flex;
+  justify-content: flex-end;
+}

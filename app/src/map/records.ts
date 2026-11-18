@@ -86,6 +86,27 @@ export const ASK_RECORD_FILE = {
 export const ASK_TURNS_DIR = "asks";
 
 /**
+ * THE SESSION CARD'S OWN RECORD (Epic 18 story 3). A THIRD family beside the
+ * ground references and the ask cards, and not a reading either: one
+ * `map/sessions.txt` line per session card and one transcript per card under
+ * `map/sessions/`. PROVISIONAL with the rest — the names, the line shape and
+ * the folder may move when an ADR settles them. Kept out of `GROUND_RECORD_FILE`
+ * and `ASK_RECORD_FILE` because a session card has no reading, no anchor and no
+ * conversation of its own: it binds a TOOL ROW and holds that row's run.
+ */
+export const SESSION_RECORD_FILE = {
+  /** One line per session card: `on | name | x | y | tool`. */
+  sessions: "sessions.txt",
+} as const;
+
+/**
+ * The session transcripts' folder, beside `map/sessions.txt`: one
+ * `<slug>.jsonl` per card, one progress entry per line, in arrival order.
+ * APPEND-ONLY: an earlier line's bytes are a prefix that never changes.
+ */
+export const SESSION_TRANSCRIPTS_DIR = "sessions";
+
+/**
  * The ground readings' text folder, beside `map/readings.txt`: one
  * `<slug>.md` per reading, holding the file's opening lines as read. The
  * name is provisional with the record shape; it is the one folder the ground

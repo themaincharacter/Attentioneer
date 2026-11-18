@@ -3886,6 +3886,21 @@ function App() {
   );
 
   /**
+   * STORY 18.3 — the ground bubble's SESSION door: a name and ONE tool row, at
+   * the point the person double-clicked. The card is a record; nothing runs
+   * until its own run is pressed, and no transcript exists before that.
+   */
+  const addGroundSessionAt = useCallback(
+    async (name: string, tool: string) => {
+      if (groundAt === null) {
+        return { ok: false, message: "nothing was written." };
+      }
+      return ground.createSession(name, tool, groundAt.x, groundAt.y);
+    },
+    [ground, groundAt],
+  );
+
+  /**
    * The ground bubble's THIRD source (story 16.15): a pasted video address. The
    * sidecar reads its oEmbed look once; the app keeps the title and a local
    * thumbnail. A refused read creates nothing.
@@ -4408,6 +4423,15 @@ function App() {
             onReanchorAsk={ground.reanchorAskTo}
             onAskTurn={ground.askTurn}
             onStopAskTurn={ground.askStop}
+            /* STORY 18.3 — the session cards: their records, their transcripts
+               and the runs that are live right now. The verbs are the hook's,
+               the record is the map folder's. */
+            sessions={ground.sessions}
+            sessionEntries={ground.sessionEntries}
+            sessionRunning={ground.sessionRunning}
+            onRunSession={ground.runSession}
+            onStopSession={ground.stopSession}
+            onChooseSessionTool={ground.bindSessionTool}
             /* STORY 17.8 — an ask card is removable through the same one toast
                every other card uses (16.13's immediate delete + Restore). */
             onRemoveAsk={ground.removeAsk}
@@ -4732,6 +4756,9 @@ function App() {
             onAdd={addGroundAt}
             onAddPage={addGroundPageAt}
             onAddVideo={addGroundVideoAt}
+            /* STORY 18.3 — the fourth door: a SESSION CARD bound to one tool
+               row. It is its own record family, not a reference's source. */
+            onAddSession={addGroundSessionAt}
             onClose={closeGroundBubble}
           />
         )}
@@ -5236,6 +5263,7 @@ function App() {
         malformedGround={ground.malformedGround}
         malformedReadings={ground.malformedReadings}
         malformedAsks={ground.malformedAsks}
+        malformedSessions={ground.malformedSessions}
         malformedGroundLinks={ground.malformedLinks}
         orphanGroundLinks={ground.orphanLinks}
         orphanGroundNotes={ground.orphanNotes}
@@ -5319,6 +5347,7 @@ function MarkNotices({
   malformedGround,
   malformedReadings,
   malformedAsks,
+  malformedSessions,
   malformedGroundLinks,
   orphanGroundLinks,
   orphanGroundNotes,
@@ -5406,6 +5435,13 @@ function MarkNotices({
    * lines in place; story 17.2 owns showing a conversation's damage.
    */
   malformedAsks: readonly string[];
+  /**
+   * STORY 18.3 — unreadable lines in `map/sessions.txt`, preserved by every
+   * write and surfaced here under the ground group only (the session cards
+   * live on that map). A transcript's own malformed lines are kept in the file
+   * as well; the card renders what it can read and never repairs the rest.
+   */
+  malformedSessions: readonly string[];
   /**
    * The ground map's WORDLESS links (story 16.5): unreadable lines in
    * `map/ground-links.txt`, and links whose endpoint is not a reference the
@@ -5501,6 +5537,7 @@ function MarkNotices({
     (malformedGround.length > 0 ||
       malformedReadings.length > 0 ||
       malformedAsks.length > 0 ||
+      malformedSessions.length > 0 ||
       malformedGroundLinks.length > 0 ||
       orphanGroundLinks.length > 0 ||
       orphanGroundNotes.length > 0 ||
@@ -5752,6 +5789,17 @@ function MarkNotices({
                   key={`malformed-asks-${index}`}
                 >
                   unreadable line in map/asks.txt: {line}
+                </div>
+              ))}
+              {/* STORY 18.3: an unreadable line in map/sessions.txt is the
+                  session cards' honesty surface, kept by every write and named
+                  here — never repaired into a card. */}
+              {malformedSessions.map((line, index) => (
+                <div
+                  className="mark-notice"
+                  key={`malformed-sessions-${index}`}
+                >
+                  unreadable line in map/sessions.txt: {line}
                 </div>
               ))}
               {/* STORY 16.6, the note's honesty surface: a file whose slug has

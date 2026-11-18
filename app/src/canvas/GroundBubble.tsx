@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { readingFileName } from "../map/readings";
+import {
+  SESSION_NAME_REFUSAL,
+  SESSION_TOOL_REFUSAL,
+  proposeSessionName,
+} from "../map/sessions";
+import { ACP_SPECS } from "../turn/acpSpecs";
 import { pickReadingFile } from "../workspace/dialogs";
 import { usePlane } from "./CanvasPlane";
 import type { GroundAddResult } from "./useGround";
@@ -45,13 +51,17 @@ import { counterScale } from "./veilRules";
  */
 
 /** What the person means to point the reference at (story 16.15). */
-export type GroundIntent = "file" | "page" | "video";
+export type GroundIntent = "file" | "page" | "video" | "session";
 
 /** The intent row's words, in order. PROVISIONAL. */
 const INTENTS: readonly { intent: GroundIntent; label: string }[] = [
   { intent: "file", label: "a file" },
   { intent: "page", label: "a page" },
   { intent: "video", label: "a video" },
+  // STORY 18.3 — the SESSION CARD is created here too: the person is already
+  // at a point on the paper, and a run needs a place. It is not a reference and
+  // not an intent on a reference's source: the row it binds is the whole card.
+  { intent: "session", label: "a session" },
 ];
 
 interface GroundBubbleProps {
@@ -72,6 +82,13 @@ interface GroundBubbleProps {
    * thumbnail. A refusal is one sentence and nothing is created.
    */
   onAddVideo?: (name: string, url: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 18.3 — make a SESSION CARD at this point, bound to one tool row. The
+   * row is named by id (`turn/acpSpecs.ts`), never by a key or a command, and a
+   * card that has never run writes no transcript. Optional so a render test (and
+   * an older caller) needs no run.
+   */
+  onAddSession?: (name: string, tool: string) => Promise<GroundAddResult>;
   /** Drop the draft (Esc, cancel or a press outside). */
   onClose: () => void;
 }
@@ -82,6 +99,7 @@ export function GroundBubble({
   onAdd,
   onAddPage,
   onAddVideo,
+  onAddSession,
   onClose,
 }: GroundBubbleProps) {
   const { camera } = usePlane();
@@ -95,6 +113,10 @@ export function GroundBubble({
   // A pasted address is kept VERBATIM: it is handed to the app exactly as
   // given, and the sidecar's own guard decides whether it can be taken.
   const [url, setUrl] = useState("");
+  // STORY 18.3 — the TOOL ROW a new session card binds, by id. PROVISIONAL:
+  // the first shipped row is the preselection, and the row's own name is
+  // proposed as the card's name (the person edits or accepts it).
+  const [tool, setTool] = useState(ACP_SPECS[0]?.id ?? "");
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const doneRef = useRef(false);
@@ -189,6 +211,36 @@ export function GroundBubble({
     setProblem(result.message);
   }
 
+  /**
+   * STORY 18.3 — commit a SESSION CARD: the name is the person's and the row is
+   * the picker's. Nothing is run here and no transcript is made — a card that
+   * has never run has nothing to say, and the run is the card's own press.
+   */
+  async function commitSession() {
+    if (doneRef.current || busy || onAddSession === undefined) return;
+    const trimmed = name.trim();
+    if (trimmed === "") {
+      setProblem(SESSION_NAME_REFUSAL);
+      nameRef.current?.focus();
+      return;
+    }
+    if (tool === "") {
+      setProblem(SESSION_TOOL_REFUSAL);
+      return;
+    }
+    setBusy(true);
+    setProblem(null);
+    const result = await onAddSession(trimmed, tool);
+    if (result.ok) {
+      doneRef.current = true;
+      onClose();
+      return;
+    }
+    setBusy(false);
+    setProblem(result.message);
+    nameRef.current?.focus();
+  }
+
   async function chooseFile() {
     if (doneRef.current || busy || intent !== "file") return;
     if (name.trim() === "") {
@@ -215,11 +267,22 @@ export function GroundBubble({
     if (busy) return;
     setIntent(next);
     setProblem(null);
+    // STORY 18.3: choosing a session PROPOSES the row's name as the card's, so
+    // the person edits or accepts rather than typing from nothing (the ask
+    // card's idiom). A draft already typed is never overwritten.
+    if (next === "session" && name.trim() === "" && tool !== "") {
+      const row = ACP_SPECS.find((spec) => spec.id === tool);
+      if (row !== undefined) setName(proposeSessionName(row.name));
+    }
     nameRef.current?.focus();
   }
 
   const hasSource =
-    intent === "file" ? from !== null : url.trim() !== "";
+    intent === "session"
+      ? tool !== ""
+      : intent === "file"
+        ? from !== null
+        : url.trim() !== "";
   const canAdd = !busy && name.trim() !== "" && hasSource;
   const addressIntent = intent === "page" || intent === "video";
 
@@ -243,7 +306,11 @@ export function GroundBubble({
       }}
       onDoubleClick={(e) => e.stopPropagation()}
     >
-      <div className="ground-bubble-title">reference</div>
+      {/* The title names what the person is about to make: a reference by
+          default, a session when the third door is open (story 18.3). */}
+      <div className="ground-bubble-title">
+        {intent === "session" ? "session" : "reference"}
+      </div>
       <div className="ground-bubble-intents" role="group" aria-label="what to add">
         {INTENTS.map((option) => {
           // A door this app was not handed is not offered: the bubble is also
@@ -253,7 +320,9 @@ export function GroundBubble({
               ? true
               : option.intent === "page"
                 ? onAddPage !== undefined
-                : onAddVideo !== undefined;
+                : option.intent === "video"
+                  ? onAddVideo !== undefined
+                  : onAddSession !== undefined;
           if (!offered) return null;
           return (
             <button
@@ -278,7 +347,9 @@ export function GroundBubble({
         className="ground-bubble-name"
         value={name}
         placeholder="name it…"
-        aria-label="name the reference"
+        aria-label={
+          intent === "session" ? "name the session card" : "name the reference"
+        }
         disabled={busy}
         onChange={(e) => {
           setName(e.target.value);
@@ -287,12 +358,35 @@ export function GroundBubble({
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           e.preventDefault();
-          if (addressIntent) void commitAddress();
+          if (intent === "session") void commitSession();
+          else if (addressIntent) void commitAddress();
           else if (from !== null) void commit(from);
           else void chooseFile();
         }}
       />
-      {intent === "file" ? (
+      {intent === "session" ? (
+        /* STORY 18.3 — THE TOOL ROW. Only the rows this build ships are
+           offered; the record names the row's id, and its key (if it ever
+           declares one) is read at run time and never kept here. */
+        <div className="ground-bubble-session">
+          <select
+            className="ground-bubble-tool"
+            aria-label="the tool this session runs"
+            value={tool}
+            disabled={busy}
+            onChange={(e) => {
+              setTool(e.target.value);
+              if (problem !== null) setProblem(null);
+            }}
+          >
+            {ACP_SPECS.map((spec) => (
+              <option key={spec.id} value={spec.id}>
+                {spec.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : intent === "file" ? (
         <div className="ground-bubble-file">
           {from === null ? "no file yet" : readingFileName(from)}
         </div>
@@ -343,6 +437,10 @@ export function GroundBubble({
           className="ground-bubble-add"
           disabled={!canAdd}
           onClick={() => {
+            if (intent === "session") {
+              void commitSession();
+              return;
+            }
             if (addressIntent) {
               void commitAddress();
               return;

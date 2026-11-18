@@ -8,6 +8,9 @@ import { canonicalJsonlLine, canonicalText, nextSlug, slugName } from "../lib/se
 import { utf8ByteLength } from "../lib/textBytes";
 import type { GroundReference } from "./ground";
 import { ASK_RECORD_FILE, ASK_TURNS_DIR, mapDir } from "./records";
+// STORY 18.3 — the shared slug space now spans THREE families; the type is all
+// this module needs from the session card's record.
+import type { SessionCard } from "./sessions";
 
 /**
  * THE ASK CARD'S RECORD FAMILY (Epic 17 story 1): one `map/asks.txt` line per
@@ -27,7 +30,10 @@ import { ASK_RECORD_FILE, ASK_TURNS_DIR, mapDir } from "./records";
  * anchor must resolve to exactly ONE card, so minting an ask card checks BOTH
  * files and dedupes with the concept map's existing suffix rule (`nextSlug`).
  * `sharedSlugs` is that one check, and the ground family's own minting is handed
- * the same set so neither direction can coin a twin.
+ * the same set so neither direction can coin a twin. STORY 18.3 EXTENDS IT TO
+ * THREE: the session cards (`sessions.ts`) are a third family on the same
+ * ground map, so the one check now spans ground + asks + sessions and every
+ * minting path is handed all three.
  *
  * THE ANCHOR IS A FIELD, NEVER A LINK. `anchor: <reference-slug>` says what the
  * ask is about, in one place. Wiring a link would spend a meaning the epic
@@ -301,17 +307,26 @@ export interface AskAddition {
 }
 
 /**
- * THE SHARED SLUG SPACE (the epic's ruling), PURE: every slug either family
- * holds. A link, a mention or an anchor must resolve to exactly one card, so
- * both minting paths are handed THIS set and neither can coin a twin.
+ * THE SHARED SLUG SPACE (the epic's ruling), PURE: every slug ALL THREE
+ * families hold — the ground references, the ask cards and (Epic 18 story 3)
+ * the session cards. A link, a mention or an anchor must resolve to exactly one
+ * card, so every minting path is handed THIS set and none of them can coin a
+ * twin; the session cards are the third family and the same one check, extended
+ * rather than duplicated.
+ *
+ * The sessions default to none so a caller that knows only two families (and
+ * an older test) keeps the two-family reading; the hook always passes all
+ * three. `sessions.ts` imports nothing from here, so the arrow points one way.
  */
 export function sharedSlugs(
   references: readonly GroundReference[],
   asks: readonly AskCard[],
+  sessions: readonly SessionCard[] = [],
 ): Set<string> {
   const taken = new Set<string>();
   for (const reference of references) taken.add(reference.on);
   for (const ask of asks) taken.add(ask.on);
+  for (const session of sessions) taken.add(session.on);
   return taken;
 }
 

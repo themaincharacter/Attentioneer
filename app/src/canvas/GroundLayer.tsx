@@ -49,6 +49,13 @@ import { isGestureArmed, type GestureMode } from "./gates";
 import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import type { Point } from "./geometry";
 import { AskCard } from "./AskCard";
+import { SessionCard as SessionCardView } from "./SessionCard";
+import {
+  type SessionCard as SessionCardRecord,
+  type SessionEntry,
+} from "../map/sessions";
+import { ACP_SPECS } from "../turn/acpSpecs";
+import { acpDeclaration } from "../turn/acpRun";
 import { GroundConceptPanel, GroundNote } from "./GroundNote";
 import {
   applyMention,
@@ -406,6 +413,24 @@ interface GroundLayerProps {
   /** Stop the running ask turn (the existing turn port's stop — story 17.2). */
   onStopAskTurn?: () => Promise<void>;
   /**
+   * STORY 18.3 — every SESSION card, in FILE ORDER, each card's transcript and
+   * the cards with a LIVE run. All three are read at load and moved only by the
+   * person's own verbs (`useGround`); the layer holds records and forwards
+   * presses, and no press in it writes anything itself.
+   */
+  sessions?: readonly SessionCardRecord[];
+  sessionEntries?: Readonly<Record<string, readonly SessionEntry[]>>;
+  sessionRunning?: readonly string[];
+  /** Start one session card's run (the 18.2 lifecycle, transcript included). */
+  onRunSession?: (slug: string) => Promise<GroundAddResult>;
+  /** Stop one session card's live run (the run's own cancel). */
+  onStopSession?: (slug: string) => Promise<void>;
+  /** Bind a card whose row is gone to another shipped row (one field). */
+  onChooseSessionTool?: (
+    slug: string,
+    tool: string,
+  ) => Promise<GroundAddResult>;
+  /**
    * STORY 17.7b — WHETHER THE ONE SETTINGS SELECTION RESOLVES. The ask card
    * says "nothing configured" BEFORE the send and offers only the settings
    * verb; the selector itself stays in Settings (story 17.7 retired it here).
@@ -496,12 +521,18 @@ export function GroundLayer({
   states,
   asks = [],
   askTurns = {},
+  sessions = [],
+  sessionEntries = {},
+  sessionRunning = [],
   onCreateAsk,
   onForkAsk,
   onReanchorAsk,
   onRemoveAsk,
   onAskTurn,
   onStopAskTurn,
+  onRunSession,
+  onStopSession,
+  onChooseSessionTool,
   hasProvider,
   onOpenSettings,
   onMove,
@@ -531,6 +562,9 @@ export function GroundLayer({
   // slug: opening one closes the other face, so the map never has two editors
   // asking for the eye at once. Nothing here is a record.
   const [openAskOn, setOpenAskOn] = useState<string | null>(null);
+  // STORY 18.3 — the OPEN SESSION CARD, the same rule: one face at a time, so
+  // the map never has two editors asking for the eye at once. View state only.
+  const [openSessionOn, setOpenSessionOn] = useState<string | null>(null);
   // The concept map's word index, read once per workspace through the ONE
   // cross-map helper. `null` means "not read yet" — never "empty" — so a word
   // mention is not called dangling on ignorance.
@@ -568,6 +602,17 @@ export function GroundLayer({
       setOpenAskOn(null);
     }
   }, [asks, openAskOn]);
+
+  useEffect(() => {
+    // STORY 18.3: the same rule for a session card — a card a hand edit removed
+    // cannot stay open, and nothing is repaired on its way out.
+    if (
+      openSessionOn !== null &&
+      !sessions.some((session) => session.on === openSessionOn)
+    ) {
+      setOpenSessionOn(null);
+    }
+  }, [sessions, openSessionOn]);
 
 
 
@@ -609,6 +654,15 @@ export function GroundLayer({
   const cardNames = new Map(
     references.map((reference) => [reference.on, reference.name] as const),
   );
+  /**
+   * STORY 18.3 — THE ROWS THIS BUILD SHIPS, as the session card's picker offers
+   * them. A tool row is DATA (`turn/acpSpecs.ts`): a second tool is an entry
+   * there, never code here, and the picker only ever offers what ships.
+   */
+  const sessionTools = ACP_SPECS.map((spec) => ({
+    id: spec.id,
+    name: spec.name,
+  }));
   /**
    * STORY 17.3 — the anchored card's block facts, as the packet reads them.
    * Built from ALREADY-LOADED state through the same pure crop the send uses
@@ -653,10 +707,12 @@ export function GroundLayer({
           // ask card's editor, and opening an ask closes the reference's.
           onOpen={() => {
             setOpenAskOn(null);
+            setOpenSessionOn(null);
             setOpenOn(reference.on);
           }}
           onOpenCard={(slug) => {
             setOpenAskOn(null);
+            setOpenSessionOn(null);
             setOpenOn(slug);
           }}
           onClose={() => setOpenOn(null)}
@@ -718,6 +774,7 @@ export function GroundLayer({
             previewLines={previewLines}
             onOpen={() => {
               setOpenOn(null);
+              setOpenSessionOn(null);
               setOpenAskOn(ask.on);
             }}
             onClose={() => setOpenAskOn(null)}
@@ -755,6 +812,54 @@ export function GroundLayer({
               onRemoveAsk === undefined
                 ? undefined
                 : () => onRemoveAsk(ask.on)
+            }
+          />
+        );
+      })}
+      {/* STORY 18.3 — THE SESSION CARDS, beside the references and the ask
+          cards on the same plane: a third record family with the same grammar
+          (name → what this is → the crop). A card names ONE tool row and holds
+          that row's run; its transcript is the record, read at load and
+          appended as the run reports, never drawn from memory of a press. */}
+      {sessions.map((session) => {
+        // The row is resolved HERE, from the rows this build ships: a record
+        // that names a row this build no longer has is a stated hole, never a
+        // repaired record (the card offers the choice again).
+        const row =
+          ACP_SPECS.find((spec) => spec.id === session.tool) ?? null;
+        return (
+          <SessionCardView
+            key={session.on}
+            session={session}
+            toolName={row === null ? null : row.name}
+            // 18.2's declaration for the NEXT run: which key it will receive,
+            // by provider ROW, or that it receives none. No key, ever.
+            declaration={row === null ? null : acpDeclaration(row)}
+            tools={sessionTools}
+            entries={sessionEntries[session.on] ?? []}
+            running={sessionRunning.includes(session.on)}
+            open={openSessionOn === session.on}
+            previewLines={previewLines}
+            onOpen={() => {
+              setOpenOn(null);
+              setOpenAskOn(null);
+              setOpenSessionOn(session.on);
+            }}
+            onClose={() => setOpenSessionOn(null)}
+            onRun={
+              onRunSession === undefined
+                ? undefined
+                : () => onRunSession(session.on)
+            }
+            onStop={
+              onStopSession === undefined
+                ? undefined
+                : () => onStopSession(session.on)
+            }
+            onChooseTool={
+              onChooseSessionTool === undefined
+                ? undefined
+                : (tool) => onChooseSessionTool(session.on, tool)
             }
           />
         );

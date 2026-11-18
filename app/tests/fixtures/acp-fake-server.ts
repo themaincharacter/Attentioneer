@@ -15,6 +15,13 @@
  *   hang-mid-turn writes one update, then waits for session/cancel before
  *                 settling the prompt as cancelled (a stop probe).
  *   silent        reads everything and answers nothing (a timeout probe).
+ *   tools         handshake, then a prompt whose stream carries a tool call
+ *                 (pending), agent words, and the same call completed before
+ *                 the turn settles — the shape 18.3's transcript renders.
+ *   no-key        handshake and session, then `session/prompt` refused with the
+ *                 real server's credentials error (-32603, "no API key …") —
+ *                 the spike's 18.1 observation, reproduced as a fixture so a
+ *                 run with no key can be proven to FAIL rather than hang.
  *
  * --report <path> writes {pid, argv, env} once at startup, before the protocol
  * starts. It is how the run tests prove what environment reached the child and
@@ -68,6 +75,10 @@ function say(payload: string): void {
 
 function respond(id: number, result: unknown): void {
   say(JSON.stringify({ jsonrpc: "2.0", id, result }));
+}
+
+function fail(id: number, code: number, message: string): void {
+  say(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }));
 }
 
 function notify(sessionId: string, update: Record<string, unknown>): void {
@@ -135,6 +146,27 @@ async function runPrompt(id: number): Promise<void> {
     update("one ");
     await Bun.sleep(20);
     process.exit(3);
+  }
+
+  if (mode === "tools") {
+    notify(sessionId, {
+      sessionUpdate: "tool_call",
+      toolCallId: "call-1",
+      title: "Read the working directory",
+      kind: "read",
+      status: "pending",
+    });
+    await Bun.sleep(10);
+    update("one ");
+    await Bun.sleep(10);
+    notify(sessionId, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call-1",
+      status: "completed",
+    });
+    update("two");
+    settlePrompt("end_turn");
+    return;
   }
 
   if (mode === "hang-mid-turn") {
@@ -221,6 +253,18 @@ function handle(message: Record<string, unknown>): void {
     return;
   }
   if (message.method === "session/prompt") {
+    if (mode === "no-key") {
+      // The spike's finding (18.1), reproduced byte for byte: the spawned tool
+      // has no key, so the turn is refused before any model step. ACP carries
+      // no auth of its own (`authMethods: []`), which is why this is the first
+      // break a real run hits.
+      fail(
+        message.id as number,
+        -32603,
+        'Internal error: turn failed: llm-deepseek: no API key for provider route "deepseek-official"; store DEEPSEEK_API_KEY through the credentials service (the web Models page writes it), or export DEEPSEEK_API_KEY in the launching environment',
+      );
+      return;
+    }
     void runPrompt(message.id as number);
     return;
   }

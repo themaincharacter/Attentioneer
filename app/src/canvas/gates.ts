@@ -392,6 +392,39 @@ export const CONTENT_CLASSES = [
   "ground-bubble-pick",
   "ground-bubble-add",
   "ground-bubble-cancel",
+  // STORY 18.3 — the bubble's SESSION door and its tool-row picker, and the
+  // session card itself (its two faces, its transcript, its ending's one line,
+  // its declaration, its picker and its run/stop verbs). They live inside the
+  // bubble or the card, which are content already; listed for the same
+  // belt-and-braces reason — a press on any of them must never fall through to
+  // the plane's pan, creation or a card drag.
+  "ground-bubble-session",
+  "ground-bubble-tool",
+  "session-card",
+  "session-card-name",
+  "session-card-kind",
+  "session-card-body",
+  "session-card-transcript",
+  "session-entry",
+  "session-entry-text",
+  "session-entry-name",
+  "session-entry-status",
+  "session-card-empty",
+  "session-card-missing",
+  "session-card-missing-sentence",
+  "session-card-picker",
+  "session-card-pick",
+  "session-card-bind",
+  "session-card-declaration",
+  "session-card-run",
+  "session-running",
+  "session-card-actions",
+  "session-card-run-verb",
+  "session-card-stop",
+  "session-card-close",
+  "session-card-open",
+  "session-card-footer",
+  "session-card-problem",
   // Story 16.6: the card's NOTE (its face, its edit and done verbs and its
   // textarea). They live inside the card, which is already content; listed
   // anyway for the same belt-and-braces reason — a press on the note or in its

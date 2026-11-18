@@ -327,8 +327,11 @@ describe("ONE slug space with ground.txt", () => {
   });
 
   test("the hook hands the SHARED set to every ground minting path", () => {
+    // STORY 18.3: the one slug space now spans THREE families, and every
+    // minting path is handed all of them — a session card's slug can no more
+    // be twinned than an ask card's.
     expect(HOOK).toContain(
-      "sharedSlugs(referencesRef.current, asksRef.current)",
+      "sharedSlugs(referencesRef.current, asksRef.current, sessionsRef.current)",
     );
     // The four creation helpers take it as their own option.
     expect(HOOK.match(/options\.taken,/g)?.length ?? 0).toBe(3);
