@@ -52,6 +52,10 @@ import {
  * row is there declares the next run before it starts — the key sentence
  * included, with no key in it: the ROW is named, never the value.
  *
+ * STORY 18.5 MAKES IT REMOVABLE: the expanded card offers remove, the same
+ * immediate delete + Restore toast every other card uses. A live run is never
+ * cut by it — the verb waits until the transcript has stopped being written.
+ *
  * ESC CLOSES THE CARD'S FACE (collapses), never the map. The wheel never zooms
  * the plane: the scrollbox stops the event where it starts.
  *
@@ -170,6 +174,7 @@ export function SessionCard({
   onAllowOnce,
   onRefuse,
   onMakeResult,
+  onRemove,
 }: {
   session: SessionCardRecord;
   /** The bound row's display name, or null when this build does not ship it. */
@@ -207,6 +212,11 @@ export function SessionCard({
   onRefuse?: () => void;
   /** Make the last completed run's text into a card (a copy, never a link). */
   onMakeResult?: () => Promise<GroundAddResult>;
+  /**
+   * STORY 18.5 — remove this card, immediately and reversibly (the one toast).
+   * A run in flight refuses: the transcript is still being written.
+   */
+  onRemove?: () => Promise<GroundAddResult>;
 }) {
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -291,6 +301,22 @@ export function SessionCard({
     } catch {
       // The run's own line settles it; a stop that cannot reach the server
       // leaves the run to its budget.
+    }
+  }
+
+  /**
+   * STORY 18.5 — the card's remove, beside close: immediate, reversible through
+   * the one toast. A refused unlink has already taken the card, so its one
+   * sentence is the layer's, not this card's.
+   */
+  async function removeCard(): Promise<void> {
+    if (busy || running || onRemove === undefined) return;
+    setBusy(true);
+    setProblem(null);
+    const result = await onRemove();
+    if (!result.ok && result.recordsRemoved !== true) {
+      setBusy(false);
+      setProblem(result.message);
     }
   }
 
@@ -501,6 +527,19 @@ export function SessionCard({
                 onClick={() => void makeResult()}
               >
                 make a card from this
+              </button>
+            )}
+            {/* STORY 18.5 — the card's remove, beside close: immediate,
+                reversible through the one toast. A live run is never cut by a
+                delete — the verb waits. */}
+            {onRemove !== undefined && (
+              <button
+                type="button"
+                className="session-card-remove"
+                disabled={busy || running}
+                onClick={() => void removeCard()}
+              >
+                remove
               </button>
             )}
             <button type="button" className="session-card-close" onClick={onClose}>

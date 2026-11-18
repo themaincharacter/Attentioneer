@@ -35,6 +35,11 @@ import {
   type EgressContactRequest,
   type EgressContactResult,
 } from "./egress";
+import {
+  runRunContact,
+  type RunContactDeps,
+  type RunContactRequest,
+} from "./run";
 import type { AskPacket } from "../turn/packet";
 import {
   abandonAsk,
@@ -356,6 +361,37 @@ export function appendAskCardMove(
       answer,
       askContactDeps(workspacePath),
     );
+    return moved.prism;
+  });
+}
+
+/** The run flow's bridges: the log's file, read and written whole. */
+export function runContactDeps(workspacePath: string): RunContactDeps {
+  const prisms = prismsPath(workspacePath);
+  return {
+    readPrismsText: () => readTextFile(prisms),
+    writePrismsText: (text) => writeTextFile(prisms, text),
+    mintId: mintPrismId,
+  };
+}
+
+/**
+ * STORY 18.5 — ONE SESSION CARD'S RUN IS ONE MOVE. The run itself happens
+ * outside this queue (the sidecar owns the child and its whole budget); only the
+ * record write is enqueued, in the same order as every other contact write, and
+ * the flow itself is pure (contacts/run.ts).
+ *
+ * STRUCTURE ONLY: the session card's slug is the Move's `on`, the contact is
+ * `run`, and the ONE `run` Change names the tool ROW's id, the ending and —
+ * only for a completed run — the result's exact byte size. NOT ONE WORD of the
+ * run rides here. A run that never started (no row, no sidecar) is not a Move
+ * and appends nothing; the caller decides that before calling here.
+ */
+export function appendSessionRun(
+  request: RunContactRequest,
+): Promise<Prism> {
+  return enqueue(async () => {
+    const moved = await runRunContact(request, runContactDeps(request.workspacePath));
     return moved.prism;
   });
 }

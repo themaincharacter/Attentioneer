@@ -30,7 +30,7 @@ import { POINTER_FORMS, type PointerForm } from "../map/pointers";
  *   - `changes` — the Change shapes (the closed union's kinds) the contact may
  *     emit, as data. A Move's log is checked against its contact's list.
  *
- * The four shapes (ADR-0028 decision 3):
+ * The five shapes (ADR-0028 decision 3; the run row is Epic 18 story 5):
  *   - look    — a head read on `path`/`at`, or the OS handed a `url`
  *               (open-os). The bound is SAID; a dangling target is honest.
  *   - make    — one artifact INSIDE the workspace (`path` form): the Move
@@ -38,6 +38,11 @@ import { POINTER_FORMS, type PointerForm } from "../map/pointers";
  *   - measure — the head's declared facts only (no computed number, no URL).
  *   - ask     — one question out; may ride a pointer or none. The inclusion set
  *               is logged, never bytes.
+ *   - run     — a session card's run (PROVISIONAL, Epic 18 story 5): the Move
+ *               hands the card's DIRECTORY and a prompt to an external program,
+ *               so it rides no pointer at all (`none`). The log names the tool
+ *               ROW's id, the ending and the result's size — never the command,
+ *               the directory, an argv or a word of the run.
  *
  * Provisional: the module's location (`contacts/` rather than inside `ghost/`),
  * the row's field names, the refusal sentences' wording, and the target-kind
@@ -78,7 +83,7 @@ export interface ContactDefinition {
   changes: readonly ChangeKind[];
 }
 
-/** The table, in the four contacts' order. */
+/** The table, in the five contacts' order. */
 export const CONTACTS: readonly ContactDefinition[] = [
   {
     contact: "look",
@@ -147,6 +152,34 @@ export const CONTACTS: readonly ContactDefinition[] = [
       { kind: "none", allowed: true },
     ],
     changes: ["ask"],
+  },
+  {
+    // STORY 18.5 (PROVISIONAL) — a session card's run. It hands a FOLDER to an
+    // external program and names that program by its row id, so it rides no
+    // pointer: `none` is the only target it knows. The other three are refused
+    // rather than left unruled (the table is fail-closed), and the refusal says
+    // the true thing — a run is not about one reach.
+    contact: "run",
+    actor: CONTACT_ACTOR,
+    targets: [
+      {
+        kind: "path",
+        allowed: false,
+        refusal: "a run hands its folder to the tool, not one reach.",
+      },
+      {
+        kind: "at",
+        allowed: false,
+        refusal: "a run hands its folder to the tool, not one reach.",
+      },
+      {
+        kind: "url",
+        allowed: false,
+        refusal: "a run is a tool in a folder, not an address.",
+      },
+      { kind: "none", allowed: true },
+    ],
+    changes: ["run"],
   },
 ];
 

@@ -806,6 +806,10 @@ describe("the wire and the record agree", () => {
       asks: [],
       malformedAsks: [],
       orphanAskTurns: [],
+      sessions: [],
+      sessionToolNames: {},
+      sessionEndings: {},
+      orphanSessionTranscripts: [],
     } as never);
     expect(render).toContain("page: example.com");
     expect(render).not.toContain("/a/b");

@@ -52,6 +52,8 @@ export const CONTACT_WORDS: Readonly<Record<ContactKind, string>> = {
   make: "make",
   measure: "measure",
   ask: "ask",
+  // STORY 18.5 (PROVISIONAL): a session card's run is its own verb.
+  run: "run",
 };
 
 /** The Change kind as a quiet log word. */
@@ -61,6 +63,7 @@ export const CHANGE_WORDS: Readonly<Record<Change["kind"], string>> = {
   "write-text": "write text",
   "open-os": "hand off to the OS",
   ask: "ask",
+  run: "run a session",
 };
 
 /** Every outcome of the closed union as the window's word. */
@@ -163,7 +166,10 @@ export function inclusionWords(included: string[] | null): string {
  *   - open-os: nothing beyond its outcome (the reach is on the header, and the
  *     app knows only the handoff);
  *   - ask: the inclusion SET (the reaches' citations, or none) and, when a
- *     response came back, its exact size + decode.
+ *     response came back, its exact size + decode;
+ *   - run (PROVISIONAL, Epic 18 story 5): the tool ROW's id and, only when the
+ *     run completed, the result's exact byte size — never a word, never a
+ *     command, never the directory.
  * Words and exact numbers only — no count, no summary, no content.
  */
 export function changeDetail(change: Change): string {
@@ -193,6 +199,13 @@ export function changeDetail(change: Change): string {
         parts.push(decode === "" ? size : size + " · " + decode);
       }
       return parts.join(" · ");
+    }
+    case "run": {
+      const size =
+        change.resultSize === null
+          ? "no result"
+          : "size " + change.resultSize + " bytes";
+      return "tool " + change.tool + " · " + size;
     }
   }
 }

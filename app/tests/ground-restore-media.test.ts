@@ -538,6 +538,10 @@ describe("a media line whose card is gone is an orphan: kept, reported, never ad
       asks: [],
       malformedAsks: [],
       orphanAskTurns: [],
+      sessions: [],
+      sessionToolNames: {},
+      sessionEndings: {},
+      orphanSessionTranscripts: [],
     });
     expect(text).toContain("## What is unknown");
     expect(text).toContain(

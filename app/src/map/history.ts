@@ -1,6 +1,7 @@
 import { readTextFile, writeTextFile } from "../lib/fs";
 import { canonicalJsonlLine } from "../lib/serialize";
 import type { GroundLink } from "./groundLinks";
+import { isRunOutcome, type RunOutcome } from "./prisms";
 import type { ReadingForm } from "./readings";
 import { mapDir } from "./records";
 
@@ -59,6 +60,19 @@ import { mapDir } from "./records";
  * its id, then `ask.turn`. The two records join by the PRISM's id; this log
  * only says the turn happened and how it ended. A turn that never left the app
  * makes no PRISM and therefore no `ask.turn` line either.
+ *
+ * STORY 18.5 — THE SESSION CARDS' OWN MOVES, STRUCTURE ONLY. Five events name
+ * what happened to a session card and never a word of what its runs said:
+ * `session.add`, `session.remove` and `session.restore` (the slug),
+ * `session.run` (the slug and the run's ENDING) and `session.result` (the card
+ * that was made, and the session it came from). A run's transcript is a
+ * document held by its own file (`map/sessions/<slug>.jsonl`); it is never
+ * quoted, previewed, sized or counted here.
+ *
+ * A RUN'S ENDING IS THE PRISM'S OUTCOME, through ONE mapping (`runOutcomeOf` in
+ * map/sessions.ts): `answered` only for a completed run, `no-response` for a
+ * stop, a failure, a timeout or a dead connection. The PRISM's `run` Change and
+ * this line are the same fact said twice.
  *
  * Written through the ground family's per-file queue (useGround), AFTER the
  * record write the line describes, so a reader never sees a line for a move
@@ -210,6 +224,38 @@ export type HistoryEvent =
       readonly slug: string;
       /** The SAME two words the PRISM's ask outcome carries. */
       readonly ending: AskTurnEnding;
+    }
+  // STORY 18.5 — THE SESSION CARDS' OWN MOVES. Five events, structure only: a
+  // slug, a pair of slugs, or a run's ending. There is no key here for a word,
+  // a command, a directory, an argv or a count of entries, by construction.
+  | {
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "session.add";
+      readonly slug: string;
+    }
+  | {
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "session.remove" | "session.restore";
+      readonly slug: string;
+    }
+  | {
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "session.run";
+      readonly slug: string;
+      /** The SAME two words the PRISM's run outcome carries (one mapping). */
+      readonly ending: RunOutcome;
+    }
+  | {
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "session.result";
+      /** The CARD that was made from the run (a slug, never a link). */
+      readonly slug: string;
+      /** The session card the run was made in (a slug). */
+      readonly from: string;
     };
 
 /**
@@ -383,6 +429,57 @@ export function askTurnEvent(
   return { v: HISTORY_VERSION, t, type: "ask.turn", slug, ending };
 }
 
+/* ------------------------------------------------------------------------- *
+ * THE SESSION CARDS' MOVES (story 18.5) — five structural events, no words.
+ *
+ * Each constructor takes only what the line needs: a slug, a pair of slugs, or
+ * a run's ending. Nothing here can accept the run's text, its prompt, the tool
+ * command, a directory, an argv or a count of entries, because the payload's
+ * key set has no slot for one (the PRISM's structural rule, one family over).
+ * ------------------------------------------------------------------------- */
+
+/** One session card was made, bound to one tool row (named in the record). */
+export function sessionAddEvent(t: number, slug: string): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "session.add", slug };
+}
+
+/** One session card was removed (its transcript goes with it, restored by Restore). */
+export function sessionRemoveEvent(t: number, slug: string): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "session.remove", slug };
+}
+
+/** The toast's Restore put the session card (and its transcript) back. */
+export function sessionRestoreEvent(t: number, slug: string): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "session.restore", slug };
+}
+
+/**
+ * One run happened, with the ENDING the PRISM recorded for the same run.
+ * `answered` and `no-response` are the PRISM's own two words; the caller forms
+ * it from the same function the PRISM's outcome comes from (`runOutcomeOf`), so
+ * the two records can never disagree. A run that never started is no Move and
+ * gets no line.
+ */
+export function sessionRunEvent(
+  t: number,
+  slug: string,
+  ending: RunOutcome,
+): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "session.run", slug, ending };
+}
+
+/**
+ * One completed run's text became a card: the NEW card's slug and the session
+ * card it came from. The copy's words are the card's reading, never this line's.
+ */
+export function sessionResultEvent(
+  t: number,
+  slug: string,
+  from: string,
+): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "session.result", slug, from };
+}
+
 /**
  * THE DELETE'S LINES: card.remove first, then one link.remove for every link
  * the cascade took (links are their own records, so their passing is its own
@@ -554,6 +651,31 @@ export function parseHistoryEvent(line: string): HistoryEvent | null {
       if (slug === null) return null;
       if (!isAskTurnEnding(record.ending)) return null;
       return askTurnEvent(t, slug, record.ending);
+    }
+    // STORY 18.5 — the session cards' moves. Each reads exactly the keys its
+    // constructor writes; a run ending outside the PRISM's two words stays
+    // PRESERVED and reported, never guessed at.
+    case "session.add":
+    case "session.remove":
+    case "session.restore": {
+      const slug = stringField(record, "slug");
+      if (slug === null) return null;
+      if (record.type === "session.add") return sessionAddEvent(t, slug);
+      return record.type === "session.remove"
+        ? sessionRemoveEvent(t, slug)
+        : sessionRestoreEvent(t, slug);
+    }
+    case "session.run": {
+      const slug = stringField(record, "slug");
+      if (slug === null) return null;
+      if (!isRunOutcome(record.ending)) return null;
+      return sessionRunEvent(t, slug, record.ending);
+    }
+    case "session.result": {
+      const slug = stringField(record, "slug");
+      const from = stringField(record, "from");
+      if (slug === null || from === null) return null;
+      return sessionResultEvent(t, slug, from);
     }
     default:
       return null;

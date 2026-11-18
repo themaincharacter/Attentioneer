@@ -103,6 +103,7 @@ describe("the window's words: the contact on the header, the exact facts", () =>
       make: "make",
       measure: "measure",
       ask: "ask",
+      run: "run",
     });
     for (const contact of ["look", "make", "measure", "ask"] as const) {
       expect(contactWord(contact)).toBe(contact);

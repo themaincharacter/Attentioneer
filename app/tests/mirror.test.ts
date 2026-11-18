@@ -173,6 +173,11 @@ function fullView(): MirrorView {
     asks: [],
     malformedAsks: [],
     orphanAskTurns: [],
+    // STORY 18.5: no session cards in this view — the section still appears.
+    sessions: [],
+    sessionToolNames: {},
+    sessionEndings: {},
+    orphanSessionTranscripts: [],
   };
 }
 
@@ -244,6 +249,10 @@ describe("the render: pure, reproducible, plain", () => {
       asks: [],
       malformedAsks: [],
       orphanAskTurns: [],
+      sessions: [],
+      sessionToolNames: {},
+      sessionEndings: {},
+      orphanSessionTranscripts: [],
     });
     expect(text).toContain("none yet.");
     expect(text).toContain("nothing is unknown.");
@@ -397,6 +406,10 @@ describe("what is unknown: reproduced, marked unreadable", () => {
       asks: [],
       malformedAsks: [],
       orphanAskTurns: [],
+      sessions: [],
+      sessionToolNames: {},
+      sessionEndings: {},
+      orphanSessionTranscripts: [],
     });
     expect(text).toContain("### Rain gauge");
     expect(text).toContain("state: the file is missing");
@@ -557,13 +570,15 @@ describe("the hook queues the mirror after every ground write", () => {
     });
   }
 
-  test("exactly eighteen call sites (one per write path, not on load)", () => {
+  test("exactly twenty-two call sites (one per write path, not on load)", () => {
     // Story 16.12 added the selection card as the ninth authored write path;
     // story 16.13 adds restore as the tenth; story 16.14 the page card and
     // story 16.15 the video card. STORY 17.8 adds four ask moves (create, fork,
     // re-anchor, remove) and the ask restore inside the one toast handler.
     // STORY 18.4 adds the run's result card, which is an ordinary reference.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(18);
+    // STORY 18.5 adds three session moves (create, remove, run) and the session
+    // restore inside the one toast handler.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(22);
   });
 
   test("opening never writes the mirror", () => {
@@ -609,6 +624,10 @@ describe("the hook queues the mirror after every ground write", () => {
       asks: [],
       malformedAsks: [],
       orphanAskTurns: [],
+      sessions: [],
+      sessionToolNames: {},
+      sessionEndings: {},
+      orphanSessionTranscripts: [],
     };
     const first = renderMirror(view);
     await writeMirror(workspace, first, fsTextIo);

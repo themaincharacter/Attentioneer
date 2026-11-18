@@ -121,6 +121,9 @@ const CHANGES: Change[] = [
     responseSize: null,
     decode: null,
   },
+  // STORY 18.5 — a session card's run: three structural facts, no words.
+  { kind: "run", tool: "acp-probe", outcome: "answered", resultSize: 42 },
+  { kind: "run", tool: "acp-probe", outcome: "no-response", resultSize: null },
 ];
 
 describe("one canonical line per Move, mark-shaped", () => {
@@ -162,13 +165,14 @@ describe("one canonical line per Move, mark-shaped", () => {
 });
 
 describe("the closed Change-union, every kind with an outcome", () => {
-  test("all five kinds are the closed vocabulary", () => {
+  test("all six kinds are the closed vocabulary", () => {
     expect([...CHANGE_KINDS]).toEqual([
       "read-head",
       "mint-pointer",
       "write-text",
       "open-os",
       "ask",
+      "run",
     ]);
     for (const kind of CHANGE_KINDS) expect(isChangeKind(kind)).toBe(true);
     expect(isChangeKind("open-url")).toBe(false);
@@ -202,6 +206,7 @@ describe("the closed Change-union, every kind with an outcome", () => {
       "refused",
     ]);
     expect([...CHANGE_OUTCOMES.ask]).toEqual(["answered", "no-response"]);
+    expect([...CHANGE_OUTCOMES.run]).toEqual(["answered", "no-response"]);
   });
 
   test("an outcome outside its kind's list refuses", () => {
@@ -222,6 +227,51 @@ describe("the closed Change-union, every kind with an outcome", () => {
         included: null,
         responseSize: null,
         decode: null,
+      }),
+    ).toBeNull();
+    expect(
+      parsePrismChange({
+        kind: "run",
+        tool: "acp-probe",
+        outcome: "finished",
+        resultSize: 1,
+      }),
+    ).toBeNull();
+  });
+
+  test("a run carries a size exactly when it answered, and a tool id only", () => {
+    expect(
+      parsePrismChange({
+        kind: "run",
+        tool: "acp-probe",
+        outcome: "answered",
+        resultSize: null,
+      }),
+    ).toBeNull();
+    expect(
+      parsePrismChange({
+        kind: "run",
+        tool: "acp-probe",
+        outcome: "no-response",
+        resultSize: 3,
+      }),
+    ).toBeNull();
+    // A completed run of nothing is size zero, said exactly.
+    expect(
+      parsePrismChange({
+        kind: "run",
+        tool: "acp-probe",
+        outcome: "answered",
+        resultSize: 0,
+      }),
+    ).not.toBeNull();
+    // The row id is structure; an empty one is not a row.
+    expect(
+      parsePrismChange({
+        kind: "run",
+        tool: "",
+        outcome: "no-response",
+        resultSize: null,
       }),
     ).toBeNull();
   });
@@ -279,7 +329,7 @@ describe("the closed Change-union, every kind with an outcome", () => {
   });
 
   test("the inclusion set is pointer KEYS, never bytes", () => {
-    const ask = CHANGES[CHANGES.length - 2];
+    const ask = CHANGES[12];
     expect(ask.kind).toBe("ask");
     if (ask.kind !== "ask") throw new Error("unreachable");
     expect(ask.included).toEqual([X, Y]);
@@ -548,8 +598,14 @@ describe("transients mint no PRISM (the peek and the look-under are not Moves)",
 });
 
 describe("small vocabulary helpers", () => {
-  test("the contact kinds are the four verbs", () => {
-    expect([...CONTACT_KINDS]).toEqual(["look", "make", "measure", "ask"]);
+  test("the contact kinds are the five verbs", () => {
+    expect([...CONTACT_KINDS]).toEqual([
+      "look",
+      "make",
+      "measure",
+      "ask",
+      "run",
+    ]);
     for (const kind of CONTACT_KINDS) expect(isContactKind(kind)).toBe(true);
     expect(isContactKind("peek")).toBe(false);
   });

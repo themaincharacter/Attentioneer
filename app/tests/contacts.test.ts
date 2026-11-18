@@ -51,13 +51,14 @@ function row(contact: string): ContactDefinition {
   return found as ContactDefinition;
 }
 
-describe("the four contacts, one row each", () => {
-  test("the table carries look, make, measure and ask in order", () => {
+describe("the five contacts, one row each", () => {
+  test("the table carries look, make, measure, ask and run in order", () => {
     expect(CONTACTS.map((entry) => entry.contact)).toEqual([
       "look",
       "make",
       "measure",
       "ask",
+      "run",
     ]);
     expect(findContact("look")).not.toBeNull();
     expect(findContact("peek")).toBeNull();
@@ -129,6 +130,16 @@ describe("target rules are data, fail-closed", () => {
     }
   });
 
+  test("a run rides no pointer: its folder is the material", () => {
+    // STORY 18.5: a session card's run hands a folder to a tool, so it names no
+    // reach — none is its only allowed target, and the other three refuse.
+    const run = row("run");
+    expect(contactAllowsTarget(run, "none")).toBe(true);
+    expect(contactAllowsTarget(run, "path")).toBe(false);
+    expect(contactAllowsTarget(run, "at")).toBe(false);
+    expect(contactAllowsTarget(run, "url")).toBe(false);
+  });
+
   test("a missing rule is a refusal, never a permission", () => {
     const look = row("look");
     const stripped: ContactDefinition = { ...look, targets: [] };
@@ -143,6 +154,8 @@ describe("Change shapes are data from the closed union", () => {
     make: ["mint-pointer", "write-text"],
     measure: ["read-head"],
     ask: ["ask"],
+    // STORY 18.5: a run's one Change, and nothing outside the closed union.
+    run: ["run"],
   };
 
   test("each contact declares its own shapes, all from the closed union", () => {

@@ -235,6 +235,11 @@ function viewOf(asks: readonly AskCard[], over: Partial<MirrorView> = {}): Mirro
     asks,
     malformedAsks: [],
     orphanAskTurns: [],
+    // STORY 18.5: these tests are about the asks; the sessions section is empty.
+    sessions: [],
+    sessionToolNames: {},
+    sessionEndings: {},
+    orphanSessionTranscripts: [],
     ...over,
   };
 }

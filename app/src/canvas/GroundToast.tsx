@@ -18,11 +18,19 @@
 export const RESTORE_SENTENCE = "this reference was removed";
 
 /**
- * STORY 17.8 — the same bar, the ask card's one word. One toast serves both
- * kinds of deletion (exactly one is pending at a time), so the sentence is the
- * caller's and the bar's look, verbs and window are unchanged.
+ * STORY 17.8 — the same bar, the ask card's one word. ONE toast serves every
+ * kind of deletion (exactly one is pending at a time), so the sentence is the
+ * caller's and the bar's look, verbs and window are unchanged; story 18.5 adds
+ * the session card's word below.
  */
 export const ASK_RESTORE_SENTENCE = "this ask card was removed";
+
+/**
+ * STORY 18.5 — the same bar, the session card's one word. The toast is one at a
+ * time and the sentence is the caller's, so all three kinds share its look,
+ * verbs and window.
+ */
+export const SESSION_RESTORE_SENTENCE = "this session card was removed";
 
 export interface GroundToastProps {
   /**

@@ -174,13 +174,14 @@ describe("transients mint no PRISM (the story 1 scan, extended)", () => {
       if (code.includes("appendPrismLine(")) appenders.push(file);
       if (code.includes("mintPrismId(")) minters.push(file);
     }
-    // The four contact flows (read, make, egress, ask) each append THEIR Move
-    // through the record module's append door; the panels never do.
+    // The five contact flows (read, make, egress, ask, run) each append THEIR
+    // Move through the record module's append door; the panels never do.
     expect(appenders.sort()).toEqual([
       "contacts/ask.ts",
       "contacts/egress.ts",
       "contacts/make.ts",
       "contacts/read.ts",
+      "contacts/run.ts",
       "map/prisms.ts",
     ]);
     // The adapter only references the minter (mintId: mintPrismId); the flows

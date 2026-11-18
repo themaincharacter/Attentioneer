@@ -337,16 +337,18 @@ describe("authored moves only: the look leaves no line", () => {
     expect(existsSync(historyPath(workspace))).toBe(false);
   });
 
-  test("the hook appends from the nineteen authored write paths, no more", () => {
+  test("the hook appends from the twenty-three authored write paths, no more", () => {
     // The only call form the verbs use; the definition is not a call site.
     // Story 16.12 added the selection card as the ninth authored write path;
     // story 16.13 adds the restore as the tenth; story 16.14 the page card and
     // story 16.15 the video card. STORY 17.8 adds five ask moves (create, fork,
     // re-anchor, remove, a turn) and the ask restore inside the one toast
     // handler, where the reference restore already lives. STORY 18.4 adds the
-    // run's result card, another ordinary reference move.
+    // run's result card, another ordinary reference move. STORY 18.5 adds three
+    // session moves (create, remove, run) and the session restore inside the
+    // one toast handler.
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(19);
+    expect(calls.length).toBe(23);
   });
 
   test("the mirror and the history own the same verbs", () => {
@@ -372,6 +374,10 @@ describe("authored moves only: the look leaves no line", () => {
       "askTurn",
       // STORY 18.4: the run's result becomes a reference card.
       "makeCardFromRun",
+      // STORY 18.5: the session cards' authored moves.
+      "createSession",
+      "removeSession",
+      "runSession",
     ];
     for (const verb of verbs) {
       const start = HOOK.indexOf("const " + verb + " = useCallback");

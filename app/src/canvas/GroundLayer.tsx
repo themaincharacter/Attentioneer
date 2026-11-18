@@ -428,6 +428,11 @@ interface GroundLayerProps {
   sessions?: readonly SessionCardRecord[];
   sessionEntries?: Readonly<Record<string, readonly SessionEntry[]>>;
   sessionRunning?: readonly string[];
+  /**
+   * STORY 18.5 — remove one session card: the immediate delete with the toast's
+   * Restore as its guard (the same one toast every other card uses).
+   */
+  onRemoveSession?: (slug: string) => Promise<GroundAddResult>;
   /** Start one session card's run (the 18.2 lifecycle, transcript included). */
   onRunSession?: (slug: string) => Promise<GroundAddResult>;
   /** Stop one session card's live run (the run's own cancel). */
@@ -552,6 +557,7 @@ export function GroundLayer({
   onChooseSessionTool,
   onAnswerSessionPermission,
   onMakeSessionResult,
+  onRemoveSession,
   hasProvider,
   onOpenSettings,
   onMove,
@@ -909,6 +915,11 @@ export function GroundLayer({
               onMakeSessionResult === undefined
                 ? undefined
                 : () => onMakeSessionResult(session.on)
+            }
+            onRemove={
+              onRemoveSession === undefined
+                ? undefined
+                : () => onRemoveSession(session.on)
             }
           />
         );

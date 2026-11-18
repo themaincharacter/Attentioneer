@@ -1,6 +1,7 @@
 import { writeTextFile } from "../lib/fs";
 import { canonicalText } from "../lib/serialize";
 import { isFork, type AskCard } from "./asks";
+import type { SessionCard, SessionEnding } from "./sessions";
 import type { GroundReference } from "./ground";
 import { serializeGroundLinkLine, type GroundLink } from "./groundLinks";
 import { serializeMediaLine, type Media } from "./media";
@@ -52,6 +53,14 @@ import {
  * dropping the card. A fork's parent that is gone is marked the same way.
  * An orphan conversation (a `map/asks/<slug>.jsonl` whose card is gone) is an
  * UNKNOWN like the orphan notes and media lines: named, kept, never adopted.
+ *
+ * SESSION CARDS ARE HERE TOO (story 18.5), in their own section and with NOT
+ * ONE WORD of any run. One line per card, in the record's own order: its NAME,
+ * the tool ROW it runs (by name) and its LAST ENDING once it has run. No text,
+ * no path, no command, no argv, no count of entries and no time — the
+ * transcript holds the words, and this derived file may be pasted anywhere.
+ * A transcript whose card is gone is an UNKNOWN like the orphan notes and
+ * conversations: named, kept, never adopted.
  *
  * NO FULL PATHS: a mirror may be shared with another agent or pasted into a
  * message, so a card names its reading's FILE NAME only (readingFileName).
@@ -116,6 +125,22 @@ export interface MirrorView {
    * is never read here, so not one word of it can reach the mirror.
    */
   asks: readonly AskCard[];
+  /**
+   * STORY 18.5 — every session card, in the record's own order. The section
+   * names each card, the tool ROW it runs and its last run's ending; the
+   * TRANSCRIPT is never read here, so not one word of a run can reach the
+   * mirror — and there is no slot here for a command, a directory or a count.
+   */
+  sessions: readonly SessionCard[];
+  /** Each session card's tool name, by slug; null when this build lacks the row. */
+  sessionToolNames: Readonly<Record<string, string | null>>;
+  /** Each session card's last run ending, by slug; null when it never ran. */
+  sessionEndings: Readonly<Record<string, SessionEnding | null>>;
+  /**
+   * STORY 18.5 — transcript files whose session card is gone: kept where they
+   * are, named under "What is unknown", never adopted into a card.
+   */
+  orphanSessionTranscripts: readonly string[];
   /** Unreadable `map/asks.txt` lines, kept and named under "What is unknown". */
   malformedAsks: readonly string[];
   /**
@@ -210,6 +235,32 @@ export function mirrorAskLine(
 }
 
 /**
+ * STORY 18.5 — THE ONE LINE A SESSION CARD GETS IN THE MIRROR (PURE,
+ * PROVISIONAL wording): its name, the tool ROW it runs and, once it has run,
+ * its last ending.
+ *
+ * NO TEXT, NO PATH, NO COUNT. The run's words live in its transcript, the tool
+ * row's command never enters a record, and the number of entries is a tally the
+ * mirror must not become. A row this build does not ship is said plainly, never
+ * repaired: the card's own face makes the same statement. A card that has never
+ * run simply has no ending to say.
+ */
+export const MIRROR_SESSION_TOOL_UNKNOWN = "a tool that is not here";
+
+export function mirrorSessionLine(
+  session: SessionCard,
+  toolName: string | null,
+  ending: SessionEnding | null,
+): string {
+  let line =
+    session.name +
+    " — runs " +
+    (toolName === null ? MIRROR_SESSION_TOOL_UNKNOWN : toolName);
+  if (ending !== null) line += "; last run: " + ending;
+  return flat(line);
+}
+
+/**
  * THE RENDER, pure: the loaded ground view in, the mirror's exact bytes out.
  * Same view -> same bytes. Every section is present in a fixed order; an empty
  * section says "none yet." rather than vanishing, so the file's shape does not
@@ -281,6 +332,23 @@ export function renderMirror(view: MirrorView): string {
   }
   if (view.asks.length > 0) lines.push("");
 
+  // STORY 18.5 — THE SESSIONS. One line per card, in the record's own order:
+  // its name, the tool row it runs and its last ending. The transcript is
+  // NEVER read here: this section cannot say a word of a run, a path, an argv
+  // or a count of entries, because none of them is in hand.
+  lines.push("## Sessions", "");
+  if (view.sessions.length === 0) lines.push("none yet.", "");
+  for (const session of view.sessions) {
+    lines.push(
+      mirrorSessionLine(
+        session,
+        view.sessionToolNames[session.on] ?? null,
+        view.sessionEndings[session.on] ?? null,
+      ),
+    );
+  }
+  if (view.sessions.length > 0) lines.push("");
+
   lines.push("## Links", "");
   const links = sortedLinks(view.links);
   if (links.length === 0) {
@@ -316,6 +384,15 @@ export function renderMirror(view: MirrorView): string {
   for (const slug of [...view.orphanAskTurns].sort()) {
     unknown.push(
       "a conversation with no ask card, kept in map/asks/" + slug + ".jsonl",
+    );
+  }
+  // STORY 18.5 — the same rule for a run's transcript: kept exactly where it
+  // is, named here, never adopted into a card and never deleted.
+  for (const slug of [...view.orphanSessionTranscripts].sort()) {
+    unknown.push(
+      "a transcript with no session card, kept in map/sessions/" +
+        slug +
+        ".jsonl",
     );
   }
   for (const link of view.orphanLinks) {

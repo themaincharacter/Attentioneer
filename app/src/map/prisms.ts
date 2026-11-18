@@ -5,7 +5,8 @@ import { POINTER_FORMS, pointerKey, type PointerForm } from "./pointers";
 /**
  * THE PRISM (Epic 12 story 1, ADR-0028 as amended; ADR-0029) — one
  * `map/prisms.jsonl` line per CONTACT MOVE: the person's contact with the
- * world (Look / Make / Measure / Ask), kept as a structured explanation and a
+ * world (Look / Make / Measure / Ask and — Epic 18 story 5 — Run), kept as a
+ * structured explanation and a
  * closed Change log. This module owns the record only: the contact layer that
  * performs the Move lives beside it, and `head.rs` answers the read only.
  *
@@ -53,6 +54,18 @@ import { POINTER_FORMS, pointerKey, type PointerForm } from "./pointers";
  *                      rode, or null for none), responseSize, decode, and —
  *                      ONLY on an ask card's turn (Epic 17 story 4,
  *                      PROVISIONAL) — anchor (the anchored reference's slug)}
+ *   - `run`          {tool (the tool ROW's id — never the command, never a
+ *                      path), outcome (answered / no-response), resultSize
+ *                      (the result's byte size when the run completed, else
+ *                      null)} — EGRESS: a session card's run (Epic 18 story 5,
+ *                      PROVISIONAL). A run is the largest egress the app makes
+ *                      (a directory, a prompt and possibly a key handed to an
+ *                      external program), so ADR-0029's rule applies here too:
+ *                      structure only. NO words, NO argv, NO directory and NO
+ *                      entry counts — the transcript holds the words, and this
+ *                      Change has no slot for one. `answered` ONLY for a run
+ *                      that ended `completed`; a stop, a failure, a timeout and
+ *                      a dead connection are all `no-response`.
  * The union is CLOSED: a Change carrying an unknown key or an outcome outside
  * its kind's list makes the LINE malformed — preserved verbatim and surfaced,
  * never guessed at. `anchor` is the ONE optional key in the whole union (see
@@ -86,13 +99,26 @@ import { POINTER_FORMS, pointerKey, type PointerForm } from "./pointers";
  * module only turns the file's bytes into records and back.
  *
  * Provisional: the `prisms.jsonl` name, the app-minted id prefix, the field
- * spellings (`bounds`/`responseSize`) and the `mint-pointer` outcome
- * vocabulary. The contact layer's own flows (stories 2-3) own what a Move
+ * spellings (`bounds`/`responseSize`), the `mint-pointer` outcome vocabulary,
+ * and — Epic 18 story 5 — the `run` Change (`tool`/`outcome`/`resultSize`), the
+ * `run` contact kind and the `run` row in the contact table. The contact layer's own flows (stories 2-3) own what a Move
  * actually does; this story owns the record and the boundary.
  */
 
-/** The four contact kinds (the person's verbs on a reach). */
-export const CONTACT_KINDS = ["look", "make", "measure", "ask"] as const;
+/**
+ * The contact kinds (the person's verbs on a reach). `run` is Epic 18 story 5's
+ * addition (PROVISIONAL): a session card's run is a Move of its own kind, not
+ * an Ask and not a Look — it hands a whole directory to an external program.
+ * The session card is what the Move is made in, so the PRISM names its slug in
+ * `on`, exactly as an ask card's turn does.
+ */
+export const CONTACT_KINDS = [
+  "look",
+  "make",
+  "measure",
+  "ask",
+  "run",
+] as const;
 
 /** A contact kind: what a PRISM's Move did. */
 export type ContactKind = (typeof CONTACT_KINDS)[number];
@@ -105,19 +131,20 @@ export function isContactKind(value: unknown): value is ContactKind {
   );
 }
 
-/** The closed Change-union's five kinds, in table order. */
+/** The closed Change-union's six kinds, in table order. */
 export const CHANGE_KINDS = [
   "read-head",
   "mint-pointer",
   "write-text",
   "open-os",
   "ask",
+  "run",
 ] as const;
 
 /** A Change kind. */
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 
-/** Is a value one of the five Change kinds? */
+/** Is a value one of the six Change kinds? */
 export function isChangeKind(value: unknown): value is ChangeKind {
   return (
     typeof value === "string" &&
@@ -159,6 +186,23 @@ export const ASK_OUTCOMES = ["answered", "no-response"] as const;
 export type AskOutcome = (typeof ASK_OUTCOMES)[number];
 
 /**
+ * run's outcomes (Epic 18 story 5, PROVISIONAL): the SAME two words an Ask's
+ * ending uses, because they mean the same thing — a completed run answered; a
+ * stop, a break, a timeout or a dead connection did not. Kept as its own
+ * exported list so a caller cannot helpfully invent a third word here.
+ */
+export const RUN_OUTCOMES = ["answered", "no-response"] as const;
+export type RunOutcome = (typeof RUN_OUTCOMES)[number];
+
+/** Is a value one of the two words a run's outcome may carry? */
+export function isRunOutcome(value: unknown): value is RunOutcome {
+  return (
+    typeof value === "string" &&
+    (RUN_OUTCOMES as readonly string[]).includes(value)
+  );
+}
+
+/**
  * Every Change kind's outcomes, as DATA — the parser's closed-list check and
  * the contact table's shape read this one table.
  */
@@ -169,6 +213,7 @@ export const CHANGE_OUTCOMES: Readonly<Record<ChangeKind, readonly string[]>> =
     "write-text": WRITE_TEXT_OUTCOMES,
     "open-os": OPEN_OS_OUTCOMES,
     ask: ASK_OUTCOMES,
+    run: RUN_OUTCOMES,
   };
 
 /**
@@ -260,13 +305,46 @@ export interface AskChange {
   decode: DecodeStatus | null;
 }
 
+/**
+ * Run's Change (Epic 18 story 5) — PROVISIONAL, the story's one record-shape
+ * addition, and the LAST kind the union gains for this epic.
+ *
+ * A RUN IS AN EGRESS AND GETS A RECORD. The session card hands a directory, a
+ * prompt and possibly a key to an external program; ADR-0029's rule is that an
+ * egress is recorded structurally, and until this Change a run was the one move
+ * with no Move. The fields are deliberately three:
+ *
+ *   - `tool`       the TOOL ROW's id — NEVER the command, NEVER an argv, NEVER
+ *                  a directory. It is the same id `map/sessions.txt` binds and
+ *                  the same row the card's declaration names.
+ *   - `outcome`    `answered` only for a run that ended `completed`; stopped,
+ *                  failed, timed-out and a dead connection are `no-response`
+ *                  (the 15.7b rule, one layer down: a partial is not a result).
+ *   - `resultSize` the result's exact byte size when the run completed, else
+ *                  null — never a size of a partial, never a count of entries.
+ *
+ * NO WORDS. The run's words live in `map/sessions/<slug>.jsonl`; this Change
+ * has no key for one, and a run that streamed a million tokens leaves exactly
+ * these three facts. The union stays CLOSED TO CONTENT.
+ */
+export interface RunChange {
+  kind: "run";
+  /** The tool ROW's id — never the command, never a path. */
+  tool: string;
+  /** `answered` only for a completed run; everything else is `no-response`. */
+  outcome: RunOutcome;
+  /** The result's byte size when the run completed, else null. */
+  resultSize: number | null;
+}
+
 /** One entry in a Move's Change log (the closed union). */
 export type Change =
   | ReadHeadChange
   | MintPointerChange
   | WriteTextChange
   | OpenOsChange
-  | AskChange;
+  | AskChange
+  | RunChange;
 
 /** The pointer a PRISM rode, as its authored form and verbatim value. */
 export interface PrismPointer {
@@ -336,6 +414,7 @@ export const CHANGE_KEYS: Readonly<Record<ChangeKind, readonly string[]>> = {
     "pointer",
     "responseSize",
   ],
+  run: ["kind", "outcome", "resultSize", "tool"],
 };
 
 /**
@@ -353,6 +432,7 @@ export const CHANGE_OPTIONAL_KEYS: Readonly<
   "write-text": [],
   "open-os": [],
   ask: ["anchor"],
+  run: [],
 };
 
 /** The key's pointer-less suffix (an Ask may ride no pointer at all). */
@@ -515,6 +595,28 @@ export function parsePrismChange(value: unknown): Change | null {
       if (!isIn(OPEN_OS_OUTCOMES, value.outcome)) return null;
       return { kind, pointer: value.pointer, outcome: value.outcome };
     }
+    case "run": {
+      // A RUN'S THREE FACTS, and nothing else: the row's id, the ending and
+      // the result's size. `answered` carries a size; every other ending
+      // carries null — the same shape rule the Ask's response facts follow.
+      if (!isNonEmptyString(value.tool)) return null;
+      if (!isIn(RUN_OUTCOMES, value.outcome)) return null;
+      const resultSize = value.resultSize;
+      if (resultSize !== null && !isCount(resultSize)) return null;
+      if (
+        value.outcome === "answered"
+          ? resultSize === null
+          : resultSize !== null
+      ) {
+        return null;
+      }
+      return {
+        kind,
+        tool: value.tool,
+        outcome: value.outcome,
+        resultSize,
+      };
+    }
     case "ask": {
       const pointer = value.pointer;
       if (pointer !== null && !isNonEmptyString(pointer)) return null;
@@ -664,6 +766,13 @@ function changeFields(change: Change): Record<string, unknown> {
         included: change.included === null ? null : [...change.included],
         responseSize: change.responseSize,
         decode: change.decode,
+      };
+    case "run":
+      return {
+        kind: change.kind,
+        tool: change.tool,
+        outcome: change.outcome,
+        resultSize: change.resultSize,
       };
   }
 }

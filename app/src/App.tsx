@@ -60,7 +60,11 @@ import { GhostPreview } from "./canvas/GhostPreview";
 import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
 import { GroundEmpty, GroundLayer } from "./canvas/GroundLayer";
-import { ASK_RESTORE_SENTENCE, GroundToast } from "./canvas/GroundToast";
+import {
+  ASK_RESTORE_SENTENCE,
+  SESSION_RESTORE_SENTENCE,
+  GroundToast,
+} from "./canvas/GroundToast";
 import { GestureChip } from "./canvas/GestureChip";
 import { ArmedBar } from "./canvas/ArmedBar";
 import {
@@ -4435,6 +4439,9 @@ function App() {
             onAnswerSessionPermission={ground.answerSessionPermission}
             onMakeSessionResult={ground.makeCardFromRun}
             onChooseSessionTool={ground.bindSessionTool}
+            /* STORY 18.5 — a session card is removable through the same one
+               toast every other card uses (immediate delete + Restore). */
+            onRemoveSession={ground.removeSession}
             /* STORY 17.8 — an ask card is removable through the same one toast
                every other card uses (16.13's immediate delete + Restore). */
             onRemoveAsk={ground.removeAsk}
@@ -4937,13 +4944,18 @@ function App() {
           reversible. It sits bottom-centre in screen space, outside the plane;
           one toast, one pending restore, and a second delete commits the first
           (useGround's pendingRestoreAfter). */}
-      {(ground.restorable !== null || ground.restoreNotice !== null) && (
+      {(ground.restorable !== null ||
+        ground.restorableAsk !== null ||
+        ground.restorableSession !== null ||
+        ground.restoreNotice !== null) && (
         <GroundToast
           notice={ground.restoreNotice}
           sentence={
-            ground.restorableAsk !== null
-              ? ASK_RESTORE_SENTENCE
-              : undefined
+            ground.restorableSession !== null
+              ? SESSION_RESTORE_SENTENCE
+              : ground.restorableAsk !== null
+                ? ASK_RESTORE_SENTENCE
+                : undefined
           }
           onRestore={() => void ground.restore()}
           onDismiss={ground.dismissRestore}
@@ -5272,6 +5284,7 @@ function App() {
         orphanGroundNotes={ground.orphanNotes}
         orphanGroundMedia={ground.orphanMedia}
         orphanAskTurns={ground.orphanAskTurns}
+        orphanSessionTranscripts={ground.orphanSessionTranscripts}
         mirrorNotice={ground.mirrorNotice}
         malformedHistory={ground.malformedHistory}
         historyNotice={ground.historyNotice}
@@ -5356,6 +5369,7 @@ function MarkNotices({
   orphanGroundNotes,
   orphanGroundMedia,
   orphanAskTurns,
+  orphanSessionTranscripts,
   mirrorNotice,
   malformedHistory,
   historyNotice,
@@ -5471,6 +5485,11 @@ function MarkNotices({
    */
   orphanAskTurns: readonly string[];
   /**
+   * STORY 18.5 — transcript files whose session card is gone: kept in
+   * `map/sessions/` and named here, never adopted and never deleted.
+   */
+  orphanSessionTranscripts: readonly string[];
+  /**
    * The mirror's one failure sentence (story 16.9), or null. The mirror is
    * DERIVED, so its failure is a notice and never a failed move; it rides the
    * ground group only, because the mirror speaks for no other map.
@@ -5546,6 +5565,7 @@ function MarkNotices({
       orphanGroundNotes.length > 0 ||
       orphanGroundMedia.length > 0 ||
       orphanAskTurns.length > 0 ||
+      orphanSessionTranscripts.length > 0 ||
       mirrorNotice !== null ||
       malformedHistory.length > 0 ||
       historyNotice !== null);
@@ -5838,6 +5858,18 @@ function MarkNotices({
                 >
                   a conversation for “{slug}” has no ask card — kept in
                   map/asks/{slug}.jsonl
+                </div>
+              ))}
+              {/* STORY 18.5, the transcript's honesty surface: a file whose
+                  session card is gone is KEPT and named here — never adopted
+                  into a card, never deleted, and never read as a run. */}
+              {orphanSessionTranscripts.map((slug) => (
+                <div
+                  className="mark-notice"
+                  key={`orphan-session-transcript-${slug}`}
+                >
+                  a transcript for “{slug}” has no session card — kept in
+                  map/sessions/{slug}.jsonl
                 </div>
               ))}
               {/* STORY 16.5, the links' two honesty surfaces: a record line the

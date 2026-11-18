@@ -14,6 +14,11 @@ import {
   askRestoreEvent,
   askTurnEvent,
   cardAddEvent,
+  sessionAddEvent,
+  sessionRemoveEvent,
+  sessionRestoreEvent,
+  sessionResultEvent,
+  sessionRunEvent,
   cardMoveEvent,
   cardRemovalEvents,
   cardRestoreEvent,
@@ -62,14 +67,20 @@ import {
   appendSessionEntries,
   bindSessionTool as bindSessionToolRecord,
   loadSessionTranscript,
-  loadSessionTranscripts,
+  loadSessionTranscriptsWithOrphans,
   loadSessions,
+  removeSessionRecords,
+  restoreSessionCard,
+  runOutcomeOf,
   saveSessions,
   SESSION_RESULT_EMPTY_SENTENCE,
   SESSION_RESULT_UNFINISHED_SENTENCE,
+  sessionLastEnding,
   sessionRefusal,
   sessionResultName,
+  sessionResultSize,
   sessionRunResult,
+  type RemovedSession,
   type SessionCard,
   type SessionEntry,
   type SessionIo,
@@ -183,7 +194,7 @@ import {
 import { readSecret } from "../lib/secret";
 import { isPointerForm, pointerKey } from "../map/pointers";
 import type { Prism } from "../map/prisms";
-import { appendAskCardMove } from "../contacts/prismLog";
+import { appendAskCardMove, appendSessionRun } from "../contacts/prismLog";
 import { askOutcomeOf, type AskEnding } from "../contacts/ask";
 import {
   cardAskContext,
@@ -316,6 +327,19 @@ import {
  *     line and the conversation's BYTES are read before the unlink and written
  *     back verbatim, and a conversation whose card is gone is an ORPHAN named
  *     in the notices group and the mirror, never adopted and never deleted.
+ *   - THE SESSIONS' TWO MEMORIES (18.5): every session move above also appends
+ *     its structural line — `session.add`, `session.remove`,
+ *     `session.restore`, one `session.run` per settled run (its ending is the
+ *     PRISM's own outcome through ONE mapping) and `session.result` when a
+ *     completed run's text became a card — and the mirror's sessions section
+ *     says each card's name, its tool row and its last ending, never a word, a
+ *     path, a command or a count. Each settled run appends ONE PRISM with the
+ *     tool ROW's id, the ending and the result's exact size. Removing a session
+ *     card is the same immediate-delete + Restore promise every other card
+ *     makes: the record line and the transcript's BYTES are read before the
+ *     unlink and written back verbatim, and a transcript whose card is gone is
+ *     an ORPHAN named in the notices group and the mirror, never adopted and
+ *     never deleted.
  *   - A SELECTION CARD (16.12): the person selects text inside an expanded
  *     card's reading, names the new card, and `createSelection` writes the
  *     excerpt's text file, its reading line (provenance `card://<source>`) and
@@ -416,6 +440,14 @@ export interface GroundView {
   sessionEntries: Readonly<Record<string, readonly SessionEntry[]>>;
   /** Unreadable `map/sessions.txt` lines, preserved and surfaced. */
   malformedSessions: readonly string[];
+  /**
+   * STORY 18.5 — transcript files whose session card is gone: kept in
+   * `map/sessions/`, named in the ground notices group and in the mirror's
+   * unknowns, never adopted and never deleted (the notes' and the ask
+   * conversations' rule, one family over). Computed from the load's listing and
+   * every write that can make one.
+   */
+  orphanSessionTranscripts: readonly string[];
   /**
    * STORY 18.3 — the session cards with a LIVE run right now. VIEW STATE, never
    * a record: the handle lives in the hook and the slug leaves this list when
@@ -524,6 +556,13 @@ export interface GroundView {
    */
   restorableAsk: RemovedAsk | null;
   /**
+   * STORY 18.5 — the ONE pending session-card deletion the toast can put back,
+   * with the record line's position and the transcript's exact bytes read
+   * before the unlink. ONE toast for all three kinds: a delete of any kind
+   * commits the earlier one.
+   */
+  restorableSession: RemovedSession | null;
+  /**
    * STORY 16.13 — one sentence when a restore only partly came back. It rides
    * the toast in place of the Restore verb; a full restore leaves it null.
    */
@@ -597,6 +636,15 @@ export interface GroundView {
    * is SAID, never adopted and never deleted.
    */
   removeAsk: (slug: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 18.5 — REMOVE one session card, immediately and reversibly: the
+   * record line and the transcript's BYTES are read first, the `sessions.txt`
+   * line is written without it, and the transcript file is unlinked. The
+   * toast's Restore writes the same bytes back (folder comparison). A refused
+   * unlink answers one sentence after the line has gone, and the orphan
+   * transcript is SAID, never adopted and never deleted.
+   */
+  removeSession: (slug: string) => Promise<GroundAddResult>;
   /**
    * STORY 18.3 — MAKE A SESSION CARD at a point: ONE `map/sessions.txt` line
    * binding a name, a point and ONE tool row (by id — never a key, never a
@@ -746,6 +794,7 @@ type GroundLoaded = Omit<
   | "forkAskAt"
   | "reanchorAskTo"
   | "removeAsk"
+  | "removeSession"
   | "createSession"
   | "bindSessionTool"
   | "runSession"
@@ -778,6 +827,7 @@ const EMPTY: GroundLoaded = {
   sessions: [],
   sessionEntries: {},
   malformedSessions: [],
+  orphanSessionTranscripts: [],
   sessionRunning: [],
   sessionPermission: {},
   readings: [],
@@ -799,6 +849,7 @@ const EMPTY: GroundLoaded = {
   malformedHistory: [],
   restorable: null,
   restorableAsk: null,
+  restorableSession: null,
   restoreNotice: null,
   loaded: false,
 };
@@ -2112,6 +2163,14 @@ export async function writeAskTurn(
 export const SESSION_PROMPT =
   "list the files in this directory and say in one sentence what this folder is for. change nothing.";
 
+/**
+ * STORY 18.5 — the one sentence a run's PRISM that could not be written answers.
+ * The run itself is already recorded in its transcript, so this is a notice about
+ * the LOG, never a claim that the run failed.
+ */
+export const SESSION_MOVE_REFUSAL =
+  "the run is in its transcript, but its move could not be written.";
+
 /** One object, or no (a wire payload is never trusted to have a shape). */
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -2857,6 +2916,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   // STORY 17.8: conversations whose ask card is gone. The load's one folder
   // listing computes them; a refused unlink adds the one it could not take.
   const orphanAskTurnsRef = useRef<string[]>([]);
+  // STORY 18.5: transcripts whose session card is gone. The load's one folder
+  // listing computes them; a refused unlink adds the one it could not take.
+  const orphanSessionTranscriptsRef = useRef<string[]>([]);
   // STORY 18.3: the session cards, their transcripts and the runs that are
   // LIVE right now. The first three are the map folder's records; the handles
   // and the running list are VIEW STATE — a run belongs to the card it started
@@ -2904,6 +2966,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   // STORY 17.8: the ask card's own pending restore. ONE toast holds exactly one
   // of the two kinds; a delete of either clears the other.
   const restorableAskRef = useRef<RemovedAsk | null>(null);
+  // STORY 18.5: the session card's own pending restore, in the same ONE toast.
+  const restorableSessionRef = useRef<RemovedSession | null>(null);
   const restoreNoticeRef = useRef<string | null>(null);
   // One queue for the ground family's files: an add's ground line must land
   // after its own readings line, never under a stale one; the link and the
@@ -2959,7 +3023,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         loadAskConversations(workspacePath, askSlugs),
         // STORY 18.3: one read per session card's transcript, in arrival
         // order. An absent file is no entries — a card made but never run.
-        loadSessionTranscripts(workspacePath, sessionSlugs),
+        // STORY 18.5 adds the folder's ONE listing, which also names an ORPHAN
+        // transcript (a run file whose card is gone).
+        loadSessionTranscriptsWithOrphans(workspacePath, sessionSlugs),
       ]);
     const states = statesOf(
       ground.references,
@@ -2992,9 +3058,12 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     const sessionEntries: Record<string, readonly SessionEntry[]> = {};
     for (const slug of sessionSlugs) {
       sessionEntries[slug] =
-        loadedSessionEntries[slug]?.entries ?? [];
+        loadedSessionEntries.transcripts[slug]?.entries ?? [];
     }
     sessionEntriesRef.current = sessionEntries;
+    // STORY 18.5: a transcript with no session card is kept and SAID, never
+    // adopted into a card and never deleted.
+    orphanSessionTranscriptsRef.current = loadedSessionEntries.orphans;
     readingsRef.current = readings.readings;
     mediaRef.current = loadedMedia.media;
     malformedMediaRef.current = loadedMedia.malformed;
@@ -3029,6 +3098,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     sessions: sessionsRef.current,
     sessionEntries: sessionEntriesRef.current,
     malformedSessions: malformedSessionsRef.current,
+    // STORY 18.5: computed from the load's listing and every write that can
+    // make one, never stored as a record.
+    orphanSessionTranscripts: orphanSessionTranscriptsRef.current,
     sessionRunning: sessionRunningRef.current,
     sessionPermission: sessionPermissionRef.current,
     readings: readingsRef.current,
@@ -3070,6 +3142,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     // window ends, its × is pressed, or a second delete commits it.
     restorable: restorableRef.current,
     restorableAsk: restorableAskRef.current,
+    restorableSession: restorableSessionRef.current,
     restoreNotice: restoreNoticeRef.current,
     loaded: true,
   });
@@ -3087,6 +3160,22 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     asks: asksRef.current,
     malformedAsks: malformedAsksRef.current,
     orphanAskTurns: orphanAskTurnsRef.current,
+    // STORY 18.5: the session cards' names, tool names and last endings — never
+    // their transcripts, so not one word of a run can reach MAP.md.
+    sessions: sessionsRef.current,
+    sessionToolNames: Object.fromEntries(
+      sessionsRef.current.map((session) => [
+        session.on,
+        shippedAcpSpec(session.tool)?.name ?? null,
+      ]),
+    ),
+    sessionEndings: Object.fromEntries(
+      sessionsRef.current.map((session) => [
+        session.on,
+        sessionLastEnding(sessionEntriesRef.current[session.on] ?? []),
+      ]),
+    ),
+    orphanSessionTranscripts: orphanSessionTranscriptsRef.current,
     readings: readingsRef.current,
     texts: textsRef.current,
     states: statesRef.current,
@@ -3177,6 +3266,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     // (story 17.8's ask-card restore rides the same one).
     restorableRef.current = null;
     restorableAskRef.current = null;
+    restorableSessionRef.current = null;
     restoreNoticeRef.current = null;
     queueRef.current = createWriteQueue();
     if (workspacePath === "") {
@@ -3185,6 +3275,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       askTurnsRef.current = {};
       malformedAsksRef.current = [];
       orphanAskTurnsRef.current = [];
+      orphanSessionTranscriptsRef.current = [];
       sessionsRef.current = [];
       sessionEntriesRef.current = {};
       malformedSessionsRef.current = [];
@@ -3206,6 +3297,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       malformedHistoryRef.current = [];
       restorableRef.current = null;
       restorableAskRef.current = null;
+      restorableSessionRef.current = null;
       restoreNoticeRef.current = null;
       setState(EMPTY);
       return;
@@ -3883,6 +3975,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           // ONE TOAST: the ask card's deletion replaces any pending reference
           // restore (a second delete commits the first).
           restorableRef.current = null;
+          // STORY 18.5: ONE toast — an ask delete commits any pending session
+          // restore too.
+          restorableSessionRef.current = null;
           restorableAskRef.current = pendingRestoreAfter(
             restorableAskRef.current,
             removal.removed,
@@ -3911,6 +4006,88 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
+   * STORY 18.5 — REMOVE one session card, immediately and reversibly. The same
+   * promise the other two kinds make: the record line and the transcript's
+   * BYTES are read BEFORE anything is written or unlinked, the line leaves
+   * first (the record is the truth), then the transcript file goes. The toast's
+   * Restore writes both back verbatim.
+   *
+   * ONE RUN AT A TIME still holds: a live run is still writing its transcript,
+   * so a card with a run in flight refuses with the existing busy sentence and
+   * nothing is removed. A transcript that could not be unlinked answers ONE
+   * sentence after the line is already gone and becomes an ORPHAN the notices
+   * group names — kept where it is, never adopted, never deleted a second time.
+   */
+  const removeSession = useCallback(
+    (slug: string): Promise<GroundAddResult> => {
+      if (!sessionsRef.current.some((session) => session.on === slug)) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          if (sessionRunsRef.current[slug] !== undefined) {
+            outcome = { ok: false, message: SESSION_BUSY_SENTENCE };
+            return;
+          }
+          const removal = await removeSessionRecords(
+            workspacePath,
+            slug,
+            sessionsRef.current,
+            malformedSessionsRef.current,
+          );
+          // Belt and braces: the list checked before the queue is the list the
+          // task runs against; if it moved, nothing was kept and nothing is
+          // logged (a delete of a card that is already gone is not a move).
+          if (removal.removed === null) {
+            outcome = { ok: false, message: SESSION_MISSING_REFUSAL };
+            return;
+          }
+          sessionsRef.current = removal.sessions;
+          const entries = { ...sessionEntriesRef.current };
+          delete entries[slug];
+          sessionEntriesRef.current = entries;
+          // A transcript the unlink could not take is an ORPHAN now: said in
+          // the notices group and in the mirror's unknowns, never deleted.
+          if (removal.refusal !== null) {
+            orphanSessionTranscriptsRef.current = [
+              ...new Set([...orphanSessionTranscriptsRef.current, slug]),
+            ].sort();
+          }
+          // ONE TOAST: a session delete replaces any pending other restore.
+          restorableRef.current = null;
+          restorableAskRef.current = null;
+          restorableSessionRef.current = pendingRestoreAfter(
+            restorableSessionRef.current,
+            removal.removed,
+          );
+          restoreNoticeRef.current = null;
+          setState(snapshot());
+          outcome =
+            removal.refusal === null
+              ? { ok: true }
+              : {
+                  ok: false,
+                  message: removal.refusal,
+                  recordsRemoved: true,
+                };
+          // STORY 18.5: the removal is an authored move — the slug only.
+          queueHistory(() => [sessionRemoveEvent(Date.now(), slug)]);
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
    * STORY 18.3 — MAKE A SESSION CARD. One queued write of `map/sessions.txt`;
    * no reading, no note, no media, no link and NO transcript (a card that has
    * never run has nothing to say). The tool row is NAMED by id, and a row this
@@ -3919,8 +4096,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * SHARED space — ground, asks and sessions — so a third family can never coil
    * a twin.
    *
-   * No mirror and no history: 18.5 owns both, and this story deliberately
-   * writes only the record. The map folder is the truth either way.
+   * STORY 18.5 gives the creation its two memories: one `session.add` line
+   * (the slug only) and MAP.md's sessions section, queued after the record like
+   * every other authored move.
    */
   const createSession = useCallback(
     (
@@ -3958,6 +4136,12 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           };
           setState(snapshot());
           outcome = { ok: true };
+          // STORY 18.5: a card appeared — one structural line, and MAP.md's
+          // sessions section gains its line in the same queue.
+          queueHistory(() => [
+            sessionAddEvent(Date.now(), written.session.on),
+          ]);
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -4092,9 +4276,34 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             [slug]: transcript.entries,
           };
           setState(snapshot());
-          return done.notice === null
+          // STORY 18.5 — THE RUN'S ONE MOVE, after it settles. ONE PRISM is
+          // appended through the contact log's own queue, with the tool ROW's
+          // id, the ending and the result's size — and NOT ONE WORD of what the
+          // run said. The ending comes from the ONE mapping the history's
+          // `session.run` line uses, so the two records never disagree.
+          const ending = runOutcomeOf(done.ending);
+          let moveRefusal: string | null = null;
+          try {
+            await appendSessionRun({
+              workspacePath,
+              on: slug,
+              tool: session.tool,
+              outcome: ending,
+              resultSize: sessionResultSize(done.entries),
+            });
+          } catch {
+            moveRefusal = SESSION_MOVE_REFUSAL;
+          }
+          // The run moved the card's last ending, so the log and the mirror
+          // follow: one line for the run, and MAP.md's line says how it ended.
+          queueHistory(() => [sessionRunEvent(Date.now(), slug, ending)]);
+          queueMirror();
+          if (done.notice !== null) {
+            return { ok: false, message: done.notice };
+          }
+          return moveRefusal === null
             ? { ok: true }
-            : { ok: false, message: done.notice };
+            : { ok: false, message: moveRefusal };
         })
         .catch(() => ({
           ok: false,
@@ -4198,14 +4407,20 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           const placed = records.references.find(
             (reference) => reference.on === records.reading.on,
           );
-          queueHistory(() => [
-            cardAddEvent(
-              Date.now(),
-              records.reading.on,
-              placed?.x ?? Math.round(session.x),
-              placed?.y ?? Math.round(session.y),
-            ),
-          ]);
+          // STORY 18.5: the copy's appearance, then the join — session.result
+          // names the card that was made and the session it came from.
+          queueHistory(() => {
+            const at = Date.now();
+            return [
+              cardAddEvent(
+                at,
+                records.reading.on,
+                placed?.x ?? Math.round(session.x),
+                placed?.y ?? Math.round(session.y),
+              ),
+              sessionResultEvent(at, records.reading.on, slug),
+            ];
+          });
           queueMirror();
         })
         .then(() => outcome)
@@ -4673,8 +4888,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             removedCard,
           );
           // STORY 17.8: ONE toast — a reference delete commits any pending ask
-          // card restore, exactly as it commits an earlier reference's.
+          // card restore, exactly as it commits an earlier reference's. STORY
+          // 18.5 adds the session card's snapshot to the same one toast.
           restorableAskRef.current = null;
+          restorableSessionRef.current = null;
           restoreNoticeRef.current = null;
           setState(snapshot());
           const refusal =
@@ -4914,20 +5131,29 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   // is drawn; the span is stated once in the story and lived with.
   useEffect(() => {
     // STORY 17.8: the ONE window covers whichever deletion the toast holds — a
-    // reference card's or an ask card's. Both are committed together so a
-    // kind-switch can never leave a stale snapshot behind.
-    if (state.restorable === null && state.restorableAsk === null) return;
+    // reference card's, an ask card's or (18.5) a session card's. All three are
+    // committed together so a kind-switch can never leave a stale snapshot
+    // behind.
+    if (
+      state.restorable === null &&
+      state.restorableAsk === null &&
+      state.restorableSession === null
+    ) {
+      return;
+    }
     const timer = setTimeout(() => {
       restorableRef.current = null;
       restorableAskRef.current = null;
+      restorableSessionRef.current = null;
       setState((current) => ({
         ...current,
         restorable: null,
         restorableAsk: null,
+        restorableSession: null,
       }));
     }, RESTORE_WINDOW_MS);
     return () => clearTimeout(timer);
-  }, [state.restorable, state.restorableAsk]);
+  }, [state.restorable, state.restorableAsk, state.restorableSession]);
 
   /**
    * STORY 16.13 — RESTORE. Through the same queue as every write, the held
@@ -4942,6 +5168,70 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     // and the one history line says the card came back. Sharing the sentence,
     // the window and the queue with the reference card's restore is the whole
     // point of one toast.
+    // STORY 18.5 — THE SESSION CARD'S OWN RESTORE, through the same one toast:
+    // the transcript's bytes go back first (verbatim), then its line, and the
+    // one history line says the card came back. A transcript that came back
+    // without its line is an ORPHAN — kept, said, never adopted.
+    const pendingSession = restorableSessionRef.current;
+    if (pendingSession !== null) {
+      const sessionSlug = pendingSession.session.on;
+      let sessionOutcome: GroundAddResult = {
+        ok: false,
+        message: "nothing came back.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const restored = await restoreSessionCard(
+            workspacePath,
+            pendingSession,
+            sessionsRef.current,
+            malformedSessionsRef.current,
+            restoreSentence,
+          );
+          sessionsRef.current = restored.sessions;
+          if (restored.restoredSession) {
+            // The card is back: its transcript is whatever the file holds now
+            // (the bytes that just went back, or none).
+            const transcript = await loadSessionTranscript(
+              workspacePath,
+              sessionSlug,
+            );
+            sessionEntriesRef.current = {
+              ...sessionEntriesRef.current,
+              [sessionSlug]: transcript.entries,
+            };
+            orphanSessionTranscriptsRef.current =
+              orphanSessionTranscriptsRef.current.filter(
+                (orphan) => orphan !== sessionSlug,
+              );
+          } else if (restored.cameBack.includes("the transcript")) {
+            // The bytes came back but the line did not: the transcript has no
+            // card, so it is an ORPHAN — kept, said, never adopted.
+            orphanSessionTranscriptsRef.current = [
+              ...new Set([...orphanSessionTranscriptsRef.current, sessionSlug]),
+            ].sort();
+          }
+          restorableSessionRef.current = null;
+          restoreNoticeRef.current = restored.refusal;
+          setState(snapshot());
+          sessionOutcome =
+            restored.refusal === null
+              ? { ok: true }
+              : { ok: false, message: restored.refusal };
+          // A restore is an AUTHORED move (story 16.13's rule, two families over).
+          if (restored.restoredSession) {
+            queueHistory(() => [
+              sessionRestoreEvent(Date.now(), sessionSlug),
+            ]);
+          }
+          if (restored.cameBack.length > 0) queueMirror();
+        })
+        .then(() => sessionOutcome)
+        .catch(() => ({
+          ok: false,
+          message: "the map folder could not take the session card back.",
+        }));
+    }
     const pendingAsk = restorableAskRef.current;
     if (pendingAsk !== null) {
       const askSlug = pendingAsk.ask.on;
@@ -5102,17 +5392,20 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     if (
       restorableRef.current === null &&
       restorableAskRef.current === null &&
+      restorableSessionRef.current === null &&
       restoreNoticeRef.current === null
     ) {
       return;
     }
     restorableRef.current = null;
     restorableAskRef.current = null;
+    restorableSessionRef.current = null;
     restoreNoticeRef.current = null;
     setState((current) => ({
       ...current,
       restorable: null,
       restorableAsk: null,
+      restorableSession: null,
       restoreNotice: null,
     }));
   }, []);
@@ -5126,6 +5419,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     sessions: state.sessions,
     sessionEntries: state.sessionEntries,
     malformedSessions: state.malformedSessions,
+    orphanSessionTranscripts: state.orphanSessionTranscripts,
     sessionRunning: state.sessionRunning,
     sessionPermission: state.sessionPermission,
     readings: state.readings,
@@ -5147,6 +5441,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     malformedHistory: state.malformedHistory,
     restorable: state.restorable,
     restorableAsk: state.restorableAsk,
+    restorableSession: state.restorableSession,
     restoreNotice: state.restoreNotice,
     loaded: state.loaded,
     createAsk,
@@ -5155,6 +5450,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     forkAskAt,
     reanchorAskTo,
     removeAsk,
+    removeSession,
     createSession,
     bindSessionTool,
     runSession,
