@@ -57,6 +57,11 @@ interface ExportedProvider {
   api: string;
   env: string;
   doc: string;
+  /**
+   * Documented request headers, when the endpoint needs one (story 15.17).
+   * Data from the export's ALLOWLIST, never a name a lane module knows.
+   */
+  headers?: Record<string, string>;
   models: ExportedModel[];
 }
 
@@ -127,6 +132,12 @@ export interface ProviderCatalogEntry {
    * person's account, and it is never fetched here.
    */
   models: readonly CatalogModel[];
+  /**
+   * The request headers a row picked from this entry ships (story 15.17).
+   * Absent for nearly every entry; present where the endpoint documents one.
+   * `{session-id}` is the generic placeholder the sidecar fills.
+   */
+  headers?: Record<string, string>;
   /** The one fact a person needs about the key or the docs. */
   note: string;
   /** Where the entry came from, in one word. */
@@ -159,16 +170,29 @@ function exampleOf(
 }
 
 /** The one sentence a pick shows: the key variable and the docs, from data. */
-function noteOf(envName: string, doc: string): string {
+function noteOf(
+  envName: string,
+  doc: string,
+  headers: Readonly<Record<string, string>> | undefined,
+): string {
   const key =
     envName === ""
       ? "models.dev lists no key variable for this provider"
       : "models.dev lists " + envName + " as this provider's key variable";
   const docs = doc === "" ? "" : "; its docs are at " + doc;
+  // WHY THE HEADER IS SHIPPED, in one sentence: this endpoint documents a
+  // header its gateway needs, so a generic one is not enough. The sentence
+  // names no header and no vendor — the map above is where that fact lives.
+  const session =
+    headers === undefined
+      ? ""
+      : " This endpoint documents a request header for its session; a row picked here carries it, stored as plain text.";
   return (
     key +
     docs +
-    ". The key you paste is kept by this machine's keychain — this file is data only."
+    "." +
+    session +
+    " The key you paste is kept by this machine's keychain — this file is data only."
   );
 }
 
@@ -192,7 +216,10 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] =
       attachment: model.attachment === true,
       reasoning: model.reasoning === true,
     })),
-    note: noteOf(provider.env, provider.doc),
+    ...(provider.headers === undefined
+      ? {}
+      : { headers: { ...provider.headers } }),
+    note: noteOf(provider.env, provider.doc, provider.headers),
     source: CATALOG_SOURCE,
     verified: false,
   }));
@@ -221,6 +248,11 @@ export interface ProviderCatalogFill {
   tools: boolean;
   /** The example model's attachment: a starting tick, changeable. */
   vision: boolean;
+  /**
+   * The entry's request headers (story 15.17): the add form's header lines,
+   * pre-filled so a documented header arrives without the person copying it.
+   */
+  headers: Record<string, string>;
 }
 
 /** Today's empty form: choosing a custom endpoint clears the fill to this. */
@@ -231,6 +263,7 @@ export const CUSTOM_FILL: ProviderCatalogFill = {
   modelName: "",
   tools: false,
   vision: false,
+  headers: {},
 };
 
 /**
@@ -246,6 +279,7 @@ export function catalogFill(entry: ProviderCatalogEntry): ProviderCatalogFill {
     modelName: entry.modelExample?.name ?? "",
     tools: entry.modelExample?.toolCall === true,
     vision: entry.modelExample?.attachment === true,
+    headers: { ...(entry.headers ?? {}) },
   };
 }
 

@@ -64,6 +64,14 @@ export interface TurnProvider {
   model: string;
   /** The key for this turn ONLY. Held in the window's memory, never on disk. */
   apiKey: string;
+  /**
+   * The row's request headers (story 15.17; PROVISIONAL). DATA the catalogue
+   * supplied, merged by the sidecar AFTER its own generic headers. A name the
+   * turn owns (authorization, content-type, host, content-length) is refused
+   * at the wire as well as at the write — defence in depth, never a silent
+   * override. Absent means the row carries none.
+   */
+  headers?: Record<string, string>;
 }
 
 /** The two roles story 1 sends: one fixed instruction and the person's words. */
@@ -564,13 +572,25 @@ function isMessage(value: unknown): value is TurnMessage {
   );
 }
 
+/** A row's header map as the wire may carry it: string names and values. */
+function isHeaderMap(value: unknown): value is Record<string, string> {
+  if (!isRecord(value)) return false;
+  return Object.entries(value).every(
+    ([name, headerValue]) =>
+      name.trim() !== "" && typeof headerValue === "string",
+  );
+}
+
 function isProvider(value: unknown): value is TurnProvider {
   if (!isRecord(value)) return false;
-  return (
+  if (!(
     isNonEmptyString(value.baseUrl) &&
     isNonEmptyString(value.model) &&
     typeof value.apiKey === "string"
-  );
+  )) {
+    return false;
+  }
+  return value.headers === undefined || isHeaderMap(value.headers);
 }
 
 /** A model-list provider: a base URL and a key that may be empty. */
@@ -981,14 +1001,21 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
   if (!value.messages.every(isMessage)) return null;
 
   const provider = value.provider;
+  const parsedProvider: TurnProvider = {
+    baseUrl: provider.baseUrl,
+    model: provider.model,
+    apiKey: provider.apiKey,
+  };
+  // The row's header map is DATA and rides the parsed request unchanged; an
+  // absent map stays absent, so the three-field provider is still exactly what
+  // a headerless row carries.
+  if (provider.headers !== undefined) {
+    parsedProvider.headers = { ...provider.headers };
+  }
   return {
     id: value.id,
     kind: "turn",
-    provider: {
-      baseUrl: provider.baseUrl,
-      model: provider.model,
-      apiKey: provider.apiKey,
-    },
+    provider: parsedProvider,
     messages: value.messages.map((message) => ({
       role: message.role,
       content: message.content,

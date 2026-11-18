@@ -47,6 +47,7 @@ import {
   type TurnSettings,
 } from "../turn/providers";
 import { CLI_SPECS, type CliSpec } from "../turn/cliSpecs";
+import { headersFromText, headersText } from "../turn/requestHeaders";
 import {
   CUSTOM_CATALOG_ID,
   CUSTOM_FILL,
@@ -154,6 +155,13 @@ import { probeSpec } from "../turn/cliBridge";
  * it because a keychain said no would throw away their work. The sentence says
  * exactly that, and nothing from the store is echoed into it.
  */
+/**
+ * THE HEADERS FIELD'S ONE WARNING (story 15.17): a header value is stored in the
+ * config as written, not in the keychain, so the person is told that plainly
+ * beside the field. It is not a secret store and does not pretend to be one.
+ */
+export const HEADER_STORE_SENTENCE = "these values are stored in plain text";
+
 export const ADD_KEY_SENTENCES = {
   kept: "the key is kept; it will not be shown again",
   notKept: "the provider is kept; the key was not kept",
@@ -314,6 +322,8 @@ export function ProvidersPanel({
   const [editing, setEditing] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editBaseUrl, setEditBaseUrl] = useState("");
+  // The row's own header lines, as the editor shows them (story 15.17).
+  const [editHeaders, setEditHeaders] = useState("");
   const [keyFor, setKeyFor] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
 
@@ -322,6 +332,11 @@ export function ProvidersPanel({
   // store and never shown again. It is cleared whatever happens, because a
   // draft that failed to be kept is not a thing to keep in memory either.
   const [addKey, setAddKey] = useState("");
+
+  // THE ADD FORM'S REQUEST HEADERS (story 15.17): one `name: value` line each,
+  // pre-filled from a catalogue pick. Plain text on purpose — a header value is
+  // stored in the config as written, and the field says so.
+  const [headerText, setHeaderText] = useState("");
 
   // WHICH CATALOGUE ENTRY THE ADD FORM CAME FROM (story 13). "custom" is
   // today's empty form; any other value names one of the data entries. It
@@ -494,6 +509,7 @@ export function ProvidersPanel({
     setModelName("");
     setTools(false);
     setVision(false);
+    setHeaderText("");
     setCommand("");
     setVersionArgs("--version");
     setRunArgs("{prompt}");
@@ -518,6 +534,9 @@ export function ProvidersPanel({
     setModelName(fill.modelName);
     setTools(fill.tools);
     setVision(fill.vision);
+    // The documented header arrives WITH the pick, as data; a person edits the
+    // lines like any other field, and an entry without one clears them.
+    setHeaderText(headersText(fill.headers));
   }
 
   /** The row the add form describes, or the one sentence it is refused with. */
@@ -552,10 +571,15 @@ export function ProvidersPanel({
         taken,
       );
     }
+    const headers = headersFromText(headerText);
+    if (headers.kind === "refused") {
+      return { kind: "refused", sentence: headers.sentence };
+    }
     const draft: ProviderDraft = {
       name,
       baseUrl,
       models: [{ id: modelId, name: modelName, tools, vision }],
+      headers: headers.headers,
     };
     return validateProviderRow(draft, taken);
   }
@@ -592,6 +616,7 @@ export function ProvidersPanel({
     setModelName("");
     setTools(false);
     setVision(false);
+    setHeaderText("");
     setCommand("");
     setVersionArgs("--version");
     setRunArgs("{prompt}");
@@ -780,10 +805,16 @@ export function ProvidersPanel({
         otherIds,
       );
     } else {
+      const headers = headersFromText(editHeaders);
+      if (headers.kind === "refused") {
+        setSentence(headers.sentence);
+        return;
+      }
       const draft: ProviderDraft = {
         id: row.id,
         name: editName,
         baseUrl: editBaseUrl,
+        headers: headers.headers,
         models: row.models.map((model) => ({
           id: model.id,
           name: model.name,
@@ -1190,16 +1221,32 @@ export function ProvidersPanel({
                   />
                 </label>
                 {provider.kind === "http" ? (
-                  <label className="providers-field">
-                    <span>base URL</span>
-                    <input
-                      type="text"
-                      value={editBaseUrl}
-                      spellCheck={false}
-                      autoComplete="off"
-                      onChange={(e) => setEditBaseUrl(e.target.value)}
-                    />
-                  </label>
+                  <>
+                    <label className="providers-field">
+                      <span>base URL</span>
+                      <input
+                        type="text"
+                        value={editBaseUrl}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setEditBaseUrl(e.target.value)}
+                      />
+                    </label>
+                    <label className="providers-field">
+                      <span>request headers — one per line, name: value</span>
+                      <textarea
+                        value={editHeaders}
+                        rows={2}
+                        spellCheck={false}
+                        autoComplete="off"
+                        placeholder="x-example: value"
+                        onChange={(e) => setEditHeaders(e.target.value)}
+                      />
+                      <span className="providers-model-hint">
+                        {HEADER_STORE_SENTENCE}
+                      </span>
+                    </label>
+                  </>
                 ) : provider.kind === "cli" ? (
                   <>
                     <label className="providers-field">
@@ -1342,6 +1389,16 @@ export function ProvidersPanel({
                     {provider.command} — {provider.model}
                   </span>
                 )}
+                {provider.kind === "http" &&
+                  provider.headers !== undefined &&
+                  Object.keys(provider.headers).length > 0 && (
+                    <span className="providers-model-id">
+                      {"request headers — "}
+                      {Object.entries(provider.headers)
+                        .map(([header, value]) => header + ": " + value)
+                        .join(" · ")}
+                    </span>
+                  )}
                 {provider.kind === "local" && (
                   <span className="providers-model-id">
                     {provider.args.join(" ")}
@@ -1525,6 +1582,11 @@ export function ProvidersPanel({
                   setEditName(provider.name);
                   setEditBaseUrl(
                     provider.kind === "http" ? provider.baseUrl : "",
+                  );
+                  setEditHeaders(
+                    provider.kind === "http"
+                      ? headersText(provider.headers ?? {})
+                      : "",
                   );
                   if (provider.kind === "cli") {
                     setEditCommand(provider.command);
@@ -1775,6 +1837,20 @@ export function ProvidersPanel({
                     endpoint may need none. Write-only like the row's — the
                     field is never filled from the store, and what is typed is
                     written only AFTER the row exists. */}
+                <label className="providers-field">
+                  <span>request headers — one per line, name: value</span>
+                  <textarea
+                    value={headerText}
+                    rows={2}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="x-example: value"
+                    onChange={(e) => setHeaderText(e.target.value)}
+                  />
+                  <span className="providers-model-hint">
+                    {HEADER_STORE_SENTENCE}
+                  </span>
+                </label>
                 <label className="providers-field">
                   <span>the key (kept; never shown again)</span>
                   <input

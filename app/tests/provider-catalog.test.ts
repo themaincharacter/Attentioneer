@@ -275,6 +275,7 @@ describe("a pick fills the form and focuses the key field", () => {
         modelName: entry.modelExample?.name ?? "",
         tools: entry.modelExample?.toolCall === true,
         vision: entry.modelExample?.attachment === true,
+        headers: entry.headers ?? {},
       });
     }
   });
@@ -289,6 +290,7 @@ describe("a pick fills the form and focuses the key field", () => {
       modelName: "",
       tools: false,
       vision: false,
+      headers: {},
     });
   });
 

@@ -83,6 +83,7 @@ import {
   refusalMessage,
   refusalSentence,
 } from "../src/turn/refusal.ts";
+import { headersForRequest } from "../src/turn/requestHeaders.ts";
 import {
   MODEL_LIST_LIMIT,
   MODEL_LIST_SENTENCES,
@@ -371,18 +372,34 @@ async function runTurn(request: TurnRequest): Promise<void> {
   };
 
   try {
+    // THE ROW'S HEADERS ARE MERGED AFTER OURS (story 15.17), and the merge is
+    // the WIRE's reserved-name gate: a name the turn owns cannot be overridden
+    // even by a hand-edited config that skipped the write's validation. A
+    // refused name is ONE sentence naming the header (never its value) and
+    // nothing is sent — a silently dropped header would be a request the
+    // provider refuses with a worse sentence later.
+    const built = headersForRequest(
+      {
+        "content-type": "application/json",
+        authorization: `Bearer ${request.provider.apiKey}`,
+        // The stable session this process names to every provider: a gateway
+        // that needs one to route the request answers 200 instead of 400, and
+        // everyone else ignores it. A catalogue header may write the
+        // `{session-id}` placeholder to carry the SAME id under its own name.
+        "x-session-id": TURN_SESSION_ID,
+      },
+      request.provider.headers,
+      TURN_SESSION_ID,
+    );
+    if (built.kind === "refused") {
+      fail(built.sentence);
+      return;
+    }
     let response: Response;
     try {
       response = await fetch(endpointOf(request.provider.baseUrl), {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${request.provider.apiKey}`,
-          // The stable session this process names to every provider: a
-          // gateway that needs one to route the request answers 200 instead
-          // of 400, and everyone else ignores it.
-          "x-session-id": TURN_SESSION_ID,
-        },
+        headers: built.headers,
         // stream:true — the answer arrives as deltas (story 7). A provider
         // that ignores this answers one JSON body, handled below.
         body: JSON.stringify({

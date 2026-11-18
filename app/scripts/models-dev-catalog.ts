@@ -70,6 +70,13 @@ export interface CatalogExportProvider {
   /** The key's environment-variable name (models.dev's `env[0]`), in words. */
   env: string;
   doc: string;
+  /**
+   * Request headers this endpoint documents (story 15.17), shipped as DATA.
+   * `{session-id}` is generic lane vocabulary: the sidecar fills it with the
+   * same stable id its generic session header carries. A provider whose
+   * gateway asks for its own name never needs code to know that name.
+   */
+  headers?: Record<string, string>;
   /** Only models that can output text — a chat catalogue, not an image one. */
   models: CatalogExportModel[];
 }
@@ -95,15 +102,31 @@ export interface AllowEntry {
   id: string;
   /** Display name override; models.dev's name is used otherwise. */
   name?: string;
+  /** Documented request headers this entry ships (story 15.17). */
+  headers?: Record<string, string>;
 }
 
 export const ALLOWLIST: readonly AllowEntry[] = [
   { modelsDevId: "deepseek", id: "deepseek" },
   { modelsDevId: "openai", id: "openai" },
-  { modelsDevId: "opencode-go", id: "opencode-go" },
+  // This gateway documents the header its session needs. Shipping it as DATA
+  // is the durable answer: the generic header we already send is a lucky
+  // compatibility, and the documented one belongs to the catalogue.
+  {
+    modelsDevId: "opencode-go",
+    id: "opencode-go",
+    headers: { "x-opencode-session": "{session-id}" },
+  },
   // models.dev calls the pay-as-you-go gateway simply "OpenCode"; the picker
   // keeps 15.13's name so it is not mistaken for the Go plan.
-  { modelsDevId: "opencode", id: "opencode-payg", name: "OpenCode (pay-as-you-go)" },
+  // The same gateway family documents the same session header; the pay-as-you-go
+  // endpoint receives it too, where it is ignored if it is not needed.
+  {
+    modelsDevId: "opencode",
+    id: "opencode-payg",
+    name: "OpenCode (pay-as-you-go)",
+    headers: { "x-opencode-session": "{session-id}" },
+  },
   { modelsDevId: "groq", id: "groq" },
   { modelsDevId: "openrouter", id: "openrouter" },
   { modelsDevId: "mistral", id: "mistral" },
@@ -226,14 +249,20 @@ export function projectCatalog(raw: unknown): CatalogExport {
       throw new CatalogRefused("no chat models for " + allow.modelsDevId);
     }
 
-    providers.push({
+    const projected: CatalogExportProvider = {
       id: allow.id,
       name: allow.name ?? name,
       api,
       env,
       doc: textField(provider.doc),
       models,
-    });
+    };
+    // Headers come from the ALLOWLIST, not from models.dev: an upstream
+    // refresh cannot silently drop a header the row needs to work.
+    if (allow.headers !== undefined) {
+      projected.headers = { ...allow.headers };
+    }
+    providers.push(projected);
   }
 
   if (providers.length === 0) {

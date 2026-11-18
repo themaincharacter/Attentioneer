@@ -721,7 +721,10 @@
           "attachment": true,
           "reasoning": true
         }
-      ]
+      ],
+      "headers": {
+        "x-opencode-session": "{session-id}"
+      }
     },
     {
       "id": "opencode-payg",
@@ -1724,7 +1727,10 @@
           "attachment": true,
           "reasoning": true
         }
-      ]
+      ],
+      "headers": {
+        "x-opencode-session": "{session-id}"
+      }
     },
     {
       "id": "groq",

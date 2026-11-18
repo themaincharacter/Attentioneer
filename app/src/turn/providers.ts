@@ -1,5 +1,9 @@
 import type { TurnProvider } from "./protocol";
 import { promptTemplateProblem } from "./cli";
+import {
+  headerMapProblem,
+  readRequestHeaders,
+} from "./requestHeaders";
 import { PROMPT_PLACEHOLDER, type CliSpec } from "./cliSpecs";
 import { localArgsProblem, modelStem } from "./local";
 import { DEFAULT_LOCAL_IDLE_MINUTES } from "./localSpecs";
@@ -13,7 +17,7 @@ import { DEFAULT_LOCAL_IDLE_MINUTES } from "./localSpecs";
  * an endpoint actually offers. A ROW names one place a turn can run (a stable
  * id, a display name, a base URL) and the model rows beneath it carry what each
  * model can do. The turn then carries only providerId:modelId — the string
- * contract Slashspace settled on — and every other fact (base URL, model id,
+ * contract a turn needs, and nothing more — and every other fact (base URL, model id,
  * the key) is re-derived from the row at send time. The sidecar's wire does not
  * change: this module still hands it exactly {baseUrl, model, apiKey}.
  *
@@ -79,11 +83,21 @@ interface ProviderRowBase {
   models: ModelRow[];
 }
 
-/** One HTTP endpoint. There is deliberately NO key field. */
+/**
+ * One HTTP endpoint. There is deliberately NO key field.
+ *
+ * STORY 15.17: an endpoint MAY carry a request-header map. It is DATA — the
+ * catalogue ships a vendor's documented header there — and the turn path never
+ * learns the vendor's name. Reserved names (authorization, content-type, host,
+ * content-length) are refused at the write and again at the wire, because a
+ * row that could set them could swap the key or lie about the body.
+ */
 export interface HttpProviderRow extends ProviderRowBase {
   kind: "http";
   /** The endpoint's base URL (/chat/completions is the sidecar's business). */
   baseUrl: string;
+  /** Optional request headers, merged AFTER the app's own (PROVISIONAL). */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -425,7 +439,19 @@ export function parseProviderRow(value: unknown): ProviderRow | null {
   const name = textOf(value.name).trim();
   const baseUrl = textOf(value.baseUrl).trim();
   if (id === "" || name === "" || baseUrl === "") return null;
-  return { kind: "http", id, name, baseUrl, models: readModelRows(value.models) };
+  const row: HttpProviderRow = {
+    kind: "http",
+    id,
+    name,
+    baseUrl,
+    models: readModelRows(value.models),
+  };
+  // A hand-edited reserved name is KEPT here (the wire refuses it loudly with
+  // one sentence); a malformed entry is dropped, because an old config must
+  // still open. The write is what refuses, never the read.
+  const headers = readRequestHeaders(value.headers);
+  if (Object.keys(headers).length > 0) row.headers = headers;
+  return row;
 }
 
 /**
@@ -520,12 +546,16 @@ function storedProviderRow(provider: ProviderRow): Record<string, unknown> {
     }
     return stored;
   }
-  return {
+  const stored: Record<string, unknown> = {
     id: provider.id,
     name: provider.name,
     baseUrl: provider.baseUrl,
     models,
   };
+  if (provider.headers !== undefined && Object.keys(provider.headers).length > 0) {
+    stored.headers = { ...provider.headers };
+  }
+  return stored;
 }
 
 function storedCapabilities(
@@ -548,6 +578,8 @@ export interface ProviderDraft {
   name: string;
   baseUrl: string;
   models: readonly ModelDraft[];
+  /** Optional request headers, as the panel's lines parsed them (15.17). */
+  headers?: Readonly<Record<string, string>>;
 }
 
 /** One model as the form holds it. */
@@ -589,6 +621,13 @@ export function validateProviderRow(
   const urlProblem = baseUrlProblem(baseUrl);
   if (urlProblem !== null) return refused(urlProblem);
 
+  // THE HEADERS ARE DATA, AND THEY ARE CHECKED (story 15.17). A reserved name
+  // could override the key, the body or the host; a newline could inject a
+  // second header. Both are refused before the row can be stored.
+  const headers = draft.headers ?? {};
+  const headerProblem = headerMapProblem(headers);
+  if (headerProblem !== null) return refused(headerProblem);
+
   if (draft.models.length === 0) return refused(PROVIDER_SENTENCES.noModels);
   const models: ModelRow[] = [];
   const seen = new Set<string>();
@@ -605,7 +644,9 @@ export function validateProviderRow(
       capabilities: capabilitiesOf(candidate),
     });
   }
-  return { kind: "row", row: { kind: "http", id, name, baseUrl, models } };
+  const row: HttpProviderRow = { kind: "http", id, name, baseUrl, models };
+  if (Object.keys(headers).length > 0) row.headers = { ...headers };
+  return { kind: "row", row };
 }
 
 /* ------------------------------------------------------------------ *
@@ -1072,9 +1113,16 @@ export function providerFrom(
   model: ModelRow,
   apiKey: string,
 ): TurnProvider {
-  return {
+  const wire: TurnProvider = {
     baseUrl: provider.baseUrl.trim(),
     model: model.id.trim(),
     apiKey,
   };
+  // The row's headers ride with the turn; the sidecar merges them after its
+  // own. An absent map is absent on the wire, so a row without headers keeps
+  // the exact three-field shape every earlier test pinned.
+  if (provider.headers !== undefined && Object.keys(provider.headers).length > 0) {
+    wire.headers = { ...provider.headers };
+  }
+  return wire;
 }

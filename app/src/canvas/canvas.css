@@ -6628,6 +6628,7 @@ body {
 
 .providers-field input,
 .providers-field select,
+.providers-field textarea,
 .providers-key-input {
   box-sizing: border-box;
   width: 100%;
@@ -6643,6 +6644,7 @@ body {
 
 .providers-field input:focus,
 .providers-field select:focus,
+.providers-field textarea:focus,
 .providers-key-input:focus {
   border-color: #cfc8ba;
 }
