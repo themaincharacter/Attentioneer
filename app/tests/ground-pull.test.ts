@@ -566,8 +566,10 @@ describe("the pull is VIEW STATE: the hook holds it, no writer sees it", () => {
     // The verb too: a closed card has no read-more button.
     // Story 16.12: a selection has no source to read more of, so its card
     // draws no pull verb — the file readings keep theirs.
+    // Story 16.14: a page has no source file to read more of either, so the
+    // one rule is "it has a file behind it".
     expect(LAYER).toMatch(
-      /open && reading !== null && reading\.form !== "selection" && onPull !== undefined/,
+      /open && reading !== null && isFileReading\(reading\) && onPull !== undefined/,
     );
   });
 

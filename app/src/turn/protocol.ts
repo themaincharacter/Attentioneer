@@ -4,8 +4,11 @@
  *
  * STORY 15.11 ADDS ONE REQUEST AND ONE LINE, not a second wire: a `models`
  * request asks the sidecar for the provider's own model list, and a `models`
- * line carries what it found. The key still rides inside a request line and
- * nowhere else, and an error is still ONE sentence, already scrubbed.
+ * line carries what it found. STORY 16.14 adds a `page` request/line for a
+ * web reference (the title, its extracted text and a thumbnail address) and a
+ * `thumb` request/line that carries the image's bytes back as base64 — the
+ * same one pipe, the same one-sentence errors. The key still rides inside a
+ * request line and nowhere else.
  *
  * Newline-delimited JSON travels in BOTH directions over stdio, so every
  * builder here answers exactly one line (JSON.stringify never emits a raw
@@ -106,6 +109,47 @@ export interface ModelsLine {
   offered?: number;
 }
 
+/** Ask the sidecar to fetch ONE web page (story 16.14). No key. */
+export interface PageRequest {
+  id: number;
+  kind: "page";
+  /** The address EXACTLY as the person gave it; the sidecar's guard decides. */
+  url: string;
+}
+
+/** Ask the sidecar to fetch ONE thumbnail image (story 16.14). No key. */
+export interface ThumbRequest {
+  id: number;
+  kind: "thumb";
+  /** The image URL the page declared, already resolved. */
+  url: string;
+}
+
+/**
+ * What one page read found: its title, the extracted text, the thumbnail's
+ * address (if the page declared one) and the HTTP status. The text is already
+ * reduced and capped; the thumbnail itself is a second, separate fetch.
+ */
+export interface PageLine {
+  id: number;
+  kind: "page";
+  title: string;
+  text: string;
+  thumbUrl: string | null;
+  http: number;
+}
+
+/** One thumbnail's bytes, base64 — the image never becomes a remote URL. */
+export interface ThumbLine {
+  id: number;
+  kind: "thumb";
+  /** The image MIME type, e.g. `image/png`. */
+  mime: string;
+  /** The image's bytes, base64-encoded. */
+  data: string;
+  http: number;
+}
+
 /** What the window may read from the sidecar's stdout. */
 export type SidecarLine =
   | HelloLine
@@ -113,7 +157,9 @@ export type SidecarLine =
   | DoneLine
   | ErrorLine
   | CancelledLine
-  | ModelsLine;
+  | ModelsLine
+  | PageLine
+  | ThumbLine;
 
 /** One turn's request. The messages are ALL that leaves the app. */
 export interface TurnRequest {
@@ -141,7 +187,12 @@ export interface StopRequest {
 }
 
 /** What the sidecar may read from its stdin. */
-export type SidecarRequest = TurnRequest | ModelsRequest | StopRequest;
+export type SidecarRequest =
+  | TurnRequest
+  | ModelsRequest
+  | PageRequest
+  | ThumbRequest
+  | StopRequest;
 
 /* ------------------------------------------------------------------ *
  * Builders — each answer ONE line, ready for the pipe.
@@ -177,6 +228,37 @@ export function errorLine(id: number, message: string): string {
 
 export function cancelledLine(id: number): string {
   return JSON.stringify({ id, kind: "cancelled" });
+}
+
+/** The page's request line: one address, one read. */
+export function pageRequestLine(id: number, url: string): string {
+  return JSON.stringify({ id, kind: "page", url });
+}
+
+/** The thumbnail's request line: one image address. */
+export function thumbRequestLine(id: number, url: string): string {
+  return JSON.stringify({ id, kind: "thumb", url });
+}
+
+/** One page, one line: title, extracted text, thumbnail address, status. */
+export function pageLine(
+  id: number,
+  title: string,
+  text: string,
+  thumbUrl: string | null,
+  http: number,
+): string {
+  return JSON.stringify({ id, kind: "page", title, text, thumbUrl, http });
+}
+
+/** One thumbnail, one line: MIME and base64 bytes. */
+export function thumbLine(
+  id: number,
+  mime: string,
+  data: string,
+  http: number,
+): string {
+  return JSON.stringify({ id, kind: "thumb", mime, data, http });
 }
 
 /** The fetch's request line: one endpoint, one key, no model. */
@@ -316,6 +398,36 @@ export function parseSidecarLine(raw: string): SidecarLine | null {
   if (value.kind === "models") {
     return readModelsLine(value.id, value);
   }
+  if (value.kind === "page") {
+    if (typeof value.title !== "string" || typeof value.text !== "string") {
+      return null;
+    }
+    if (value.thumbUrl !== null && typeof value.thumbUrl !== "string") {
+      return null;
+    }
+    if (!isId(value.http)) return null;
+    return {
+      id: value.id,
+      kind: "page",
+      title: value.title,
+      text: value.text,
+      thumbUrl: value.thumbUrl,
+      http: value.http,
+    };
+  }
+  if (value.kind === "thumb") {
+    if (typeof value.mime !== "string" || typeof value.data !== "string") {
+      return null;
+    }
+    if (!isId(value.http)) return null;
+    return {
+      id: value.id,
+      kind: "thumb",
+      mime: value.mime,
+      data: value.data,
+      http: value.http,
+    };
+  }
   return null;
 }
 
@@ -346,6 +458,14 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
         apiKey: value.provider.apiKey,
       },
     };
+  }
+  if (value.kind === "page") {
+    if (!isNonEmptyString(value.url)) return null;
+    return { id: value.id, kind: "page", url: value.url };
+  }
+  if (value.kind === "thumb") {
+    if (!isNonEmptyString(value.url)) return null;
+    return { id: value.id, kind: "thumb", url: value.url };
   }
   if (value.kind !== "turn") return null;
   if (!isProvider(value.provider)) return null;

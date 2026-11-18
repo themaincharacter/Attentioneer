@@ -50,8 +50,9 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * a workspace-relative value (portable with the folder); a pick OUTSIDE is
  * `form: at` with the absolute value (machine-local, ADR-0017's outward
  * exception). A LEGACY `form: path` line whose value is absolute is read as
- * absolute and left exactly as it is — there is no migration pass. `url` is
- * not a reading form in this story: a link is not reachable without a network.
+ * absolute and left exactly as it is — there is no migration pass. STORY 16.14
+ * adds `url`: a page the SIDECAR fetched once, whose text is the reading and
+ * which has no path to stat (see the page section below).
  *
  * STORY 16.4 ADDS THE SECOND EXTRACTOR (ADR-0035): a pick whose NAME ends in
  * `.pdf` is read on device by pdf.js (`extract.ts` + `pdf.ts`), and its text
@@ -64,6 +65,14 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  *
  * THE CAP IS STILL PROVISIONAL: the first 64 lines or 8 KiB, whichever comes
  * first (a hypothesis, not a rule).
+ *
+ * STORY 16.14 ADDS THE PAGE (the spec is story 16.14): a person pastes a web
+ * address and the SIDECAR fetches it once; the extracted TEXT lands in this
+ * same store and under the same provisional cap, the page's bytes are never
+ * copied, and a local thumbnail is kept beside the map by `media.ts`. A url
+ * reading is NEVER "missing": there is no path to stat, so it is current once
+ * taken (the state short-circuit below). The record keeps the URL exactly as
+ * the person gave it; the card shows the host only.
  *
  * STORY 16.12 ADDS A READING WITH NO SOURCE FILE (a SELECTION): the person
  * selects text inside another card's expanded reading, names the new card, and
@@ -92,8 +101,9 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
 /**
  * The forms a reading line may carry. PROVISIONAL: a pick inside the workspace
  * is `path` (workspace-relative), a pick outside is `at` (absolute,
- * machine-local). A `url` line is not a reading yet — it is surfaced as
- * unreadable input, not guessed into a form.
+ * machine-local). STORY 16.14 adds `url`: a web page's address, kept exactly
+ * as the person gave it; it is never guessed from another form, and a line
+ * whose value is not an http(s) URL stays malformed.
  *
  * STORY 16.12 adds `selection`: the text the person selected OUT of another
  * card's expanded reading. It is a reading kind, never a note, and it has NO
@@ -102,12 +112,13 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * guessed into a form), because a selection can never be stale and nothing
  * behind it is ever stat'ed.
  */
-export type ReadingForm = PointerForm | "selection";
+export type ReadingForm = PointerForm | "selection" | "url";
 
 export const READING_FORMS: readonly ReadingForm[] = [
   "path",
   "at",
   "selection",
+  "url",
 ];
 
 /** Story 1's cap: the first 64 lines... (PROVISIONAL, not a rule). */
@@ -127,9 +138,9 @@ export const READING_PREVIEW_LINES = 6;
  * Which extractor produced a reading (story 16.4, ADR-0035 decision 4).
  * PROVISIONAL: the two names; absence on a legacy line means `text`.
  */
-export type ReadingExtract = "text" | "pdf";
+export type ReadingExtract = "text" | "pdf" | "page";
 
-/** One reading: the file the person picked and when its head was taken. */
+/** One reading: the source the person pointed at and when it was taken. */
 export interface Reading {
   /** The ground reference's slug — the key the two files join on. */
   on: string;
@@ -227,7 +238,7 @@ export function readingTextPath(
  * rewrite. The writer emits them in this order, the reader needs that order.
  */
 const READING_LINE =
-  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf))?$/;
+  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf|page))?$/;
 
 /** Parse one line; anything out of shape is `null` (kept and reported). */
 export function parseReadingLine(line: string): Reading | null {
@@ -241,6 +252,10 @@ export function parseReadingLine(line: string): Reading | null {
   // so no caller can ever stat, read or re-take behind it (story 16.12).
   if (!READING_FORMS.includes(form as ReadingForm)) return null;
   if (form === "selection" && !isSelectionProvenance(from)) return null;
+  // STORY 16.14: a url reading must carry a URL, never a path. It is kept
+  // verbatim; the fetch's own guard refuses an address it cannot take, and
+  // nothing here repairs or normalizes what the person pasted.
+  if (form === "url" && !isWebUrl(from)) return null;
   const reading: Reading = {
     on,
     form: form as ReadingForm,
@@ -513,6 +528,93 @@ export function readingAbsolutePath(
   return `${workspacePath}/${reading.from}`;
 }
 
+/* ------------------------------------------------------------------------- *
+ * STORY 16.14 — A WEB PAGE IS A REFERENCE (the page form).
+ *
+ * The record stores the URL EXACTLY as the person gave it. The card face shows
+ * only the HOST: the full address stays a record, where a person can see it in
+ * the reference's own surface, but the map itself does not turn the plane into
+ * a list of links. Nothing here fetches, parses or repairs an address — the
+ * sidecar's one guard decides whether a page can be taken.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Is this a URL a page reading may name? `http(s)` only, parsed rather than
+ * pattern-matched. The stricter remote-or-loopback rule lives in the sidecar
+ * (the process that actually reaches out); this is the RECORD's shape check,
+ * so a hand-edited line naming a path is refused rather than half-read.
+ */
+export function isWebUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The HOST of a page reading's URL — the card's quiet provenance. A hostname
+ * only (no scheme, path, query or fragment); an unparsable value falls back to
+ * the string as written, because a record that got onto disk is shown rather
+ * than silently emptied.
+ */
+export function pageHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Does this reading have a FILE behind it (a stat-able source)? A selection
+ * and a page do not: their text is the map's own copy and neither can go stale.
+ * PURE, so the card's verbs and the pull's guard read one rule.
+ */
+export function isFileReading(reading: Reading): boolean {
+  return reading.form === "path" || reading.form === "at";
+}
+
+/**
+ * ONE page reading, built from the sidecar's extract (story 16.14). The URL is
+ * stored VERBATIM — never normalized, trimmed or repaired — and the line
+ * records `extract: page` so the app knows which extractor produced the text.
+ * PURE: the caller writes the text, the line and the media record, in the
+ * house order.
+ */
+export function pageReading(
+  on: string,
+  url: string,
+  taken: string,
+): Reading {
+  return { on, form: "url", from: url, taken, extract: "page" };
+}
+
+/**
+ * The page's extracted text, cut by the reading's provisional cap (64 lines /
+ * 8 KiB). PURE and shared with a PDF's own cap rule: the sidecar's text cap is
+ * a transport bound, while this is the reading's bound.
+ */
+export function cappedReadingText(text: string): string {
+  return clipHead(text, READING_MAX_LINES, READING_MAX_BYTES).head;
+}
+
+/**
+ * Store one reading's text VERBATIM (already extracted and capped), the text
+ * first and its line last — the house order. The page's text is the map's own
+ * copy: nothing behind it is ever stat'ed or re-read.
+ */
+export async function storeReadingText(
+  workspacePath: string,
+  on: string,
+  text: string,
+  io: ReadingIo = READING_IO,
+): Promise<void> {
+  await io.createDirAll(readingsDir(workspacePath));
+  await io.writeTextFile(readingTextPath(workspacePath, on), text);
+}
+
 /** The map's five reading states, computed at load and never stored. */
 export type ReadingState =
   | "current"
@@ -549,6 +651,11 @@ export function resolveReadingState(
   // and the SHORT-CIRCUIT comes before any metadata answer: no caller ever
   // stats a selection (an empty answer is simply ignored here).
   if (reading.form === "selection") return "current";
+  // STORY 16.14: a PAGE has NO PATH — its text was copied beside the map by
+  // the sidecar, so there is nothing on this machine to stat and no way for it
+  // to go stale. It is current once taken, before any metadata answer (which
+  // is empty for it and simply ignored here).
+  if (reading.form === "url") return "current";
   if (meta === null || meta.kind === "refused") return "unreadable";
   if (!meta.exists) return "missing";
   if (!meta.is_file) return "unreadable";
@@ -707,8 +814,11 @@ async function storeReading(
   when: string,
   io: ReadingIo,
 ): Promise<TakeReadingResult> {
+  // STORY 16.14: a PAGE's extracted text passes the SAME provisional cap as a
+  // PDF's; the sidecar already refuses an empty page, so this can never write
+  // a blank reading.
   const text =
-    extract === "pdf"
+    extract === "pdf" || extract === "page"
       ? clipHead(taken.text, READING_MAX_LINES, READING_MAX_BYTES).head
       : taken.text;
   await io.createDirAll(readingsDir(workspacePath));

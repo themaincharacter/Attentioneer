@@ -5414,6 +5414,23 @@ body {
   text-overflow: ellipsis;
 }
 
+/* STORY 16.14 — the page's IMAGE line: a local copy of the thumbnail, above
+   the reading. It is drawn only when map/media/<slug>.svg was present at load,
+   so there is no remote request and no broken-image face when it is absent. */
+.ground-thumb {
+  display: block;
+  width: 100%;
+  height: 74px;
+  margin: 6px 0 4px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: rgba(141, 136, 124, 0.08);
+}
+
+.ground-reference.expanded .ground-thumb {
+  height: 132px;
+}
+
 /* STORY 16.13 (shortlist item 3): the reading's slot when there is no text to
    show. The same quiet body ink so a refused/absent reading still reads as a
    card's third line, never as a broken empty box. */
@@ -6231,8 +6248,22 @@ body {
   outline: none;
 }
 
-.ground-bubble-name::placeholder {
+.ground-bubble-name::placeholder,
+.ground-bubble-url::placeholder {
   color: #c4beb1;
+}
+
+/* STORY 16.14: the pasted address is the bubble's second source. Same quiet
+   field as the name; the app stores the value verbatim. */
+.ground-bubble-url {
+  font: inherit;
+  font-size: 11.5px;
+  color: #2c2a26;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 3px 6px;
+  outline: none;
 }
 
 .ground-bubble-file {

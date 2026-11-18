@@ -47,6 +47,9 @@ import {
   REFRESH_UNCHANGED,
   loadReadings,
   loadReadingTexts,
+  cappedReadingText,
+  isFileReading,
+  pageReading,
   readingAbsolutePath,
   readingFileName,
   readingFor,
@@ -57,6 +60,7 @@ import {
   saveReadings,
   selectionReading,
   selectionRefusal,
+  storeReadingText,
   storeSelectionText,
   takeReading,
   withReading,
@@ -64,6 +68,20 @@ import {
   type Reading,
   type ReadingState,
 } from "../map/readings";
+import {
+  MEDIA_IO,
+  loadMedia,
+  loadThumbSrcs,
+  mediaFor,
+  saveMedia,
+  storeThumb,
+  thumbAbsolutePath,
+  thumbSrcOf,
+  thumbSvg,
+  withMedia,
+  withoutMedia,
+  type Media,
+} from "../map/media";
 import {
   NOTE_IO,
   loadNotes,
@@ -79,6 +97,11 @@ import {
   type MirrorView,
 } from "../map/mirror";
 import { pullReading, type PulledText } from "../map/pull";
+import {
+  createPageFetcher,
+  type PageFetchAnswer,
+  type PageImage,
+} from "../turn/pageFetch";
 
 /**
  * The ground map's loaded state and its one write path (story 16.1; story 16.2
@@ -159,6 +182,11 @@ import { pullReading, type PulledText } from "../map/pull";
  *     one baseline line so a later replay knows where the board began. A
  *     malformed line is preserved and reported in the ground notices group; a
  *     failed append is one sentence and NEVER undoes the move.
+ *   - A PAGE CARD (16.14): the person pastes a web address; the SIDECAR reads
+ *     the page once and this hook writes the extracted text (readings.txt,
+ *     form url, extract page), a LOCAL thumbnail (map/media/) and the media
+ *     line, then the ground line last. A refused fetch writes NOTHING; the
+ *     card renders offline because title, text and image are all copies.
  *   - A SELECTION CARD (16.12): the person selects text inside an expanded
  *     card's reading, names the new card, and `createSelection` writes the
  *     excerpt's text file, its reading line (provenance `card://<source>`) and
@@ -194,6 +222,16 @@ export type GroundAddResult =
 export interface GroundView {
   references: readonly GroundReference[];
   readings: readonly Reading[];
+  /**
+   * Each media-bearing card's line (story 16.14): the page's title and its
+   * LOCAL thumbnail path. Kept beside the reading, never joined with it.
+   */
+  media: readonly Media[];
+  /**
+   * Each card's thumbnail, READ from the map folder at load and turned into a
+   * data URL (story 16.14). Absent means no image; the card never says so.
+   */
+  thumbs: Readonly<Record<string, string>>;
   /** Each reading's text, keyed by slug (a missing text is simply absent). */
   texts: Readonly<Record<string, string>>;
   /**
@@ -288,6 +326,17 @@ export interface GroundView {
     y: number,
     text: string,
   ) => Promise<GroundAddResult>;
+  /**
+   * Add one reference from a pasted web address (story 16.14): the sidecar
+   * fetches it ONCE, the text becomes the reading and a local thumbnail is
+   * kept. A refused fetch writes NOTHING — there is no half-formed card.
+   */
+  createPage: (
+    name: string,
+    x: number,
+    y: number,
+    url: string,
+  ) => Promise<GroundAddResult>;
   /** Move one reference to a dropped point (one line, on release). */
   move: (on: string, x: number, y: number) => Promise<GroundAddResult>;
   /** Re-read this reference's file, by the person's press only. */
@@ -342,6 +391,7 @@ type GroundLoaded = Omit<
   GroundView,
   | "create"
   | "createSelection"
+  | "createPage"
   | "move"
   | "refresh"
   | "repoint"
@@ -358,6 +408,8 @@ type GroundLoaded = Omit<
 const EMPTY: GroundLoaded = {
   references: [],
   readings: [],
+  media: [],
+  thumbs: {},
   texts: {},
   states: {},
   pulled: {},
@@ -541,6 +593,68 @@ export async function removeGroundLinksNaming(
   const next = withoutGroundLinksFor(links, on);
   await saveGroundLinks(workspacePath, next, malformedLinks, io);
   return next;
+}
+
+/** What taking a card's media left: the next lines and the picture's bytes. */
+export interface GroundMediaRemoval {
+  media: Media[];
+  /** The thumbnail's SVG text, read before its unlink (null when no image). */
+  thumbSvgText: string | null;
+  /** One sentence when the picture could not be removed; null when it went. */
+  refusal: string | null;
+}
+
+/** The one sentence a refused thumbnail unlink answers (PROVISIONAL wording). */
+export const GROUND_MEDIA_REMOVAL_REFUSAL =
+  "the card and its reading were removed, but its image could not be removed.";
+
+/**
+ * THE DELETE CASCADE's media step (story 16.14): a card's media line and its
+ * local thumbnail go with the card's other files. The thumbnail's bytes are
+ * READ before the unlink so a later Restore could put the same picture back
+ * (restoring media is PROVISIONAL and not wired yet); a missing line or file
+ * is a quiet no-op, and a refused unlink is one sentence, never a repair.
+ */
+export async function removeGroundMedia(
+  workspacePath: string,
+  on: string,
+  media: readonly Media[],
+  malformedMedia: readonly string[],
+  io: typeof MEDIA_IO = MEDIA_IO,
+): Promise<GroundMediaRemoval> {
+  const entry = mediaFor(media, on);
+  let thumbSvgText: string | null = null;
+  if (entry !== undefined && entry !== null && entry.thumb !== undefined) {
+    try {
+      thumbSvgText = await io.readTextFile(
+        thumbAbsolutePath(workspacePath, entry.thumb),
+      );
+    } catch {
+      thumbSvgText = null;
+    }
+  }
+  const next = withoutMedia(media, on);
+  let refusal: string | null = null;
+  try {
+    await saveMedia(workspacePath, next, malformedMedia, io);
+  } catch {
+    // The card is already gone; one sentence and no repair, like the note's
+    // own refused unlink. The media line may be orphaned; nothing pretends
+    // otherwise.
+    return {
+      media: [...media],
+      thumbSvgText,
+      refusal: GROUND_MEDIA_REMOVAL_REFUSAL,
+    };
+  }
+  if (entry !== undefined && entry !== null && entry.thumb !== undefined) {
+    try {
+      await removeFile(thumbAbsolutePath(workspacePath, entry.thumb));
+    } catch {
+      refusal = GROUND_MEDIA_REMOVAL_REFUSAL;
+    }
+  }
+  return { media: next, thumbSvgText, refusal };
 }
 
 /** The one sentence a refused note unlink answers (PROVISIONAL wording). */
@@ -827,6 +941,188 @@ export async function writeSelectionCard(
   };
 }
 
+/** The bridges a page card's creation needs; a test passes its own fakes. */
+export interface PageIo {
+  storeReadingText: typeof storeReadingText;
+  saveReadings: typeof saveReadings;
+  saveMedia: typeof saveMedia;
+  storeThumb: typeof storeThumb;
+  saveGround: typeof saveGround;
+}
+
+/** The real bridges, bound once so the hook's path is the tested one. */
+const PAGE_IO: PageIo = {
+  storeReadingText,
+  saveReadings,
+  saveMedia,
+  storeThumb,
+  saveGround,
+};
+
+/** What the sidecar read: the page's title, its text and its image (or none). */
+export interface PagePayload {
+  title: string;
+  text: string;
+  thumb: PageImage | null;
+}
+
+/** What making a page card produced: the next records and the pieces. */
+export interface PageRecords {
+  references: GroundReference[];
+  readings: Reading[];
+  media: Media[];
+  reading: Reading;
+  entry: Media;
+  text: string;
+  /** The card's image source, or null when the page had no usable image. */
+  thumbSrc: string | null;
+}
+
+/** The two things a page add refuses before anything is fetched (PROVISIONAL). */
+export const PAGE_NAME_REFUSAL = "name it first.";
+export const PAGE_URL_REFUSAL = "paste a web page's address first.";
+
+/**
+ * The page add's ONE refusal rule, PURE: the person's word is the name, and an
+ * empty address has nothing to fetch. Both run BEFORE the queue, so a refusal
+ * never reaches the network or a file.
+ */
+export function pageRefusal(name: string, url: string): string | null {
+  if (name.trim() === "") return PAGE_NAME_REFUSAL;
+  if (url.trim() === "") return PAGE_URL_REFUSAL;
+  return null;
+}
+
+/**
+ * STORY 16.14 — CREATE A PAGE CARD, in the house order:
+ *
+ *   1. the extracted text FIRST (`map/readings/<new-slug>.md`, already capped);
+ *   2. the readings line NEXT (`form: url`, `extract: page`, the URL verbatim);
+ *   3. the thumbnail's local file (when the page had an image);
+ *   4. the media line (`map/media.jsonl`) — the record naming the title and the
+ *      LOCAL thumb path, never a remote URL;
+ *   5. the ground line LAST, so a crash can leave orphan pieces but never a
+ *      card whose reading is absent.
+ *
+ * NOTHING IS FETCHED HERE: the sidecar read the page first, and a refusal
+ * returns before this function is called — so a failed fetch writes nothing at
+ * all. The image is best-effort: a thumbnail that cannot be written is simply
+ * no picture (the card says nothing about it), never a failed add.
+ * PURE apart from the bridges it is handed.
+ */
+export async function writePageCard(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+  media: readonly Media[],
+  malformedGround: readonly string[],
+  malformedReadings: readonly string[],
+  malformedMedia: readonly string[],
+  name: string,
+  x: number,
+  y: number,
+  url: string,
+  page: PagePayload,
+  taken: string,
+  io: PageIo = PAGE_IO,
+): Promise<PageRecords> {
+  const addition = addGroundReference(references, name.trim(), x, y);
+  const reading = pageReading(addition.reference.on, url, taken);
+  const text = cappedReadingText(page.text);
+  await io.storeReadingText(workspacePath, reading.on, text);
+  const nextReadings = withReading(readings, reading);
+  await io.saveReadings(workspacePath, nextReadings, malformedReadings);
+
+  let entry: Media = {
+    on: reading.on,
+    kind: "page",
+    title: page.title,
+    fetched: taken,
+  };
+  let thumbSrc: string | null = null;
+  if (page.thumb !== null) {
+    try {
+      const thumb = await io.storeThumb(
+        workspacePath,
+        reading.on,
+        page.thumb.mime,
+        page.thumb.base64,
+      );
+      entry = { ...entry, thumb };
+      thumbSrc = thumbSrcOf(thumbSvg(page.thumb.mime, page.thumb.base64));
+    } catch {
+      // No picture is not an error: the card is still made, the media line
+      // simply carries no thumb, and the face draws no image line.
+    }
+  }
+  const nextMedia = withMedia(media, entry);
+  await io.saveMedia(workspacePath, nextMedia, malformedMedia);
+
+  await io.saveGround(workspacePath, addition.references, malformedGround);
+  return {
+    references: addition.references,
+    readings: nextReadings,
+    media: nextMedia,
+    reading,
+    entry,
+    text,
+    thumbSrc,
+  };
+}
+
+/** What one fetched page add settled as: the written records, or a sentence. */
+export type PageCreate =
+  | { kind: "written"; records: PageRecords }
+  | { kind: "refused"; message: string };
+
+/**
+ * STORY 16.14 — THE ONE PAGE ADD, as a value-returning step: the refusal rule
+ * runs first, a REFUSED fetch returns BEFORE any writer, and only a successful
+ * read reaches `writePageCard`. So "a failed fetch writes NOTHING" is this
+ * function's shape, not a caller's memory. PURE apart from the bridges.
+ */
+export async function createFetchedPage(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+  media: readonly Media[],
+  malformedGround: readonly string[],
+  malformedReadings: readonly string[],
+  malformedMedia: readonly string[],
+  name: string,
+  x: number,
+  y: number,
+  url: string,
+  read: PageFetchAnswer,
+  taken: string,
+  io: PageIo = PAGE_IO,
+): Promise<PageCreate> {
+  const refusal = pageRefusal(name, url);
+  if (refusal !== null) return { kind: "refused", message: refusal };
+  if (read.kind === "refused") {
+    // NOTHING is written: no text, no reading line, no media line, no ground
+    // line, no thumbnail. The bubble shows the one sentence.
+    return { kind: "refused", message: read.sentence };
+  }
+  const records = await writePageCard(
+    workspacePath,
+    references,
+    readings,
+    media,
+    malformedGround,
+    malformedReadings,
+    malformedMedia,
+    name,
+    x,
+    y,
+    url,
+    { title: read.title, text: read.text, thumb: read.thumb },
+    taken,
+    io,
+  );
+  return { kind: "written", records };
+}
+
 /**
  * The states of every reference, from the readings and their metadata (story
  * 16.2). Pure apart from the answers it is handed: one reading per slug, its
@@ -864,8 +1160,8 @@ export async function metasOf(
   const metas = new Map<string, FileMetaAnswer>();
   await Promise.all(
     readings.map(async (reading) => {
-      // No source file, no stat: a selection can never be stale.
-      if (reading.form === "selection") return;
+      // No source file, no stat: a selection and a page can never be stale.
+      if (!isFileReading(reading)) return;
       metas.set(
         reading.on,
         await fileMeta(readingAbsolutePath(workspacePath, reading)),
@@ -880,6 +1176,11 @@ export function useGround(workspacePath: string): GroundView {
   // Synchronous mirrors: the queued write must never read a stale list.
   const referencesRef = useRef<GroundReference[]>([]);
   const readingsRef = useRef<Reading[]>([]);
+  // Story 16.14: the media lines and their READ thumbnail sources. Both are
+  // view mirrors of the map folder — the thumb's bytes live in map/media/.
+  const mediaRef = useRef<Media[]>([]);
+  const malformedMediaRef = useRef<string[]>([]);
+  const thumbsRef = useRef<Record<string, string>>({});
   const malformedGroundRef = useRef<string[]>([]);
   const malformedReadingsRef = useRef<string[]>([]);
   const textsRef = useRef<Record<string, string>>({});
@@ -914,21 +1215,29 @@ export function useGround(workspacePath: string): GroundView {
 
   const reload = useCallback(async () => {
     if (workspacePath === "") return;
-    const [ground, readings, groundLinks, history] = await Promise.all([
-      loadGround(workspacePath),
-      loadReadings(workspacePath),
-      loadGroundLinks(workspacePath),
-      // Story 16.10: a READ only — opening is a look, so a missing history is
-      // not created here, and its malformed lines are reported, not repaired.
-      readHistory(workspacePath),
-    ]);
+    const [ground, readings, groundLinks, history, loadedMedia] =
+      await Promise.all([
+        loadGround(workspacePath),
+        loadReadings(workspacePath),
+        loadGroundLinks(workspacePath),
+        // Story 16.10: a READ only — opening is a look, so a missing history is
+        // not created here, and its malformed lines are reported, not repaired.
+        readHistory(workspacePath),
+        // Story 16.14: the media lines and the thumbnails they name are read
+        // ONCE, offline; there is no fetch and no watcher at open.
+        loadMedia(workspacePath),
+      ]);
     const slugs = ground.references.map((reference) => reference.on);
-    const [texts, metas, loadedNotes] = await Promise.all([
+    const [texts, metas, loadedNotes, thumbs] = await Promise.all([
       loadReadingTexts(workspacePath, slugs),
       metasOf(workspacePath, readings.readings),
       // Story 16.6: ONE folder listing, then one read per card that has a
       // note. Orphans are computed from the same listing and never read.
       loadNotes(workspacePath, slugs),
+      // Story 16.14: each media line's local thumbnail, read once and turned
+      // into a data URL. A missing image is absent from the map, never an
+      // error; this is why reopening works with the network unplugged.
+      loadThumbSrcs(workspacePath, loadedMedia.media),
     ]);
     const states = statesOf(
       ground.references,
@@ -941,6 +1250,9 @@ export function useGround(workspacePath: string): GroundView {
     // the notices group.
     referencesRef.current = ground.references;
     readingsRef.current = readings.readings;
+    mediaRef.current = loadedMedia.media;
+    malformedMediaRef.current = loadedMedia.malformed;
+    thumbsRef.current = thumbs;
     malformedGroundRef.current = ground.malformed;
     malformedReadingsRef.current = readings.malformed;
     malformedLinksRef.current = groundLinks.malformed;
@@ -961,6 +1273,8 @@ export function useGround(workspacePath: string): GroundView {
   const snapshot = (): GroundLoaded => ({
     references: referencesRef.current,
     readings: readingsRef.current,
+    media: mediaRef.current,
+    thumbs: thumbsRef.current,
     texts: textsRef.current,
     states: statesRef.current,
     // Story 16.8: the pulled text is a LOOK, held until it is dismissed or the
@@ -1075,6 +1389,9 @@ export function useGround(workspacePath: string): GroundView {
     if (workspacePath === "") {
       referencesRef.current = [];
       readingsRef.current = [];
+      mediaRef.current = [];
+      malformedMediaRef.current = [];
+      thumbsRef.current = {};
       malformedGroundRef.current = [];
       malformedReadingsRef.current = [];
       malformedLinksRef.current = [];
@@ -1258,6 +1575,93 @@ export function useGround(workspacePath: string): GroundView {
     [workspacePath],
   );
 
+  /**
+   * CREATE A PAGE CARD (story 16.14): the person pasted a web address. The
+   * SIDECAR is asked once, inside this queued pass, and only a successful read
+   * reaches the writers. Everything the card needs — title, text, a local
+   * thumbnail — is copied beside the map, so the card renders offline and the
+   * fetch is never repeated at render or reopen.
+   *
+   * A refused fetch answers one sentence and writes NOTHING: no reading, no
+   * media line, no ground line, no thumbnail. An image that cannot be kept is
+   * not a refusal — the card simply has no picture and says nothing about it.
+   */
+  const createPage = useCallback(
+    (name: string, x: number, y: number, url: string): Promise<GroundAddResult> => {
+      const refusal = pageRefusal(name, url);
+      if (refusal !== null) {
+        return Promise.resolve({ ok: false, message: refusal });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const read = await createPageFetcher()(url);
+          const created = await createFetchedPage(
+            workspacePath,
+            referencesRef.current,
+            readingsRef.current,
+            mediaRef.current,
+            malformedGroundRef.current,
+            malformedReadingsRef.current,
+            malformedMediaRef.current,
+            name,
+            x,
+            y,
+            url,
+            read,
+            new Date().toISOString(),
+          );
+          if (created.kind === "refused") {
+            outcome = { ok: false, message: created.message };
+            return;
+          }
+          const written = created.records;
+          referencesRef.current = written.references;
+          readingsRef.current = written.readings;
+          mediaRef.current = written.media;
+          const texts = { ...textsRef.current, [written.reading.on]: written.text };
+          textsRef.current = texts;
+          if (written.thumbSrc !== null) {
+            thumbsRef.current = {
+              ...thumbsRef.current,
+              [written.reading.on]: written.thumbSrc,
+            };
+          }
+          // A page has no path to stat: it is current once taken.
+          statesRef.current = {
+            ...statesRef.current,
+            [written.reading.on]: "current" as ReadingState,
+          };
+          setState(snapshot());
+          outcome = { ok: true };
+          // Story 16.10: the card appeared and its page was read — the form and
+          // the move, never the address, the title or a word of the text.
+          queueHistory(() => {
+            const at = Date.now();
+            return [
+              cardAddEvent(
+                at,
+                written.reading.on,
+                x,
+                y,
+              ),
+              readingTakeEvent(at, written.reading.on, "url", null),
+            ];
+          });
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
   /** MOVE: one ground-line write on drop; no reading is touched. */
   const move = useCallback(
     (on: string, x: number, y: number): Promise<GroundAddResult> => {
@@ -1323,6 +1727,14 @@ export function useGround(workspacePath: string): GroundView {
           const reading = readingFor(readingsRef.current, on);
           if (reading === null) {
             outcome = { ok: false, message: "there is no reading to refresh." };
+            return;
+          }
+          // A page has no file behind it: its text is the map's own copy.
+          if (!isFileReading(reading)) {
+            outcome = {
+              ok: false,
+              message: "a page has no file to re-read; its text is kept here.",
+            };
             return;
           }
           const taken = await refreshReading(workspacePath, reading);
@@ -1454,6 +1866,19 @@ export function useGround(workspacePath: string): GroundView {
           // unlink is one sentence; the card is already gone, so nothing here
           // is retried or repaired.
           const noteRefusal = await removeGroundNote(workspacePath, on);
+          // STORY 16.14: the card's media line and its local thumbnail go with
+          // its other files — no orphan image, no stale picture if the slug is
+          // coined again later.
+          const mediaRemoval = await removeGroundMedia(
+            workspacePath,
+            on,
+            mediaRef.current,
+            malformedMediaRef.current,
+          );
+          mediaRef.current = mediaRemoval.media;
+          const thumbs = { ...thumbsRef.current };
+          delete thumbs[on];
+          thumbsRef.current = thumbs;
           // THE CASCADE (story 16.5): AFTER the reference's own removal (the
           // existing card-delete order above is untouched) and in the same
           // queued pass, every link that NAMES this slug leaves the link file —
@@ -1501,7 +1926,8 @@ export function useGround(workspacePath: string): GroundView {
           );
           restoreNoticeRef.current = null;
           setState(snapshot());
-          const refusal = removal.refusal ?? noteRefusal;
+          const refusal =
+            removal.refusal ?? noteRefusal ?? mediaRemoval.refusal;
           outcome =
             refusal === null
               ? { ok: true }
@@ -1683,6 +2109,14 @@ export function useGround(workspacePath: string): GroundView {
           message: READING_REFUSALS.absent,
         });
       }
+      // STORY 16.14: a page reading has no source file to pull MORE from — the
+      // whole extracted text is already the kept reading.
+      if (!isFileReading(reading)) {
+        return Promise.resolve({
+          ok: false,
+          message: "a page's text is already kept here.",
+        });
+      }
       return pullReading(workspacePath, reading)
         .then((result): GroundAddResult => {
           if (result.kind === "refused") {
@@ -1843,6 +2277,8 @@ export function useGround(workspacePath: string): GroundView {
   return {
     references: state.references,
     readings: state.readings,
+    media: state.media,
+    thumbs: state.thumbs,
     texts: state.texts,
     states: state.states,
     pulled: state.pulled,
@@ -1861,6 +2297,7 @@ export function useGround(workspacePath: string): GroundView {
     loaded: state.loaded,
     create,
     createSelection,
+    createPage,
     move,
     refresh,
     repoint,

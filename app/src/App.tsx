@@ -3801,6 +3801,21 @@ function App() {
     [ground, groundAt],
   );
 
+  /**
+   * The ground bubble's OTHER source (story 16.14): a pasted web address. The
+   * sidecar reads it once; the app keeps the text and a local image. A refused
+   * page creates nothing.
+   */
+  const addGroundPageAt = useCallback(
+    async (name: string, url: string) => {
+      if (groundAt === null) {
+        return { ok: false, message: "nothing was written." };
+      }
+      return ground.createPage(name, groundAt.x, groundAt.y, url);
+    },
+    [ground, groundAt],
+  );
+
   /** The menu's word choice: close it and open the in-place coin field. */
   const chooseWord = useCallback(() => {
     const spot = menuAt;
@@ -4290,6 +4305,8 @@ function App() {
           <GroundLayer
             references={ground.references}
             readings={ground.readings}
+            media={ground.media}
+            thumbs={ground.thumbs}
             texts={ground.texts}
             notes={ground.notes}
             pulled={ground.pulled}
@@ -4608,6 +4625,7 @@ function App() {
             x={groundAt.x}
             y={groundAt.y}
             onAdd={addGroundAt}
+            onAddPage={addGroundPageAt}
             onClose={closeGroundBubble}
           />
         )}

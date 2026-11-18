@@ -9,7 +9,10 @@
  * reads response lines, and kills the child when the app exits. This file is
  * therefore a FILTER, not a service: stdin in, one provider request, stdout
  * out. Story 15.11 adds a second request kind — a model list's `GET` — to the
- * same filter; the app still makes no other network call.
+ * same filter; story 16.14 adds `page` and `thumb` (a web reference's text and
+ * its image), so the app's ONLY network calls still pass through here. The page
+ * read writes nothing: it answers a title, reduced text and an image address,
+ * and the window copies what it keeps beside the map.
  *
  * WHY THE KEY IS IN MEMORY: the key arrives inside a request line, is used for
  * exactly one `fetch`, and is not stored by this process. Nothing is written
@@ -42,12 +45,16 @@ import {
   errorLine,
   helloLine,
   modelsLine,
+  pageLine,
   parseRequestLine,
   partLine,
   requestIdOf,
   scrubSecret,
+  thumbLine,
   type ModelsRequest,
+  type PageRequest,
   type SidecarRequest,
+  type ThumbRequest,
   type TurnRequest,
 } from "../src/turn/protocol.ts";
 import {
@@ -57,6 +64,17 @@ import {
   providerRefusal,
   readModelIds,
 } from "../src/turn/modelList.ts";
+import {
+  PAGE_MAX_BODY_BYTES,
+  PAGE_MAX_REDIRECTS,
+  PAGE_MAX_THUMB_BYTES,
+  PAGE_SENTENCES,
+  PAGE_TIMEOUT_MS,
+  extractPage,
+  imageMime,
+  isPageContentType,
+  pageUrlProblem,
+} from "../src/turn/pageExtract.ts";
 
 /**
  * One serialized writer: lines must reach the pipe in the order they were
@@ -480,6 +498,245 @@ async function runModels(request: ModelsRequest): Promise<void> {
   }
 }
 
+/** What a capped body read settled as. */
+type CappedRead =
+  | { kind: "bytes"; bytes: Uint8Array; text: string }
+  | { kind: "too-large" }
+  | { kind: "broke" };
+
+/**
+ * Read a body up to a STATED cap, cancelling the stream once it is passed.
+ * Nothing larger than the cap is ever held or decoded: the read is a guard, not
+ * a hope. A body-less answer is an empty read, not a failure.
+ */
+async function readCapped(
+  response: Response,
+  maxBytes: number,
+): Promise<CappedRead> {
+  const body = response.body;
+  if (body === null) {
+    return { kind: "bytes", bytes: new Uint8Array(0), text: "" };
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const read = await reader.read();
+      if (read.done) break;
+      total += read.value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        return { kind: "too-large" };
+      }
+      chunks.push(read.value);
+    }
+  } catch {
+    return { kind: "broke" };
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return { kind: "bytes", bytes, text: new TextDecoder().decode(bytes) };
+}
+
+/** One page's response and the address it finally answered from. */
+type PageFetch =
+  | { kind: "ok"; response: Response; finalUrl: string }
+  | { kind: "refused"; message: string };
+
+/**
+ * Fetch ONE page, following at most `PAGE_MAX_REDIRECTS` redirects BY HAND so
+ * every hop is re-checked against the same https-or-loopback rule. A redirect
+ * is never allowed to walk the read from an allowed address to a refused one.
+ */
+async function fetchPage(
+  url: string,
+  signal: AbortSignal,
+): Promise<PageFetch> {
+  let current = url;
+  for (let redirects = 0; ; redirects += 1) {
+    const problem = pageUrlProblem(current);
+    if (problem !== null) return { kind: "refused", message: problem };
+    const response = await fetch(current, {
+      method: "GET",
+      redirect: "manual",
+      headers: {
+        accept: "text/html, application/xhtml+xml, text/plain;q=0.8",
+      },
+      signal,
+    });
+    const location =
+      response.status >= 300 && response.status < 400
+        ? response.headers.get("location")
+        : null;
+    if (location === null) return { kind: "ok", response, finalUrl: current };
+    if (response.body !== null) await response.body.cancel().catch(() => {});
+    if (redirects >= PAGE_MAX_REDIRECTS) {
+      return { kind: "refused", message: PAGE_SENTENCES.tooManyRedirects };
+    }
+    try {
+      current = new URL(location, current).href;
+    } catch {
+      return { kind: "refused", message: PAGE_SENTENCES.unreachable };
+    }
+  }
+}
+
+/**
+ * Fetch ONE web page (story 16.14) — the app's second outward read, and the
+ * only place a page's bytes ever exist. The guards all live here: the address
+ * rule, a stated timeout, the body cap, the content-type check and the
+ * redirect bound. What comes back is TITLE, EXTRACTED TEXT and a thumbnail
+ * ADDRESS — never the page; the window writes the text and asks separately for
+ * the image, which it copies beside the map.
+ *
+ * NOTHING IS GEARED TO WRITING: this process still opens no workspace file, so
+ * a failed fetch has nothing to clean up and the window creates nothing.
+ */
+async function runPage(request: PageRequest): Promise<void> {
+  const id = request.id;
+  const controller = new AbortController();
+  inFlight.set(id, controller);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, PAGE_TIMEOUT_MS);
+
+  const fail = (message: string): void => {
+    if (!stopped.has(id)) say(errorLine(id, message));
+  };
+
+  try {
+    let fetched: PageFetch;
+    try {
+      fetched = await fetchPage(request.url, controller.signal);
+    } catch {
+      if (stopped.has(id)) return;
+      fail(timedOut ? PAGE_SENTENCES.brokeOff : PAGE_SENTENCES.unreachable);
+      return;
+    }
+    if (stopped.has(id)) return;
+    if (fetched.kind === "refused") {
+      fail(fetched.message);
+      return;
+    }
+    const response = fetched.response;
+    if (!response.ok) {
+      fail(
+        response.status === 404 || response.status === 410
+          ? PAGE_SENTENCES.notFound
+          : `that page answered ${response.status}.`,
+      );
+      return;
+    }
+    if (!isPageContentType(response.headers.get("content-type"))) {
+      fail(PAGE_SENTENCES.notPage);
+      return;
+    }
+    const body = await readCapped(response, PAGE_MAX_BODY_BYTES);
+    if (stopped.has(id)) return;
+    if (body.kind === "too-large") {
+      fail(PAGE_SENTENCES.tooLarge);
+      return;
+    }
+    if (body.kind === "broke") {
+      fail(PAGE_SENTENCES.brokeOff);
+      return;
+    }
+    const extracted = extractPage(body.text, fetched.finalUrl);
+    if (extracted === null) {
+      // An empty extraction is one sentence, and the window creates nothing:
+      // an empty reading is never pretended (the same rule a scan PDF gets).
+      fail(PAGE_SENTENCES.noText);
+      return;
+    }
+    const title =
+      extracted.title !== ""
+        ? extracted.title
+        : new URL(fetched.finalUrl).hostname;
+    const thumbUrl =
+      extracted.thumbUrl !== null &&
+      pageUrlProblem(extracted.thumbUrl) === null
+        ? extracted.thumbUrl
+        : null;
+    say(pageLine(id, title, extracted.text, thumbUrl, response.status));
+  } finally {
+    clearTimeout(timer);
+    inFlight.delete(id);
+    stopped.delete(id);
+  }
+}
+
+/**
+ * Fetch ONE thumbnail (story 16.14): the SAME guard family, a much smaller cap,
+ * and image bytes carried back as base64 so the only writer stays the window's
+ * text writer. A refused image is one quiet sentence; the window treats it as
+ * "no picture", which the card never mentions again.
+ */
+async function runThumb(request: ThumbRequest): Promise<void> {
+  const id = request.id;
+  const controller = new AbortController();
+  inFlight.set(id, controller);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, PAGE_TIMEOUT_MS);
+
+  const fail = (message: string): void => {
+    if (!stopped.has(id)) say(errorLine(id, message));
+  };
+
+  try {
+    let fetched: PageFetch;
+    try {
+      fetched = await fetchPage(request.url, controller.signal);
+    } catch {
+      if (stopped.has(id)) return;
+      fail(timedOut ? PAGE_SENTENCES.thumbNotImage : PAGE_SENTENCES.unreachable);
+      return;
+    }
+    if (stopped.has(id)) return;
+    if (fetched.kind === "refused") {
+      fail(fetched.message);
+      return;
+    }
+    const response = fetched.response;
+    if (!response.ok) {
+      fail(PAGE_SENTENCES.thumbNotImage);
+      return;
+    }
+    const mime = imageMime(response.headers.get("content-type"));
+    if (mime === null) {
+      fail(PAGE_SENTENCES.thumbNotImage);
+      return;
+    }
+    const body = await readCapped(response, PAGE_MAX_THUMB_BYTES);
+    if (stopped.has(id)) return;
+    if (body.kind !== "bytes" || body.bytes.byteLength === 0) {
+      fail(PAGE_SENTENCES.thumbNotImage);
+      return;
+    }
+    say(
+      thumbLine(
+        id,
+        mime,
+        Buffer.from(body.bytes).toString("base64"),
+        response.status,
+      ),
+    );
+  } finally {
+    clearTimeout(timer);
+    inFlight.delete(id);
+    stopped.delete(id);
+  }
+}
+
 /**
  * A stop for an in-flight turn or model fetch: answer `cancelled` NOW (the
  * request may be waiting on a slow provider), then abort the fetch so the
@@ -515,6 +772,14 @@ function handleLine(raw: string): void {
   // reading so a stop can arrive while a provider is slow.
   if (request.kind === "models") {
     void runModels(request);
+    return;
+  }
+  if (request.kind === "page") {
+    void runPage(request);
+    return;
+  }
+  if (request.kind === "thumb") {
+    void runThumb(request);
     return;
   }
   void runTurn(request);

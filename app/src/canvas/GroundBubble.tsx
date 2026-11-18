@@ -39,16 +39,31 @@ interface GroundBubbleProps {
   y: number;
   /** Add the reference (the app's one write path); a refusal is a sentence. */
   onAdd: (name: string, from: string) => Promise<GroundAddResult>;
+  /**
+   * Add a reference from a pasted web address (story 16.14): the sidecar
+   * fetches it once and the card keeps the text and a local image. A refusal
+   * is one sentence and nothing is created.
+   */
+  onAddPage?: (name: string, url: string) => Promise<GroundAddResult>;
   /** Drop the draft (Esc, cancel or a press outside). */
   onClose: () => void;
 }
 
-export function GroundBubble({ x, y, onAdd, onClose }: GroundBubbleProps) {
+export function GroundBubble({
+  x,
+  y,
+  onAdd,
+  onAddPage,
+  onClose,
+}: GroundBubbleProps) {
   const { camera } = usePlane();
   const rootRef = useRef<HTMLDivElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const [from, setFrom] = useState<string | null>(null);
+  // STORY 16.14: a pasted address is the OTHER way to name a source. It is
+  // kept verbatim in the draft and read by the app exactly as given.
+  const [url, setUrl] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const doneRef = useRef(false);
@@ -111,6 +126,33 @@ export function GroundBubble({ x, y, onAdd, onClose }: GroundBubbleProps) {
     nameRef.current?.focus();
   }
 
+  async function commitPage() {
+    if (doneRef.current || busy || onAddPage === undefined) return;
+    const trimmed = name.trim();
+    if (trimmed === "") {
+      setProblem("name it first.");
+      nameRef.current?.focus();
+      return;
+    }
+    // STORED VERBATIM: the address is never trimmed, normalized or repaired.
+    // The emptiness check is the only place whitespace is looked at.
+    const address = url;
+    if (address.trim() === "") {
+      setProblem("paste a web page's address first.");
+      return;
+    }
+    setBusy(true);
+    setProblem(null);
+    const result = await onAddPage(trimmed, address);
+    if (result.ok) {
+      doneRef.current = true;
+      onClose();
+      return;
+    }
+    setBusy(false);
+    setProblem(result.message);
+  }
+
   async function chooseFile() {
     if (doneRef.current || busy) return;
     if (name.trim() === "") {
@@ -127,6 +169,7 @@ export function GroundBubble({ x, y, onAdd, onClose }: GroundBubbleProps) {
       pickingRef.current = false;
     }
     if (picked === null) return;
+    setUrl("");
     setFrom(picked);
     // The pick is the commit once the name is there (the story's order).
     await commit(picked);
@@ -169,13 +212,34 @@ export function GroundBubble({ x, y, onAdd, onClose }: GroundBubbleProps) {
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           e.preventDefault();
-          if (from !== null) void commit(from);
+          if (url.trim() !== "" && onAddPage !== undefined) void commitPage();
+          else if (from !== null) void commit(from);
           else void chooseFile();
         }}
       />
       <div className="ground-bubble-file">
         {from === null ? "no file yet" : readingFileName(from)}
       </div>
+      {/* STORY 16.14: paste a web address instead of picking a file. The
+          address is handed VERBATIM to the app; it is never normalized here. */}
+      {onAddPage !== undefined && (
+        <input
+          className="ground-bubble-url"
+          value={url}
+          placeholder="or paste a web address…"
+          aria-label="paste a web page's address"
+          disabled={busy}
+          onChange={(e) => {
+            setUrl(e.target.value);
+            if (problem !== null) setProblem(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            void commitPage();
+          }}
+        />
+      )}
       {problem !== null && (
         <div className="ground-bubble-problem" role="status">
           {problem}
@@ -193,8 +257,12 @@ export function GroundBubble({ x, y, onAdd, onClose }: GroundBubbleProps) {
         <button
           type="button"
           className="ground-bubble-add"
-          disabled={!canAdd}
+          disabled={!canAdd && !(url.trim() !== "" && name.trim() !== "")}
           onClick={() => {
+            if (url.trim() !== "" && onAddPage !== undefined) {
+              void commitPage();
+              return;
+            }
             if (from !== null) void commit(from);
           }}
         >

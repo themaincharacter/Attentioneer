@@ -312,7 +312,8 @@ describe("the form: a reading with no source file", () => {
     expect(metas.has("nights")).toBe(false);
     // The hook's load path really calls this helper (not its own stat loop).
     expect(HOOK).toContain("metasOf(workspacePath, readings.readings)");
-    expect(HOOK).toContain('if (reading.form === "selection") return;');
+    // STORY 16.14: a page has no path either — the same one rule skips both.
+    expect(HOOK).toContain("if (!isFileReading(reading)) return;");
   });
 });
 

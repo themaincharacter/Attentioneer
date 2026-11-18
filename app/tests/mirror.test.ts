@@ -525,10 +525,10 @@ describe("the hook queues the mirror after every ground write", () => {
     });
   }
 
-  test("exactly ten call sites (one per write path, not on load)", () => {
+  test("exactly eleven call sites (one per write path, not on load)", () => {
     // Story 16.12 added the selection card as the ninth authored write path;
-    // story 16.13 adds restore as the tenth (a restore re-derives the mirror).
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(10);
+    // story 16.13 adds restore as the tenth; story 16.14 adds the page card.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(11);
   });
 
   test("opening never writes the mirror", () => {

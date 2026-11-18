@@ -3,6 +3,7 @@ import { canonicalText } from "../lib/serialize";
 import type { GroundReference } from "./ground";
 import { serializeGroundLinkLine, type GroundLink } from "./groundLinks";
 import {
+  pageHost,
   readingFileName,
   selectionSourceSlug,
   type Reading,
@@ -159,7 +160,11 @@ export function renderMirror(view: MirrorView): string {
     // source's NAME, and a source the map no longer carries is said quietly.
     if (reading !== null) {
       const sourceSlug = selectionSourceSlug(reading);
-      if (sourceSlug === null) {
+      if (reading.form === "url") {
+        // STORY 16.14: the mirror names the page's HOST only; the full address
+        // stays in the reading's record, never in a shareable derived file.
+        lines.push("page: " + pageHost(reading.from));
+      } else if (sourceSlug === null) {
         lines.push("file: " + readingFileName(reading.from));
       } else {
         lines.push(

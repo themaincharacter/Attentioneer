@@ -281,9 +281,21 @@ describe("the reading line and its text", () => {
   });
 
   test("an unknown form or a missing field is malformed, never guessed", () => {
+    // STORY 16.14: `url` IS a form now — but only with a web address behind
+    // it. A url line naming something that is not http(s) stays malformed.
     expect(
       parseReadingLine(
         "on: rain | form: url | from: https://x | taken: 2026-11-16T12:00:00.000Z",
+      ),
+    ).toEqual({
+      on: "rain",
+      form: "url",
+      from: "https://x",
+      taken: "2026-11-16T12:00:00.000Z",
+    });
+    expect(
+      parseReadingLine(
+        "on: rain | form: url | from: notes/gauge.txt | taken: 2026-11-16T12:00:00.000Z",
       ),
     ).toBeNull();
     expect(parseReadingLine("on: rain | form: path | from: x")).toBeNull();
@@ -443,7 +455,7 @@ describe("story 16.2: bytes in the line are tolerant, and the form follows the p
       "on: rain-gauge | form: path | from: notes/gauge.txt | taken: 2026-11-17T12:00:00.000Z",
     );
 
-    // `at` is a reading form now; `url` is not one in this story.
+    // `at` is a reading form; story 16.14 makes `url` one too.
     expect(
       parseReadingLine(
         "on: rain | form: at | from: C:\\Users\\k\\gauge.txt | taken: 2026-11-17T12:00:00.000Z",
@@ -458,7 +470,12 @@ describe("story 16.2: bytes in the line are tolerant, and the form follows the p
       parseReadingLine(
         "on: rain | form: url | from: https://x | taken: 2026-11-17T12:00:00.000Z",
       ),
-    ).toBeNull();
+    ).toEqual({
+      on: "rain",
+      form: "url",
+      from: "https://x",
+      taken: "2026-11-17T12:00:00.000Z",
+    });
   });
 
   test("inside the workspace stores path/relative; outside stores at/absolute", () => {

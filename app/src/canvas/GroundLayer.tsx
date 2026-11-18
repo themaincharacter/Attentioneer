@@ -12,6 +12,8 @@ import {
   type PulledText,
 } from "../map/pull";
 import {
+  isFileReading,
+  pageHost,
   proposeSelectionName,
   previewText,
   readingFileName,
@@ -21,6 +23,7 @@ import {
   type Reading,
   type ReadingState,
 } from "../map/readings";
+import type { Media } from "../map/media";
 import { pickReadingFile } from "../workspace/dialogs";
 import {
   beginGroundDrag,
@@ -87,6 +90,10 @@ import type { TurnPort } from "../turn/turn";
  * STORY 16.13 also gives every card a THREE-LINE GRAMMAR (shortlist item 3):
  * the name, one quiet line saying what this is, then the reading — or, when
  * there is no stored text, the refusal/state sentence in the reading's place.
+ * STORY 16.14 adds an IMAGE line above the reading (name → what this is →
+ * image → reading): only the LOCAL copy the map holds, so it renders offline
+ * with no request; a page says its copied TITLE as "what this is" and its
+ * HOST in the footer, never the full address.
  * A selection's verbs are not silently absent: one quiet line says why there
  * is nothing to refresh or point at (shortlist item 2).
  *
@@ -187,6 +194,9 @@ export function readingProvenance(
   reading: Reading,
   cardNames: ReadonlyMap<string, string>,
 ): string {
+  // STORY 16.14: a page's footer shows its HOST only. The full URL stays in
+  // the record; the map's plane is not a list of links.
+  if (reading.form === "url") return pageHost(reading.from);
   const source = selectionSourceSlug(reading);
   if (source === null) return readingFileName(reading.from);
   const name = cardNames.get(source);
@@ -203,8 +213,16 @@ export function readingProvenance(
 export function readingKind(
   reading: Reading | null,
   cardNames: ReadonlyMap<string, string>,
+  pageTitle: string | null = null,
 ): string {
   if (reading === null) return "a reference with no reading";
+  // STORY 16.14: a page says WHAT IT IS with its own copied title; a page whose
+  // media line is missing (or carries no title) still names its host.
+  if (reading.form === "url") {
+    return pageTitle !== null && pageTitle.trim() !== ""
+      ? pageTitle
+      : "the page kept from " + pageHost(reading.from);
+  }
   const source = selectionSourceSlug(reading);
   if (source !== null) {
     const name = cardNames.get(source);
@@ -258,6 +276,16 @@ interface GroundLayerProps {
   references: readonly GroundReference[];
   /** The reading lines, keyed by slug (the handle's source). */
   readings: readonly Reading[];
+  /**
+   * Each media-bearing card's line (story 16.14). Optional so a render test
+   * needs no page; the app always passes `useGround.media`.
+   */
+  media?: readonly Media[];
+  /**
+   * Each card's thumbnail source, read offline into a data URL (story 16.14).
+   * Absent means no image line.
+   */
+  thumbs?: Readonly<Record<string, string>>;
   /** The reading texts, keyed by slug (a missing text is absent). */
   texts: Readonly<Record<string, string>>;
   /** The person's notes, keyed by slug (a card with no note is absent). */
@@ -346,6 +374,8 @@ interface GroundLayerProps {
 export function GroundLayer({
   references,
   readings,
+  media = [],
+  thumbs = {},
   texts,
   notes = {},
   pulled = {},
@@ -369,6 +399,7 @@ export function GroundLayer({
   // onConfigure and providersRev are the GroundLayer's own props; the cards
   // below receive them so an open card ask can open Settings and reload.
   const readingsBySlug = new Map(readings.map((reading) => [reading.on, reading]));
+  const mediaBySlug = new Map(media.map((entry) => [entry.on, entry]));
   // STORY 16.7 — WHICH card is expanded is the LAYER's view state, not each
   // card's: a card mention must be able to open ANOTHER card. It is still view
   // state only (a reopened workspace shows every card small) and no write
@@ -456,6 +487,8 @@ export function GroundLayer({
           key={reference.on}
           reference={reference}
           reading={readingsBySlug.get(reference.on) ?? null}
+          media={mediaBySlug.get(reference.on) ?? null}
+          thumbSrc={thumbs[reference.on]}
           text={texts[reference.on]}
           note={notes[reference.on]}
           pulled={pulled[reference.on]}
@@ -544,6 +577,8 @@ export function GroundPulled({
 function GroundCard({
   reference,
   reading,
+  media,
+  thumbSrc,
   text,
   note,
   pulled,
@@ -574,6 +609,10 @@ function GroundCard({
 }: {
   reference: GroundReference;
   reading: Reading | null;
+  /** This card's media line (story 16.14), or null when it has none. */
+  media: Media | null;
+  /** The page's local image as a data URL, or undefined (no image line). */
+  thumbSrc: string | undefined;
   text: string | undefined;
   note: string | undefined;
   /** This card's ephemeral pull, when the person asked for more (16.8). */
@@ -898,12 +937,16 @@ function GroundCard({
   // stored text itself, untouched. Neither path reads anything.
   const bodyText =
     shownText === null ? null : open ? shownText : previewText(shownText);
+  // STORY 16.14: the page's title is its "what this is" line; the image is the
+  // card's own line above the reading (no image, no line). Both are copies
+  // read from the map folder — nothing here fetches, on open or ever.
+  const pageTitle = media !== null ? media.title : null;
   // STORY 16.13: when the body carries the absence line, the footer does not
   // repeat a state word that would claim a kept copy which is not on disk.
   const showStateWord = word !== null && bodyText !== null;
   // Story 16.12: a selection has no source file, so the FILE verbs (refresh,
   // re-point, read more) have nothing to act on; its bytes are already here.
-  const fileReading = reading !== null && reading.form !== "selection";
+  const fileReading = reading !== null && isFileReading(reading);
   // The footer's one attribution: a file's NAME, or a selection's SOURCE NAME.
   const provenance =
     reading === null ? null : readingProvenance(reading, cardNames);
@@ -1106,8 +1149,16 @@ function GroundCard({
       {/* STORY 16.13 (shortlist items 3 and 10): the card's second line says
           WHAT THIS IS — the copy kept from a file, a copy of text selected from
           another card, or a reference with no reading. Never a broken box. */}
-      <div className="ground-kind">{readingKind(reading, cardNames)}</div>
+      <div className="ground-kind">
+        {readingKind(reading, cardNames, pageTitle)}
+      </div>
       <div className="ground-body" ref={bodyRef}>
+        {/* STORY 16.14: the page's image line — above the note and the reading,
+            and only when a local copy exists. It renders from the map folder,
+            so it still shows with the machine offline. */}
+        {thumbSrc !== undefined && (
+          <img className="ground-thumb" src={thumbSrc} alt="" />
+        )}
         {/* STORY 16.6: the note sits ABOVE the reading, in the person's own
             voice. Small: a two-line crop cut by `previewText`. Expanded: the
             whole note. Editing: a textarea in its place, Enter a newline. */}
@@ -1344,7 +1395,7 @@ function GroundCard({
               no background read. It reprocesses an existing pull harmlessly
               (the text is replaced in view state) and never writes. Story
               16.12: a selection has no source to read more of, so no verb. */}
-          {open && reading !== null && reading.form !== "selection" && onPull !== undefined && (
+          {open && reading !== null && isFileReading(reading) && onPull !== undefined && (
             <button
               type="button"
               className="ground-read-more"
