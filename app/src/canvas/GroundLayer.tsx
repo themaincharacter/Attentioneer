@@ -235,6 +235,19 @@ import {
  * never cover the card's own verbs, and it is inside the content the plane's
  * gate already knows, so it can never be read as empty paper.
  *
+ * STORY 16.22 — THE PILL IS EVERY CARD'S, NOT THE REFERENCE'S. Ask cards and
+ * session cards are peers on this map (17.10, 18.3), so they wear the SAME
+ * `CardNamePill` — the same counter-scale, the same handle, the same
+ * double-click rename — and each family hands it its OWN name rules, because
+ * the families really do differ (a reference's blank field stores "Untitled
+ * reference", a session's stores "Untitled session", an ask's is a REFUSAL).
+ * The layer's part is small: it passes the camera's zoom to every card and the
+ * hook's one session-name write path to the session cards. A committed rename
+ * becomes ONE `card.rename` line in the history, carrying the family, the slug
+ * and both names — the layer writes none of it. The drag rule is still the
+ * layer's ONE raw listener on the reference card: the pill is a child of the
+ * card it names, so the press reaches that rule wherever a card can move.
+ *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
  */
@@ -508,6 +521,12 @@ interface GroundLayerProps {
    * Restore as its guard (the same one toast every other card uses).
    */
   onRemoveSession?: (slug: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 16.22 — RENAME one session card (the name pill is the rename field,
+   * the same one every card wears). The name is the person's; the slug is
+   * identity and the transcript is untouched.
+   */
+  onRenameSession?: (slug: string, name: string) => Promise<GroundAddResult>;
   /** Start one session card's run (the 18.2 lifecycle, transcript included). */
   onRunSession?: (slug: string) => Promise<GroundAddResult>;
   /** Stop one session card's live run (the run's own cancel). */
@@ -642,6 +661,7 @@ export function GroundLayer({
   onAnswerSessionPermission,
   onMakeSessionResult,
   onRemoveSession,
+  onRenameSession,
   hasProvider,
   calls = null,
   onOpenSettings,
@@ -1040,6 +1060,7 @@ export function GroundLayer({
             turns={thread.turns}
             carried={thread.carried.length}
             forkMissing={thread.missing}
+            zoom={zoom}
             open={openAskOn === ask.on}
             previewLines={previewLines}
             onOpen={() => {
@@ -1118,6 +1139,7 @@ export function GroundLayer({
             tools={sessionTools}
             entries={sessionEntries[session.on] ?? []}
             running={sessionRunning.includes(session.on)}
+            zoom={zoom}
             open={openSessionOn === session.on}
             previewLines={previewLines}
             onOpen={() => {
@@ -1163,6 +1185,13 @@ export function GroundLayer({
               onRemoveSession === undefined
                 ? undefined
                 : () => onRemoveSession(session.on)
+            }
+            // STORY 16.22 — the shared name pill's rename, through the hook's
+            // one session-name write path.
+            onRename={
+              onRenameSession === undefined
+                ? undefined
+                : (name) => onRenameSession(session.on, name)
             }
             onLink={onLink}
             interactionMode={interactionMode}

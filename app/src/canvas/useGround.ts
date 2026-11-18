@@ -13,6 +13,7 @@ import {
   askRestoreEvent,
   askTurnEvent,
   cardAddEvent,
+  cardRenameEvent,
   sessionAddEvent,
   sessionRemoveEvent,
   sessionRestoreEvent,
@@ -75,12 +76,14 @@ import {
   loadSessionTranscriptsWithOrphans,
   loadSessions,
   removeSessionRecords,
+  renameSession,
   restoreSessionCard,
   runOutcomeOf,
   saveSessions,
   SESSION_RESULT_EMPTY_SENTENCE,
   SESSION_RESULT_UNFINISHED_SENTENCE,
   sessionLastEnding,
+  sessionNameForWrite,
   sessionRefusal,
   sessionResultName,
   sessionResultSize,
@@ -690,6 +693,13 @@ export interface GroundView {
     y: number,
   ) => Promise<GroundAddResult>;
   /**
+   * STORY 16.22 — RENAME one session card: the name changes, the slug (the
+   * transcript's file name and a wire's endpoint) does not, and the transcript
+   * is never touched. A blank field stores "Untitled session", and one
+   * `card.rename` history line names both names.
+   */
+  renameSessionTo: (slug: string, name: string) => Promise<GroundAddResult>;
+  /**
    * STORY 17.8 — REMOVE one ask card, immediately and reversibly: the record
    * line and the conversation's BYTES are read first, the `asks.txt` line is
    * written without it, and the conversation file is unlinked. The toast's
@@ -851,6 +861,7 @@ type GroundLoaded = Omit<
   | "createEmptyAsk"
   | "askFromSelection"
   | "renameAskTo"
+  | "renameSessionTo"
   | "removeAsk"
   | "removeSession"
   | "createSession"
@@ -4560,12 +4571,16 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       if (!asksRef.current.some((ask) => ask.on === slug)) {
         return Promise.resolve({ ok: false, message: ASK_MISSING_REFUSAL });
       }
+      const now = name.trim();
       let outcome: GroundAddResult = {
         ok: false,
         message: "nothing was written.",
       };
       return queueRef.current
         .push(async () => {
+          // STORY 16.22 — the name the line HAD, read in the queue so two
+          // renames in a row each name the right 'from'.
+          const was = asksRef.current.find((ask) => ask.on === slug);
           const next = renameAsk(asksRef.current, slug, name.trim());
           if (next === null) {
             outcome = { ok: false, message: ASK_MISSING_REFUSAL };
@@ -4575,8 +4590,74 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           asksRef.current = next;
           setState(snapshot());
           outcome = { ok: true };
-          // A rename changes no name, anchor or parent surface in MAP.md? It
-          // changes the NAME, so the derived mirror follows it.
+          // STORY 16.22 — A COMMITTED RENAME IS AN AUTHORED MOVE: ONE line
+          // naming the family, the slug and BOTH names — never a word of the
+          // card's conversation. A same-name commit is not an edit, so it logs
+          // nothing (and nothing was changed in the record either).
+          if (was !== undefined && was.name !== now) {
+            const from = was.name;
+            queueHistory(() => [
+              cardRenameEvent(Date.now(), "ask", slug, from, now),
+            ]);
+          }
+          // A rename changes the NAME, so the derived mirror follows it.
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 16.22 — RENAME one session card. One queued write of
+   * `map/sessions.txt`; the name is the person's and the SLUG is identity (the
+   * transcript's file name and a wire's endpoint), so nothing else moves and the
+   * transcript is never read or written. A blank field stores the family's
+   * untitled sentence — this family has no refusal for one, unlike the ask
+   * card — and an unknown slug answers the one sentence. A committed rename
+   * writes ONE `card.rename` history line carrying both names, never content;
+   * a same-name commit writes no line.
+   */
+  const renameSessionTo = useCallback(
+    (slug: string, name: string): Promise<GroundAddResult> => {
+      if (!sessionsRef.current.some((session) => session.on === slug)) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      // The name the record will hold, by the family's OWN rule (a blank field
+      // becomes the untitled sentence here, and never a refusal).
+      const now = sessionNameForWrite(name);
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          // STORY 16.22 — the name the line HAD, read in the queue so two
+          // renames in a row each name the right 'from'.
+          const was = sessionsRef.current.find((session) => session.on === slug);
+          const next = renameSession(sessionsRef.current, slug, name);
+          if (next === null) {
+            outcome = { ok: false, message: SESSION_MISSING_REFUSAL };
+            return;
+          }
+          await saveSessions(workspacePath, next, malformedSessionsRef.current);
+          sessionsRef.current = next;
+          setState(snapshot());
+          outcome = { ok: true };
+          // STORY 16.22 — ONE line per real rename, structure only: the family,
+          // the slug and both names. The transcript is not read, not sized and
+          // not quoted here.
+          if (was !== undefined && was.name !== now) {
+            const from = was.name;
+            queueHistory(() => [
+              cardRenameEvent(Date.now(), "session", slug, from, now),
+            ]);
+          }
+          // The session's name is what MAP.md prints, so the mirror follows.
           queueMirror();
         })
         .then(() => outcome)
@@ -5513,6 +5594,13 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       };
       return queueRef.current
         .push(async () => {
+          // STORY 16.22 — the name the line HAD, read HERE, in the queue: after
+          // every earlier write has landed, so two renames in a row name the
+          // right 'from'. The history carries both names; a same-name commit
+          // logs nothing.
+          const was = referencesRef.current.find(
+            (reference) => reference.on === on,
+          );
           const result = await renameGroundRecords(
             workspacePath,
             on,
@@ -5527,6 +5615,16 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             return;
           }
           outcome = { ok: true };
+          // STORY 16.22 — A COMMITTED RENAME IS ONE HISTORY LINE: the family,
+          // the slug and BOTH names, never the card's content. A same-name
+          // commit changes no words and writes no line.
+          const now = result.renamed.name;
+          if (was !== undefined && result.renamed !== null && was.name !== now) {
+            const from = was.name;
+            queueHistory(() => [
+              cardRenameEvent(Date.now(), "reference", on, from, now),
+            ]);
+          }
           queueMirror();
         })
         .then(() => outcome)
@@ -6364,6 +6462,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     createEmptyAsk,
     askFromSelection,
     renameAskTo,
+    renameSessionTo,
     askTurn,
     askStop,
     forkAskAt,

@@ -1041,6 +1041,53 @@ export const SESSION_MISSING_REFUSAL = "there is no session card here.";
 /** The one sentence a creation with no chosen tool row answers. */
 export const SESSION_TOOL_REFUSAL = "pick a tool to run.";
 
+/**
+ * STORY 16.22 — THE SESSION CARD'S NAME, AS THE SHARED PILL SHOWS AND STORES IT.
+ * A session line cannot carry an empty name (the parser keeps it as a malformed
+ * line, and the card would lose the one word that identifies it), so a blank
+ * field becomes THIS sentence — the reference card's rule, one family over. An
+ * ask card refuses a blank name instead; the difference is deliberate, and it is
+ * the family's own rule that decides, not the pill. PROVISIONAL wording.
+ */
+export const SESSION_UNTITLED_NAME = "Untitled session";
+
+/** The name a session card SHOWS: the record's words, or the untitled sentence. */
+export function sessionDisplayName(name: string): string {
+  return name.trim() === "" ? SESSION_UNTITLED_NAME : name;
+}
+
+/**
+ * The name a session rename STORES: trimmed, and the untitled sentence when the
+ * field is blank. Never an empty name — an empty `name:` tail would make the
+ * line unreadable on the next load, and an empty field is a legal name here,
+ * not a refusal (the ask card's rule is the strict one).
+ */
+export function sessionNameForWrite(name: string): string {
+  const trimmed = name.trim();
+  return trimmed === "" ? SESSION_UNTITLED_NAME : trimmed;
+}
+
+/**
+ * STORY 16.22 — RENAME one session card: the NAME changes and NOTHING else
+ * does. Identity is the SLUG (the transcript's file name and the card a wire
+ * points at), so a rename never mints a new one, never moves a wire and never
+ * touches the transcript. One line is rewritten in place, so a rename can
+ * neither reorder `sessions.txt` nor orphan a transcript. PURE — the caller
+ * writes the file through the ground family's one write queue. A slug this
+ * file does not carry answers `null`, never an appended card.
+ */
+export function renameSession(
+  sessions: readonly SessionCard[],
+  slug: string,
+  name: string,
+): SessionCard[] | null {
+  if (!sessions.some((session) => session.on === slug)) return null;
+  const next = sessionNameForWrite(name);
+  return sessions.map((session) =>
+    session.on === slug ? { ...session, name: next } : session,
+  );
+}
+
 /** The creation's ONE refusal rule, PURE: a blank name writes nothing. */
 export function sessionRefusal(name: string): string | null {
   return name.trim() === "" ? SESSION_NAME_REFUSAL : null;

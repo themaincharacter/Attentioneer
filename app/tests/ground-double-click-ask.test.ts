@@ -231,7 +231,10 @@ describe("an ask card is created empty and names itself", () => {
     );
     // The title pill is the rename field (the card owns no file write).
     expect(CARD).toContain("onRename?: (name: string)");
-    expect(CARD).toContain("ask-card-name-input");
+    // STORY 16.22: the card wears the SHARED name pill (one component, one
+    // rename field) instead of its own in-card field.
+    expect(CARD).toContain("<CardNamePill");
+    expect(CARD).toContain("ASK_PILL_RULES");
     expect(LAYER).toContain("onRenameAsk");
     // A rename keeps identity: the slug (wire target, conversation file).
     const renamed = renameAsk([madeCard()], "untitled-ask", "The gauge question");

@@ -5601,8 +5601,10 @@ body {
   transform-origin: left bottom;
   white-space: nowrap;
   /* A press on the name is a press on the handle: the grab cursor says the
-     card can be moved by the words, not only by its body. */
-  cursor: grab;
+     card can be moved by the words, not only by its body. STORY 16.22: a kind
+     with no move path yet passes `movable={false}`, so the pill sets the
+     default cursor and promises nothing it cannot do. */
+  cursor: var(--pill-cursor, grab);
 }
 
 /* The rename field opens IN the pill's own shape and type, so the card does not
@@ -7695,26 +7697,6 @@ body {
   cursor: default;
 }
 
-.ask-card-name {
-  font-size: 17px;
-  color: var(--ink-strong);
-}
-
-/* STORY 17.10 — the title pill IS the rename field: it takes the name's own
-   type so the card does not jump when the field opens. */
-.ask-card-name-input {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 0;
-  border: none;
-  border-bottom: 1px solid var(--ink-rule);
-  background: transparent;
-  font: inherit;
-  font-size: 17px;
-  color: var(--ink-strong);
-  outline: none;
-}
-
 .ask-card-kind {
   font-size: 12px;
   font-style: italic;
@@ -8014,11 +7996,6 @@ body {
   height: 400px;
   padding: 14px 16px 12px;
   cursor: default;
-}
-
-.session-card-name {
-  font-size: 17px;
-  color: var(--ink-strong);
 }
 
 .session-card-kind {

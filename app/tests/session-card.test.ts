@@ -1591,7 +1591,9 @@ describe("the session card's boundaries", () => {
   test("the session card's classes are content to the plane's gate", () => {
     for (const name of [
       "session-card",
-      "session-card-name",
+      // STORY 16.22: the name is the SHARED pill above the card now, so
+      // `session-card-name` is gone and `ground-pill` carries its presses.
+      "ground-pill",
       "session-card-body",
       "session-card-transcript",
       "session-entry",

@@ -344,7 +344,12 @@ describe("the rename writes through the existing name path", () => {
     expect(PILL).toContain('if (e.key === "Escape")');
     expect(PILL).toContain("abandonRename();");
     expect(PILL).toContain("e.currentTarget.blur();");
-    expect(PILL).toContain("groundNameForWrite(draft)");
+    // STORY 16.22: the write goes through the FAMILY's rule, whose default is
+    // the reference card's (`REFERENCE_PILL_RULES`). An ask card passes its own,
+    // which refuses a blank field.
+    expect(PILL).toContain("rules.nameForWrite(draft)");
+    expect(PILL).toContain("displayName: groundDisplayName");
+    expect(PILL).toContain("nameForWrite: groundNameForWrite");
   });
 
   test("the rename keeps the reading's key: no slug is minted", () => {

@@ -540,6 +540,9 @@ describe("the hook queues the mirror after every ground write", () => {
     // `createEmptyAsk`) are not listed: they hold no write of their own.
     "writeEmptyAsk",
     "renameAskTo",
+    // STORY 16.22: the session card's name pill renames its line, so the
+    // mirror is re-derived after that one session write too.
+    "renameSessionTo",
     "forkAskAt",
     "removeAsk",
     // STORY 16.19: an ask made from a selection writes the ask line and the
@@ -589,7 +592,7 @@ describe("the hook queues the mirror after every ground write", () => {
     });
   }
 
-  test("exactly twenty-five call sites (one per write path, not on load)", () => {
+  test("exactly twenty-six call sites (one per write path, not on load)", () => {
     // STORY 18 removes story 16.12's selection card from the write paths with
     // its verb, so this is one fewer than the twenty-three 18.5 left.
     // Story 16.13 adds restore as the tenth; story 16.14 the page card and
@@ -605,7 +608,8 @@ describe("the hook queues the mirror after every ground write", () => {
     // STORY 17.11 adds one: a completed ask turn's card is an ordinary
     // reference, so its appearance reaches the mirror like any other add.
     // STORY 16.21 adds one: renaming a card changes a name MAP.md renders.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(25);
+    // STORY 16.22 adds one: a session card's rename does too.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(26);
   });
 
   test("opening never writes the mirror", () => {

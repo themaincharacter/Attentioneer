@@ -337,7 +337,7 @@ describe("authored moves only: the look leaves no line", () => {
     expect(existsSync(historyPath(workspace))).toBe(false);
   });
 
-  test("the hook appends from the twenty-three authored write paths, no more", () => {
+  test("the hook appends from the twenty-six authored write paths, no more", () => {
     // The only call form the verbs use; the definition is not a call site.
     // STORY 18 removes story 16.12's selection card from the authored write
     // paths with its verb (the user corrected the intent), so the count drops
@@ -351,8 +351,10 @@ describe("authored moves only: the look leaves no line", () => {
     // inside the one toast handler.
     // STORY 16.19 adds one: the ask a selection makes logs its add and its wire.
     // STORY 17.11 adds one: a completed ask turn's card logs its own add.
+    // STORY 16.22 adds three: a committed rename of a reference, an ask or a
+    // session card is an authored move, and this log now events it.
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(23);
+    expect(calls.length).toBe(26);
   });
 
   test("the mirror and the history own the same verbs", () => {
@@ -384,6 +386,11 @@ describe("authored moves only: the look leaves no line", () => {
       "runSession",
       // STORY 16.19: the ask a selection makes — the card's add and its wire.
       "askFromSelection",
+      // STORY 16.22: the three committed renames (one per family) are authored
+      // moves too, and each logs its one line.
+      "rename",
+      "renameAskTo",
+      "renameSessionTo",
     ];
     for (const verb of verbs) {
       const start = HOOK.indexOf("const " + verb + " = useCallback");

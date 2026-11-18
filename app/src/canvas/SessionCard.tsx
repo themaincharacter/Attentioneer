@@ -4,12 +4,15 @@ import {
   SESSION_EMPTY_SENTENCE,
   SESSION_MISSING_TOOL_SENTENCE,
   SESSION_RUNNING_SENTENCE,
+  sessionDisplayName,
   sessionEntryLine,
   sessionKindLine,
+  sessionNameForWrite,
   sessionNewestEntry,
   type SessionCard as SessionCardRecord,
   type SessionEntry,
 } from "../map/sessions";
+import { CardNamePill, type PillNameRules } from "./CardNamePill";
 import type { GroundAddResult } from "./useGround";
 import type { GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
@@ -19,6 +22,18 @@ import {
   refuseOption,
   type AcpPermissionAsk,
 } from "../turn/acpEntries";
+
+/**
+ * STORY 16.22 — THE SESSION CARD'S RULES FOR THE SHARED NAME PILL. A session
+ * line cannot carry an empty name, so a blank field stores the untitled
+ * sentence ("Untitled session", the reference card's rule one family over) —
+ * NOT the ask card's refusal. The pill decides nothing about names; each
+ * family's own rules do, and these are this family's.
+ */
+const SESSION_PILL_RULES: PillNameRules = {
+  displayName: sessionDisplayName,
+  nameForWrite: sessionNameForWrite,
+};
 
 /**
  * THE SESSION CARD (Epic 18 story 3).
@@ -58,6 +73,15 @@ import {
  * STORY 18.5 MAKES IT REMOVABLE: the expanded card offers remove, the same
  * immediate delete + Restore toast every other card uses. A live run is never
  * cut by it — the verb waits until the transcript has stopped being written.
+ *
+ * STORY 16.22 — THE NAME FLOATS ABOVE THIS CARD TOO, in the SHARED pill (one
+ * component, one counter-scale, one rename field) the reference and ask cards
+ * already wear: a session card is a peer on the same map, and its name was
+ * cropped by its own transcript. The card's OWN name rules ride into the pill
+ * (`SESSION_PILL_RULES`): a blank field stores "Untitled session" — this
+ * family has no refusal for one, unlike an ask card. The rename reaches the
+ * hook's one session-name path, which writes the record and ONE `card.rename`
+ * history line (never a word of the transcript).
  *
  * ESC CLOSES THE CARD'S FACE (collapses), never the map. The wheel never zooms
  * the plane: the scrollbox stops the event where it starts.
@@ -170,6 +194,7 @@ export function SessionCard({
   tools = [],
   entries,
   running,
+  zoom = 1,
   open,
   previewLines,
   onOpen,
@@ -182,6 +207,7 @@ export function SessionCard({
   onRefuse,
   onMakeResult,
   onRemove,
+  onRename,
   onLink,
   interactionMode = "idle",
   onNarrate,
@@ -201,6 +227,12 @@ export function SessionCard({
   entries: readonly SessionEntry[];
   /** View state: this card has a LIVE run right now. */
   running: boolean;
+  /**
+   * STORY 16.22 — the camera's own zoom, handed straight to the name pill (its
+   * counter-scale is the card's legibility rule at any zoom). Optional: a
+   * render test that only cares about the transcript is at 100%.
+   */
+  zoom?: number;
   open: boolean;
   /** How many lines the small face crops at (the stated preference). */
   previewLines: number;
@@ -222,6 +254,13 @@ export function SessionCard({
   onRefuse?: () => void;
   /** Make the last completed run's text into a card (a copy, never a link). */
   onMakeResult?: () => Promise<GroundAddResult>;
+  /**
+   * STORY 16.22 — RENAME this card: the shared name pill IS the rename field.
+   * The name is the person's and the slug is identity (the transcript's file
+   * name and a wire's endpoint), so a rename moves neither. Optional so a
+   * render test needs no writer.
+   */
+  onRename?: (name: string) => Promise<GroundAddResult>;
   /**
    * STORY 18.5 — remove this card, immediately and reversibly (the one toast).
    * A run in flight refuses: the transcript is still being written.
@@ -254,6 +293,10 @@ export function SessionCard({
     if (!open) return;
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
+      // STORY 16.22 — THE NAME'S FIELD IS THE PILL'S, NOT THE CARD'S. Escape
+      // while renaming forgets the draft (the pill's own handler) and must not
+      // ALSO collapse the card. One press, one thing.
+      if ((e.target as HTMLElement | null)?.closest?.(".ground-pill")) return;
       e.preventDefault();
       e.stopPropagation();
       if (picked !== null) {
@@ -403,9 +446,41 @@ export function SessionCard({
         } as CSSProperties
       }
       data-slug={session.on}
-      onClick={open ? undefined : onOpen}
+      onClick={
+        open
+          ? undefined
+          : (e) => {
+              // STORY 16.22 — a press on the NAME is the name's, not the door's
+              // (the reference card's rule, one family over).
+              if ((e.target as HTMLElement).closest(".ground-pill") !== null) {
+                return;
+              }
+              onOpen();
+            }
+      }
     >
-      <div className="session-card-name">{session.name}</div>
+      {/* STORY 16.22 — THE NAME FLOATS ABOVE THE SESSION CARD, in the SAME pill
+          the reference and ask cards wear: one component, one counter-scale,
+          one rename field, and this family's OWN name rules (a blank field
+          stores "Untitled session"). The name left the body because the body's
+          transcript cropped it and the plane's scale shrank it away. */}
+      <CardNamePill
+        name={session.name}
+        zoom={zoom}
+        busy={busy}
+        rules={SESSION_PILL_RULES}
+        renameLabel="rename this session card"
+        movable={false}
+        onRename={
+          onRename === undefined
+            ? undefined
+            : async (name: string) => {
+                const result = await onRename(name);
+                if (!result.ok) setProblem(result.message);
+                return result;
+              }
+        }
+      />
       <div className="session-card-kind">{sessionKindLine(toolName)}</div>
       {/* STORY 17.9 — a session card can be wired into an ask card; its last
           completed run is what it lends. */}

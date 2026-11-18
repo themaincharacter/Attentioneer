@@ -4622,6 +4622,10 @@ function App() {
             /* STORY 18.5 — a session card is removable through the same one
                toast every other card uses (immediate delete + Restore). */
             onRemoveSession={ground.removeSession}
+            /* STORY 16.22 — the session card's name pill renames through the
+               hook's one session-name write path (one history line per real
+               change, never a word of the transcript). */
+            onRenameSession={ground.renameSessionTo}
             /* STORY 17.8 — an ask card is removable through the same one toast
                every other card uses (16.13's immediate delete + Restore). */
             onRemoveAsk={ground.removeAsk}

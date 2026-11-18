@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   ASK_QUESTION_REFUSAL,
   ASK_THREAD_BOUND,
+  askDisplayName,
   askLastTurn,
+  askNameForWrite,
   askRefusal,
   askRoleMark,
   proposeForkName,
@@ -18,7 +20,21 @@ import { previewOverflows, previewText } from "../map/readings";
 import { PacketSurface } from "./PacketSurface";
 import { STEP_LIMIT_SENTENCE } from "../turn/steps";
 import { PROVIDER_SENTENCES } from "../turn/providers";
+import { CardNamePill, type PillNameRules } from "./CardNamePill";
 import type { GroundAddResult } from "./useGround";
+
+/**
+ * STORY 16.22 — THE ASK CARD'S RULES FOR THE SHARED NAME PILL. The pill decides
+ * nothing about a blank field: this family REFUSES one (a question's name is
+ * the person's words; an invented placeholder would be a card that says nothing
+ * about what it asks), so `askNameForWrite` answers null and no write follows.
+ * The reference card's rule — a blank field becomes "Untitled reference" — is
+ * deliberately NOT this family's, one family over.
+ */
+const ASK_PILL_RULES: PillNameRules = {
+  displayName: askDisplayName,
+  nameForWrite: askNameForWrite,
+};
 
 /**
  * THE ASK CARD (Epic 17 story 1; story 2 makes it a conversation).
@@ -42,6 +58,16 @@ import type { GroundAddResult } from "./useGround";
  * and stop is the existing stop. A stopped or broken turn keeps the words that
  * arrived, MARKED as incomplete, and writes no answer line: the record's answer
  * line is only ever a finished answer (story 17.4 owns the PRISM side).
+ *
+ * STORY 16.22 — THE NAME FLOATS ABOVE THIS CARD TOO, in the SHARED pill (one
+ * component, one counter-scale, one rename field) that the reference cards
+ * already wear: an ask card is a peer on the same map, and its name was cropped
+ * by its own thread at exactly the zoom where the map's shape is being read.
+ * The card's OWN name rules ride into the pill (`ASK_PILL_RULES`): a blank
+ * field is a REFUSAL here — the card keeps the name it had and writes nothing —
+ * so no "Untitled ask" placeholder is ever invented. The rename reaches the
+ * hook's one ask-name path, which writes the record and ONE `card.rename`
+ * history line (never a word of the conversation).
  *
  * ESC CLOSES THE CARD'S EDITOR (collapses), never the map: the capture listener
  * stops the key before the plane's handlers see it. A half-typed question stays
@@ -379,6 +405,7 @@ export function AskCard({
   onRename,
   onRemove,
   onLink,
+  zoom = 1,
   autoAsk,
   onAutoAsked,
   interactionMode = "idle",
@@ -423,6 +450,12 @@ export function AskCard({
    * carried part, and the card's own turns still read and it can still send.
    */
   forkMissing?: boolean;
+  /**
+   * STORY 16.22 — the camera's own zoom, handed straight to the name pill so its
+   * counter-scale is the card's legibility rule at any zoom. Optional: a render
+   * test that only cares about the thread is at 100%, where the scale is 1.
+   */
+  zoom?: number;
   /** View state: a small card opens; an expanded card sends. */
   open: boolean;
   /** How many lines the small face crops at (the stated preference). */
@@ -513,12 +546,6 @@ export function AskCard({
   const [forking, setForking] = useState<{ carry: number; name: string } | null>(
     null,
   );
-  // STORY 17.10 — the title pill's in-place rename: a draft and a ref that says
-  // whether the field is still live (so Enter-then-blur commits ONCE and Esc
-  // cancels without writing).
-  const [renaming, setRenaming] = useState(false);
-  const [nameDraft, setNameDraft] = useState(ask.name);
-  const renamingRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -591,15 +618,15 @@ export function AskCard({
     if (!open) return;
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
+      // STORY 16.22 — THE NAME'S FIELD IS THE PILL'S, NOT THE CARD'S. Escape
+      // while renaming forgets the draft (the pill's own handler) and must not
+      // ALSO collapse the card, so a key that began inside the pill is left
+      // alone here. One press, one thing.
+      if ((e.target as HTMLElement | null)?.closest?.(".ground-pill")) return;
       e.preventDefault();
       e.stopPropagation();
       if (forking !== null) {
         setForking(null);
-        return;
-      }
-      if (renamingRef.current) {
-        renamingRef.current = false;
-        setRenaming(false);
         return;
       }
       onClose();
@@ -745,29 +772,6 @@ export function AskCard({
    * card's own verb makes an empty ask and wires it.
    */
 
-  /** The title pill's rename: seed the draft from the record and select it. */
-  function startRename(): void {
-    if (onRename === undefined || busy) return;
-    renamingRef.current = true;
-    setNameDraft(ask.name);
-    setRenaming(true);
-    setProblem(null);
-  }
-
-  /**
-   * Commit the rename ONCE. A blank name and an unchanged name write nothing;
-   * a refusal is the writer's one sentence on the card.
-   */
-  async function commitRename(): Promise<void> {
-    if (!renamingRef.current) return;
-    renamingRef.current = false;
-    setRenaming(false);
-    const next = nameDraft.trim();
-    if (next === "" || next === ask.name || onRename === undefined) return;
-    const result = await onRename(next);
-    if (!result.ok) setProblem(result.message);
-  }
-
   /**
    * STORY 17.8 — remove is IMMEDIATE (16.13's rule): one press, no confirming
    * step. A refusal that kept the card shows its one sentence here; the
@@ -846,46 +850,46 @@ export function AskCard({
         } as CSSProperties
       }
       data-slug={ask.on}
-      onClick={open ? undefined : onOpen}
-    >
-      {/* STORY 17.10 — THE TITLE PILL IS THE RENAME FIELD. Double-clicking the
-          name opens an in-place field seeded with the old name (the concept
-          map's word idiom); Enter or a press away writes it, Esc forgets it.
-          The empty ask names itself from its first question until the person
-          renames it, so this is the one place a name changes. */}
-      {renaming ? (
-        <input
-          className="ask-card-name ask-card-name-input"
-          value={nameDraft}
-          autoFocus
-          aria-label="rename this ask card"
-          onFocus={(e) => e.currentTarget.select()}
-          onChange={(e) => setNameDraft(e.target.value)}
-          onBlur={() => void commitRename()}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              // The card's own capture listener also sees Esc; forget the
-              // draft here and stop it so the card does not collapse too.
-              e.preventDefault();
-              e.stopPropagation();
-              renamingRef.current = false;
-              setRenaming(false);
-              return;
+      onClick={
+        open
+          ? undefined
+          : (e) => {
+              // STORY 16.22 — A PRESS ON THE NAME IS THE NAME'S, NOT THE DOOR'S
+              // (the reference card's rule, one family over): the pill carries
+              // the rename field, so a press there must not also open the card.
+              if ((e.target as HTMLElement).closest(".ground-pill") !== null) {
+                return;
+              }
+              onOpen();
             }
-            if (e.key !== "Enter") return;
-            e.preventDefault();
-            e.currentTarget.blur();
-          }}
-        />
-      ) : (
-        <div
-          className="ask-card-name"
-          title={onRename === undefined ? undefined : "double-click to rename"}
-          onDoubleClick={onRename === undefined ? undefined : startRename}
-        >
-          {ask.name}
-        </div>
-      )}
+      }
+    >
+      {/* STORY 16.22 — THE NAME FLOATS ABOVE THE ASK CARD, in the SAME pill the
+          reference cards wear (one component, one counter-scale, one rename
+          field). The name left the card's body because the body's own thread
+          cropped it and the plane's scale shrank it; the pill is legible at any
+          zoom and is this card's one place a name changes. The card's OWN name
+          rules ride in (ASK_PILL_RULES): a blank field is a REFUSAL here, so no
+          placeholder is ever stored. */}
+      <CardNamePill
+        name={ask.name}
+        zoom={zoom}
+        busy={busy}
+        rules={ASK_PILL_RULES}
+        renameLabel="rename this ask card"
+        movable={false}
+        onRename={
+          onRename === undefined
+            ? undefined
+            : async (name: string) => {
+                const result = await onRename(name);
+                // A refused write is one sentence on the card, never a name that
+                // quietly snaps back for no stated reason.
+                if (!result.ok) setProblem(result.message);
+                return result;
+              }
+        }
+      />
       {/* STORY 17.6 — WHEN THE ANCHOR IS GONE the second line STATES it: the
           name the record remembered, and that the card is gone. It clears by
           itself when the anchor resolves again (the deleted card's own

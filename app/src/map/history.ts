@@ -76,6 +76,15 @@ import { mapDir } from "./records";
  * stop, a failure, a timeout or a dead connection. The PRISM's `run` Change and
  * this line are the same fact said twice.
  *
+ * STORY 16.22 — A RENAME IS AN AUTHORED MOVE. One \`card.rename\` line per
+ * committed rename, with the family the card belongs to, its slug and BOTH
+ * names. A name is the person's word for a thing on the map, not its content:
+ * no note, no reading, no question, no transcript word can reach this line,
+ * because the payload's key set has no slot for one. A same-name commit is not
+ * an edit and writes nothing; an abandoned rename never reaches this module at
+ * all. The log stays append-only: two renames are two lines, in the order they
+ * happened, and no earlier line is ever rewritten.
+ *
  * Written through the ground family's per-file queue (useGround), AFTER the
  * record write the line describes, so a reader never sees a line for a move
  * that did not happen.
@@ -99,6 +108,23 @@ export function historyPath(workspacePath: string): string {
 
 /** The line's version, so a later shape can be told apart from this one. */
 export const HISTORY_VERSION = 1;
+
+/**
+ * STORY 16.22 — WHICH CARD WAS RENAMED. The three record families share one
+ * ground map, so a rename line says which family its slug belongs to: without
+ * it a reader holding only the log could not tell an ask card from a reference.
+ * PROVISIONAL (the vocabulary and the key, with the event's shape).
+ */
+export const CARD_RENAME_KINDS = ["reference", "ask", "session"] as const;
+export type CardRenameKind = (typeof CARD_RENAME_KINDS)[number];
+
+/** Is a value one of the three families a rename line may name? */
+export function isCardRenameKind(value: unknown): value is CardRenameKind {
+  return (
+    typeof value === "string" &&
+    (CARD_RENAME_KINDS as readonly string[]).includes(value)
+  );
+}
 
 /**
  * How an ask card's sending turn ended, in the PRISM's own two words (story
@@ -138,6 +164,22 @@ export type HistoryEvent =
       readonly slug: string;
       readonly x: number;
       readonly y: number;
+    }
+  | {
+      // STORY 16.22 — THE NAME CHANGED AND NOTHING ELSE DID. Two names are the
+      // move's whole fact: what the card was called, and what it is called now.
+      // A name is the person's word for a thing, never its content, so this
+      // payload is still structural. PROVISIONAL name/payload.
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "card.rename";
+      /** Which family the slug belongs to (one ground map, three records). */
+      readonly kind: CardRenameKind;
+      readonly slug: string;
+      /** The name the card had (the record's own words). */
+      readonly from: string;
+      /** The name it has now (the record's own words). */
+      readonly to: string;
     }
   | {
       readonly v: 1;
@@ -295,6 +337,21 @@ export function cardMoveEvent(
   y: number,
 ): HistoryEvent {
   return { v: HISTORY_VERSION, t, type: "card.move", slug, x, y };
+}
+
+/**
+ * STORY 16.22 — ONE COMMITTED RENAME, in one line: the family, the slug and BOTH
+ * names. The caller emits it only when the name actually changed, so a
+ * same-name commit logs nothing and two renames are two lines in order.
+ */
+export function cardRenameEvent(
+  t: number,
+  kind: CardRenameKind,
+  slug: string,
+  from: string,
+  to: string,
+): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "card.rename", kind, slug, from, to };
 }
 
 /** A card was removed (its own record only; the cascade is separate lines). */
@@ -583,6 +640,18 @@ export function parseHistoryEvent(line: string): HistoryEvent | null {
       return record.type === "card.add"
         ? cardAddEvent(t, slug, x, y)
         : cardMoveEvent(t, slug, x, y);
+    }
+    case "card.rename": {
+      // STORY 16.22: both names are the card's own words, and every write path
+      // stores a non-empty name (a blank field becomes the family's untitled
+      // sentence, or is refused), so an empty one is OUT OF SHAPE here rather
+      // than a rename to nothing.
+      const slug = stringField(record, "slug");
+      const from = stringField(record, "from");
+      const to = stringField(record, "to");
+      if (slug === null || from === null || to === null) return null;
+      if (!isCardRenameKind(record.kind)) return null;
+      return cardRenameEvent(t, record.kind, slug, from, to);
     }
     case "card.remove": {
       const slug = stringField(record, "slug");

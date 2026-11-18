@@ -40,6 +40,33 @@ import type { GroundAddResult } from "./useGround";
  * legal name that stores and shows "Untitled reference" (the ask card's
  * empty-name rule, one family over). Enter commits, Escape abandons, and a
  * press away commits what is typed (the note editor's idiom).
+ *
+ * STORY 16.22 — THE PILL BELONGS TO EVERY CARD, AND EACH KIND KEEPS ITS OWN NAME
+ * RULES. Ask cards and session cards are peers of a reference on the same map,
+ * so they wear the SAME pill (one counter-scale, one handle, one rename field,
+ * one component): a second name surface would be a second thing to keep in
+ * step. What the pill does NOT do is decide what a blank field means. Each
+ * family hands in its own two rules — how a name is SHOWN and what a commit
+ * STORES — because the families really do differ:
+ *
+ *   - a REFERENCE'S blank field stores "Untitled reference" (`map/ground.ts`);
+ *   - a SESSION'S stores "Untitled session" (`map/sessions.ts`);
+ *   - an ASK'S is a REFUSAL: the card keeps the name it had and nothing is
+ *     written (`map/asks.ts`), because a question's name is the person's words
+ *     and an invented placeholder would be a card that says nothing.
+ *
+ * A rule that answers `null` refuses the commit. Every rule returns the name
+ * the RECORD stores, so the same-name check below compares stored against
+ * stored: a commit that changes no words calls no writer (and therefore logs
+ * nothing — the history's own rule for a rename is one line per real change).
+ *
+ * NOT YET A MOVE FOR EVERY KIND. The handle is the CARD'S drag, reached through
+ * the card's own mousedown rule — this file owns no drag. A reference card has
+ * that rule (`groundDrag.ts`) and an ask or a session card has NONE: their
+ * records carry a point that no shipped path rewrites after creation, so
+ * dragging those names moves nothing today. The pill is already the handle they
+ * would use (it adds no second rule); a move path for those two families is its
+ * own story, and the pill will need no change to serve it.
  */
 
 /** The counter-scale never goes below the card's own scale (a zoomed-in pill). */
@@ -66,6 +93,18 @@ export function pillCounterScale(zoom: number): number {
   );
 }
 
+/**
+ * STORY 16.22 — A RECORD FAMILY'S TWO NAME RULES. The pill owns the affordance;
+ * the family owns the meaning of a name (which is why the ask card's blank field
+ * is a refusal and a session card's is a sentence).
+ */
+export interface PillNameRules {
+  /** What the card SHOWS for a stored name (never invents a record). */
+  displayName(name: string): string;
+  /** What a commit stores, or null when this family REFUSES a blank field. */
+  nameForWrite(name: string): string | null;
+}
+
 interface CardNamePillProps {
   /** The record's name — the person's exact words, possibly an empty field. */
   name: string;
@@ -79,6 +118,51 @@ interface CardNamePillProps {
   onRename?: (name: string) => Promise<GroundAddResult>;
   /** The card is mid-write: the field does not open (the verbs' own guard). */
   busy?: boolean;
+  /**
+   * THIS FAMILY'S NAME RULES. Omitted means the reference card's
+   * (`ground`), which is what a reference passes by passing nothing.
+   */
+  rules?: PillNameRules;
+  /** The rename field's label: "rename this reference" / ask card / session card. */
+  renameLabel?: string;
+  /**
+   * WHETHER THIS CARD CAN BE MOVED BY ITS NAME (the handle's promise). True for
+   * a reference card, whose press reaches the layer's one drag rule; FALSE for
+   * a kind with no move path yet, so the cursor does not promise a drag the app
+   * cannot perform. The pill itself still owns no drag either way.
+   */
+  movable?: boolean;
+}
+
+/** The reference card's rules: a blank field is a legal name, not a refusal. */
+export const REFERENCE_PILL_RULES: PillNameRules = {
+  displayName: groundDisplayName,
+  nameForWrite: groundNameForWrite,
+};
+
+/**
+ * WHAT A COMMIT WOULD WRITE, PURE: the name the record should now hold, or null
+ * for NOTHING AT ALL. Two cases write nothing, and they are different facts:
+ *
+ *   - the family REFUSES the field (an ask card's blank name) — the card keeps
+ *     the name it had;
+ *   - the stored names are the same — a commit that changes no words is not an
+ *     edit, so no writer runs and (because the history logs writes) no line is
+ *     appended either.
+ *
+ * The comparison is stored-name against stored-name, so the family's own rule
+ * decides what "the same name" means (a reference's "  " and its "Untitled
+ * reference" are the same name; an ask card would have refused the field).
+ */
+export function pillRenameOutcome(
+  stored: string,
+  draft: string,
+  rules: PillNameRules = REFERENCE_PILL_RULES,
+): string | null {
+  const next = rules.nameForWrite(draft);
+  if (next === null) return null;
+  if (next === rules.nameForWrite(stored)) return null;
+  return next;
 }
 
 export function CardNamePill({
@@ -86,6 +170,9 @@ export function CardNamePill({
   zoom,
   onRename,
   busy = false,
+  rules = REFERENCE_PILL_RULES,
+  renameLabel = "rename this reference",
+  movable = true,
 }: CardNamePillProps) {
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(name);
@@ -98,7 +185,7 @@ export function CardNamePill({
   function beginRename(): void {
     if (onRename === undefined || busy) return;
     liveRef.current = true;
-    setDraft(groundDisplayName(name));
+    setDraft(rules.displayName(name));
     setRenaming(true);
   }
 
@@ -112,8 +199,10 @@ export function CardNamePill({
     liveRef.current = false;
     setRenaming(false);
     if (onRename === undefined) return;
-    const next = groundNameForWrite(draft);
-    if (next === groundNameForWrite(name)) return;
+    // The family's write rule, through the pure decision: null means no write
+    // at all (a REFUSAL, or a commit that changes no words).
+    const next = pillRenameOutcome(name, draft, rules);
+    if (next === null) return;
     await onRename(next);
   }
 
@@ -132,6 +221,9 @@ export function CardNamePill({
           // is to stay the same size on screen. CSS owns the transform so the
           // clamp's number is the only thing this component decides.
           "--pill-scale": pillCounterScale(zoom),
+          // The handle's cursor tells the truth: a card with no move path does
+          // not offer a grab (see NOT YET A MOVE FOR EVERY KIND above).
+          "--pill-cursor": movable ? "grab" : "default",
         } as CSSProperties
       }
       title={onRename === undefined ? undefined : "double-click to rename"}
@@ -142,7 +234,7 @@ export function CardNamePill({
           className="ground-pill-input"
           value={draft}
           autoFocus
-          aria-label="rename this reference"
+          aria-label={renameLabel}
           disabled={busy}
           onFocus={(e) => e.currentTarget.select()}
           onChange={(e) => setDraft(e.target.value)}
@@ -166,7 +258,7 @@ export function CardNamePill({
       ) : (
         // The name keeps the card heading's own type (canvas.css), so moving
         // it out of the card changes where it sits, never what it reads like.
-        <span className="ground-name">{groundDisplayName(name)}</span>
+        <span className="ground-name">{rules.displayName(name)}</span>
       )}
     </div>
   );

@@ -780,6 +780,43 @@ export function askQuestionRefusal(question: string): string | null {
 }
 
 /* ------------------------------------------------------------------------- *
+ * STORY 16.22 — THE ASK CARD'S NAME AS THE PILL SHOWS AND STORES IT.
+ *
+ * The pill every card now wears is ONE component with ONE counter-scale, and it
+ * asks each record family for that family's own name rules. This is the ask
+ * card's, and it is deliberately the strictest of the three:
+ *
+ *   - a BLANK ask name is a REFUSAL, not a placeholder. A question's name is
+ *     the person's words for what it asks (story 17.10 names an empty card from
+ *     its first question); "Untitled ask" is a SENTINEL the record may carry,
+ *     never a sentence a write invents to paper over an empty field. So a blank
+ *     commit keeps the name the card had and writes nothing — the same rule
+ *     `askRefusal` already applies at creation.
+ *   - the name SHOWN is the record's own words, verbatim: there is no display
+ *     fallback here to disagree with the write rule above.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The name an ask card SHOWS: the record's own words. No untitled fallback,
+ * because an empty ask name is refused rather than stored (see below).
+ */
+export function askDisplayName(name: string): string {
+  return name;
+}
+
+/**
+ * THE NAME AN ASK RENAME STORES: trimmed, or NULL when the field is blank.
+ * NULL is this family's one REFUSAL rule — the card keeps the name it had and
+ * nothing is written. Stated here so the shared pill can never turn an empty
+ * ask field into "Untitled ask" (the reference card's rule, which this family
+ * does not share).
+ */
+export function askNameForWrite(name: string): string | null {
+  const trimmed = name.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+/* ------------------------------------------------------------------------- *
  * STORY 16.19 — THE WORDS A SELECTION CHOSE.
  *
  * The user's correction: selecting text in a card's reading should open a
