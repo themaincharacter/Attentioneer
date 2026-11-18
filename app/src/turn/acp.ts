@@ -10,7 +10,7 @@
  *
  * FRAMING, PROBED AND DOCUMENTED. ACP's stdio transport is NEWLINE-DELIMITED
  * JSON (one compact JSON object per line, trailing LF), not LSP's
- * \`Content-Length\` headers. The installed DSH server proves it: its SDK's
+ * \`Content-Length\` headers. The installed server proves it: its SDK's
  * \`ndJsonStream\` encodes \`JSON.stringify(message) + "\n"\` and splits input on
  * 0x0a. Both framings live here anyway, behind one reader and one writer, so a
  * second server's framing is a flag rather than a rewrite. The spike probes
@@ -29,8 +29,8 @@
  * module writes no file and reads no key: the only I/O is the child's pipes.
  *
  * PROVISIONAL: the helper names, the capability object sent in \`initialize\`
- * and the sentence wording. The wire shapes are ACP v1's (as the installed
- * DSH server answered them); every observed shape is recorded in
+ * and the sentence wording. The wire shapes are ACP v1's (as the spike's
+ * server answered them); every observed shape is recorded in
  * \`notes/acp-spike.md\`.
  */
 

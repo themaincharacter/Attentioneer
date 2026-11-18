@@ -58,6 +58,7 @@ import {
 } from "../src/turn/acpRun.ts";
 import { optionIdForChoice } from "../src/turn/acpEntries.ts";
 import type { AcpSpec } from "../src/turn/acpSpecs.ts";
+import { existsSync } from "node:fs";
 
 /** The lane's own refusals, in the sidecar's one-sentence voice. */
 export const RUN_LANE_SENTENCES = {
@@ -65,6 +66,41 @@ export const RUN_LANE_SENTENCES = {
   unknown: "no run is live with that number.",
   noPermission: "no permission request is waiting on that run.",
 } as const;
+
+/**
+ * STORY 18.6 — THE ROW'S COMMAND IS NOT THERE. One sentence, naming the
+ * command, said BEFORE anything is spawned: a tool the person installed is
+ * found on PATH, and a tool that is not there must not become a half-started
+ * child, an empty transcript or a timeout dressed up as a failure.
+ */
+export function runMissingCommandSentence(command: string): string {
+  return "the command " + command + " was not found, so nothing was started.";
+}
+
+/**
+ * Is this command there to run? An absolute path is checked where it points; a
+ * bare name is looked up on PATH (the sidecar's own PATH — the person's). PURE
+ * apart from the two facts it reads, so a test can stand behind either.
+ */
+export function commandFound(
+  command: string,
+  exists: (path: string) => boolean = existsSync,
+): boolean {
+  const text = command.trim();
+  if (text === "") return false;
+  const looksLikePath =
+    text.includes("/") || text.includes("\\") || /^[A-Za-z]:/.test(text);
+  if (looksLikePath) return exists(text);
+  const runtime = (
+    globalThis as { Bun?: { which?: (name: string) => string | null } }
+  ).Bun;
+  if (typeof runtime?.which !== "function") return false;
+  try {
+    return runtime.which(text) !== null;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * What the lane needs from the process that owns it: one writer, and nothing
@@ -125,6 +161,8 @@ export function runSpecOf(request: RunRequest): AcpSpec {
     kind: "acp",
     id: "sidecar-run",
     name: "a run",
+    // The lane does not judge a row's honesty; it only needs the argv.
+    verified: false,
     command: request.tool.command,
     args: [...request.tool.args],
     cwdPolicy: "session",
@@ -145,6 +183,18 @@ export function createRunLane(options: RunLaneOptions): RunLane {
     if (closing) return;
     if (live.has(request.run)) {
       options.say(errorLine(request.id, RUN_LANE_SENTENCES.busy));
+      return;
+    }
+    // STORY 18.6 — THE ROW'S COMMAND IS CHECKED BEFORE ANY SPAWN. A shipped
+    // row may name a bare command; one that is not on PATH answers one sentence
+    // naming it, and no child, transcript or budget clock is ever made.
+    if (!commandFound(request.tool.command)) {
+      options.say(
+        errorLine(
+          request.id,
+          runMissingCommandSentence(request.tool.command),
+        ),
+      );
       return;
     }
     // ONE WAIT PER RUN. It is filled when the server asks and resolved by the

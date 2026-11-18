@@ -10,7 +10,7 @@
  *
  * THE ENV RULE, IN ONE PLACE. The spike (18.1) found the first break is
  * credentials: `session/prompt` was refused with `-32603` because the spawned
- * `dsh` had no DEEPSEEK_API_KEY, and ACP advertises no auth (`authMethods: []`).
+ * server had no DEEPSEEK_API_KEY, and ACP advertises no auth (`authMethods: []`).
  * A child therefore receives a stored key ONLY through an explicit env entry
  * on its row, naming one provider row; the key is read from the store in
  * memory for this spawn and appears in no argv, no file and no log line. The
@@ -20,7 +20,7 @@
  * WHAT IS INHERITED: PATH and HOME, when they are set, and NOTHING ELSE. Not
  * this app's key store, not the parent's DEEPSEEK_API_KEY, not any other
  * variable. The spawned child's environment is exactly that pair plus the
- * row's declared entries. (A Windows `dsh.cmd` may in time want SystemRoot;
+ * row's declared entries. (A Windows `.cmd` shim may in time want SystemRoot;
  * that would be a second explicit name, never a blanket inherit.)
  *
  * A PARTIAL NEVER COUNTS AS A RESULT. Only a turn that settles `end_turn`

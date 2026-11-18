@@ -767,6 +767,7 @@ function row(extra: Partial<AcpSpec> = {}): AcpSpec {
     kind: "acp",
     id: "fake-acp",
     name: "Fake ACP",
+    verified: false,
     command: "/bin/tool",
     args: ["--profile", "acp"],
     cwdPolicy: "session",

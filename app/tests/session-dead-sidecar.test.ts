@@ -106,6 +106,7 @@ function row(mode: string, reportPath: string): AcpSpec {
     kind: "acp",
     id: "fake-acp",
     name: "Fake ACP",
+    verified: false,
     command: BUN,
     args: [FAKE_SERVER, mode, "--report", reportPath],
     cwdPolicy: "session",

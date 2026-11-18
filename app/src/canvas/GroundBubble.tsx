@@ -5,7 +5,7 @@ import {
   SESSION_TOOL_REFUSAL,
   proposeSessionName,
 } from "../map/sessions";
-import { ACP_SPECS } from "../turn/acpSpecs";
+import { ACP_SPECS, acpRowLabel } from "../turn/acpSpecs";
 import { pickReadingFile } from "../workspace/dialogs";
 import { usePlane } from "./CanvasPlane";
 import type { GroundAddResult } from "./useGround";
@@ -367,7 +367,9 @@ export function GroundBubble({
       {intent === "session" ? (
         /* STORY 18.3 — THE TOOL ROW. Only the rows this build ships are
            offered; the record names the row's id, and its key (if it ever
-           declares one) is read at run time and never kept here. */
+           declares one) is read at run time and never kept here. STORY 18.6
+           lists EVERY row and marks the unverified ones from the data: this
+           file never learns a product's name. */
         <div className="ground-bubble-session">
           <select
             className="ground-bubble-tool"
@@ -381,7 +383,7 @@ export function GroundBubble({
           >
             {ACP_SPECS.map((spec) => (
               <option key={spec.id} value={spec.id}>
-                {spec.name}
+                {acpRowLabel(spec)}
               </option>
             ))}
           </select>

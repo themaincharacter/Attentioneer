@@ -78,6 +78,7 @@ function spec(overrides: Partial<AcpSpec> = {}): AcpSpec {
     kind: "acp",
     id: "fake",
     name: "Fake ACP",
+    verified: false,
     command: BUN,
     args: [FAKE, "normal"],
     cwdPolicy: "session",
@@ -332,7 +333,8 @@ describe("the ACP row is data, and a key is never one of its fields", () => {
       [],
     );
     expect(read.kind).toBe("row");
-    expect(ACP_SPECS.map((entry) => entry.kind)).toEqual(["acp"]);
+    // Story 18.6 ships a SECOND row; both are rows, neither is code.
+    expect(ACP_SPECS.map((entry) => entry.kind)).toEqual(["acp", "acp"]);
   });
 });
 

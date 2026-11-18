@@ -165,6 +165,7 @@ function row(mode: string, extra: Partial<AcpSpec> = {}): AcpSpec {
     kind: "acp",
     id: "fake-acp",
     name: "Fake ACP",
+    verified: false,
     command: BUN,
     args: [FAKE, mode],
     cwdPolicy: "session",

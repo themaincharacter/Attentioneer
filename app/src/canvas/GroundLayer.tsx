@@ -58,7 +58,7 @@ import {
   type SessionCard as SessionCardRecord,
   type SessionEntry,
 } from "../map/sessions";
-import { ACP_SPECS, acpDeclaration } from "../turn/acpSpecs";
+import { ACP_SPECS, acpDeclaration, acpRowLabel } from "../turn/acpSpecs";
 import type {
   AcpPermissionAsk,
   AcpPermissionChoice,
@@ -697,7 +697,9 @@ export function GroundLayer({
    */
   const sessionTools = ACP_SPECS.map((spec) => ({
     id: spec.id,
-    name: spec.name,
+    // The label says which rows are unverified; it comes from the row, so a
+    // third tool marks itself and this file never learns a product's name.
+    name: acpRowLabel(spec),
   }));
   /**
    * STORY 17.3 — the anchored card's block facts, as the packet reads them.

@@ -150,7 +150,11 @@ export function permissionAskLine(toolCall: unknown): string {
   return kind === "" ? title : title + " (" + kind + ")";
 }
 
-/** One tool row a picker may offer: its id and the name the person reads. */
+/**
+ * One tool row a picker may offer: its id and the LABEL the person reads. The
+ * label is the layer's, built from the row (story 18.6 adds "(unverified)"), so
+ * this card never learns a product's name or judges one.
+ */
 export interface SessionToolChoice {
   id: string;
   name: string;

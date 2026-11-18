@@ -17,16 +17,22 @@
  * else is inherited PATH and HOME and nothing more.
  *
  * ARGV ONLY. `args` is an argv array; nothing here is ever joined into a shell
- * string, and the command must be absolute so a PATH lookup cannot swap the
- * server for something else.
+ * string.
  *
- * THE SHIPPED ROW IS UNVERIFIED, LIKE THE CLI ROWS. Its argv is what the spike
- * observed (`--profile acp` is required; a bare `dsh` is not an ACP server),
- * its command is the absolute shim the spike reached, and it has NO env entry —
- * so a real run refuses honestly at the first prompt until the person adds one.
+ * WHERE A COMMAND COMES FROM: a row a PERSON types must be absolute, so PATH
+ * cannot choose a different program. A row this build SHIPS may name a bare
+ * command when the tool is one a person installs themselves — the run lane
+ * looks it up on PATH and refuses, in one sentence naming it, before any
+ * spawn. Neither kind is ever run through a shell.
  *
- * PROVISIONAL: the field names, the env entry shape, the default budget and
- * every sentence in ACP_SENTENCES.
+ * THE SHIPPED ROWS ARE UNVERIFIED, LIKE THE CLI ROWS. The first row's argv is
+ * what the spike observed (`--profile acp` is required; a bare `dsh` is not an
+ * ACP server), and it has NO env entry — so a real run refuses honestly at the
+ * first prompt until the person adds one. The second row is a documented entry
+ * point nobody here has run (story 18.6), and says so.
+ *
+ * PROVISIONAL: the field names, the env entry shape, the `verified` mark, the
+ * default budget, the label suffix and every sentence in ACP_SENTENCES.
  */
 
 import { uniqueProviderId, type Refusal, type RowRead } from "./providers";
@@ -57,7 +63,17 @@ export interface AcpSpec {
   id: string;
   /** The display name the panel shows. */
   name: string;
-  /** The server executable: an ABSOLUTE path, never a shell string. */
+  /**
+   * Whether a live install confirmed this row (PROVISIONAL, story 18.6). A
+   * false row is still offerable — it is DATA — but the pickers mark it, and
+   * its notes say what was not run. Nothing branches on a product's name.
+   */
+  verified: boolean;
+  /**
+   * The server executable: an ABSOLUTE path for a row a person typed; a bare
+   * name for a shipped row whose tool the person installs (the lane resolves
+   * it on PATH and refuses before spawning when it is not there).
+   */
   command: string;
   /** The argv that makes the command an ACP server, one entry each. */
   args: string[];
@@ -206,6 +222,8 @@ export function validateAcpSpec(
       kind: "acp",
       id,
       name,
+      // A typed row cannot claim a verification this file did not see.
+      verified: false,
       command,
       args,
       cwdPolicy: ACP_CWD_POLICY,
@@ -218,16 +236,23 @@ export function validateAcpSpec(
 
 /**
  * The shipped list. Data, and the only place an ACP product is named at all.
- * PROVISIONAL and UNVERIFIED: the command is this machine's observed absolute
- * shim (the spike's `dsh --profile acp`), the argv is the required pair, and
- * the row deliberately grants NO key — the spike's first break was credentials,
- * so this row fails honestly instead of pretending it can run.
+ * PROVISIONAL and UNVERIFIED, both rows: the first is this machine's observed
+ * absolute shim (the spike's `dsh --profile acp`); the second is a documented
+ * entry point nobody here ran. Each argv is the pair its tool documents, and
+ * neither row declares an env entry — the spike's first break was credentials,
+ * so a run fails honestly instead of pretending it can run.
+ *
+ * STORY 18.6 — A SECOND TOOL IS THIS ENTRY. The lane, the card, the picker and
+ * the records take a row by its id and its argv; not one of them knows a
+ * product. The label marks what is unverified; the run lane refuses a missing
+ * command before it spawns anything.
  */
 export const ACP_SPECS: readonly AcpSpec[] = [
   {
     kind: "acp",
     id: "dsh-acp",
     name: "DeepSeek Harness (ACP)",
+    verified: false,
     command:
       "C:\\Users\\thema\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
     args: ["--profile", "acp"],
@@ -237,7 +262,32 @@ export const ACP_SPECS: readonly AcpSpec[] = [
     notes:
       "UNVERIFIED — the spike (18.1) reached this absolute dsh.cmd with --profile acp and created a session; no env entry is declared, so a prompt is refused for a missing DEEPSEEK_API_KEY until you add one for your provider row. Edit the command for another install.",
   },
+  {
+    kind: "acp",
+    id: "opencode-acp",
+    name: "OpenCode (ACP)",
+    verified: false,
+    // A bare command on purpose: OpenCode is installed by the person, and the
+    // run lane resolves it on PATH (or refuses, naming it, before any spawn).
+    command: "opencode",
+    args: ["acp"],
+    cwdPolicy: ACP_CWD_POLICY,
+    env: [],
+    timeoutMinutes: DEFAULT_ACP_TIMEOUT_MINUTES,
+    notes:
+      "UNVERIFIED — 'opencode acp' is OpenCode's documented ACP entry point (research, 2026-11-17), but nothing here has run it. Its sign-in is out of band ('opencode auth login') and cannot be brokered: no env entry is declared, so this app never holds its credentials. Its sandbox defaults, permission habits and whether it can resume a session are the tool's own and unknown here; one fresh session directory is the only workspace it is given.",
+  },
 ];
+
+/**
+ * THE PICKER'S LABEL (story 18.6, PURE, PROVISIONAL): the row's name, and the
+ * one word that says it was not confirmed on a live install. The mark comes
+ * from the DATA, never from recognising a product — a third row is a third
+ * entry, and it marks itself.
+ */
+export function acpRowLabel(spec: AcpSpec): string {
+  return spec.verified ? spec.name : spec.name + " (unverified)";
+}
 
 /**
  * THE ENV RULE MADE AUDIBLE (18.2, moved here by 18.3b): one sentence naming
