@@ -10,6 +10,34 @@ export type Box = { w: number; h: number };
 /** Fallback word box before measurement (a single line of text). */
 export const DEFAULT_BOX: Box = { w: 96, h: 28 };
 
+/** The camera's plane transform, as far as a pointer needs it. */
+export interface ClientCamera {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+/**
+ * STORY 16.20 — THE PLANE'S ONE POINTER→WORLD CONVERSION. A pointer arrives in
+ * the window's own pixels; the map's coordinates are what the camera transform
+ * leaves underneath it. The plane's double-click, the gesture drafts and the
+ * OS drop all ask THIS function, so "where the pointer is" can never mean two
+ * slightly different points. The rect is the plane element's, measured at the
+ * moment of the ask: a window move or a resize would make a remembered one a
+ * lie. PURE, so the conversion is testable without a DOM.
+ */
+export function clientToWorld(
+  clientX: number,
+  clientY: number,
+  rect: { left: number; top: number },
+  camera: ClientCamera,
+): Point {
+  return {
+    x: (clientX - rect.left - camera.x) / camera.zoom,
+    y: (clientY - rect.top - camera.y) / camera.zoom,
+  };
+}
+
 /**
  * STORY 18.4 — WHERE A NEW CARD GOES BESIDE THE ONE IT CAME FROM: the same
  * scale, offset by a little more than a card's own width so the two never

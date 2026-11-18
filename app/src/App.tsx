@@ -105,6 +105,14 @@ import { readingFor } from "./map/readings";
 import type { Media } from "./map/media";
 import { GroundWires } from "./canvas/GroundWires";
 import { GroundBubble, type GroundIntent } from "./canvas/GroundBubble";
+import { GroundDropNotice } from "./canvas/GroundDropNotice";
+import {
+  dropBlocked,
+  dropLandsOnCard,
+  dropWorldPoint,
+  runOsDrop,
+} from "./canvas/osDrop";
+import { listenOsDrop, type OsDrop } from "./canvas/osDropWindow";
 import { ASK_UNTITLED_NAME } from "./map/asks";
 import { useGround } from "./canvas/useGround";
 import { SketchToolbar } from "./canvas/SketchToolbar";
@@ -653,6 +661,16 @@ function App() {
    * ground's doors; there is no second bubble.
    */
   const [groundMenuAt, setGroundMenuAt] = useState<Point | null>(null);
+  /**
+   * STORY 16.20 — a refused OS drop's ONE sentence, at the point it landed.
+   * VIEW STATE, never a record: it is written by the drop's own handler, shown
+   * where the pointer was, and cleared by itself. The next drop replaces it.
+   */
+  const [dropNotice, setDropNotice] = useState<{
+    at: Point;
+    text: string;
+    taken: number;
+  } | null>(null);
   /**
    * STORY 17.10 — the ask card the ASK door just made, so the layer can open
    * it. A fresh token per creation keeps a later render from reopening a card
@@ -3925,6 +3943,7 @@ function App() {
 
   const closePlaneMenu = useCallback(() => setMenuAt(null), []);
   const closeGroundBubble = useCallback(() => setGroundAt(null), []);
+  const dismissDropNotice = useCallback(() => setDropNotice(null), []);
   const closeGroundMenu = useCallback(() => setGroundMenuAt(null), []);
 
   /** STORY 17.10 — the ASK door: an empty peer card at the point, then OPEN. */
@@ -4009,6 +4028,69 @@ function App() {
     },
     [ground, groundAt],
   );
+
+  /**
+   * STORY 16.20 — A FILE DROPPED FROM THE OS. The window's own event (heard in
+   * canvas/osDropWindow.ts) hands this the paths and the pointer; the pure
+   * rules in canvas/osDrop.ts decide the point, the cascade, the intents and
+   * the ONE sentence.
+   *
+   * NOTHING HERE WRITES: each file goes through `ground.create`, the same
+   * creation path the bubble uses, so a record's shape cannot drift between a
+   * picked file and a dropped one. A drop during a card drag or a wire drag is
+   * IGNORED, and a drop ONTO a card creates nothing (a card is not a place to
+   * put a card); neither says anything, because the gesture was never about a
+   * drop. A transform that cannot say where the pointer is writes nothing.
+   */
+  const handleOsDrop = useCallback(
+    async (drop: OsDrop) => {
+      // The ground map is the only map whose cards point at files.
+      if (level !== "ground") return;
+      // The hand is mid-gesture: a card appearing under it is an interruption.
+      if (dropBlocked(gesture, gestureMode !== "idle")) return;
+      const plane = document.querySelector(".plane");
+      if (!(plane instanceof HTMLElement)) return;
+      // A drop onto a card is not a card-on-card act (out of scope).
+      if (dropLandsOnCard(document.elementFromPoint(drop.client.x, drop.client.y))) {
+        return;
+      }
+      // THE POINTER, through the plane's own conversion (geometry.ts). A
+      // conversion that fails has no place to put a card, so nothing is made.
+      const origin = dropWorldPoint(
+        drop.client,
+        plane.getBoundingClientRect(),
+        camera,
+      );
+      if (origin === null) return;
+      const outcome = await runOsDrop(drop.paths, origin, ground.create);
+      if (outcome.notice === null) return;
+      setDropNotice({ at: origin, text: outcome.notice, taken: Date.now() });
+    },
+    [camera, gesture, gestureMode, ground.create, level],
+  );
+
+  // The window's drop listener is attached ONCE; the ref lets it always read
+  // the handler this render made, without re-subscribing on every camera move.
+  const osDropHandlerRef = useRef<(drop: OsDrop) => void>(() => {});
+  osDropHandlerRef.current = handleOsDrop;
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let gone = false;
+    void listenOsDrop((drop) => {
+      void osDropHandlerRef.current(drop);
+    })
+      .then((unlisten) => {
+        if (gone) unlisten();
+        else stop = unlisten;
+      })
+      // A window that cannot report drops (a plain browser tab) simply has
+      // none: the bubble's own pick stays the way in.
+      .catch(() => {});
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, []);
 
   /** The menu's word choice: close it and open the in-place coin field. */
   const chooseWord = useCallback(() => {
@@ -4919,6 +5001,19 @@ function App() {
                row. It is its own record family, not a reference's source. */
             onAddSession={addGroundSessionAt}
             onClose={closeGroundBubble}
+          />
+        )}
+
+        {/* STORY 16.20 — a refused OS drop's ONE sentence, where the pointer
+            released it. World space and counter-scaled like the bubble; view
+            state only, cleared by itself. */}
+        {level === "ground" && dropNotice !== null && (
+          <GroundDropNotice
+            x={dropNotice.at.x}
+            y={dropNotice.at.y}
+            text={dropNotice.text}
+            taken={dropNotice.taken}
+            onDismiss={dismissDropNotice}
           />
         )}
 

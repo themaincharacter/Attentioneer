@@ -44,7 +44,7 @@ import {
   type ShapeMode,
 } from "./languageGameRules";
 import type { GamePoint, GameShape } from "../map/languageGames";
-import type { Point } from "./geometry";
+import { clientToWorld, type Point } from "./geometry";
 import { boxIsDrawable, capturedBox } from "./veilRules";
 import type { VeilBox } from "../map/veils";
 import { MAX_ZOOM, MIN_ZOOM, type Camera, type CameraIntents } from "./useCamera";
@@ -347,11 +347,10 @@ export function CanvasPlane({
   ): { x: number; y: number } | null {
     const el = planeRef.current;
     if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    return {
-      x: (clientX - rect.left - camera.x) / camera.zoom,
-      y: (clientY - rect.top - camera.y) / camera.zoom,
-    };
+    // STORY 16.20: the conversion is geometry.ts's ONE helper, shared with the
+    // OS drop, so a double-click and a dropped file can never land on two
+    // slightly different points.
+    return clientToWorld(clientX, clientY, el.getBoundingClientRect(), camera);
   }
 
   function handleDoubleClick(e: ReactMouseEvent<HTMLDivElement>) {
@@ -475,10 +474,7 @@ export function CanvasPlane({
       // sample rather than capturing it at the press.
       const toWorld = (clientX: number, clientY: number): Point => {
         const cam = cameraRef.current;
-        return {
-          x: (clientX - rect.left - cam.x) / cam.zoom,
-          y: (clientY - rect.top - cam.y) / cam.zoom,
-        };
+        return clientToWorld(clientX, clientY, rect, cam);
       };
       const start = toWorld(event.clientX, event.clientY);
       path = [start];
@@ -569,10 +565,7 @@ export function CanvasPlane({
       const rect = plane.getBoundingClientRect();
       const toWorld = (clientX: number, clientY: number): SketchPoint => {
         const cam = cameraRef.current;
-        return {
-          x: (clientX - rect.left - cam.x) / cam.zoom,
-          y: (clientY - rect.top - cam.y) / cam.zoom,
-        };
+        return clientToWorld(clientX, clientY, rect, cam);
       };
       let points: SketchPoint[] = [toWorld(event.clientX, event.clientY)];
       if (tool === "pen") setStrokeDraft([...points]);
@@ -636,10 +629,7 @@ export function CanvasPlane({
       const rect = plane.getBoundingClientRect();
       const toWorld = (clientX: number, clientY: number): GamePoint => {
         const cam = cameraRef.current;
-        return {
-          x: (clientX - rect.left - cam.x) / cam.zoom,
-          y: (clientY - rect.top - cam.y) / cam.zoom,
-        };
+        return clientToWorld(clientX, clientY, rect, cam);
       };
       const start = toWorld(event.clientX, event.clientY);
       let path: GamePoint[] = [start];

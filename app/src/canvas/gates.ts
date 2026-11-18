@@ -395,6 +395,10 @@ export const CONTENT_CLASSES = [
   "ground-bubble-pick",
   "ground-bubble-add",
   "ground-bubble-cancel",
+  // STORY 16.20: the ONE sentence a refused OS drop says at the pointer. It is
+  // inside the plane like the bubble, so its presses (none of its own) must
+  // never fall through to the plane's pan or creation.
+  "ground-drop-notice",
   // STORY 18.3 — the bubble's SESSION door and its tool-row picker, and the
   // session card itself (its two faces, its transcript, its ending's one line,
   // its declaration, its picker and its run/stop verbs). They live inside the

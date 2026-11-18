@@ -6537,6 +6537,24 @@ body {
 /* The creation bubble: world-anchored at the double-clicked point and
    counter-scaled by the component (the naming popup's idiom). Provisional:
    the card's look. */
+/* STORY 16.20: a refused OS drop's ONE sentence, at the point it was released.
+   World space, counter-scaled with the bubble; view state only, gone on its own. */
+.ground-drop-notice {
+  position: absolute;
+  z-index: 9;
+  max-width: 260px;
+  padding: 3px 7px;
+  background: rgba(255, 253, 248, 0.95);
+  border: 1px solid rgba(141, 136, 124, 0.24);
+  border-radius: 5px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--ink-soft);
+  transform-origin: left top;
+  pointer-events: none;
+  animation: fade-in var(--motion-fast) var(--ease-out);
+}
+
 .ground-bubble {
   position: absolute;
   z-index: 10;
