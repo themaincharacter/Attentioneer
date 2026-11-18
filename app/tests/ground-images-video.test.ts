@@ -307,6 +307,7 @@ const mediaIo: MediaIo = {
   readTextFile: groundIo.readTextFile,
   writeTextFile: groundIo.writeTextFile,
   createDirAll: async (path: string) => mkdirSync(path, { recursive: true }),
+  removeFile: async () => {},
 };
 
 const videoIo: VideoIo = {
@@ -754,6 +755,7 @@ describe("a video card is copied beside the map and reopens OFFLINE", () => {
         states: { [reopened.readings.readings[0].on]: "current" },
         notes: {},
         orphanNotes: [],
+        orphanMedia: [],
         links: [],
         orphanLinks: [],
         malformedGround: [],

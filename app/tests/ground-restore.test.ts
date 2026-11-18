@@ -49,6 +49,10 @@ import {
   type GroundLink,
 } from "../src/map/groundLinks";
 import {
+  restoreThumb,
+  saveMedia,
+} from "../src/map/media";
+import {
   notePath,
   restoreNote,
   saveNote,
@@ -253,6 +257,14 @@ const noteIo = {
   removeFile: async (path: string) => rmSync(path, { force: true }),
 };
 
+/** The media file's bridges, for the restore's picture and media line. */
+const mediaIo = {
+  readTextFile: groundIo.readTextFile,
+  writeTextFile: groundIo.writeTextFile,
+  createDirAll: async (path: string) => mkdirSync(path, { recursive: true }),
+  removeFile: async (path: string) => rmSync(path, { force: true }),
+};
+
 /** The restore's real bridges (the same files, the same bytes). */
 const restoreIo: GroundRestoreIo = {
   saveGround: (workspace, references, malformed) =>
@@ -261,6 +273,10 @@ const restoreIo: GroundRestoreIo = {
     saveReadings(workspace, readings, malformed, readingIo),
   saveGroundLinks: (workspace, links, malformed) =>
     saveGroundLinks(workspace, links, malformed, groundIo),
+  saveMedia: (workspace, media, malformed) =>
+    saveMedia(workspace, media, malformed, mediaIo),
+  restoreThumb: (workspace, thumb, text) =>
+    restoreThumb(workspace, thumb, text, mediaIo),
   restoreReadingText: (workspace, on, text) =>
     restoreReadingText(workspace, on, text, readingIo),
   restoreNote: (workspace, slug, text) =>
@@ -298,6 +314,9 @@ async function removeForRestore(workspace: string) {
       ({ link }) => link.from === "rain-gauge" || link.to === "rain-gauge",
     ),
     state: "current",
+    media: null,
+    mediaIndex: -1,
+    thumbSvgText: null,
   };
   return { log, removal, removed, links: links.links };
 }
@@ -361,9 +380,11 @@ describe("Restore puts the SAME BYTES back", () => {
       (await loadGround(workspace, groundIo)).references,
       [READING],
       links,
+      [],
       [MALFORMED_GROUND],
       [MALFORMED_READINGS],
       [MALFORMED_LINKS],
+      [],
       restoreIo,
     );
     expect(result.refusal).toBeNull();
@@ -404,9 +425,11 @@ describe("Restore puts the SAME BYTES back", () => {
       (await loadGround(workspace, groundIo)).references,
       [READING],
       links,
+      [],
       [MALFORMED_GROUND],
       [MALFORMED_READINGS],
       [MALFORMED_LINKS],
+      [],
       failing,
     );
     expect(result.refusal).not.toBeNull();

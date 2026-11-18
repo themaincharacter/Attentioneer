@@ -1,4 +1,4 @@
-import { createDirAll, readTextFile, writeTextFile } from "../lib/fs";
+import { createDirAll, readTextFile, removeFile, writeTextFile } from "../lib/fs";
 import { canonicalJsonlLine, canonicalJsonlLines } from "../lib/serialize";
 import { mapDir } from "./records";
 
@@ -37,6 +37,11 @@ import { mapDir } from "./records";
  * SVG wrapper, the same `thumb` wire). The kind says which flow produced it.
  * A remote image at render time would put the network inside the map's
  * rendering, which is the whole reason the bytes are copied.
+ *
+ * STORY 16.14b: a card's line and its wrapper are READ before the delete
+ * unlinks them, so Restore can put the SAME BYTES back; a line whose card is
+ * gone is an ORPHAN — preserved where it is, reported beside the card's other
+ * orphans, and never adopted into a card or deleted by the app.
  *
  * PROVISIONAL (with the rest of the story's record shapes): the file name, the
  * line shape, `media/`, the .svg wrapper and the kind names.
@@ -82,10 +87,17 @@ export interface MediaIo {
   readTextFile(path: string): Promise<string | null>;
   writeTextFile(path: string, content: string): Promise<void>;
   createDirAll(path: string): Promise<void>;
+  /** STORY 16.14b: taking a card's picture away is this family's own move. */
+  removeFile(path: string): Promise<void>;
 }
 
 /** The real bridges, bound once so the module stays importable in bun tests. */
-export const MEDIA_IO: MediaIo = { readTextFile, writeTextFile, createDirAll };
+export const MEDIA_IO: MediaIo = {
+  readTextFile,
+  writeTextFile,
+  createDirAll,
+  removeFile,
+};
 
 /** The media record file: `<workspace>/map/media.jsonl`. */
 export function mediaPath(workspacePath: string): string {
@@ -240,6 +252,21 @@ export function withoutMedia(
 }
 
 /**
+ * STORY 16.14b — media lines whose card the map does not carry. They are KEPT
+ * exactly where they are (the app never deletes a record it cannot place) and
+ * REPORTED in the ground notices group and the mirror's unknowns; they are
+ * never adopted into a card. PURE — the caller hands the slugs the map carries,
+ * so the report is computed from the load, never stored.
+ */
+export function orphanMedia(
+  media: readonly Media[],
+  slugs: readonly string[],
+): Media[] {
+  const carried = new Set(slugs);
+  return media.filter((entry) => !carried.has(entry.on));
+}
+
+/**
  * The SVG wrapper for one downloaded image. PURE. The image is a data URL, so
  * the file needs no network and no sidecar; the 320x180 box is only the
  * wrapper's aspect (the card crops with CSS). PROVISIONAL: the box.
@@ -275,6 +302,24 @@ export async function storeThumb(
     thumbSvg(mime, base64),
   );
   return thumb;
+}
+
+/**
+ * STORY 16.14b — PUT ONE PICTURE BACK EXACTLY: the wrapper's bytes the delete
+ * read into memory before its unlink go back verbatim, at the path the media
+ * line names. This is deliberately NOT `storeThumb`: nothing is downloaded and
+ * no wrapper is rebuilt from base64, so a hand-edited wrapper comes back as
+ * itself. A card whose picture was already missing restores no file at all (a
+ * missing thumbnail is not an error, and nothing is invented).
+ */
+export async function restoreThumb(
+  workspacePath: string,
+  thumb: string,
+  text: string,
+  io: MediaIo = MEDIA_IO,
+): Promise<void> {
+  await io.createDirAll(mediaDir(workspacePath));
+  await io.writeTextFile(thumbAbsolutePath(workspacePath, thumb), text);
 }
 
 /** The data URL the card renders, made from the SVG text READ or just written. */

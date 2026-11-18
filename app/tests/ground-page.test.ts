@@ -266,6 +266,7 @@ const mediaIo: MediaIo = {
   readTextFile: groundIo.readTextFile,
   writeTextFile: groundIo.writeTextFile,
   createDirAll: async (path: string) => mkdirSync(path, { recursive: true }),
+  removeFile: async () => {},
 };
 
 const pageIo: PageIo = {
@@ -796,6 +797,7 @@ describe("the wire and the record agree", () => {
       states: { rivers: "current" },
       notes: {},
       orphanNotes: [],
+      orphanMedia: [],
       links: [],
       orphanLinks: [],
       malformedGround: [],

@@ -2,6 +2,7 @@ import { writeTextFile } from "../lib/fs";
 import { canonicalText } from "../lib/serialize";
 import type { GroundReference } from "./ground";
 import { serializeGroundLinkLine, type GroundLink } from "./groundLinks";
+import { serializeMediaLine, type Media } from "./media";
 import {
   pageHost,
   readingExtract,
@@ -45,6 +46,10 @@ import {
  * `video: <host>` — the same two quiet facts the card's face carries, no count
  * and no reading claimed.
  *
+ * STORY 16.14b: a media line whose card is gone is an UNKNOWN, like an orphan
+ * link or note. It is reproduced in "What is unknown" from the record itself,
+ * never dropped to make the index look tidy and never repaired into a card.
+ *
  * PROVISIONAL (the story's artifact, before an ADR settles it): the MAP.md
  * name and location, the block layout, the section order, the preview length
  * and the exact state sentences.
@@ -85,6 +90,11 @@ export interface MirrorView {
   states: Readonly<Record<string, ReadingState>>;
   notes: Readonly<Record<string, string>>;
   orphanNotes: readonly string[];
+  /**
+   * STORY 16.14b — media lines naming a card the map does not carry: kept in
+   * `map/media.jsonl` and named under "What is unknown", never adopted.
+   */
+  orphanMedia: readonly Media[];
   links: readonly GroundLink[];
   orphanLinks: readonly GroundLink[];
   malformedGround: readonly string[];
@@ -227,6 +237,11 @@ export function renderMirror(view: MirrorView): string {
   }
   for (const slug of [...view.orphanNotes].sort()) {
     unknown.push("unreadable note, no card is on the map: " + slug + ".md");
+  }
+  // STORY 16.14b: the media line is reproduced as the record holds it — title
+  // and all — so a reader can tell which orphan it is without the map.
+  for (const entry of view.orphanMedia) {
+    unknown.push("media with no card on the map: " + serializeMediaLine(entry));
   }
   lines.push("## What is unknown", "");
   if (unknown.length === 0) lines.push("nothing is unknown.", "");

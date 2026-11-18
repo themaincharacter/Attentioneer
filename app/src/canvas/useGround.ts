@@ -77,6 +77,8 @@ import {
   loadMedia,
   loadThumbSrcs,
   mediaFor,
+  orphanMedia,
+  restoreThumb,
   saveMedia,
   storeThumb,
   thumbAbsolutePath,
@@ -85,6 +87,7 @@ import {
   withMedia,
   withoutMedia,
   type Media,
+  type MediaIo,
 } from "../map/media";
 import {
   NOTE_IO,
@@ -202,6 +205,13 @@ import {
  *     with NO text at all: the picture is drawn from wherever it already is
  *     through the asset protocol, so nothing is copied and only the pointing
  *     is recorded.
+ *   - REMOVING A PAGE OR VIDEO CARD (16.14b): the delete reads the card's
+ *     media line and its thumbnail's bytes BEFORE any unlink, and Restore
+ *     writes them back in the house order — picture, reading text, readings
+ *     line, media line, note, ground line, links — so the folder comes back
+ *     byte-identical. A media line whose card is gone is an ORPHAN: kept
+ *     where it is, named in the ground notices group and in the mirror's
+ *     unknowns, never adopted and never deleted.
  *   - A SELECTION CARD (16.12): the person selects text inside an expanded
  *     card's reading, names the new card, and `createSelection` writes the
  *     excerpt's text file, its reading line (provenance `card://<source>`) and
@@ -247,6 +257,13 @@ export interface GroundView {
    * data URL (story 16.14). Absent means no image; the card never says so.
    */
   thumbs: Readonly<Record<string, string>>;
+  /**
+   * STORY 16.14b — media lines whose card is not on the map: kept exactly
+   * where they are and named in the ground notices group, never adopted and
+   * never deleted (the notes' rule). Computed from the load and every write,
+   * never stored, so the app cannot manufacture one of its own.
+   */
+  orphanMedia: readonly Media[];
   /** Each reading's text, keyed by slug (a missing text is simply absent). */
   texts: Readonly<Record<string, string>>;
   /**
@@ -437,6 +454,7 @@ const EMPTY: GroundLoaded = {
   references: [],
   readings: [],
   media: [],
+  orphanMedia: [],
   thumbs: {},
   texts: {},
   states: {},
@@ -501,6 +519,19 @@ export interface RemovedCard {
   readingText: string | null;
   /** The note file's bytes, read before its unlink; null if there was none. */
   note: string | null;
+  /**
+   * STORY 16.14b — the card's media line, read before the delete; null when it
+   * had none. With `mediaIndex` and the wrapper's bytes below, Restore can put
+   * the title and the picture back exactly where they were.
+   */
+  media: Media | null;
+  /** Where the media line sat in file order, so Restore can put it back there. */
+  mediaIndex: number;
+  /**
+   * The thumbnail wrapper's bytes, read before its unlink; null when the card
+   * had no picture (a missing one stays missing — nothing is invented).
+   */
+  thumbSvgText: string | null;
   /** Every link naming the card, both directions, in file order. */
   links: readonly RemovedLink[];
   /** The computed reading state at delete time (view state, never a record). */
@@ -597,6 +628,11 @@ export async function removeGroundRecords(
             note,
             // The caller adds the links it takes, because its cascade has them.
             links: [],
+            // STORY 16.14b: the media line and the picture's bytes are captured
+            // by the caller BEFORE this step runs, so they are added there too.
+            media: null,
+            mediaIndex: -1,
+            thumbSvgText: null,
             // The caller records the state it computed at load.
             state: "unread",
           },
@@ -623,11 +659,47 @@ export async function removeGroundLinksNaming(
   return next;
 }
 
-/** What taking a card's media left: the next lines and the picture's bytes. */
+/** What the delete read from a card's media BEFORE any unlink (story 16.14b). */
+export interface GroundMediaCapture {
+  /** The line as the file held it; null when the card had no media line. */
+  entry: Media | null;
+  /** Where that line sat in file order, so Restore can put it back there. */
+  index: number;
+  /** The thumbnail wrapper's bytes; null when the card had no picture. */
+  thumbSvgText: string | null;
+}
+
+/**
+ * THE DELETE CASCADE's media READ (story 16.14b): the card's media line and the
+ * thumbnail file's bytes come into memory BEFORE anything is unlinked. The
+ * wrapper is TEXT, so the whole picture is one file the app can already read —
+ * no new capability is asked for. A missing line or file is a quiet absence:
+ * no error, no sentence, and Restore never invents what was not there.
+ */
+export async function captureGroundMedia(
+  workspacePath: string,
+  on: string,
+  media: readonly Media[],
+  io: MediaIo = MEDIA_IO,
+): Promise<GroundMediaCapture> {
+  const index = media.findIndex((entry) => entry.on === on);
+  const entry = index >= 0 ? media[index] ?? null : null;
+  let thumbSvgText: string | null = null;
+  if (entry !== null && entry.thumb !== undefined) {
+    try {
+      thumbSvgText = await io.readTextFile(
+        thumbAbsolutePath(workspacePath, entry.thumb),
+      );
+    } catch {
+      thumbSvgText = null;
+    }
+  }
+  return { entry, index, thumbSvgText };
+}
+
+/** What taking a card's media left: the next lines and its one sentence. */
 export interface GroundMediaRemoval {
   media: Media[];
-  /** The thumbnail's SVG text, read before its unlink (null when no image). */
-  thumbSvgText: string | null;
   /** One sentence when the picture could not be removed; null when it went. */
   refusal: string | null;
 }
@@ -638,29 +710,19 @@ export const GROUND_MEDIA_REMOVAL_REFUSAL =
 
 /**
  * THE DELETE CASCADE's media step (story 16.14): a card's media line and its
- * local thumbnail go with the card's other files. The thumbnail's bytes are
- * READ before the unlink so a later Restore could put the same picture back
- * (restoring media is PROVISIONAL and not wired yet); a missing line or file
- * is a quiet no-op, and a refused unlink is one sentence, never a repair.
+ * local thumbnail go with the card's other files, AFTER `captureGroundMedia`
+ * has read them. A missing line or file is a quiet no-op, and a refused write
+ * is one sentence, never a repair. What the capture remembered is what Restore
+ * writes back, verbatim (story 16.14b).
  */
 export async function removeGroundMedia(
   workspacePath: string,
   on: string,
   media: readonly Media[],
   malformedMedia: readonly string[],
-  io: typeof MEDIA_IO = MEDIA_IO,
+  io: MediaIo = MEDIA_IO,
 ): Promise<GroundMediaRemoval> {
   const entry = mediaFor(media, on);
-  let thumbSvgText: string | null = null;
-  if (entry !== undefined && entry !== null && entry.thumb !== undefined) {
-    try {
-      thumbSvgText = await io.readTextFile(
-        thumbAbsolutePath(workspacePath, entry.thumb),
-      );
-    } catch {
-      thumbSvgText = null;
-    }
-  }
   const next = withoutMedia(media, on);
   let refusal: string | null = null;
   try {
@@ -669,20 +731,16 @@ export async function removeGroundMedia(
     // The card is already gone; one sentence and no repair, like the note's
     // own refused unlink. The media line may be orphaned; nothing pretends
     // otherwise.
-    return {
-      media: [...media],
-      thumbSvgText,
-      refusal: GROUND_MEDIA_REMOVAL_REFUSAL,
-    };
+    return { media: [...media], refusal: GROUND_MEDIA_REMOVAL_REFUSAL };
   }
-  if (entry !== undefined && entry !== null && entry.thumb !== undefined) {
+  if (entry !== null && entry.thumb !== undefined) {
     try {
-      await removeFile(thumbAbsolutePath(workspacePath, entry.thumb));
+      await io.removeFile(thumbAbsolutePath(workspacePath, entry.thumb));
     } catch {
       refusal = GROUND_MEDIA_REMOVAL_REFUSAL;
     }
   }
-  return { media: next, thumbSvgText, refusal };
+  return { media: next, refusal };
 }
 
 /** The one sentence a refused note unlink answers (PROVISIONAL wording). */
@@ -733,8 +791,10 @@ export interface GroundRestoreIo {
   saveGround: typeof saveGround;
   saveReadings: typeof saveReadings;
   saveGroundLinks: typeof saveGroundLinks;
+  saveMedia: typeof saveMedia;
   restoreReadingText: typeof restoreReadingText;
   restoreNote: typeof restoreNote;
+  restoreThumb: typeof restoreThumb;
 }
 
 /** The real bridges, bound once so this module stays importable in tests. */
@@ -742,8 +802,10 @@ const GROUND_RESTORE_IO: GroundRestoreIo = {
   saveGround,
   saveReadings,
   saveGroundLinks,
+  saveMedia,
   restoreReadingText,
   restoreNote,
+  restoreThumb,
 };
 
 /** What a restore did: the next records, what came back, what did not. */
@@ -751,6 +813,8 @@ export interface GroundRestoreResult {
   references: GroundReference[];
   readings: Reading[];
   links: GroundLink[];
+  /** STORY 16.14b: the media lines after the write (the card's line is back). */
+  media: Media[];
   /** True when the card's own ground line went back (the card is on the map). */
   restoredReference: boolean;
   /** The links whose lines went back (the hook logs their own moves). */
@@ -797,18 +861,23 @@ export function restoreSentence(
 }
 
 /**
- * STORY 16.13 — PUT THE SAME BYTES BACK, in the delete's reverse safety order:
+ * STORY 16.13 — PUT THE SAME BYTES BACK. STORY 16.14b adds the picture and the
+ * media line to that promise, in the house order:
  *
- *   1. the reading text (exactly the bytes read before the unlink);
- *   2. the note (exactly the bytes read before its unlink);
+ *   1. the thumbnail (exactly the wrapper's bytes read before its unlink);
+ *   2. the reading text (exactly the bytes read before the unlink);
  *   3. the reading line, at its old file position;
- *   4. every link the cascade took, at its old file position;
- *   5. the reference line LAST, so a crash can never leave a reference whose
- *      reading is not there.
+ *   4. the media line, at its old file position;
+ *   5. the note (exactly the bytes read before its unlink);
+ *   6. the reference line, so a crash can never leave a reference whose
+ *      reading or title is not there;
+ *   7. every link the cascade took, at its old file position.
  *
  * Every write is attempted even after an earlier one fails, so the one
- * sentence can name BOTH what came back and what did not. The caller owns the
- * queue and the in-memory views; this function writes the files and reports.
+ * sentence can name BOTH what came back and what did not. A card whose
+ * thumbnail was already missing restores no picture and says nothing — nothing
+ * is invented. The caller owns the queue and the in-memory views; this
+ * function writes the files and reports.
  */
 export async function restoreGroundCard(
   workspacePath: string,
@@ -816,9 +885,11 @@ export async function restoreGroundCard(
   references: readonly GroundReference[],
   readings: readonly Reading[],
   links: readonly GroundLink[],
+  media: readonly Media[],
   malformedGround: readonly string[],
   malformedReadings: readonly string[],
   malformedLinks: readonly string[],
+  malformedMedia: readonly string[],
   io: GroundRestoreIo = GROUND_RESTORE_IO,
 ): Promise<GroundRestoreResult> {
   const slug = removed.reference.on;
@@ -827,25 +898,34 @@ export async function restoreGroundCard(
   let nextReferences = [...references];
   let nextReadings = [...readings];
   let nextLinks = [...links];
+  let nextMedia = [...media];
   let restoredReference = false;
   const restoredLinks: GroundLink[] = [];
+  const entry = removed.media;
 
-  // 1. the reading text, byte for byte.
+  // 1. the picture, byte for byte (story 16.14b): the wrapper goes back at the
+  //    path its line names. A thumbnail the delete could not read (already
+  //    gone) is simply absent — a missing picture is not an error and Restore
+  //    never invents one.
+  if (
+    entry !== null &&
+    entry.thumb !== undefined &&
+    removed.thumbSvgText !== null
+  ) {
+    try {
+      await io.restoreThumb(workspacePath, entry.thumb, removed.thumbSvgText);
+      cameBack.push("the picture");
+    } catch {
+      didNot.push("the picture");
+    }
+  }
+  // 2. the reading text, byte for byte.
   if (removed.reading !== null && removed.readingText !== null) {
     try {
       await io.restoreReadingText(workspacePath, slug, removed.readingText);
       cameBack.push("the reading text");
     } catch {
       didNot.push("the reading text");
-    }
-  }
-  // 2. the note, byte for byte.
-  if (removed.note !== null) {
-    try {
-      await io.restoreNote(workspacePath, slug, removed.note);
-      cameBack.push("the note");
-    } catch {
-      didNot.push("the note");
     }
   }
   // 3. the reading line, back where it sat.
@@ -860,28 +940,30 @@ export async function restoreGroundCard(
       didNot.push("the reading");
     }
   }
-  // 4. every link the cascade took, back where each line sat.
-  if (removed.links.length > 0) {
-    const candidate = [...nextLinks];
-    for (const entry of [...removed.links].sort((a, b) => a.index - b.index)) {
-      const pair = entry.link;
-      const already = candidate.some(
-        (link) => link.from === pair.from && link.to === pair.to,
-      );
-      if (!already) {
-        candidate.splice(Math.min(entry.index, candidate.length), 0, pair);
-      }
-    }
+  // 4. the media line, back where it sat (story 16.14b): the SAME record, so
+  //    the same bytes. A line the refused delete could not take is replaced,
+  //    never doubled.
+  if (entry !== null) {
+    const without = nextMedia.filter((line) => line.on !== slug);
+    const candidate = insertAt(without, removed.mediaIndex, entry);
     try {
-      await io.saveGroundLinks(workspacePath, candidate, malformedLinks);
-      nextLinks = candidate;
-      restoredLinks.push(...removed.links.map((entry) => entry.link));
-      cameBack.push("the links");
+      await io.saveMedia(workspacePath, candidate, malformedMedia);
+      nextMedia = candidate;
+      cameBack.push("the media line");
     } catch {
-      didNot.push("the links");
+      didNot.push("the media line");
     }
   }
-  // 5. the reference LAST: the card returns once its pieces are there.
+  // 5. the note, byte for byte.
+  if (removed.note !== null) {
+    try {
+      await io.restoreNote(workspacePath, slug, removed.note);
+      cameBack.push("the note");
+    } catch {
+      didNot.push("the note");
+    }
+  }
+  // 6. the reference: the card returns once its pieces are there.
   {
     const without = nextReferences.filter((reference) => reference.on !== slug);
     const candidate = insertAt(without, removed.referenceIndex, removed.reference);
@@ -894,11 +976,33 @@ export async function restoreGroundCard(
       didNot.push("the reference");
     }
   }
+  // 7. every link the cascade took, back where each line sat.
+  if (removed.links.length > 0) {
+    const candidate = [...nextLinks];
+    for (const link of [...removed.links].sort((a, b) => a.index - b.index)) {
+      const pair = link.link;
+      const already = candidate.some(
+        (existing) => existing.from === pair.from && existing.to === pair.to,
+      );
+      if (!already) {
+        candidate.splice(Math.min(link.index, candidate.length), 0, pair);
+      }
+    }
+    try {
+      await io.saveGroundLinks(workspacePath, candidate, malformedLinks);
+      nextLinks = candidate;
+      restoredLinks.push(...removed.links.map((link) => link.link));
+      cameBack.push("the links");
+    } catch {
+      didNot.push("the links");
+    }
+  }
 
   return {
     references: nextReferences,
     readings: nextReadings,
     links: nextLinks,
+    media: nextMedia,
     restoredReference,
     restoredLinks,
     refusal: restoreSentence(cameBack, didNot),
@@ -1496,6 +1600,14 @@ export function useGround(workspacePath: string): GroundView {
     // ORPHAN NOTES ARE COMPUTED from the load's listing, never stored: a note
     // file the app itself never writes for a missing card (story 16.6).
     orphanNotes: orphanNotesRef.current,
+    // STORY 16.14b — ORPHAN MEDIA ARE COMPUTED like the links' and the notes':
+    // a media line whose card is not on the map is kept in the file, reported
+    // in the notices group and the mirror's unknowns, and never adopted or
+    // deleted by the app.
+    orphanMedia: orphanMedia(
+      mediaRef.current,
+      referencesRef.current.map((reference) => reference.on),
+    ),
     links: linksRef.current,
     // Recomputed on every write (story 16.5): a cascade can leave the file
     // with fewer links but never with one the app itself orphaned.
@@ -1530,6 +1642,10 @@ export function useGround(workspacePath: string): GroundView {
     states: statesRef.current,
     notes: notesRef.current,
     orphanNotes: orphanNotesRef.current,
+    orphanMedia: orphanMedia(
+      mediaRef.current,
+      referencesRef.current.map((reference) => reference.on),
+    ),
     links: linksRef.current,
     orphanLinks: orphanGroundLinks(
       linksRef.current,
@@ -2163,6 +2279,15 @@ export function useGround(workspacePath: string): GroundView {
           // The computed state at delete time is what the restored card shows;
           // it is view state, never a record (story 16.2's rule).
           const previousState = statesRef.current[on] ?? "unread";
+          // STORY 16.14b — READ THE PICTURE BEFORE ANY UNLINK. The media line
+          // and the thumbnail wrapper's bytes are what Restore must put back; a
+          // card with no picture captures nothing (a missing one is not an
+          // error, and nothing is invented on the way back).
+          const capturedMedia = await captureGroundMedia(
+            workspacePath,
+            on,
+            mediaRef.current,
+          );
           const removal = await removeGroundRecords(
             workspacePath,
             on,
@@ -2231,6 +2356,9 @@ export function useGround(workspacePath: string): GroundView {
                   ...removal.removed,
                   links: cascaded,
                   state: previousState,
+                  media: capturedMedia.entry,
+                  mediaIndex: capturedMedia.index,
+                  thumbSvgText: capturedMedia.thumbSvgText,
                 };
           restorableRef.current = pendingRestoreAfter(
             restorableRef.current,
@@ -2510,13 +2638,16 @@ export function useGround(workspacePath: string): GroundView {
           referencesRef.current,
           readingsRef.current,
           linksRef.current,
+          mediaRef.current,
           malformedGroundRef.current,
           malformedReadingsRef.current,
           malformedLinksRef.current,
+          malformedMediaRef.current,
         );
         referencesRef.current = restored.references;
         readingsRef.current = restored.readings;
         linksRef.current = restored.links;
+        mediaRef.current = restored.media;
         // The in-memory views follow the writes that actually landed: a piece
         // whose file refused must not be shown as if it were back.
         if (
@@ -2530,6 +2661,19 @@ export function useGround(workspacePath: string): GroundView {
         }
         if (pending.note !== null && restored.cameBack.includes("the note")) {
           notesRef.current = { ...notesRef.current, [slug]: pending.note };
+        }
+        // STORY 16.14b: the card's picture returns with the file that was
+        // written back. Only a picture that was there is shown again.
+        if (
+          pending.media !== null &&
+          pending.media.thumb !== undefined &&
+          pending.thumbSvgText !== null &&
+          restored.cameBack.includes("the picture")
+        ) {
+          thumbsRef.current = {
+            ...thumbsRef.current,
+            [slug]: thumbSrcOf(pending.thumbSvgText),
+          };
         }
         if (restored.restoredReference) {
           // The reading's state only returns with its LINE; a line that did not
@@ -2600,6 +2744,7 @@ export function useGround(workspacePath: string): GroundView {
     pulled: state.pulled,
     notes: state.notes,
     orphanNotes: state.orphanNotes,
+    orphanMedia: state.orphanMedia,
     links: state.links,
     orphanLinks: state.orphanLinks,
     malformedGround: state.malformedGround,

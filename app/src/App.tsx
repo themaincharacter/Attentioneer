@@ -84,6 +84,7 @@ import {
 } from "./turn/context";
 import type { AskPacket } from "./turn/packet";
 import { readingFor } from "./map/readings";
+import type { Media } from "./map/media";
 import { GroundWires } from "./canvas/GroundWires";
 import { GroundBubble } from "./canvas/GroundBubble";
 import { useGround } from "./canvas/useGround";
@@ -5125,6 +5126,7 @@ function App() {
         malformedGroundLinks={ground.malformedLinks}
         orphanGroundLinks={ground.orphanLinks}
         orphanGroundNotes={ground.orphanNotes}
+        orphanGroundMedia={ground.orphanMedia}
         mirrorNotice={ground.mirrorNotice}
         malformedHistory={ground.malformedHistory}
         historyNotice={ground.historyNotice}
@@ -5205,6 +5207,7 @@ function MarkNotices({
   malformedGroundLinks,
   orphanGroundLinks,
   orphanGroundNotes,
+  orphanGroundMedia,
   mirrorNotice,
   malformedHistory,
   historyNotice,
@@ -5295,6 +5298,12 @@ function MarkNotices({
    */
   orphanGroundNotes: readonly string[];
   /**
+   * Media lines whose card is gone (story 16.14b), reported under the ground
+   * group only: kept exactly where they are — never adopted into a card, never
+   * deleted, and never drawn as a picture (an orphan has no card to sit on).
+   */
+  orphanGroundMedia: readonly Media[];
+  /**
    * The mirror's one failure sentence (story 16.9), or null. The mirror is
    * DERIVED, so its failure is a notice and never a failed move; it rides the
    * ground group only, because the mirror speaks for no other map.
@@ -5366,6 +5375,7 @@ function MarkNotices({
       malformedGroundLinks.length > 0 ||
       orphanGroundLinks.length > 0 ||
       orphanGroundNotes.length > 0 ||
+      orphanGroundMedia.length > 0 ||
       mirrorNotice !== null ||
       malformedHistory.length > 0 ||
       historyNotice !== null);
@@ -5613,6 +5623,18 @@ function MarkNotices({
                   key={`orphan-ground-note-${slug}`}
                 >
                   a note for “{slug}” has no card — kept in map/notes/{slug}.md
+                </div>
+              ))}
+              {/* STORY 16.14b, the media line's honesty surface: a line whose
+                  slug has no card is KEPT and named here — never adopted into a
+                  card, never deleted, and never drawn as a picture. */}
+              {orphanGroundMedia.map((entry) => (
+                <div
+                  className="mark-notice"
+                  key={`orphan-ground-media-${entry.on}`}
+                >
+                  a media line for “{entry.on}” has no card — kept in
+                  map/media.jsonl
                 </div>
               ))}
               {/* STORY 16.5, the links' two honesty surfaces: a record line the
