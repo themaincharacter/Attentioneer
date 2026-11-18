@@ -51,7 +51,13 @@ export const NO_PROVIDER_SENTENCE =
 export const SIDECAR_UNAVAILABLE_SENTENCE =
   "the sidecar could not start, so the question goes by clipboard — use copy below.";
 
-/** What the app-sent send reports: an answer, the fallback, or a failed turn. */
+/**
+ * What the app-sent send reports: an answer, the fallback, or an ending that
+ * is NOT an answer (story 7b). The ending is typed because the record is
+ * formed from it: a stop, a break and the turn's own budget are the existing
+ * no-response, even when words arrived. The partial is a view of those words,
+ * never a response size.
+ */
 export type PacketSend =
   | {
       kind: "answered";
@@ -67,9 +73,27 @@ export type PacketSend =
     }
   | { kind: "unavailable"; sentence: string }
   | {
+      /** The person pressed stop: what arrived is kept, marked as a partial. */
+      kind: "stopped";
+      /** The words that arrived before the stop, or null for none. */
+      partial: string | null;
+      /** The messages that left before the stop (the readback's bytes). */
+      messages: readonly TurnMessage[];
+    }
+  | {
       kind: "failed";
       sentence: string;
+      /** The words that arrived before the break, when there were any. */
+      partial?: string;
       /** The messages that left before the failure (the readback's bytes). */
+      messages: readonly TurnMessage[];
+    }
+  | {
+      kind: "timed-out";
+      sentence: string;
+      /** The words that arrived before the budget ran out, when any did. */
+      partial?: string;
+      /** The messages that left before the budget ran out. */
       messages: readonly TurnMessage[];
     };
 
@@ -95,6 +119,7 @@ export interface PacketSendDeps {
 export async function sendPacketApp(
   packet: AskPacket,
   deps: PacketSendDeps,
+  onPart?: (text: string) => void,
 ): Promise<PacketSend> {
   let settings: TurnSettings;
   try {
@@ -132,7 +157,14 @@ export async function sendPacketApp(
     };
   }
 
-  const turned = await deps.turn.sendPacket(route, packet, deps.fetchBlock);
+  // The SAME options a panel streams with: the parts are a view of the text
+  // the result settles with, so the ending and the screen can never disagree.
+  const turned = await deps.turn.sendPacket(
+    route,
+    packet,
+    deps.fetchBlock,
+    onPart === undefined ? undefined : { onPart },
+  );
   if (turned.result.kind === "answer") {
     return {
       kind: "answered",
@@ -143,9 +175,30 @@ export async function sendPacketApp(
       ghost: turned.proposal ?? { kind: "none" },
     };
   }
+  // THE ENDING, TYPED (story 7b): a stopped turn is its own kind, the budget
+  // is its own, and a provider error is the third. Each carries the partial it
+  // kept, so the panel can hold the words while the record says no answer.
+  const partial =
+    turned.result.partial === undefined ? {} : { partial: turned.result.partial };
+  if (turned.result.kind === "cancelled") {
+    return {
+      kind: "stopped",
+      partial: turned.result.partial ?? null,
+      messages: turned.messages,
+    };
+  }
+  if (turned.result.kind === "timeout") {
+    return {
+      kind: "timed-out",
+      sentence: turned.result.sentence,
+      messages: turned.messages,
+      ...partial,
+    };
+  }
   return {
     kind: "failed",
     sentence: turned.result.sentence,
     messages: turned.messages,
+    ...partial,
   };
 }

@@ -4564,6 +4564,33 @@ body {
   color: #8d887c;
 }
 
+/* THE ANSWER ARRIVING (Epic 15 story 7b): the person's reading, not a message
+   bubble. A stopped, broken or timed-out partial is quieter — it keeps the
+   words but is never presented as a complete answer. PROVISIONAL: the look. */
+.ask-answer {
+  margin: 0;
+  max-height: 30vh;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #4a473f;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ask-answer[data-state="stopped"],
+.ask-answer[data-state="failed"],
+.ask-answer[data-state="timed-out"] {
+  color: #6b665c;
+}
+
+.ask-answer-note {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #8d8779;
+  font-style: italic;
+}
+
 /* THE DECLARATION (Epic 15 story 2): one quiet line naming what will go — the
    inclusion set and its sizes — and the stated fallback beside it. No accent,
    no urgency: the words are the whole surface. PROVISIONAL: the look. */

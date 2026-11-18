@@ -1,5 +1,6 @@
 import type {
   AskDeclaration,
+  AskEnding,
   AskResponse,
   AskTransport,
 } from "../contacts/ask";
@@ -205,6 +206,25 @@ export const ASK_CONTEXT_READING = "reading the included previews…";
 export const ASK_BYTES_OPEN = "the exact bytes";
 export const ASK_BYTES_CLOSE = "hide the bytes";
 export const ASK_BYTES_LABEL = "what leaves, message by message (verbatim)";
+
+/**
+ * THE PARTIAL'S ONE QUIET LINE (Epic 15 story 7b). A stopped, broken or
+ * timed-out turn keeps the words it showed, and says in one sentence that they
+ * were NOT recorded as an answer. A partial is never dressed as complete, and
+ * the record never gets a size from it.
+ */
+export function askPartialWords(ending: AskEnding): string {
+  switch (ending) {
+    case "stopped":
+      return "stopped mid-answer — this was not recorded as an answer.";
+    case "timed-out":
+      return "the provider did not answer in time — this was not recorded as an answer.";
+    case "failed":
+      return "the turn broke off — this was not recorded as an answer.";
+    case "answered":
+      return "";
+  }
+}
 
 /** The follow-up's quiet line: it asked for ONE block and got it. */
 export function askReadWords(name: string): string {

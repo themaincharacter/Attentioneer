@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Pointer } from "../map/pointers";
 import type {
+  AskEnding,
   AskResponse,
   AskTransport,
   InFlightAsk,
@@ -32,6 +33,7 @@ import {
   ASK_SHOW_LOG,
   ASK_STOP,
   ASK_TITLE,
+  askPartialWords,
   declarationWords,
   responseWords,
   transportWord,
@@ -51,6 +53,19 @@ export interface AskSessionView {
   response: AskResponse | null;
   /** A quiet sentence for the session (null otherwise). */
   note: string | null;
+  /**
+   * THE WORDS ON SCREEN (Epic 15 story 7b): the answer as it arrives, and the
+   * partial a stopped/broken/timed-out turn keeps. Never a record: the panel
+   * holds them, the ending decides what the log says.
+   */
+  partial?: string | null;
+  /**
+   * How the app-sent turn ended, when it has; null while it runs and on the
+   * clipboard routes (the Move completes on the response there). Only
+   * `answered` is an answer — every other ending is the no-response record,
+   * and the words beside it are a partial.
+   */
+  ending?: AskEnding | null;
 }
 
 /**
@@ -174,14 +189,19 @@ function rowKey(pointer: Pointer): string {
  * included CITATIONS, never a preview, so its declaration and its packet stay
  * exactly what they were. The panel never hides which transport is live.
  *
- * IN FLIGHT: the paste field is where a clipboard response comes back — the
- * ghost intake's sibling. "log it" wraps the pasted text at intake (exact byte
- * size + decode status) and appends the ONE PRISM; the panel then holds the
- * response as content and its "the log" opens the Move's own PRISM window
- * (record != visible: on demand, never a gallery). An app-sent answer arrives
- * in place, with the stop verb while the turn runs. "nothing came back" closes
- * the question with the no-response outcome. An optional attached file rides
- * the response, and the workspace-boundary rule applies to it at intake.
+ * IN FLIGHT (Epic 15 story 7b): an app-sent answer ARRIVES — the parts render
+ * as they come, with the stop verb beside them. A stop, a break or the turn's
+ * own budget KEEPS the words already on screen and marks them a partial: the
+ * one quiet sentence says it was stopped (or broke) and was not recorded as an
+ * answer. The record is formed from the ENDING, never from the bytes: only a
+ * completed turn appends the answered Change, and every other ending is the
+ * existing no-response Change with no size. So the paste field is the clipboard
+ * routes' door, not a second chance after an app-sent ending: "log it" wraps
+ * the pasted text at intake (exact byte size + decode status) and appends the
+ * ONE PRISM; "nothing came back" closes the question with the same no-response
+ * outcome. "the log" opens the Move's own PRISM window either way (record !=
+ * visible: on demand, never a gallery). An optional attached file rides the
+ * response, and the workspace-boundary rule applies to it at intake.
  *
  * THE KEEP is a SEPARATE act: a quiet button writes the response into this
  * word's memory (the existing Finding move). It never extends the PRISM — the
@@ -261,6 +281,14 @@ export function AskPanel({
   }
 
   const handoffable = ride !== null && ride.form === "url";
+  // A stopped, broken or timed-out ending: the words stay, the record says no
+  // response. Never `answered` — that one's response arrives through intake.
+  const partialEnding: AskEnding | null =
+    session?.ending !== undefined &&
+    session.ending !== null &&
+    session.ending !== "answered"
+      ? session.ending
+      : null;
   const chosenNow = included();
   const inclusionKey = chosenNow.map((pointer) => rowKey(pointer)).join("\u0001");
 
@@ -503,52 +531,96 @@ export function AskPanel({
           )}
           <div className="ask-sent">{transportWord(session.ask.transport)}</div>
 
-          {session.response === null && (
-            <>
-              <textarea
-                className="ask-response"
-                value={raw}
-                rows={5}
-                aria-label={ASK_PASTE_LABEL}
-                placeholder={ASK_PASTE_PLACEHOLDER}
-                onChange={(e) => setRaw(e.target.value)}
-              />
-              <input
-                className="ask-attach"
-                value={attach}
-                aria-label={ASK_ATTACH_LABEL}
-                placeholder={ASK_ATTACH_PLACEHOLDER}
-                onChange={(e) => setAttach(e.target.value)}
-              />
-              <div className="ask-actions">
-                <button
-                  type="button"
-                  className="ask-log"
-                  disabled={busy || raw === ""}
-                  title={ASK_LOG_IT}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (raw === "") return;
-                    onIntake(raw, attach);
-                  }}
-                >
-                  log it
-                </button>
-                <button
-                  type="button"
-                  className="ask-none"
-                  disabled={busy}
-                  title={ASK_NO_RESPONSE}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onAbandon();
-                  }}
-                >
-                  nothing came back
-                </button>
-              </div>
-            </>
+          {/* THE ANSWER ARRIVES (Epic 15 story 7b): the parts render as they
+              come, and a stop or a break KEEPS the words already on screen —
+              marked for what they are, never dressed as complete. */}
+          {(running || session.partial !== null) && (
+            <pre
+              className="ask-answer"
+              data-state={session.ending ?? "streaming"}
+              aria-live="polite"
+            >
+              {session.partial ?? ""}
+            </pre>
           )}
+
+          {/* THE ONE QUIET LINE a non-answer ending keeps: the words stayed,
+              and the record formed from this ending says no response. */}
+          {partialEnding !== null && (
+            <div className="ask-answer-note" role="status">
+              {askPartialWords(partialEnding)}
+            </div>
+          )}
+
+          {/* While the app carries a turn the stop verb stands beside the
+              arriving words: the person's stop is one of the endings. */}
+          {running && (
+            <div className="ask-actions">
+              <button
+                type="button"
+                className="ask-stop"
+                disabled={busy}
+                title={ASK_STOP}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStop();
+                }}
+              >
+                {ASK_STOP}
+              </button>
+            </div>
+          )}
+
+          {/* THE PASTE (the clipboard routes): the response comes back by
+              hand, and the Move closes on "log it" or "nothing came back". */}
+          {session.response === null &&
+            session.ending === null &&
+            !running && (
+              <>
+                <textarea
+                  className="ask-response"
+                  value={raw}
+                  rows={5}
+                  aria-label={ASK_PASTE_LABEL}
+                  placeholder={ASK_PASTE_PLACEHOLDER}
+                  onChange={(e) => setRaw(e.target.value)}
+                />
+                <input
+                  className="ask-attach"
+                  value={attach}
+                  aria-label={ASK_ATTACH_LABEL}
+                  placeholder={ASK_ATTACH_PLACEHOLDER}
+                  onChange={(e) => setAttach(e.target.value)}
+                />
+                <div className="ask-actions">
+                  <button
+                    type="button"
+                    className="ask-log"
+                    disabled={busy || raw === ""}
+                    title={ASK_LOG_IT}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (raw === "") return;
+                      onIntake(raw, attach);
+                    }}
+                  >
+                    log it
+                  </button>
+                  <button
+                    type="button"
+                    className="ask-none"
+                    disabled={busy}
+                    title={ASK_NO_RESPONSE}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAbandon();
+                    }}
+                  >
+                    nothing came back
+                  </button>
+                </div>
+              </>
+            )}
 
           {session.response !== null && (
             <>
@@ -582,6 +654,24 @@ export function AskPanel({
                 </button>
               </div>
             </>
+          )}
+
+          {/* A non-answer ending IS the Move's close: ONE no-response PRISM,
+              so the only verb left is the log — never a second record. */}
+          {partialEnding !== null && (
+            <div className="ask-actions">
+              <button
+                type="button"
+                className="ask-show-log"
+                title={ASK_SHOW_LOG}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onLog();
+                }}
+              >
+                the log
+              </button>
+            </div>
           )}
         </>
       )}

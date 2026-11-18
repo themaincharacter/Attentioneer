@@ -38,6 +38,7 @@ import {
 import type { AskPacket } from "../turn/packet";
 import {
   abandonAsk,
+  askOutcomeOf,
   intakeAskResponse,
   sendAsk,
   type AskAbandonResult,
@@ -47,6 +48,7 @@ import {
   type AskIntakeResult,
   type AskRequest,
   type AskSendResult,
+  type AskSendView,
   type InFlightAsk,
 } from "./ask";
 
@@ -263,18 +265,44 @@ export function askContactDeps(
  * THE APP-SENT ANSWER is the exception, and the queue is why it is split: the
  * turn may take a minute, so the network wait runs OUTSIDE the PRISM file's
  * queue and only the intake (wrap + ONE append) is enqueued — with the SAME
- * `intakeAskResponse` a paste uses. A failed turn or a stated fallback writes
- * nothing; a failed intake says its one sentence and leaves the file alone.
+ * `intakeAskResponse` a paste uses. A stated fallback writes nothing; a failed
+ * intake says its one sentence and leaves the file alone.
+ *
+ * THE ENDING FORMS THE RECORD (Epic 15 story 7b): a completed turn enters the
+ * answered intake; a stop, a break or the turn's own budget enters the SAME
+ * no-response path a paste-less close uses — one append, no size, even when
+ * the panel holds words. The view streams while the turn runs, but it never
+ * writes; the one record is formed here, from how the turn ended.
  */
 export async function sendAskOut(
   request: AskRequest,
-  sendApp?: (packet: AskPacket) => Promise<AskAppSend>,
+  sendApp?: (
+    packet: AskPacket,
+    onPart?: (text: string) => void,
+  ) => Promise<AskAppSend>,
+  view: AskSendView = {},
 ): Promise<AskSendResult> {
   const sent = await sendAsk(
     request,
     askContactDeps(request.workspacePath, sendApp),
+    view,
   );
-  if (sent.kind !== "sent" || sent.answer === undefined) return sent;
+  if (sent.kind !== "sent") return sent;
+  // A PARTIAL IS NEVER AN ANSWER: the ending, not the bytes, chooses the one
+  // record. A stopped/failed/timed-out turn takes the existing no-response
+  // Change (no size, no decode, no words) — exactly one append.
+  if (sent.ending !== undefined && askOutcomeOf(sent.ending) === "no-response") {
+    const ask = sent.ask;
+    return enqueue(async () => {
+      const ended = await abandonAsk(
+        ask,
+        askContactDeps(request.workspacePath),
+      );
+      if (ended.kind === "refused") return { ...sent, note: ended.reason };
+      return { ...sent, prism: ended.prism };
+    });
+  }
+  if (sent.answer === undefined) return sent;
   // A USABLE PROPOSAL IS NOT AN ASK'S RESPONSE (Epic 15 story 8): it is the
   // ghost path's, filed through the existing intake and accepted only by the
   // person. Logging it as a PRISM too would leave a record of the exchange on

@@ -163,6 +163,7 @@ import {
   closeAsk,
 } from "./contacts/prismLog";
 import type {
+  AskEnding,
   AskPointer,
   AskResponse,
   AskTransport,
@@ -762,6 +763,11 @@ function App() {
   // until the person keeps the response — the app writes neither.
   const [askSession, setAskSession] = useState<InFlightAsk | null>(null);
   const [askResponse, setAskResponse] = useState<AskResponse | null>(null);
+  // THE WORDS AS THEY ARRIVE (story 7b) and how the app-sent turn ended. The
+  // partial is KEPT after a stop/break/timeout, but the ending — not the words
+  // — is what the one record was formed from. Both are ephemeral view state.
+  const [askPartial, setAskPartial] = useState<string | null>(null);
+  const [askEnding, setAskEnding] = useState<AskEnding | null>(null);
   // The ONE PRISM the completed Ask appended, held for its window (one Move).
   const [askPrism, setAskPrism] = useState<Prism | null>(null);
   const [askSentNote, setAskSentNote] = useState<string | null>(null);
@@ -1910,6 +1916,8 @@ function App() {
   const resetAsk = useCallback(() => {
     setAskSession(null);
     setAskResponse(null);
+    setAskPartial(null);
+    setAskEnding(null);
     setAskPrism(null);
     setAskSentNote(null);
     setAskNote(null);
@@ -2077,21 +2085,27 @@ function App() {
    * where the provider facts come from.
    */
   const askSendApp = useCallback(
-    (packet: AskPacket) =>
-      sendPacketApp(packet, {
-        loadSettings: loadTurnSettings,
-        // Read at send time, for the selected provider only; the key never
-        // enters React state, a field, a log or an error sentence.
-        apiKey: readSecret,
-        turn: turnPort,
-        // The ONE follow-up's read: a block the packet already carried, its
-        // fuller text from the pull reader. Null (no read) for anything else,
-        // so a name outside the packet never widens the view.
-        fetchBlock: (name: string) =>
-          workspace === null
-            ? Promise.resolve(null)
-            : fetchAskBlock(workspace.path, name, askContext),
-      }),
+    (packet: AskPacket, onPart?: (text: string) => void) =>
+      sendPacketApp(
+        packet,
+        {
+          loadSettings: loadTurnSettings,
+          // Read at send time, for the selected provider only; the key never
+          // enters React state, a field, a log or an error sentence.
+          apiKey: readSecret,
+          turn: turnPort,
+          // The ONE follow-up's read: a block the packet already carried, its
+          // fuller text from the pull reader. Null (no read) for anything else,
+          // so a name outside the packet never widens the view.
+          fetchBlock: (name: string) =>
+            workspace === null
+              ? Promise.resolve(null)
+              : fetchAskBlock(workspace.path, name, askContext),
+        },
+        // The stream is a VIEW: the same accumulation the ending settles with,
+        // so the panel can show the words without a second copy of them.
+        onPart,
+      ),
     [workspace, askContext],
   );
 
@@ -2144,21 +2158,45 @@ function App() {
                 },
         },
         askSendApp,
+        {
+          // The Ask is in flight the moment the packet leaves: the panel shows
+          // the words arriving instead of waiting for a block. The stream is a
+          // VIEW of the bytes the ending settles with — never a record.
+          onSent: (ask) => {
+            setAskSession(ask);
+            setAskPartial(null);
+            setAskEnding(null);
+          },
+          onPart: (text) => setAskPartial(text),
+        },
       )
         .then(async (result) => {
           setAskBusy(false);
           setAskAppRunning(false);
           if (result.kind === "refused") {
+            // Nothing left, so nothing is in flight.
+            setAskSession(null);
+            setAskPartial(null);
+            setAskEnding(null);
             setAskNote(result.reason);
             return;
           }
           if (result.kind === "fallback") {
             // Nothing left: say so, and let the panel show the clipboard path.
+            // The in-flight view (if the route died on its way out) is cleared.
+            setAskSession(null);
+            setAskPartial(null);
+            setAskEnding(null);
             setAskFallback(result.reason);
             return;
           }
           setAskFallback(null);
           setAskSession(result.ask);
+          // THE ENDING SETTLES THE RECORD (story 7b): a partial is kept for the
+          // panel, but only an answered turn produced an answered record. The
+          // wiring appended the ONE no-response PRISM for every other ending.
+          setAskEnding(result.ending ?? null);
+          setAskPartial(result.partial ?? null);
           setAskSentNote(
             result.missed !== undefined && result.missed !== null
               ? ASK_READ_MISSED
@@ -2317,8 +2355,14 @@ function App() {
     () =>
       askSession === null
         ? null
-        : { ask: askSession, response: askResponse, note: askSentNote },
-    [askSession, askResponse, askSentNote],
+        : {
+            ask: askSession,
+            response: askResponse,
+            note: askSentNote,
+            partial: askPartial,
+            ending: askEnding,
+          },
+    [askSession, askResponse, askSentNote, askPartial, askEnding],
   );
 
   /**

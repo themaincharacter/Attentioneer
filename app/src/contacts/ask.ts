@@ -60,6 +60,14 @@ import {
  *      is appended with no-response and null response facts (never a zero that
  *      would look like content).
  *
+ * THE ENDING FORMS THE RECORD (Epic 15 story 7b). An app-sent turn streams its
+ * answer into the panel, and the flow reports HOW IT ENDED alongside the words:
+ * a completed turn is `answered`; a stop, a break and the turn's own budget are
+ * non-answers. The app's wiring then appends the SAME one PRISM the paste path
+ * uses: the answered Change for a completion, the existing no-response Change
+ * for everything else — even when bytes reached the screen. A partial therefore
+ * never has a response size, because a size would look like an answer's.
+ *
  * THE KEEP IS NOT HERE, BY CONSTRUCTION. Keeping what came back is the
  * existing FINDING move — the person writes the response into a reference's
  * memory (an ordinary map edit) or coins a word for it. It is a SEPARATE ACT
@@ -262,10 +270,23 @@ export function askPacket(
 }
 
 /**
- * What the app-sent route reports: one answer, the stated fallback (nothing
- * left) or one failed-turn sentence. The sender is injected so this flow never
- * imports Tauri, a sidecar or a provider row — the app wires the turn,
- * `turn/egress.ts` owns it, and bun asserts the route with a script.
+ * HOW THE TURN ENDED (Epic 15 story 7b): the record is formed from this, never
+ * from what arrived. A completed turn is `answered`; the person's stop, a
+ * break and the turn's own budget are all NON-answers, even when bytes reached
+ * the screen. The partial they leave is a view, not an outcome.
+ */
+export type AskEnding = "answered" | "stopped" | "failed" | "timed-out";
+
+/** The record's outcome for one ending: only a completed turn answers. */
+export function askOutcomeOf(ending: AskEnding): "answered" | "no-response" {
+  return ending === "answered" ? "answered" : "no-response";
+}
+
+/**
+ * What the app-sent route reports: an ending and, when it was not an answer,
+ * the partial it kept. The sender is injected so this flow never imports Tauri,
+ * a sidecar or a provider row — the app wires the turn, `turn/egress.ts` owns
+ * it, and bun asserts the route with a script.
  */
 export type AskAppSend =
   | {
@@ -282,9 +303,27 @@ export type AskAppSend =
     }
   | { kind: "unavailable"; sentence: string }
   | {
+      /** The person pressed stop: the words stay on screen, nothing answered. */
+      kind: "stopped";
+      /** The words that arrived before the stop, or null for none. */
+      partial: string | null;
+      /** The messages that left before the stop (the readback's bytes). */
+      messages?: readonly TurnMessage[];
+    }
+  | {
       kind: "failed";
       sentence: string;
+      /** The words that arrived before the break, when there were any. */
+      partial?: string;
       /** The messages that left before the failure (the readback's bytes). */
+      messages?: readonly TurnMessage[];
+    }
+  | {
+      kind: "timed-out";
+      sentence: string;
+      /** The words that arrived before the budget ran out, when any did. */
+      partial?: string;
+      /** The messages that left before the budget ran out. */
       messages?: readonly TurnMessage[];
     };
 
@@ -298,7 +337,10 @@ export interface AskContactDeps {
    * names a single READ may retrieve, and the readback needs the same bytes.
    * Absent means the app-sent route is not wired: the send falls back, stated.
    */
-  sendApp?: (packet: AskPacket) => Promise<AskAppSend>;
+  sendApp?: (
+    packet: AskPacket,
+    onPart?: (text: string) => void,
+  ) => Promise<AskAppSend>;
   /** Hand one url to the OS (the app passes the opener plugin's openUrl). */
   handOff: (url: string) => Promise<void>;
   /** The boundary's realpath (the app passes the Rust command's bridge). */
@@ -406,7 +448,31 @@ export type AskSendResult =
        * the app hands its body to the existing ghost intake and logs nothing.
        */
       ghost?: ProposalRead;
+      /**
+       * How the app-sent turn ended (story 7b). Absent on the clipboard routes:
+       * the question is merely out, and the Move completes on the response.
+       * The record is formed from THIS, never from the bytes above.
+       */
+      ending?: AskEnding;
+      /**
+       * The words that arrived before a non-answer ending — the panel keeps
+       * them, and the record does not. Never a size, never an answer.
+       */
+      partial?: string | null;
     };
+
+/**
+ * The view the send may show while it runs (Epic 15 story 7b): the in-flight
+ * Ask at the moment the packet leaves, and every accumulation of the answer as
+ * it arrives. Both are views of the same bytes the ending settles with — never
+ * a second copy, and never the record.
+ */
+export interface AskSendView {
+  /** The question has left: the panel can show the in-flight Ask at once. */
+  onSent?: (ask: InFlightAsk) => void;
+  /** The text accumulated SO FAR, on every part (the panel renders it live). */
+  onPart?: (text: string) => void;
+}
 
 /**
  * SEND one question out. The table answers first (fail-closed); the question
@@ -418,8 +484,10 @@ export type AskSendResult =
  * wraps it with the same function a paste uses. The network wait never holds
  * the PRISM file's write queue.
  *   - no provider (or no sidecar): the stated fallback, nothing logged;
- *   - a failed turn: the question is held in flight with one sentence, nothing
- *     logged here — the person pastes, or ends it, and exactly one PRISM lands.
+ *   - a stopped, failed or timed-out turn: the question left and the words
+ *     that arrived are kept as a PARTIAL, but the ending says no answer came.
+ *     Nothing is written here; the app's wiring forms the ONE record from the
+ *     ending, and a partial never receives a response size.
  *
  * THE CLIPBOARD ROUTES: copy is the packet's carrier in both — a url handoff
  * carries no question on its own, so the packet is copied first and the url is
@@ -430,6 +498,7 @@ export type AskSendResult =
 export async function sendAsk(
   request: AskRequest,
   deps: AskContactDeps,
+  view: AskSendView = {},
 ): Promise<AskSendResult> {
   const row = findContact(request.contact);
   if (row === null) return { kind: "refused", reason: NOT_AN_ASK_CONTACT };
@@ -468,23 +537,50 @@ export async function sendAsk(
     const packet = assembleAskPacket(packetInputOf(request));
     const send = deps.sendApp;
     if (send === undefined) return { kind: "fallback", reason: NO_APP_ROUTE };
+    const ask = inFlight(request, packet.text, "app");
+    // The Ask is in flight from the moment the packet leaves, not only once
+    // the turn settles: the panel streams into this same view, and a stop has
+    // a question to name while the words are still arriving.
+    view.onSent?.(ask);
     let turned: AskAppSend;
     try {
-      turned = await send(packet);
+      turned = await send(packet, view.onPart);
     } catch {
       return { kind: "fallback", reason: NO_APP_ROUTE };
     }
     if (turned.kind === "unavailable") {
       return { kind: "fallback", reason: turned.sentence };
     }
-    const ask = inFlight(request, packet.text, "app");
-    if (turned.kind === "failed") {
-      // It may have left and produced no answer: one sentence, no record yet.
-      // The panel keeps the question in flight so a paste can still log ONE.
+    // THE ENDING, NOT THE BYTES (story 7b): a stop, a break or the turn's own
+    // budget is the existing no-response, and its partial is only a view. The
+    // app's wiring appends the ONE record from this ending; nothing here writes.
+    if (turned.kind === "stopped") {
+      return {
+        kind: "sent",
+        ask,
+        note: null,
+        ending: "stopped",
+        partial: turned.partial,
+        sentMessages: turned.messages ?? packet.messages,
+      };
+    }
+    if (turned.kind === "timed-out") {
       return {
         kind: "sent",
         ask,
         note: turned.sentence,
+        ending: "timed-out",
+        partial: turned.partial ?? null,
+        sentMessages: turned.messages ?? packet.messages,
+      };
+    }
+    if (turned.kind === "failed") {
+      return {
+        kind: "sent",
+        ask,
+        note: turned.sentence,
+        ending: "failed",
+        partial: turned.partial ?? null,
         sentMessages: turned.messages ?? packet.messages,
       };
     }
@@ -494,6 +590,7 @@ export async function sendAsk(
       kind: "sent",
       ask,
       note: null,
+      ending: "answered",
       answer: turned.text,
       sentMessages: turned.messages,
       read: turned.read,
@@ -507,6 +604,8 @@ export async function sendAsk(
   const copied = await deps.copy(packet);
   if (!copied) return { kind: "refused", reason: COPY_FAILED };
 
+  const ask = inFlight(request, packet, request.transport);
+  view.onSent?.(ask);
   let note: string | null = null;
   if (request.transport === "handoff" && request.pointer !== null) {
     try {
@@ -517,7 +616,7 @@ export async function sendAsk(
   }
   return {
     kind: "sent",
-    ask: inFlight(request, packet, request.transport),
+    ask,
     note,
   };
 }
