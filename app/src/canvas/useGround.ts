@@ -283,6 +283,13 @@ export type GroundAddResult =
        */
       readback?: AskPacketReadback;
       /**
+       * STORY 17.7b — WHAT THE TURN HIT, handed to the card beside the words:
+       * the step ceiling's sentence (or null) and a READ the view did not carry
+       * (or null). View facts, never record fields: a reload forgets them.
+       */
+      reached?: string | null;
+      missed?: string | null;
+      /**
        * STORY 17.5 — the slug of the card a FORK just made, so the layer can
        * open it (a fork opens its new card). Absent on every other move.
        */
@@ -293,6 +300,14 @@ export type GroundAddResult =
       message: string;
       /** The same bytes for a turn that left and did not finish. */
       readback?: AskPacketReadback;
+      /**
+       * STORY 17.7b — WHAT THE TURN HIT, handed to the card beside the words:
+       * the step ceiling's sentence (or null) and a READ the view did not carry
+       * (or null). These are the TURN's facts, never the record's — a reload
+       * forgets them and the conversation file still holds only words.
+       */
+      reached?: string | null;
+      missed?: string | null;
       /**
        * The records were removed but a later piece refused (the unlink): the
        * card is already gone, so the layer shows the sentence where it stood
@@ -1483,6 +1498,13 @@ export interface AskTurnSend {
   result: AskSendResult;
   ending: AskEnding;
   left: boolean;
+  /**
+   * STORY 17.7b — WHAT THE TURN HIT, passed straight through to the card: the
+   * step ceiling's sentence (or null) and a READ the view did not carry (or
+   * null). Nothing here enters the record; the card is their only reader.
+   */
+  reached: string | null;
+  missed: string | null;
 }
 
 /** What recording one ask turn did: the whole conversation and its sentence. */
@@ -2674,6 +2696,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           result: { kind: "failed", sentence: TURN_SENTENCES.unreachable },
           ending: "failed",
           left: false,
+          reached: null,
+          missed: null,
         };
       }
       const current = await loadTurnSettings();
@@ -2683,6 +2707,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           result: { kind: "failed", sentence: PROVIDER_SENTENCES.nothing },
           ending: "failed",
           left: false,
+          reached: null,
+          missed: null,
         };
       }
       // The key is read NOW, for this provider only, and handed straight to the
@@ -2712,6 +2738,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         }),
         ending: askEndingOf(answered.result),
         left: true,
+        // STORY 17.7b: the ceiling and the missed READ ride beside the words,
+        // to the card and nowhere else.
+        reached: answered.reached,
+        missed: answered.missed,
       };
     },
     [turn, workspacePath],
@@ -2981,13 +3011,22 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
               [slug]: recorded.turns,
             };
             setState(snapshot());
+            // STORY 17.7b: the turn's hit facts ride out with the words, on
+            // either ending — the card says what happened beside the turn.
             outcome =
               recorded.sentence === null
-                ? { ok: true, readback: sent.result.readback }
+                ? {
+                    ok: true,
+                    readback: sent.result.readback,
+                    reached: sent.reached,
+                    missed: sent.missed,
+                  }
                 : {
                     ok: false,
                     message: recorded.sentence,
                     readback: sent.result.readback,
+                    reached: sent.reached,
+                    missed: sent.missed,
                   };
           }),
         )

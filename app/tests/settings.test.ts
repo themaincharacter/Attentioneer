@@ -329,14 +329,16 @@ describe("with nothing configured an ask is a sentence and a shortcut", () => {
     expect(html).toContain("configure");
   });
 
-  test("the ask card has no provider branch: the hook refuses with one sentence", () => {
-    // STORY 17.7 finding: the panel's dedicated "nothing configured — open
-    // settings" branch retired with it. The ask card still sends; the hook
-    // refuses the turn with PROVIDER_SENTENCES.nothing and the card shows it.
+  test("the ask card says it BEFORE the send: one sentence and the settings verb", () => {
+    // STORY 17.7b: the panel's dedicated "nothing configured — open settings"
+    // branch retired with story 17.7, and the card withheld the state until a
+    // send failed. The card now says it first; the SAME sentence a failed send
+    // shows (PROVIDER_SENTENCES.nothing) is reused, never a second wording.
+    // The one selection still lives in Settings — no selector on the card.
     const card = codeOf(source("canvas/AskCard.tsx"));
     expect(card).not.toContain("resolveSelection");
-    expect(card).not.toContain("onConfigure");
-    expect(card).not.toContain("open settings");
+    expect(card).toContain("PROVIDER_SENTENCES.nothing");
+    expect(card).toContain("open settings");
     expect(card).toContain("ask-card-problem");
     const hook = codeOf(source("canvas/useGround.ts"));
     expect(hook).toContain("PROVIDER_SENTENCES.nothing");

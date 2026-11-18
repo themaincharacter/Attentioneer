@@ -10,8 +10,11 @@ import {
   type AskTurn,
 } from "../map/asks";
 import { assembleAskCardPacket, type AskPacketCard, type AskPacketReadback } from "../turn/packet";
+import { ASK_READ_MISSED } from "./contactRules";
 import { previewOverflows, previewText } from "../map/readings";
 import { PacketSurface } from "./PacketSurface";
+import { STEP_LIMIT_SENTENCE } from "../turn/steps";
+import { PROVIDER_SENTENCES } from "../turn/providers";
 import type { GroundAddResult } from "./useGround";
 
 /**
@@ -73,11 +76,27 @@ import type { GroundAddResult } from "./useGround";
  * and still send. The re-anchor verb changes ONE field: the next turn is about
  * the reference the person chose.
  *
+ * THE PER-ASK PROVIDER SELECTOR IS GONE BY DESIGN (story 17.7, recorded in
+ * 17.7b): one selection lives in Settings. The card READS that selection and,
+ * when nothing resolves, says so BEFORE the send — one sentence and one verb
+ * to the Settings, with no question box and no send. A future story decides
+ * whether a per-card selector comes back; this card does not grow a second
+ * one, and its only post-send path stays the one existing sentence.
+ *
+ * STORY 17.7b — THE CARD SAYS WHAT THE TURN HIT. The retired panel used to
+ * surface two facts the turn computes and the card did not draw: the step
+ * ceiling (`STEP_LIMIT_SENTENCE`) and a READ the packet did not carry
+ * (`ASK_READ_MISSED`). They now ride the turn result and render as ONE quiet
+ * line each, beside the turn they belong to — no count, no internal key, no
+ * red, no icon. They are VIEW facts: the conversation file still holds only
+ * words, so a reload forgets them.
+ *
  * PROVISIONAL (ADR-0003's rendering seam): the card's size, the crop, the
  * scrollbox height and slack, the role marks, the stopped/incomplete wording,
  * story 17.5's divider and missing-parent lines and the fork/re-anchor
- * chooser's look, and story 17.6's dangling sentence, its wording and its place
- * on the "what this is" line.
+ * chooser's look, story 17.6's dangling sentence, its wording and its place
+ * on the "what this is" line, and story 17.7b's fact lines' placement and the
+ * pre-send state's wording (the sentence is reused, not new).
  */
 
 /** The quiet line an ask card with no turns shows (PROVISIONAL wording). */
@@ -188,6 +207,30 @@ export function askEndingMark(ending: AskEnding): string | null {
   return null;
 }
 
+/**
+ * STORY 17.7b — WHAT THE TURN HIT, AS THE CARD'S OWN QUIET LINES (PURE).
+ *
+ * The turn result says whether the step ceiling bit and whether a READ named a
+ * block the view did not carry. The card says each as ONE line, using the
+ * EXISTING sentence constants so no second wording exists for either fact:
+ * `STEP_LIMIT_SENTENCE` is stated, never counted ("reached", never a ratio),
+ * and `ASK_READ_MISSED` names nothing internal — the requested name does not
+ * ride the sentence. A clean turn renders nothing at all. The class is story
+ * 17.5's quiet stated line, reused rather than growing a new colour.
+ */
+export function AskTurnFactsLine({ result }: { result: GroundAddResult }) {
+  const reached = result.reached ?? null;
+  const missed = result.missed ?? null;
+  const missedSaid = missed !== null && missed.trim() !== "";
+  if (reached === null && !missedSaid) return null;
+  return (
+    <div className="ask-fork-missing">
+      {reached !== null && <div>{STEP_LIMIT_SENTENCE}</div>}
+      {missedSaid && <div>{ASK_READ_MISSED}</div>}
+    </div>
+  );
+}
+
 /** Whether a scrollbox is close enough to its bottom to keep following (PURE). */
 export function askAtBottom(
   scrollTop: number,
@@ -277,6 +320,8 @@ export function AskCard({
   anchorChoices,
   open,
   previewLines,
+  hasProvider,
+  onOpenSettings,
   onOpen,
   onClose,
   onAskTurn,
@@ -323,6 +368,20 @@ export function AskCard({
   open: boolean;
   /** How many lines the small face crops at (the stated preference). */
   previewLines: number;
+  /**
+   * STORY 17.7b — WHETHER A PROVIDER/MODEL RESOLVES, read from Settings (the
+   * one selection's home). `false` is the PRE-SEND state: one sentence and the
+   * settings verb, and the send is not offered. `null` is not yet known (the
+   * config has not answered), so nothing is claimed and the card composes as
+   * usual. Absent on a render test that only cares about the thread.
+   */
+  hasProvider?: boolean | null;
+  /**
+   * Open Settings on its Providers section — the ONE verb the pre-send state
+   * offers. Optional so a render test needs no modal; the layer always passes
+   * the app's real opener.
+   */
+  onOpenSettings?: () => void;
   onOpen: () => void;
   onClose: () => void;
   /**
@@ -377,6 +436,12 @@ export function AskCard({
    * one readback: the messages that actually left, the follow-up included.
    */
   const [sent, setSent] = useState<AskPacketReadback | null>(null);
+  /**
+   * STORY 17.7b — WHAT THE LAST SETTLED TURN HIT (the ceiling, a missed READ),
+   * or null. VIEW STATE beside `pending`: the record keeps words only, so a
+   * reload starts clean and the line describes the turn the person just saw.
+   */
+  const [hit, setHit] = useState<GroundAddResult | null>(null);
   const running = pending !== null && pending.ending === "running";
   const packet =
     anchor === undefined
@@ -455,6 +520,8 @@ export function AskCard({
     }
     const asked = question;
     setProblem(null);
+    // A new turn has its own facts; the last turn's line goes with it.
+    setHit(null);
     setStopping(false);
     stoppedRef.current = false;
     // The person's line is shown at once as the pending question; the writer
@@ -470,6 +537,9 @@ export function AskCard({
     });
     setStopping(false);
     setPending((current) => askSettlePending(current, result.ok, stoppedRef.current));
+    // STORY 17.7b: the turn's hit facts are the card's quiet lines; a clean
+    // turn hands over nulls and the component draws nothing.
+    setHit(result);
     if (result.readback !== undefined) setSent(result.readback);
     if (!result.ok) setProblem(result.message);
   }
@@ -697,6 +767,9 @@ export function AskCard({
                 />
               </div>
             )}
+            {/* STORY 17.7b — WHAT THE TURN HIT, beside the turn it belongs to:
+                one quiet line each, the existing sentences, no count. */}
+            {hit !== null && <AskTurnFactsLine result={hit} />}
           </div>
         ) : smallTurn === null ? (
           <div className="ask-card-empty">{ASK_EMPTY_SENTENCE}</div>
@@ -733,119 +806,154 @@ export function AskCard({
       )}
       {open && (
         <div className="ask-card-ask">
-          <textarea
-            className="ask-card-question"
-            value={question}
-            placeholder="your question"
-            autoFocus
-            disabled={running}
-            onChange={(e) => {
-              setQuestion(e.target.value);
-              if (problem !== null) setProblem(null);
-              // A new question is a NEW packet: the old readback no longer
-              // describes what would leave, so the declaration takes over.
-              if (sent !== null) setSent(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter" || e.shiftKey) return;
-              e.preventDefault();
-              void send();
-            }}
-          />
-          {/* THE DECLARATION AND THE READBACK, the shared PacketSurface: before
-              the send every block with its exact size and the total, then one
-              verb that opens the bytes; after it, what actually left. The
-              anchored card's crops and the thread are already here, so nothing
-              is read to declare this. */}
-          {sent === null ? (
-            packet !== null && (
-              <PacketSurface
-                declaration={packet.declaration}
-                messages={packet.messages}
-              />
-            )
-          ) : (
-            <PacketSurface messages={sent.messages} read={sent.read} />
-          )}
-          {/* STORY 17.5 — RE-ANCHOR is a verb on the expanded card: it changes
-              ONE field, so the next turn is about the newly chosen reference.
-              The chooser is the map's own card list; a choice that is already
-              gone is refused by the writer's one sentence, never repaired. */}
-          {onReanchor !== undefined && (
-            <div className="ask-card-reanchor-row">
-              {reanchorTo === null ? (
+          {/* STORY 17.7b — NOTHING CONFIGURED, SAID BEFORE THE SEND. One
+              sentence (the SAME one a failed send shows, PROVIDER_SENTENCES.
+              nothing) and one verb to Settings; no question box and no send.
+              The selector this replaced is gone by design — one selection
+              lives in Settings (story 17.7). */}
+          {hasProvider === false ? (
+            <>
+              <div className="ask-unconfigured">
+                <div className="ask-fallback">{PROVIDER_SENTENCES.nothing}</div>
+                {onOpenSettings !== undefined && (
+                  <div className="ask-card-actions">
+                    <button
+                      type="button"
+                      className="ask-configure"
+                      onClick={onOpenSettings}
+                    >
+                      open settings
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="ask-card-actions">
                 <button
                   type="button"
-                  className="ask-card-reanchor"
-                  disabled={
-                    busy || running || (anchorChoices?.length ?? 0) === 0
-                  }
-                  onClick={startReanchor}
+                  className="ask-card-close"
+                  onClick={onClose}
                 >
-                  re-anchor
+                  close
                 </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <textarea
+                className="ask-card-question"
+                value={question}
+                placeholder="your question"
+                autoFocus
+                disabled={running}
+                onChange={(e) => {
+                  setQuestion(e.target.value);
+                  if (problem !== null) setProblem(null);
+                  // A new question is a NEW packet: the old readback no longer
+                  // describes what would leave, so the declaration takes over.
+                  if (sent !== null) setSent(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || e.shiftKey) return;
+                  e.preventDefault();
+                  void send();
+                }}
+              />
+              {/* THE DECLARATION AND THE READBACK, the shared PacketSurface: before
+                  the send every block with its exact size and the total, then one
+                  verb that opens the bytes; after it, what actually left. The
+                  anchored card's crops and the thread are already here, so nothing
+                  is read to declare this. */}
+              {sent === null ? (
+                packet !== null && (
+                  <PacketSurface
+                    declaration={packet.declaration}
+                    messages={packet.messages}
+                  />
+                )
               ) : (
-                <>
-                  <select
-                    className="ask-card-reanchor-pick"
-                    aria-label="anchor this card to"
-                    value={reanchorTo}
-                    disabled={busy}
-                    onChange={(e) => setReanchorTo(e.target.value)}
-                  >
-                    {(anchorChoices ?? []).map((choice) => (
-                      <option key={choice.slug} value={choice.slug}>
-                        {choice.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="ask-card-reanchor-make"
-                    disabled={busy}
-                    onClick={() => void makeReanchor()}
-                  >
-                    make it about this
-                  </button>
-                  <button
-                    type="button"
-                    className="ask-card-reanchor-cancel"
-                    disabled={busy}
-                    onClick={() => setReanchorTo(null)}
-                  >
-                    cancel
-                  </button>
-                </>
+                <PacketSurface messages={sent.messages} read={sent.read} />
               )}
-            </div>
+              {/* STORY 17.5 — RE-ANCHOR is a verb on the expanded card: it changes
+                  ONE field, so the next turn is about the newly chosen reference.
+                  The chooser is the map's own card list; a choice that is already
+                  gone is refused by the writer's one sentence, never repaired. */}
+              {onReanchor !== undefined && (
+                <div className="ask-card-reanchor-row">
+                  {reanchorTo === null ? (
+                    <button
+                      type="button"
+                      className="ask-card-reanchor"
+                      disabled={
+                        busy || running || (anchorChoices?.length ?? 0) === 0
+                      }
+                      onClick={startReanchor}
+                    >
+                      re-anchor
+                    </button>
+                  ) : (
+                    <>
+                      <select
+                        className="ask-card-reanchor-pick"
+                        aria-label="anchor this card to"
+                        value={reanchorTo}
+                        disabled={busy}
+                        onChange={(e) => setReanchorTo(e.target.value)}
+                      >
+                        {(anchorChoices ?? []).map((choice) => (
+                          <option key={choice.slug} value={choice.slug}>
+                            {choice.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="ask-card-reanchor-make"
+                        disabled={busy}
+                        onClick={() => void makeReanchor()}
+                      >
+                        make it about this
+                      </button>
+                      <button
+                        type="button"
+                        className="ask-card-reanchor-cancel"
+                        disabled={busy}
+                        onClick={() => setReanchorTo(null)}
+                      >
+                        cancel
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              <div className="ask-card-actions">
+                <button
+                  type="button"
+                  className="ask-card-send"
+                  disabled={running}
+                  onClick={() => void send()}
+                >
+                  send
+                </button>
+                {running && (
+                  <button
+                    type="button"
+                    className="ask-card-stop"
+                    disabled={stopping}
+                    onClick={() => void stop()}
+                  >
+                    stop
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="ask-card-close"
+                  onClick={onClose}
+                >
+                  close
+                </button>
+              </div>
+            </>
           )}
-          <div className="ask-card-actions">
-            <button
-              type="button"
-              className="ask-card-send"
-              disabled={running}
-              onClick={() => void send()}
-            >
-              send
-            </button>
-            {running && (
-              <button
-                type="button"
-                className="ask-card-stop"
-                disabled={stopping}
-                onClick={() => void stop()}
-              >
-                stop
-              </button>
-            )}
-            <button
-              type="button"
-              className="ask-card-close"
-              onClick={onClose}
-            >
-              close
-            </button>
-          </div>
         </div>
       )}
       {!open && (

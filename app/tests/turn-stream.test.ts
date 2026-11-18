@@ -505,11 +505,14 @@ describe("the ask card shows arrival and stop; the ceiling is still a sentence",
     expect(card).toContain("ASK_INCOMPLETE_MARK");
     expect(card).toContain("ask-turn-mark");
     // The ceiling's sentence is still the pure one, never a counter; the
-    // turn's result still carries it. FINDING 17.7: the ask card does NOT
-    // render that sentence (the retired panel did); see the story report.
+    // turn's result carries it AND the card now renders it (story 17.7b
+    // closed 17.7's finding: the retired panel's sentence is back, in the
+    // card's own quiet line).
     expect(STEP_LIMIT_SENTENCE).toContain("reading limit");
-    expect(card).not.toContain("reached");
-    expect(card).not.toMatch(/steps\s*\//);
+    expect(card).toContain("STEP_LIMIT_SENTENCE");
+    expect(card).toContain("ASK_READ_MISSED");
+    // No counter phrasing rides anywhere in the card's source.
+    expect(card).not.toMatch(/\d+\s*(of|\/)\s*\d+/);
   });
 });
 

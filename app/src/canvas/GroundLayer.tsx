@@ -397,6 +397,15 @@ interface GroundLayerProps {
   ) => Promise<GroundAddResult>;
   /** Stop the running ask turn (the existing turn port's stop — story 17.2). */
   onStopAskTurn?: () => Promise<void>;
+  /**
+   * STORY 17.7b — WHETHER THE ONE SETTINGS SELECTION RESOLVES. The ask card
+   * says "nothing configured" BEFORE the send and offers only the settings
+   * verb; the selector itself stays in Settings (story 17.7 retired it here).
+   * `null` is not yet known, so nothing is claimed.
+   */
+  hasProvider?: boolean | null;
+  /** Open Settings on Providers — the pre-send state's ONE verb. */
+  onOpenSettings?: () => void;
   /** Move one reference to its dropped point (one line, on release). */
   onMove: (on: string, x: number, y: number) => Promise<GroundAddResult>;
   /** Re-read this reference's file (the person's press only). */
@@ -484,6 +493,8 @@ export function GroundLayer({
   onReanchorAsk,
   onAskTurn,
   onStopAskTurn,
+  hasProvider,
+  onOpenSettings,
   onMove,
   onRefresh,
   onRepoint,
@@ -702,6 +713,8 @@ export function GroundLayer({
             onClose={() => setOpenAskOn(null)}
             onAskTurn={onAskTurn}
             onStopTurn={onStopAskTurn}
+            hasProvider={hasProvider}
+            onOpenSettings={onOpenSettings}
             onForkTurn={
               onForkAsk === undefined
                 ? undefined

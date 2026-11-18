@@ -2020,6 +2020,15 @@ function App() {
   }, [refreshReadingPreference]);
 
   /**
+   * STORY 17.7b — READ THE ONE SELECTION AT START, so an ask card can say
+   * "nothing configured" BEFORE the first send. The same reading the Ask Move
+   * takes when it opens; opening it only then would leave the card guessing.
+   */
+  useEffect(() => {
+    refreshProviderFacts();
+  }, [refreshProviderFacts]);
+
+  /**
    * Open Settings on a section (story 15.10). The chrome's control and the ask
    * panels' configure shortcut both land here; opening writes nothing.
    */
@@ -4399,6 +4408,11 @@ function App() {
             onReanchorAsk={ground.reanchorAskTo}
             onAskTurn={ground.askTurn}
             onStopAskTurn={ground.askStop}
+            // STORY 17.7b — the card says "nothing configured" BEFORE a send.
+            // The one selection still lives in Settings; no per-ask selector
+            // comes back here by design (story 17.7).
+            hasProvider={askProvider}
+            onOpenSettings={() => openSettings("providers")}
             onMove={ground.move}
             onRefresh={ground.refresh}
             onRepoint={ground.repoint}

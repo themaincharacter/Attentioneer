@@ -165,6 +165,8 @@ function answered(text: string): AskTurnSend {
     result: { kind: "answer", text },
     ending: "answered",
     left: true,
+    reached: null,
+    missed: null,
   };
 }
 
@@ -173,6 +175,8 @@ function stopped(sentence: string): AskTurnSend {
     result: { kind: "failed", sentence },
     ending: "stopped",
     left: true,
+    reached: null,
+    missed: null,
   };
 }
 
@@ -366,6 +370,8 @@ describe("the join: the answer line names the Move, the person's line does not",
       result: { kind: "failed", sentence: "no provider is configured" },
       ending: "failed",
       left: false,
+      reached: null,
+      missed: null,
     };
     const recorded = await writeAskTurn(workspace, ASK, ANCHOR, INCLUDED, Q1, sent, h.io);
     expect(recorded.prism).toBeNull();
