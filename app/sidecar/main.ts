@@ -78,6 +78,12 @@ import {
   type VideoRequest,
 } from "../src/turn/protocol.ts";
 import {
+  REFUSAL_MAX_BODY_BYTES,
+  classifyRefusalBody,
+  refusalMessage,
+  refusalSentence,
+} from "../src/turn/refusal.ts";
+import {
   MODEL_LIST_LIMIT,
   MODEL_LIST_SENTENCES,
   capModelIds,
@@ -394,11 +400,47 @@ async function runTurn(request: TurnRequest): Promise<void> {
     if (stopped.has(id)) return;
 
     if (!response.ok) {
-      const reason =
-        typeof response.statusText === "string" && response.statusText.trim() !== ""
-          ? ` ${response.statusText.trim()}`
-          : "";
-      fail(`the provider answered ${response.status}${reason}`);
+      // STORY 15.16: KEEP WHAT THE PROVIDER SAID. A gateway's 400 carried the
+      // missing header's own name in its body; this branch threw that body
+      // away and answered "the provider answered 400 Bad Request", which sent
+      // a whole investigation after the catalogue and the model id.
+      // The body was never secret, so it is read ONCE, bounded, and made into
+      // one sentence beside the status — because 400 vs 429 vs 500 is still
+      // the first thing the person needs to know.
+      //
+      // 401/403 ARE ANSWERED WITHOUT READING: the actionable fact is the key,
+      // and a stubborn login page must not hold that sentence behind a body.
+      if (response.status === 401 || response.status === 403) {
+        if (response.body !== null) {
+          void response.body.cancel().catch(() => {});
+        }
+        fail(refusalSentence(response.status, response.statusText, { kind: "empty" }, null));
+        return;
+      }
+      const refusal = await readRefusal(response, REFUSAL_MAX_BODY_BYTES);
+      if (stopped.has(id)) return;
+      if (refusal.kind === "broke") {
+        // A refusal body is a courtesy, never a reason to lose the status.
+        fail(
+          `the provider answered ${response.status}: the body could not be read`,
+        );
+        return;
+      }
+      const body = classifyRefusalBody(
+        refusal.bytes,
+        response.headers.get("content-type"),
+        refusal.truncated,
+      );
+      const candidate = body.kind === "text" ? refusalMessage(body.text) : null;
+      // THE SCRUB RUNS BEFORE THE SENTENCE IS FORMED. The candidate is cleaned
+      // here, at the seam that owns the key, and only then is any wording
+      // built — so a key echoed in a provider's body (a URL, a rejected id)
+      // cannot reach the pipe, not even across the truncation boundary.
+      const scrubbed =
+        candidate === null
+          ? null
+          : scrubSecret(candidate, request.provider.apiKey);
+      fail(refusalSentence(response.status, response.statusText, body, scrubbed));
       return;
     }
 
@@ -598,6 +640,59 @@ async function readCapped(
     at += chunk.byteLength;
   }
   return { kind: "bytes", bytes, text: new TextDecoder().decode(bytes) };
+}
+
+/** What a refusal's bounded body read settled as. */
+type RefusalRead =
+  | { kind: "bytes"; bytes: Uint8Array; truncated: boolean }
+  | { kind: "broke" };
+
+/**
+ * Read a refusal's body ONCE, up to a STATED cap. Unlike a page read, a body
+ * past the cap is not a failure: the head already read is enough for one
+ * sentence, so the stream is cancelled and what arrived is kept. A body that
+ * breaks off is still the response's own status, reported rather than swallowed.
+ *
+ * There is no timer here on purpose: the turn's existing timeout is the one
+ * budget, and a stop aborts this same controller, which ends the body read.
+ */
+async function readRefusal(
+  response: Response,
+  maxBytes: number,
+): Promise<RefusalRead> {
+  const body = response.body;
+  if (body === null) {
+    return { kind: "bytes", bytes: new Uint8Array(0), truncated: false };
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+  try {
+    for (;;) {
+      const read = await reader.read();
+      if (read.done) break;
+      const chunk = read.value;
+      if (total + chunk.byteLength > maxBytes) {
+        chunks.push(chunk.subarray(0, maxBytes - total));
+        total = maxBytes;
+        truncated = true;
+        await reader.cancel().catch(() => {});
+        break;
+      }
+      chunks.push(chunk);
+      total += chunk.byteLength;
+    }
+  } catch {
+    return { kind: "broke" };
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return { kind: "bytes", bytes, truncated };
 }
 
 /** One page's response and the address it finally answered from. */
