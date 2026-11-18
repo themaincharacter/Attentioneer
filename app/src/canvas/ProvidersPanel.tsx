@@ -2,11 +2,25 @@ import { useEffect, useState } from "react";
 import {
   forgetSecret,
   keyExists,
+  readSecret,
   secretStatus,
   secretStatusWords,
   setSecret,
   type SecretStore,
 } from "../lib/secret";
+import {
+  MODEL_LIST_SENTENCES,
+  offerFetchedModels,
+  modelsFetchProblem,
+  newTickedModels,
+  truncationSentence,
+  withTickedModels,
+  type FetchedModel,
+} from "../turn/modelList";
+import {
+  createModelFetcher,
+  type ModelFetcher,
+} from "../turn/modelFetch";
 import { loadTurnSettings, saveTurnSettings } from "../turn/provider";
 import {
   cliSpecOf,
@@ -64,6 +78,12 @@ import { probeSpec } from "../turn/cliBridge";
  * Secret Service). Which one is in use is a fact about this machine, so it is
  * on screen the whole time the panel is open, not a note shown once.
  *
+ * STORY 11 ADDS ONE VERB TO AN ENDPOINT ROW: fetch models. It asks once, shows
+ * the provider's list with the row's own models already checked, and adds only
+ * what the person ticks — a fetch never writes, never removes, never renames.
+ * A command or a local model has exactly one model already, so its row says why
+ * it has no list instead of offering a verb that could only fail.
+ *
  * PROVISIONAL (ADR-0003's rendering seam): the layout, the field order and the
  * wording of the refusals.
  */
@@ -74,17 +94,37 @@ import { probeSpec } from "../turn/cliBridge";
  */
 const DEFAULT_LOCAL_SPEC: LocalSpec = LOCAL_SPECS[0];
 
+/**
+ * The app's fetcher, made ONCE: a fetch is a press, and every row's verb uses
+ * the same sidecar pipe the turns use. A test may pass its own through the
+ * prop; the render tests never press it.
+ */
+const appModelFetcher: ModelFetcher = createModelFetcher();
+
 export function ProvidersPanel({
   onChanged,
+  fetchModels = appModelFetcher,
 }: {
   /** The rows or the selection changed (the frame re-reads its facts). */
   onChanged?: () => void;
+  /** Ask a provider for its list (the sidecar's GET; a test passes a stand-in). */
+  fetchModels?: ModelFetcher;
 }) {
   const [settings, setSettings] = useState<TurnSettings | null>(null);
   const [store, setStore] = useState<SecretStore | null>(null);
   const [keys, setKeys] = useState<Record<string, boolean>>({});
   const [sentence, setSentence] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // THE FETCHED CHECKLIST (story 11): one list per row at a time. A list is
+  // what the provider OFFERED, marked where the row already has it; the ticks
+  // are the ids the person chose, and nothing is written until confirm. A
+  // failed fetch leaves both empty and only a sentence behind.
+  const [fetching, setFetching] = useState<string | null>(null);
+  const [lists, setLists] = useState<Record<string, FetchedModel[]>>({});
+  const [ticks, setTicks] = useState<Record<string, string[]>>({});
+  const [fetchNotes, setFetchNotes] = useState<Record<string, string>>({});
+  const [fetchOffered, setFetchOffered] = useState<Record<string, number>>({});
 
   // The add form's fields. One model comes with a new provider: a row with no
   // model can never resolve a turn, so the form cannot make one.
@@ -459,6 +499,9 @@ export function ProvidersPanel({
     }
     setSentence(null);
     if (await write(withProvider(settings, read.row))) {
+      // A row whose URL just changed has no checklist yet: the old list is
+      // dropped rather than offered against the new endpoint.
+      clearFetched(row.id);
       setEditing(null);
     }
   }
@@ -502,6 +545,134 @@ export function ProvidersPanel({
     await write(withProvider(settings, read.row));
   }
 
+  /**
+   * Ask the provider for its list. WHY THE KEY IS READ HERE, AT THE PRESS: the
+   * key is not panel state and is never filled into a field; it is read for
+   * this one request line and forgotten. A CLI or local row (or a base URL
+   * that fails the https rule) is refused BEFORE anything leaves, with the
+   * sentence that says why it has no list. A failed fetch writes NOTHING: the
+   * row's models are exactly as they were.
+   */
+  async function fetchModelsForRow(row: HttpProviderRow): Promise<void> {
+    if (busy || fetching !== null) return;
+    const problem = modelsFetchProblem(row);
+    if (problem !== null) {
+      setFetchNotes((current) => ({ ...current, [row.id]: problem }));
+      return;
+    }
+    setFetching(row.id);
+    setFetchNotes((current) => ({ ...current, [row.id]: "" }));
+    try {
+      const key = await readSecret(row.id);
+      const answer = await fetchModels({ baseUrl: row.baseUrl, apiKey: key });
+      if (answer.kind === "models") {
+        const offered = offerFetchedModels(row, answer.ids);
+        setLists((current) => ({ ...current, [row.id]: offered }));
+        setFetchOffered((current) => ({
+          ...current,
+          [row.id]: answer.offered,
+        }));
+        // A fresh list starts with nothing new ticked: the person's press is
+        // the only thing that ever adds a model.
+        setTicks((current) => ({ ...current, [row.id]: [] }));
+        if (offered.length === 0) {
+          setFetchNotes((current) => ({
+            ...current,
+            [row.id]: MODEL_LIST_SENTENCES.noModels,
+          }));
+        }
+        return;
+      }
+      // NO LIST: the row is untouched, and the sentence is the whole result.
+      clearFetched(row.id);
+      setFetchNotes((current) => ({
+        ...current,
+        [row.id]: answer.sentence,
+      }));
+    } finally {
+      setFetching(null);
+    }
+  }
+
+  /** Forget a row's fetched checklist (a new fetch, a write, or removal). */
+  function clearFetched(providerId: string): void {
+    setLists((current) => {
+      const next = { ...current };
+      delete next[providerId];
+      return next;
+    });
+    setTicks((current) => {
+      const next = { ...current };
+      delete next[providerId];
+      return next;
+    });
+    setFetchOffered((current) => {
+      const next = { ...current };
+      delete next[providerId];
+      return next;
+    });
+  }
+
+  /** Tick or untick one offered model (existing ones are not tickable). */
+  function toggleTick(providerId: string, modelId: string): void {
+    setTicks((current) => {
+      const chosen = current[providerId] ?? [];
+      const next = chosen.includes(modelId)
+        ? chosen.filter((id) => id !== modelId)
+        : [...chosen, modelId];
+      return { ...current, [providerId]: next };
+    });
+  }
+
+  /**
+   * Add the TICKED models to the row. The write is the ordinary config write
+   * through validateProviderRow, so the row still has to be a row the app can
+   * act on. Existing models are carried through by withTickedModels: a fetch
+   * can add, never remove and never rename.
+   */
+  async function addTicked(row: HttpProviderRow): Promise<void> {
+    if (settings === null || busy) return;
+    const fresh = newTickedModels(row, ticks[row.id] ?? []);
+    if (fresh.length === 0) {
+      setFetchNotes((current) => ({
+        ...current,
+        [row.id]: MODEL_LIST_SENTENCES.nothingTicked,
+      }));
+      return;
+    }
+    const next = withTickedModels(row, fresh);
+    const read = validateProviderRow(
+      {
+        id: row.id,
+        name: row.name,
+        baseUrl: row.baseUrl,
+        models: next.models.map((model) => ({
+          id: model.id,
+          name: model.name,
+          tools: model.capabilities.tools,
+          vision: model.capabilities.vision,
+          contextWindow: model.capabilities.contextWindow,
+        })),
+      },
+      settings.providers
+        .map((provider) => provider.id)
+        .filter((id) => id !== row.id),
+    );
+    if (read.kind === "refused") {
+      setSentence(read.sentence);
+      return;
+    }
+    setSentence(null);
+    // THE ROW IS WRITTEN ONLY NOW, on confirm, and only with the ticks: the
+    // fetch itself had no write path at all.
+    if (!(await write(withProvider(settings, read.row)))) return;
+    clearFetched(row.id);
+    setFetchNotes((current) => ({
+      ...current,
+      [row.id]: MODEL_LIST_SENTENCES.added,
+    }));
+  }
+
   async function removeProvider(row: ProviderRow): Promise<void> {
     if (settings === null || busy) return;
     // A running local child belongs to its row: stopping it here means a
@@ -518,6 +689,12 @@ export function ProvidersPanel({
     setSentence(null);
     if (await write(withoutProvider(settings, row.id))) {
       setKeys((current) => {
+        const next = { ...current };
+        delete next[row.id];
+        return next;
+      });
+      clearFetched(row.id);
+      setFetchNotes((current) => {
         const next = { ...current };
         delete next[row.id];
         return next;
@@ -883,6 +1060,24 @@ export function ProvidersPanel({
                 )}
                 </>
               )}
+              {/* FETCH IS FOR AN ENDPOINT ONLY: the provider publishes a list;
+                  a command and a local model have exactly one model already,
+                  and the span says so instead of offering a verb that could
+                  only fail. */}
+              {provider.kind === "http" ? (
+                <button
+                  type="button"
+                  className="providers-fetch"
+                  disabled={fetching !== null || busy}
+                  onClick={() => void fetchModelsForRow(provider)}
+                >
+                  {fetching === provider.id ? "asking…" : "fetch models"}
+                </button>
+              ) : (
+                <span className="providers-fetch-none">
+                  {modelsFetchProblem(provider)}
+                </span>
+              )}
               {provider.kind === "cli" && (
                 <button
                   type="button"
@@ -949,6 +1144,66 @@ export function ProvidersPanel({
                 remove
               </button>
             </div>
+
+            {/* THE FETCHED CHECKLIST: every id the provider offered, the ones
+                already on the row checked and locked, the rest waiting for a
+                tick. The confirm is the only write in this block. */}
+            {provider.kind === "http" &&
+              lists[provider.id] !== undefined && (
+                <div className="providers-fetch-list">
+                  <span className="providers-add-title">
+                    the provider's models
+                  </span>
+                  {fetchOffered[provider.id] !== undefined &&
+                    fetchOffered[provider.id] > lists[provider.id].length && (
+                      <span className="providers-note">
+                        {truncationSentence(
+                          fetchOffered[provider.id],
+                          lists[provider.id].length,
+                        )}
+                      </span>
+                    )}
+                  {lists[provider.id].map((model) => (
+                    <label
+                      className="providers-fetch-option"
+                      key={model.id}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={
+                          model.onRow ||
+                          (ticks[provider.id] ?? []).includes(model.id)
+                        }
+                        disabled={model.onRow || busy}
+                        onChange={() => toggleTick(provider.id, model.id)}
+                      />
+                      <span className="providers-fetch-id">{model.id}</span>
+                      {model.onRow && (
+                        <span className="providers-fetch-on-row">
+                          already on the row
+                        </span>
+                      )}
+                    </label>
+                  ))}
+                  <div className="providers-actions">
+                    <button
+                      type="button"
+                      className="providers-fetch-add"
+                      disabled={busy}
+                      onClick={() => void addTicked(provider)}
+                    >
+                      add the ticked models
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            {provider.kind === "http" &&
+              (fetchNotes[provider.id] ?? "") !== "" && (
+                <div className="providers-note" role="status">
+                  {fetchNotes[provider.id]}
+                </div>
+              )}
 
             {/* One more model on this row, refused if it shares an id with one
                 already there (two rows with one id would resolve two ways). */}

@@ -2,6 +2,11 @@
  * THE TURN'S WIRE — one envelope, one strict reader, one set of builders
  * (Epic 15 story 1; ADR-0034's transport, implemented not decided).
  *
+ * STORY 15.11 ADDS ONE REQUEST AND ONE LINE, not a second wire: a `models`
+ * request asks the sidecar for the provider's own model list, and a `models`
+ * line carries what it found. The key still rides inside a request line and
+ * nowhere else, and an error is still ONE sentence, already scrubbed.
+ *
  * Newline-delimited JSON travels in BOTH directions over stdio, so every
  * builder here answers exactly one line (JSON.stringify never emits a raw
  * newline) and every reader REFUSES rather than guesses: a malformed line is
@@ -71,13 +76,44 @@ export interface CancelledLine {
   kind: "cancelled";
 }
 
+/**
+ * Where a model list comes from (story 15.11): the row's base URL and the key
+ * for exactly this one fetch. There is no model: asking for a list is asking
+ * before one is chosen.
+ */
+export interface ModelListProvider {
+  /** The provider's base URL; `/models` is appended by the sidecar. */
+  baseUrl: string;
+  /** The key for this fetch ONLY. It may be empty for a keyless loopback. */
+  apiKey: string;
+}
+
+/** One id the provider listed, as the wire carries it. */
+export interface ModelIdLine {
+  id: string;
+}
+
+/**
+ * The provider's list: ids, sorted and de-duplicated by the sidecar. `offered`
+ * is present only when the cap dropped some — it says how many there were, so
+ * the window can state the truncation without keeping a count of its own.
+ */
+export interface ModelsLine {
+  id: number;
+  kind: "models";
+  models: ModelIdLine[];
+  /** How many ids the provider offered before the cap, when it truncated. */
+  offered?: number;
+}
+
 /** What the window may read from the sidecar's stdout. */
 export type SidecarLine =
   | HelloLine
   | TextPartLine
   | DoneLine
   | ErrorLine
-  | CancelledLine;
+  | CancelledLine
+  | ModelsLine;
 
 /** One turn's request. The messages are ALL that leaves the app. */
 export interface TurnRequest {
@@ -87,14 +123,25 @@ export interface TurnRequest {
   messages: TurnMessage[];
 }
 
-/** Stop the in-flight turn with this id; the sidecar answers `cancelled`. */
+/**
+ * Ask the provider for its model list (story 15.11). No messages, no model:
+ * it is the request a person's press makes, and it is answered by ONE `models`
+ * line or ONE `error` line.
+ */
+export interface ModelsRequest {
+  id: number;
+  kind: "models";
+  provider: ModelListProvider;
+}
+
+/** Stop the in-flight turn — or model fetch — with this id; `cancelled` answers. */
 export interface StopRequest {
   id: number;
   kind: "stop";
 }
 
 /** What the sidecar may read from its stdin. */
-export type SidecarRequest = TurnRequest | StopRequest;
+export type SidecarRequest = TurnRequest | ModelsRequest | StopRequest;
 
 /* ------------------------------------------------------------------ *
  * Builders — each answer ONE line, ready for the pipe.
@@ -130,6 +177,32 @@ export function errorLine(id: number, message: string): string {
 
 export function cancelledLine(id: number): string {
   return JSON.stringify({ id, kind: "cancelled" });
+}
+
+/** The fetch's request line: one endpoint, one key, no model. */
+export function modelsRequestLine(
+  id: number,
+  provider: ModelListProvider,
+): string {
+  return JSON.stringify({ id, kind: "models", provider });
+}
+
+/**
+ * The list, one line. `offered` rides ONLY when the cap dropped some: a line
+ * that truncated says so, and a line that did not carries no count to misread.
+ */
+export function modelsLine(
+  id: number,
+  models: readonly string[],
+  offered?: number,
+): string {
+  const line: Record<string, unknown> = {
+    id,
+    kind: "models",
+    models: models.map((model) => ({ id: model })),
+  };
+  if (offered !== undefined) line.offered = offered;
+  return JSON.stringify(line);
 }
 
 /* ------------------------------------------------------------------ *
@@ -168,6 +241,42 @@ function isProvider(value: unknown): value is TurnProvider {
   );
 }
 
+/** A model-list provider: a base URL and a key that may be empty. */
+function isModelListProvider(value: unknown): value is ModelListProvider {
+  if (!isRecord(value)) return false;
+  return isNonEmptyString(value.baseUrl) && typeof value.apiKey === "string";
+}
+
+/** Read one `models` line; null for anything that is not exactly that line. */
+function readModelsLine(
+  id: number,
+  value: Record<string, unknown>,
+): ModelsLine | null {
+  if (!Array.isArray(value.models)) return null;
+  const models: ModelIdLine[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value.models) {
+    if (!isRecord(candidate) || !isNonEmptyString(candidate.id)) return null;
+    const modelId = candidate.id.trim();
+    // The sidecar de-duplicates before it writes; a duplicate is a broken line.
+    if (seen.has(modelId)) return null;
+    seen.add(modelId);
+    models.push({ id: modelId });
+  }
+  if (value.offered === undefined) {
+    return { id, kind: "models", models };
+  }
+  const offered = value.offered;
+  if (
+    typeof offered !== "number" ||
+    !Number.isInteger(offered) ||
+    offered < models.length
+  ) {
+    return null;
+  }
+  return { id, kind: "models", models, offered };
+}
+
 /**
  * Parse one line the SIDECAR wrote. `null` for anything that is not exactly a
  * line of this wire: bad JSON, a missing id, an unknown kind, a part that is
@@ -204,6 +313,9 @@ export function parseSidecarLine(raw: string): SidecarLine | null {
   if (value.kind === "cancelled") {
     return { id: value.id, kind: "cancelled" };
   }
+  if (value.kind === "models") {
+    return readModelsLine(value.id, value);
+  }
   return null;
 }
 
@@ -223,6 +335,17 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
 
   if (value.kind === "stop") {
     return { id: value.id, kind: "stop" };
+  }
+  if (value.kind === "models") {
+    if (!isModelListProvider(value.provider)) return null;
+    return {
+      id: value.id,
+      kind: "models",
+      provider: {
+        baseUrl: value.provider.baseUrl,
+        apiKey: value.provider.apiKey,
+      },
+    };
   }
   if (value.kind !== "turn") return null;
   if (!isProvider(value.provider)) return null;

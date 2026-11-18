@@ -7,7 +7,9 @@
  * turn is only reachable by the parent that already holds the pipe. The host
  * (Tauri) owns the child: it spawns on first use, writes request lines and
  * reads response lines, and kills the child when the app exits. This file is
- * therefore a FILTER, not a service: stdin in, one provider POST, stdout out.
+ * therefore a FILTER, not a service: stdin in, one provider request, stdout
+ * out. Story 15.11 adds a second request kind — a model list's `GET` — to the
+ * same filter; the app still makes no other network call.
  *
  * WHY THE KEY IS IN MEMORY: the key arrives inside a request line, is used for
  * exactly one `fetch`, and is not stored by this process. Nothing is written
@@ -39,13 +41,22 @@ import {
   doneLine,
   errorLine,
   helloLine,
+  modelsLine,
   parseRequestLine,
   partLine,
   requestIdOf,
   scrubSecret,
+  type ModelsRequest,
   type SidecarRequest,
   type TurnRequest,
 } from "../src/turn/protocol.ts";
+import {
+  MODEL_LIST_LIMIT,
+  MODEL_LIST_SENTENCES,
+  capModelIds,
+  providerRefusal,
+  readModelIds,
+} from "../src/turn/modelList.ts";
 
 /**
  * One serialized writer: lines must reach the pipe in the order they were
@@ -71,6 +82,11 @@ const stopped = new Set<number>();
 /** `{baseUrl}` + `/chat/completions`, tolerating a trailing slash. */
 function endpointOf(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "") + "/chat/completions";
+}
+
+/** `{baseUrl}` + `/models`, the same tolerance (story 15.11). */
+function modelsEndpointOf(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "") + "/models";
 }
 
 /**
@@ -383,10 +399,92 @@ async function runTurn(request: TurnRequest): Promise<void> {
 }
 
 /**
- * A stop for an in-flight turn: answer `cancelled` NOW (the request may be
- * waiting on a slow provider), then abort the fetch so the process lets go of
- * it. A stop naming an id there is nothing to stop is ignored — there is no
- * turn to answer for.
+ * Fetch ONE provider's model list (story 15.11). Same envelope, same fetch
+ * idiom, same one-sentence failure: a GET to `{baseUrl}/models` with the
+ * bearer key, read as the OpenAI shape, de-duplicated, sorted and capped.
+ *
+ * THREE THINGS THIS DELIBERATELY DOES NOT DO: it does not retry (a fetch is
+ * the person's press), it does not cache anything on disk (there is nothing
+ * here to cache into), and it does not write a row — the window decides what
+ * the person ticked, and only then writes. A keyless loopback endpoint is a
+ * legitimate list, so an empty key omits the bearer header rather than sending
+ * "Bearer " with nothing after it.
+ */
+async function runModels(request: ModelsRequest): Promise<void> {
+  const id = request.id;
+  const controller = new AbortController();
+  inFlight.set(id, controller);
+
+  const fail = (message: string): void => {
+    say(errorLine(id, scrubSecret(message, request.provider.apiKey)));
+  };
+
+  try {
+    const headers: Record<string, string> = { accept: "application/json" };
+    if (request.provider.apiKey !== "") {
+      headers.authorization = `Bearer ${request.provider.apiKey}`;
+    }
+    let response: Response;
+    try {
+      response = await fetch(modelsEndpointOf(request.provider.baseUrl), {
+        method: "GET",
+        headers,
+        signal: controller.signal,
+      });
+    } catch {
+      if (!stopped.has(id)) fail(MODEL_LIST_SENTENCES.unreachable);
+      return;
+    }
+    if (stopped.has(id)) return;
+    if (!response.ok) {
+      fail(providerRefusal(response.status));
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await response.text();
+    } catch {
+      if (!stopped.has(id)) fail(MODEL_LIST_SENTENCES.brokeOff);
+      return;
+    }
+    if (stopped.has(id)) return;
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      fail(MODEL_LIST_SENTENCES.notJson);
+      return;
+    }
+    const ids = readModelIds(payload);
+    if (ids === null) {
+      fail(MODEL_LIST_SENTENCES.notTheShape);
+      return;
+    }
+    if (ids.length === 0) {
+      fail(MODEL_LIST_SENTENCES.noModels);
+      return;
+    }
+    const capped = capModelIds(ids, MODEL_LIST_LIMIT);
+    say(
+      modelsLine(
+        id,
+        capped.ids,
+        capped.truncated ? capped.offered : undefined,
+      ),
+    );
+  } finally {
+    inFlight.delete(id);
+    stopped.delete(id);
+  }
+}
+
+/**
+ * A stop for an in-flight turn or model fetch: answer `cancelled` NOW (the
+ * request may be waiting on a slow provider), then abort the fetch so the
+ * process lets go of it. A stop naming an id there is nothing to stop is
+ * ignored — there is no turn to answer for.
  */
 function stopTurn(id: number): void {
   const controller = inFlight.get(id);
@@ -415,6 +513,10 @@ function handleLine(raw: string): void {
   }
   // Not awaited: turns are concurrent by id, and the read loop must keep
   // reading so a stop can arrive while a provider is slow.
+  if (request.kind === "models") {
+    void runModels(request);
+    return;
+  }
   void runTurn(request);
 }
 
