@@ -7424,3 +7424,151 @@ body {
     transition: none !important;
   }
 }
+
+
+/* ------------------------------------------------------------------------- *
+ * STORY 17.1 — THE ASK CARD: a conversation about a reference, on the plane
+ * beside it. Same grammar and same fixed card shape as a reference (name →
+ * what this is → the crop), so the map stays one surface; the body holds the
+ * exchange instead of a reading. The small face crops the conversation at the
+ * person's stated count; the expanded face shows it whole and offers the one
+ * question field and its send.
+ *
+ * PROVISIONAL (ADR-0003's rendering seam): the size, the crop and the verbs'
+ * look. Story 17.2 owns the thread's face, 17.5 fork and 17.6 the dangling
+ * anchor's sentence — nothing here anticipates them, and nothing counts.
+ * ------------------------------------------------------------------------- */
+.ask-card {
+  position: absolute;
+  pointer-events: auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 300px;
+  height: 220px;
+  padding: 9px 13px 8px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid var(--ink-rule);
+  border-radius: 8px;
+  box-shadow: 0 1px 5px rgba(40, 35, 25, 0.06);
+  user-select: none;
+  cursor: pointer;
+  animation: fade-in var(--motion-base) var(--ease-out);
+}
+
+.ask-card.expanded {
+  z-index: 6;
+  width: 520px;
+  height: 420px;
+  padding: 14px 16px 12px;
+  cursor: default;
+}
+
+.ask-card-name {
+  font-size: 17px;
+  color: var(--ink-strong);
+}
+
+.ask-card-kind {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--ink-marker);
+}
+
+.ask-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-card.expanded .ask-card-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ask-card-exchange {
+  font-size: 12px;
+  line-height: 1.625;
+  color: var(--ink-body);
+  white-space: pre-wrap;
+}
+
+.ask-card-empty,
+.ask-card-stream {
+  font-size: 12px;
+  line-height: 1.625;
+  color: var(--ink-faint);
+}
+
+.ask-card-stream {
+  white-space: pre-wrap;
+  color: var(--ink-body);
+}
+
+.ask-card-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(141, 136, 124, 0.16);
+}
+
+.ask-card-question {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 46px;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-strong);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 4px 6px;
+  outline: none;
+}
+
+.ask-card-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.ask-card-actions button,
+.ask-card-open {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink-marker);
+  cursor: pointer;
+}
+
+.ask-card-actions button:hover,
+.ask-card-open:hover {
+  color: var(--ink-strong);
+}
+
+.ask-card-actions button:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+}
+
+.ask-card-problem {
+  font-size: 11.5px;
+  color: var(--ink-marker);
+}
+
+.ask-card-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ground-ask-card {
+  font-style: italic;
+}

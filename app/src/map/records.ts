@@ -66,6 +66,26 @@ export const GROUND_RECORD_FILE = {
 } as const;
 
 /**
+ * THE ASK CARD'S OWN RECORD (Epic 17 story 1). It is a NEW family beside the
+ * ground records, not a reading: one `map/asks.txt` line per ask card and one
+ * conversation file per card under `map/asks/`. PROVISIONAL with the rest —
+ * the names, the line shape and the folder may move when an ADR settles them.
+ * Kept out of `GROUND_RECORD_FILE` because an ask card is not a ground
+ * reference and has no reading, note, media or link of its own.
+ */
+export const ASK_RECORD_FILE = {
+  /** One line per ask card: `on | name | x | y | anchor`. */
+  asks: "asks.txt",
+} as const;
+
+/**
+ * The ask cards' conversation folder, beside `map/asks.txt`: one
+ * `<slug>.jsonl` per card, one turn per line. Story 17.1 writes exactly one
+ * exchange; 17.2 reads the same shape as a thread, so no migration is needed.
+ */
+export const ASK_TURNS_DIR = "asks";
+
+/**
  * The ground readings' text folder, beside `map/readings.txt`: one
  * `<slug>.md` per reading, holding the file's opening lines as read. The
  * name is provisional with the record shape; it is the one folder the ground

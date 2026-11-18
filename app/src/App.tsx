@@ -590,7 +590,10 @@ function App() {
   // `map/readings.txt` and `map/readings/<slug>.md` whenever the workspace
   // opens, and written through its own per-file queue. The concept map's
   // reload never touches it (the maps are separate, ADR-0032).
-  const ground = useGround(workspace?.path ?? "");
+  // STORY 17.1: the ground hook also owns the ask cards' records; the turn
+  // port is the SAME one the card's embedded ask panel uses, so an ask card
+  // reuses the existing card-ask path rather than growing a second one.
+  const ground = useGround(workspace?.path ?? "", turnPort);
 
   // The step's run (Epic 8 story 3, ADR-0022): an EPHEMERAL read of the ACTIVE
   // model, held in memory and never written. The key is the model's identity —
@@ -4393,6 +4396,10 @@ function App() {
             notes={ground.notes}
             pulled={ground.pulled}
             states={ground.states}
+            asks={ground.asks}
+            askTurns={ground.askTurns}
+            onCreateAsk={ground.createAsk}
+            onAskTurn={ground.askTurn}
             onMove={ground.move}
             onRefresh={ground.refresh}
             onRepoint={ground.repoint}
@@ -5210,6 +5217,7 @@ function App() {
         orphanPointers={orphanPointers}
         malformedGround={ground.malformedGround}
         malformedReadings={ground.malformedReadings}
+        malformedAsks={ground.malformedAsks}
         malformedGroundLinks={ground.malformedLinks}
         orphanGroundLinks={ground.orphanLinks}
         orphanGroundNotes={ground.orphanNotes}
@@ -5291,6 +5299,7 @@ function MarkNotices({
   orphanPointers,
   malformedGround,
   malformedReadings,
+  malformedAsks,
   malformedGroundLinks,
   orphanGroundLinks,
   orphanGroundNotes,
@@ -5370,6 +5379,13 @@ function MarkNotices({
    */
   malformedGround: readonly string[];
   malformedReadings: readonly string[];
+  /**
+   * STORY 17.1: unreadable lines in `map/asks.txt`, preserved by every write
+   * and surfaced here under the ground group only (the ask cards live on that
+   * map). The ask cards' conversations are JSONL and keep their own malformed
+   * lines in place; story 17.2 owns showing a conversation's damage.
+   */
+  malformedAsks: readonly string[];
   /**
    * The ground map's WORDLESS links (story 16.5): unreadable lines in
    * `map/ground-links.txt`, and links whose endpoint is not a reference the
@@ -5459,6 +5475,7 @@ function MarkNotices({
     level === "ground" &&
     (malformedGround.length > 0 ||
       malformedReadings.length > 0 ||
+      malformedAsks.length > 0 ||
       malformedGroundLinks.length > 0 ||
       orphanGroundLinks.length > 0 ||
       orphanGroundNotes.length > 0 ||
@@ -5699,6 +5716,16 @@ function MarkNotices({
                   key={`malformed-readings-${index}`}
                 >
                   unreadable line in map/readings.txt: {line}
+                </div>
+              ))}
+              {/* STORY 17.1: an unreadable line in map/asks.txt is the ask
+                  cards' honesty surface, kept by every write and named here. */}
+              {malformedAsks.map((line, index) => (
+                <div
+                  className="mark-notice"
+                  key={`malformed-asks-${index}`}
+                >
+                  unreadable line in map/asks.txt: {line}
                 </div>
               ))}
               {/* STORY 16.6, the note's honesty surface: a file whose slug has

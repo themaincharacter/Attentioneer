@@ -23,6 +23,20 @@ import {
   type HistoryEvent,
 } from "../map/history";
 import {
+  ASK_MISSING_REFUSAL,
+  ASK_SOURCE_REFUSAL,
+  addAsk,
+  appendExchange,
+  askQuestionRefusal,
+  askRefusal,
+  loadAskTurns,
+  loadAsks,
+  saveAsks,
+  sharedSlugs,
+  type AskCard,
+  type AskTurn,
+} from "../map/asks";
+import {
   addGroundReference,
   loadGround,
   moveGroundReference,
@@ -111,6 +125,22 @@ import {
   type PageImage,
   type VideoFetchAnswer,
 } from "../turn/pageFetch";
+import { readSecret } from "../lib/secret";
+import {
+  cardAskContext,
+  fetchAskBlock,
+  type AskContext,
+} from "../turn/context";
+import { assembleCardPacket, type AskPacket } from "../turn/packet";
+import { loadTurnSettings } from "../turn/provider";
+import { PROVIDER_SENTENCES, resolveSelection } from "../turn/providers";
+import {
+  TURN_SENTENCES,
+  routeOf,
+  turnSentence,
+  type TurnPort,
+  type TurnResult,
+} from "../turn/turn";
 
 /**
  * The ground map's loaded state and its one write path (story 16.1; story 16.2
@@ -246,6 +276,20 @@ export type GroundAddResult =
 /** Everything the ground layer renders, loaded from the map folder. */
 export interface GroundView {
   references: readonly GroundReference[];
+  /**
+   * STORY 17.1 — every ask card, in FILE ORDER. An ask card is its own record
+   * family (`map/asks.txt`), beside the ground references and never a reading:
+   * it has no reading text and no note, only a name, a point and an anchor.
+   */
+  asks: readonly AskCard[];
+  /**
+   * Each ask card's conversation, keyed by slug (story 17.1). The words live in
+   * `map/asks/<slug>.jsonl`, one line per turn; an absent file is an empty
+   * conversation, never an invented one.
+   */
+  askTurns: Readonly<Record<string, readonly AskTurn[]>>;
+  /** Unreadable `map/asks.txt` lines, preserved and surfaced. */
+  malformedAsks: readonly string[];
   readings: readonly Reading[];
   /**
    * Each media-bearing card's line (story 16.14): the page's title and its
@@ -338,6 +382,32 @@ export interface GroundView {
   restoreNotice: string | null;
   /** The map folder's ground records have been read once. */
   loaded: boolean;
+  /**
+   * STORY 17.1 — MAKE AN ASK CARD beside a reference: one `map/asks.txt` line,
+   * with a name the person accepted or edited and an `anchor` field naming the
+   * reference it is about. The anchor is a FIELD, never a link; a blank name
+   * refuses before anything is queued, and the source card's files are never
+   * touched. The shared slug space (both files) mints the new slug.
+   */
+  createAsk: (
+    sourceSlug: string,
+    name: string,
+    x: number,
+    y: number,
+  ) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.1 — ASK ONE QUESTION inside an ask card: the existing card-ask
+   * turn path (the packet anchored on the reference, the person's question),
+   * and then ONE append-only write of the exchange — the person's line always,
+   * the answer line only when the turn answered. No PRISM yet (story 17.4 owns
+   * it), no history line and no mirror (story 17.8), and the reference card is
+   * never touched.
+   */
+  askTurn: (
+    slug: string,
+    question: string,
+    onPart?: (text: string) => void,
+  ) => Promise<GroundAddResult>;
   /** Add one reference from a picked text file (the one create write). */
   create: (
     name: string,
@@ -433,6 +503,8 @@ export interface GroundView {
 /** The view without its verbs: what the load and every write render. */
 type GroundLoaded = Omit<
   GroundView,
+  | "createAsk"
+  | "askTurn"
   | "create"
   | "createSelection"
   | "createPage"
@@ -452,6 +524,9 @@ type GroundLoaded = Omit<
 
 const EMPTY: GroundLoaded = {
   references: [],
+  asks: [],
+  askTurns: {},
+  malformedAsks: [],
   readings: [],
   media: [],
   orphanMedia: [],
@@ -1059,8 +1134,16 @@ export async function writeSelectionCard(
   text: string,
   taken: string,
   io: SelectionIo = SELECTION_IO,
+  /** STORY 17.1: the SHARED slug set (ground + asks); default references only. */
+  options: { taken?: ReadonlySet<string> } = {},
 ): Promise<SelectionRecords> {
-  const addition = addGroundReference(references, name.trim(), x, y);
+  const addition = addGroundReference(
+    references,
+    name.trim(),
+    x,
+    y,
+    options.taken,
+  );
   const reading = selectionReading(addition.reference.on, sourceSlug, taken);
   await io.storeSelectionText(workspacePath, reading.on, text);
   const nextReadings = withReading(readings, reading);
@@ -1070,6 +1153,122 @@ export async function writeSelectionCard(
     references: addition.references,
     readings: nextReadings,
     reading,
+  };
+}
+
+/* ------------------------------------------------------------------------- *
+ * STORY 17.1 — THE ASK CARD'S RECORD: one `map/asks.txt` line, and one
+ * append-only conversation write.
+ *
+ * The creation is the ground add's shape with the anchor in place of a reading:
+ * ONE queued write of the ask line, and NOTHING else — no reading text, no
+ * note, no media, no link and no touch of the reference card. The shared slug
+ * space (both files) mints the slug, so a link, a mention or an anchor can
+ * always resolve to exactly one card.
+ *
+ * The turn is the existing card-ask path's: the app sends the packet anchored
+ * on the reference, and only what CAME BACK is written here. The person's line
+ * is always appended; the answer line only when the turn actually answered. A
+ * failed or stopped turn therefore leaves the person's line alone and hands
+ * back the ONE sentence the card shows. A partial is never an answer (story
+ * 17.4 owns PRISM and that rule's record).
+ * ------------------------------------------------------------------------- */
+
+/** The bridges an ask card's creation needs; a test passes its own fakes. */
+export interface AskCardIo {
+  saveAsks: typeof saveAsks;
+}
+
+/** The real bridges, bound once so the hook's path is the tested one. */
+const ASK_CARD_IO: AskCardIo = { saveAsks };
+
+/** What making an ask card produced: the next lines and the new card. */
+export interface AskCardRecords {
+  asks: AskCard[];
+  ask: AskCard;
+}
+
+/**
+ * STORY 17.1 — WRITE ONE ASK CARD, in the house order: the ask line only, and
+ * the slug minted against BOTH slugs files (the ground references and the asks
+ * already on the map). A blank name is the caller's refusal (it never reaches
+ * here), and the source card is only NAMED by the anchor field — nothing about
+ * it is read, rewritten or repaired. PURE apart from the bridge it is handed.
+ */
+export async function writeAskCard(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  asks: readonly AskCard[],
+  malformedAsks: readonly string[],
+  sourceSlug: string,
+  name: string,
+  x: number,
+  y: number,
+  io: AskCardIo = ASK_CARD_IO,
+): Promise<AskCardRecords> {
+  const addition = addAsk(
+    asks,
+    sharedSlugs(references, asks),
+    name.trim(),
+    x,
+    y,
+    sourceSlug,
+  );
+  await io.saveAsks(workspacePath, addition.asks, malformedAsks);
+  return { asks: addition.asks, ask: addition.ask };
+}
+
+/** The bridges an ask turn's record write needs; a test passes its own fakes. */
+export interface AskTurnIo {
+  appendExchange: typeof appendExchange;
+}
+
+/** The real bridges, bound once so the hook's path is the tested one. */
+const ASK_TURN_IO: AskTurnIo = { appendExchange };
+
+/**
+ * What one ask turn settled as: the answer's words, or the one sentence the
+ * card shows instead. A stopped, timed-out or broken turn is a `failed` — it
+ * writes no answer line, even when the person saw words stream.
+ */
+export type AskSendResult =
+  | { kind: "answer"; text: string }
+  | { kind: "failed"; sentence: string };
+
+/** Map one turn's result to what the ask card writes and says (PURE). */
+export function askSendResult(result: TurnResult): AskSendResult {
+  return result.kind === "answer"
+    ? { kind: "answer", text: result.text }
+    : { kind: "failed", sentence: turnSentence(result) };
+}
+
+/** What recording one ask turn did: the whole conversation and its sentence. */
+export interface AskTurnRecords {
+  /** Every turn the file now holds, in order (the new exchange appended). */
+  turns: readonly AskTurn[];
+  /** The one sentence when the turn did not answer; null when it did. */
+  sentence: string | null;
+}
+
+/**
+ * STORY 17.1 — RECORD ONE ASK TURN, APPEND-ONLY: the person's question line
+ * always, the answer line only when `sent` is an answer. Nothing earlier is
+ * rewritten (the file's bytes stay a prefix), the words are verbatim, and a
+ * failed turn hands back the one sentence in place of an answer. The caller
+ * queues this, so a conversation line can never land under a stale file.
+ */
+export async function recordAskTurn(
+  workspacePath: string,
+  slug: string,
+  question: string,
+  sent: AskSendResult,
+  io: AskTurnIo = ASK_TURN_IO,
+): Promise<AskTurnRecords> {
+  const answer = sent.kind === "answer" ? sent.text : null;
+  const turns = await io.appendExchange(workspacePath, slug, question, answer);
+  return {
+    turns,
+    sentence: sent.kind === "answer" ? null : sent.sentence,
   };
 }
 
@@ -1157,8 +1356,16 @@ export async function writePageCard(
   page: PagePayload,
   taken: string,
   io: PageIo = PAGE_IO,
+  /** STORY 17.1: the SHARED slug set (ground + asks); default references only. */
+  options: { taken?: ReadonlySet<string> } = {},
 ): Promise<PageRecords> {
-  const addition = addGroundReference(references, name.trim(), x, y);
+  const addition = addGroundReference(
+    references,
+    name.trim(),
+    x,
+    y,
+    options.taken,
+  );
   const reading = pageReading(addition.reference.on, url, taken);
   const text = cappedReadingText(page.text);
   await io.storeReadingText(workspacePath, reading.on, text);
@@ -1228,6 +1435,7 @@ export async function createFetchedPage(
   read: PageFetchAnswer,
   taken: string,
   io: PageIo = PAGE_IO,
+  options: { taken?: ReadonlySet<string> } = {},
 ): Promise<PageCreate> {
   const refusal = pageRefusal(name, url);
   if (refusal !== null) return { kind: "refused", message: refusal };
@@ -1251,6 +1459,7 @@ export async function createFetchedPage(
     { title: read.title, text: read.text, thumb: read.thumb },
     taken,
     io,
+    options,
   );
   return { kind: "written", records };
 }
@@ -1338,8 +1547,16 @@ export async function writeVideoCard(
   video: VideoPayload,
   taken: string,
   io: VideoIo = VIDEO_IO,
+  /** STORY 17.1: the SHARED slug set (ground + asks); default references only. */
+  options: { taken?: ReadonlySet<string> } = {},
 ): Promise<VideoRecords> {
-  const addition = addGroundReference(references, name.trim(), x, y);
+  const addition = addGroundReference(
+    references,
+    name.trim(),
+    x,
+    y,
+    options.taken,
+  );
   const reading = videoReading(addition.reference.on, url, taken);
   let entry: Media = {
     on: reading.on,
@@ -1404,6 +1621,7 @@ export async function createFetchedVideo(
   read: VideoFetchAnswer,
   taken: string,
   io: VideoIo = VIDEO_IO,
+  options: { taken?: ReadonlySet<string> } = {},
 ): Promise<VideoCreate> {
   const refusal = videoRefusal(name, url);
   if (refusal !== null) return { kind: "refused", message: refusal };
@@ -1427,6 +1645,7 @@ export async function createFetchedVideo(
     { title: read.title, thumb: read.thumb },
     taken,
     io,
+    options,
   );
   return { kind: "written", records };
 }
@@ -1483,10 +1702,15 @@ export async function metasOf(
   return metas;
 }
 
-export function useGround(workspacePath: string): GroundView {
+export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   const [state, setState] = useState<GroundLoaded>(EMPTY);
   // Synchronous mirrors: the queued write must never read a stale list.
   const referencesRef = useRef<GroundReference[]>([]);
+  // STORY 17.1: the ask cards' lines and their conversations. Both are loaded
+  // with the map folder and moved only by the person's own create/turn.
+  const asksRef = useRef<AskCard[]>([]);
+  const askTurnsRef = useRef<Record<string, readonly AskTurn[]>>({});
+  const malformedAsksRef = useRef<string[]>([]);
   const readingsRef = useRef<Reading[]>([]);
   // Story 16.14: the media lines and their READ thumbnail sources. Both are
   // view mirrors of the map folder — the thumb's bytes live in map/media/.
@@ -1527,9 +1751,13 @@ export function useGround(workspacePath: string): GroundView {
 
   const reload = useCallback(async () => {
     if (workspacePath === "") return;
-    const [ground, readings, groundLinks, history, loadedMedia] =
+    const [ground, asks, readings, groundLinks, history, loadedMedia] =
       await Promise.all([
         loadGround(workspacePath),
+        // STORY 17.1: the ask cards' lines are read with the workspace, like
+        // every other record family. Their conversations are read below, one
+        // per card, once — nothing watches or re-reads.
+        loadAsks(workspacePath),
         loadReadings(workspacePath),
         loadGroundLinks(workspacePath),
         // Story 16.10: a READ only — opening is a look, so a missing history is
@@ -1540,17 +1768,22 @@ export function useGround(workspacePath: string): GroundView {
         loadMedia(workspacePath),
       ]);
     const slugs = ground.references.map((reference) => reference.on);
-    const [texts, metas, loadedNotes, thumbs] = await Promise.all([
-      loadReadingTexts(workspacePath, slugs),
-      metasOf(workspacePath, readings.readings),
-      // Story 16.6: ONE folder listing, then one read per card that has a
-      // note. Orphans are computed from the same listing and never read.
-      loadNotes(workspacePath, slugs),
-      // Story 16.14: each media line's local thumbnail, read once and turned
-      // into a data URL. A missing image is absent from the map, never an
-      // error; this is why reopening works with the network unplugged.
-      loadThumbSrcs(workspacePath, loadedMedia.media),
-    ]);
+    const askSlugs = asks.asks.map((ask) => ask.on);
+    const [texts, metas, loadedNotes, thumbs, loadedAskTurns] =
+      await Promise.all([
+        loadReadingTexts(workspacePath, slugs),
+        metasOf(workspacePath, readings.readings),
+        // Story 16.6: ONE folder listing, then one read per card that has a
+        // note. Orphans are computed from the same listing and never read.
+        loadNotes(workspacePath, slugs),
+        // Story 16.14: each media line's local thumbnail, read once and turned
+        // into a data URL. A missing image is absent from the map, never an
+        // error; this is why reopening works with the network unplugged.
+        loadThumbSrcs(workspacePath, loadedMedia.media),
+        // STORY 17.1: one read per ask card's conversation. An absent file is
+        // an empty conversation, never an invented one.
+        loadAskTurns(workspacePath, askSlugs),
+      ]);
     const states = statesOf(
       ground.references,
       readings.readings,
@@ -1564,6 +1797,13 @@ export function useGround(workspacePath: string): GroundView {
     // naming a slug the map does not carry is kept in the file and named in
     // the notices group.
     referencesRef.current = ground.references;
+    asksRef.current = asks.asks;
+    malformedAsksRef.current = asks.malformed;
+    const askTurns: Record<string, readonly AskTurn[]> = {};
+    for (const slug of askSlugs) {
+      askTurns[slug] = loadedAskTurns[slug]?.turns ?? [];
+    }
+    askTurnsRef.current = askTurns;
     readingsRef.current = readings.readings;
     mediaRef.current = loadedMedia.media;
     malformedMediaRef.current = loadedMedia.malformed;
@@ -1587,6 +1827,9 @@ export function useGround(workspacePath: string): GroundView {
    */
   const snapshot = (): GroundLoaded => ({
     references: referencesRef.current,
+    asks: asksRef.current,
+    askTurns: askTurnsRef.current,
+    malformedAsks: malformedAsksRef.current,
     readings: readingsRef.current,
     media: mediaRef.current,
     thumbs: thumbsRef.current,
@@ -1715,6 +1958,9 @@ export function useGround(workspacePath: string): GroundView {
     queueRef.current = createWriteQueue();
     if (workspacePath === "") {
       referencesRef.current = [];
+      asksRef.current = [];
+      askTurnsRef.current = {};
+      malformedAsksRef.current = [];
       readingsRef.current = [];
       mediaRef.current = [];
       malformedMediaRef.current = [];
@@ -1752,11 +1998,15 @@ export function useGround(workspacePath: string): GroundView {
       };
       return queueRef.current
         .push(async () => {
+          // STORY 17.1: ONE slug space with the ask cards, so the new ground
+          // slug can never twin an ask card's (a link or a mention must resolve
+          // to exactly one card).
           const addition = addGroundReference(
             referencesRef.current,
             trimmed,
             x,
             y,
+            sharedSlugs(referencesRef.current, asksRef.current),
           );
           const taken = await takeReading(
             workspacePath,
@@ -1867,6 +2117,8 @@ export function useGround(workspacePath: string): GroundView {
             y,
             text,
             new Date().toISOString(),
+            undefined,
+            { taken: sharedSlugs(referencesRef.current, asksRef.current) },
           );
           referencesRef.current = written.references;
           readingsRef.current = written.readings;
@@ -1943,6 +2195,8 @@ export function useGround(workspacePath: string): GroundView {
             url,
             read,
             new Date().toISOString(),
+            undefined,
+            { taken: sharedSlugs(referencesRef.current, asksRef.current) },
           );
           if (created.kind === "refused") {
             outcome = { ok: false, message: created.message };
@@ -2029,6 +2283,8 @@ export function useGround(workspacePath: string): GroundView {
             url,
             read,
             new Date().toISOString(),
+            undefined,
+            { taken: sharedSlugs(referencesRef.current, asksRef.current) },
           );
           if (created.kind === "refused") {
             outcome = { ok: false, message: created.message };
@@ -2069,6 +2325,184 @@ export function useGround(workspacePath: string): GroundView {
         }));
     },
     [workspacePath],
+  );
+
+  /**
+   * SEND one ask turn's question through the EXISTING card-ask path: the same
+   * packet assembler, the same provider rows, the same streaming. This is the
+   * only new send site; nothing about the packet, the provider rows or the
+   * steps changed (story 17.3 owns the thread's bound, story 17.4 owns the
+   * sending turn's PRISM).
+   *
+   * It runs OUTSIDE the write queue: a turn may take its whole budget, and a
+   * card drag must never wait for a provider. Only the record write goes
+   * through the queue. An unconfigured turn is one sentence and no answer.
+   */
+  const sendAskQuestion = useCallback(
+    async (
+      packet: AskPacket,
+      context: AskContext,
+      onPart?: (text: string) => void,
+    ): Promise<AskSendResult> => {
+      if (turn === undefined) {
+        return { kind: "failed", sentence: TURN_SENTENCES.unreachable };
+      }
+      const current = await loadTurnSettings();
+      const resolved = resolveSelection(current);
+      if (resolved.kind !== "resolved") {
+        return { kind: "failed", sentence: PROVIDER_SENTENCES.nothing };
+      }
+      // The key is read NOW, for this provider only, and handed straight to the
+      // request line — never rendered, never kept in state.
+      const apiKey =
+        resolved.provider.kind === "http"
+          ? await readSecret(resolved.provider.id)
+          : "";
+      const route = routeOf(resolved.provider, resolved.model, apiKey);
+      const answered = await turn.sendPacket(
+        route,
+        packet,
+        (blockName) =>
+          workspacePath === ""
+            ? Promise.resolve(null)
+            : fetchAskBlock(workspacePath, blockName, context),
+        onPart === undefined ? {} : { onPart },
+      );
+      return askSendResult(answered.result);
+    },
+    [turn, workspacePath],
+  );
+
+  /**
+   * STORY 17.1 — MAKE AN ASK CARD BESIDE A REFERENCE. One queued write of
+   * `map/asks.txt`; no reading, no note, no media, no link, and NEVER a touch
+   * of the reference card. The anchor is a FIELD naming the reference, and the
+   * slug is minted in the shared space of both files. The conversation file
+   * appears with the first turn, not here: a card that has never been asked in
+   * has no conversation to invent.
+   *
+   * No history line and no mirror write: story 17.8 owns the asks' authored
+   * moves in the log and the index.
+   */
+  const createAsk = useCallback(
+    (
+      sourceSlug: string,
+      name: string,
+      x: number,
+      y: number,
+    ): Promise<GroundAddResult> => {
+      const refusal = askRefusal(name);
+      if (refusal !== null) return Promise.resolve({ ok: false, message: refusal });
+      if (!referencesRef.current.some((reference) => reference.on === sourceSlug)) {
+        return Promise.resolve({ ok: false, message: ASK_SOURCE_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const written = await writeAskCard(
+            workspacePath,
+            referencesRef.current,
+            asksRef.current,
+            malformedAsksRef.current,
+            sourceSlug,
+            name,
+            x,
+            y,
+          );
+          asksRef.current = written.asks;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 17.1 — ASK ONE QUESTION inside an ask card. The question is sent
+   * through the existing card-ask path anchored on the REFERENCE (the packet's
+   * one block is the card this ask is about), and then ONE append-only write
+   * records the exchange: the person's line always, the answer line only when
+   * the turn answered. A failed or stopped turn leaves the person's line alone
+   * and answers the ONE sentence in the card — no PRISM (17.4), no packet
+   * change (17.3) and no map write beyond the ask card's conversation.
+   */
+  const askTurn = useCallback(
+    (
+      slug: string,
+      question: string,
+      onPart?: (text: string) => void,
+    ): Promise<GroundAddResult> => {
+      const refusal = askQuestionRefusal(question);
+      if (refusal !== null) {
+        return Promise.resolve({ ok: false, message: refusal });
+      }
+      const ask = asksRef.current.find((entry) => entry.on === slug);
+      if (ask === undefined) {
+        return Promise.resolve({ ok: false, message: ASK_MISSING_REFUSAL });
+      }
+      // The anchored card's facts as the app already holds them. A DANGLING
+      // anchor is legal (story 17.6 states it): the packet rides the slug and
+      // claims no reading, and nothing here repairs or refuses the record.
+      const anchor =
+        referencesRef.current.find((reference) => reference.on === ask.anchor) ??
+        null;
+      const facts = {
+        name: anchor === null ? ask.anchor : anchor.name,
+        state:
+          anchor === null ? null : statesRef.current[anchor.on] ?? null,
+        reading:
+          anchor === null
+            ? null
+            : readingFor(readingsRef.current, anchor.on),
+        readingText:
+          anchor === null ? null : textsRef.current[anchor.on] ?? null,
+        note: anchor === null ? null : notesRef.current[anchor.on] ?? null,
+      };
+      const context = cardAskContext(facts);
+      const packet = assembleCardPacket({
+        question,
+        card: context.card,
+        retrievable: context.retrievable,
+      });
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return sendAskQuestion(packet, context, onPart)
+        .then((sent) =>
+          queueRef.current.push(async () => {
+            const recorded = await recordAskTurn(
+              workspacePath,
+              slug,
+              question,
+              sent,
+            );
+            askTurnsRef.current = {
+              ...askTurnsRef.current,
+              [slug]: recorded.turns,
+            };
+            setState(snapshot());
+            outcome =
+              recorded.sentence === null
+                ? { ok: true }
+                : { ok: false, message: recorded.sentence };
+          }),
+        )
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath, sendAskQuestion],
   );
 
   /** MOVE: one ground-line write on drop; no reading is touched. */
@@ -2736,6 +3170,9 @@ export function useGround(workspacePath: string): GroundView {
 
   return {
     references: state.references,
+    asks: state.asks,
+    askTurns: state.askTurns,
+    malformedAsks: state.malformedAsks,
     readings: state.readings,
     media: state.media,
     thumbs: state.thumbs,
@@ -2756,6 +3193,8 @@ export function useGround(workspacePath: string): GroundView {
     restorable: state.restorable,
     restoreNotice: state.restoreNotice,
     loaded: state.loaded,
+    createAsk,
+    askTurn,
     create,
     createSelection,
     createPage,

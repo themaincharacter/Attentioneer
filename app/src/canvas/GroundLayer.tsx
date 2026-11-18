@@ -5,6 +5,12 @@ import {
   type ConceptWord,
 } from "../map/conceptWords";
 import type { GroundReference } from "../map/ground";
+import {
+  askRefusal,
+  proposeAskName,
+  type AskCard as AskCardRecord,
+  type AskTurn,
+} from "../map/asks";
 import { NOTE_PREVIEW_LINES } from "../map/notes";
 import {
   PULL_BUDGET_BYTES,
@@ -40,6 +46,7 @@ import {
 import { isGestureArmed, type GestureMode } from "./gates";
 import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import type { Point } from "./geometry";
+import { AskCard } from "./AskCard";
 import { AskSidecarPanel } from "./AskSidecarPanel";
 import { GroundConceptPanel, GroundNote } from "./GroundNote";
 import {
@@ -204,6 +211,16 @@ export function selectionPlacement(x: number, y: number): Point {
   return { x: x + SELECTION_OFFSET_X, y };
 }
 
+/**
+ * STORY 17.1 — WHERE THE ASK CARD GOES: beside its source, at the same scale,
+ * on the selection card's one offset. PURE, so the placement is not the confirm
+ * handler's only truth. PROVISIONAL: the side and the offset (the story's spec
+ * leaves the placement open).
+ */
+export function askPlacement(x: number, y: number): Point {
+  return selectionPlacement(x, y);
+}
+
 /** The one quiet line for a source the map no longer carries (PROVISIONAL). */
 export const SELECTION_MISSING_SOURCE = "from a card that is gone";
 
@@ -338,6 +355,29 @@ interface GroundLayerProps {
   pulled?: Readonly<Record<string, PulledText>>;
   /** Each reference's computed reading state (never a record field). */
   states: Readonly<Record<string, ReadingState>>;
+  /**
+   * STORY 17.1 — every ask card, in FILE ORDER, and each card's conversation.
+   * Both are read at load (`useGround`), never here: the layer holds records
+   * and hands the person's verbs, and no press in it writes anything.
+   */
+  asks?: readonly AskCardRecord[];
+  askTurns?: Readonly<Record<string, readonly AskTurn[]>>;
+  /**
+   * Make an ask card beside this reference (one record line, never a change to
+   * the reference card). Optional so a render test needs no write path.
+   */
+  onCreateAsk?: (
+    sourceSlug: string,
+    name: string,
+    x: number,
+    y: number,
+  ) => Promise<GroundAddResult>;
+  /** Ask one question inside an ask card (the existing card-ask turn path). */
+  onAskTurn?: (
+    slug: string,
+    question: string,
+    onPart?: (text: string) => void,
+  ) => Promise<GroundAddResult>;
   /** Move one reference to its dropped point (one line, on release). */
   onMove: (on: string, x: number, y: number) => Promise<GroundAddResult>;
   /** Re-read this reference's file (the person's press only). */
@@ -436,6 +476,10 @@ export function GroundLayer({
   notes = {},
   pulled = {},
   states,
+  asks = [],
+  askTurns = {},
+  onCreateAsk,
+  onAskTurn,
   onMove,
   onRefresh,
   onRepoint,
@@ -464,6 +508,10 @@ export function GroundLayer({
   // state only (a reopened workspace shows every card small) and no write
   // path here touches a file.
   const [openOn, setOpenOn] = useState<string | null>(null);
+  // STORY 17.1 — the OPEN ASK CARD is the layer's view state too, on its own
+  // slug: opening one closes the other face, so the map never has two editors
+  // asking for the eye at once. Nothing here is a record.
+  const [openAskOn, setOpenAskOn] = useState<string | null>(null);
   // The concept map's word index, read once per workspace through the ONE
   // cross-map helper. `null` means "not read yet" — never "empty" — so a word
   // mention is not called dangling on ignorance.
@@ -493,6 +541,16 @@ export function GroundLayer({
       setOpenOn(null);
     }
   }, [references, openOn]);
+
+  useEffect(() => {
+    // STORY 17.1: the same rule for an ask card — a card a hand edit removed
+    // cannot stay open, and nothing is repaired on its way out.
+    if (openAskOn !== null && !asks.some((ask) => ask.on === openAskOn)) {
+      setOpenAskOn(null);
+    }
+  }, [asks, openAskOn]);
+
+
 
   // STORY 16.8 — CLOSING THE CARD FORGETS THE LOOK. A pull is view state, so
   // there is nothing to delete on disk; the pure rule names the card whose
@@ -553,8 +611,16 @@ export function GroundLayer({
           pulled={pulled[reference.on]}
           state={states[reference.on] ?? (readingsBySlug.has(reference.on) ? "current" : "unread")}
           open={openOn === reference.on}
-          onOpen={() => setOpenOn(reference.on)}
-          onOpenCard={(slug) => setOpenOn(slug)}
+          // STORY 17.1: one face at a time — opening a reference closes the
+          // ask card's editor, and opening an ask closes the reference's.
+          onOpen={() => {
+            setOpenAskOn(null);
+            setOpenOn(reference.on);
+          }}
+          onOpenCard={(slug) => {
+            setOpenAskOn(null);
+            setOpenOn(slug);
+          }}
           onClose={() => setOpenOn(null)}
           cardNames={cardNames}
           wordSlugs={wordSlugs}
@@ -567,6 +633,7 @@ export function GroundLayer({
           onRepoint={onRepoint}
           onRemove={remove}
           onCreateSelection={onCreateSelection}
+          onCreateAsk={onCreateAsk}
           onSetNote={onSetNote}
           onPull={onPull}
           onDismissPull={onDismissPull}
@@ -578,6 +645,27 @@ export function GroundLayer({
           onNarrate={onNarrate}
           previewLines={previewLines}
           noteLines={noteLines}
+        />
+      ))}
+      {/* STORY 17.1 — THE ASK CARDS, beside the reference cards on the same
+          plane: their own record family, their own conversations, and the same
+          grammar (name → what this is → the crop). Story 17.2 owns the thread's
+          face, 17.5 fork and 17.6 the dangling anchor's sentence; story 1 only
+          shows one exchange and lets the person ask it. */}
+      {asks.map((ask) => (
+        <AskCard
+          key={ask.on}
+          ask={ask}
+          anchorName={cardNames.get(ask.anchor) ?? null}
+          turns={askTurns[ask.on] ?? []}
+          open={openAskOn === ask.on}
+          previewLines={previewLines}
+          onOpen={() => {
+            setOpenOn(null);
+            setOpenAskOn(ask.on);
+          }}
+          onClose={() => setOpenAskOn(null)}
+          onAskTurn={onAskTurn}
         />
       ))}
       {refusal !== null && (
@@ -660,6 +748,7 @@ function GroundCard({
   onRepoint,
   onRemove,
   onCreateSelection,
+  onCreateAsk,
   onSetNote,
   onPull,
   onDismissPull,
@@ -710,6 +799,13 @@ function GroundCard({
     x: number,
     y: number,
     text: string,
+  ) => Promise<GroundAddResult>;
+  /** STORY 17.1: make an ask card beside this reference (one record line). */
+  onCreateAsk?: (
+    sourceSlug: string,
+    name: string,
+    x: number,
+    y: number,
   ) => Promise<GroundAddResult>;
   onSetNote?: (on: string, text: string) => Promise<GroundAddResult>;
   onPull?: (on: string) => Promise<GroundAddResult>;
@@ -766,6 +862,10 @@ function GroundCard({
   const [naming, setNaming] = useState<{ text: string; name: string } | null>(
     null,
   );
+  // STORY 17.1 — THE ASK CARD'S proposed name, before anything is written. A
+  // separate field from the selection's, because they name two different cards;
+  // opening one closes the other so the card asks once.
+  const [askNaming, setAskNaming] = useState<{ name: string } | null>(null);
   // STORY 16.6 — the note's edit is VIEW state, like open/closed: nothing is
   // written until a save, and Esc leaves the stored note exactly as it was.
   // The refs mirror the draft so the press-away and Esc listeners (registered
@@ -790,6 +890,9 @@ function GroundCard({
     // Story 16.12: a closed card cannot offer a selection it no longer shows.
     setSelected(null);
     setNaming(null);
+    // STORY 17.1: a closed card forgets the ask's proposed name too; nothing
+    // was written by proposing one.
+    setAskNaming(null);
   }, [open]);
 
   // STORY 16.12 — THE SELECTION WATCHER. While the card is open, the DOM's
@@ -1123,6 +1226,7 @@ function GroundCard({
   function askAboutSelection() {
     if (selected === null || selected === "") return;
     setNaming({ text: selected, name: proposeSelectionName(selected) });
+    setAskNaming(null);
     setProblem(null);
   }
 
@@ -1154,6 +1258,46 @@ function GroundCard({
     }
     setNaming(null);
     setSelected(null);
+  }
+
+  // STORY 17.1 — THE ASK CARD'S TWO MOVES. `ask about this` only PROPOSES a
+  // name (the anchored card's name plus "question", the selection card's
+  // idiom); the confirm is the ONE write, and a blank name is refused with the
+  // same one sentence before anything is queued. Cancel forgets the proposal;
+  // the reference card is never touched by either.
+  function askAboutCard() {
+    if (onCreateAsk === undefined || busy) return;
+    setAskNaming({ name: proposeAskName(reference.name) });
+    setNaming(null);
+    setProblem(null);
+  }
+
+  function cancelAsk() {
+    setAskNaming(null);
+  }
+
+  async function makeAsk() {
+    if (askNaming === null || onCreateAsk === undefined || busy) return;
+    const refusal = askRefusal(askNaming.name);
+    if (refusal !== null) {
+      setProblem(refusal);
+      return;
+    }
+    const at = askPlacement(reference.x, reference.y);
+    setBusy(true);
+    setProblem(null);
+    const result = await onCreateAsk(
+      reference.on,
+      askNaming.name.trim(),
+      at.x,
+      at.y,
+    );
+    setBusy(false);
+    if (!result.ok) {
+      setProblem(result.message);
+      return;
+    }
+    setAskNaming(null);
   }
 
   // STORY 16.7 — the picker's list and the mention's insert. Nothing here
@@ -1435,6 +1579,59 @@ function GroundCard({
           {problem}
         </div>
       )}
+      {/* STORY 17.1 — THE ASK CARD'S NAME, before anything is written. The
+          field is PRE-FILLED with the proposed name and is the person's to
+          edit; the confirm writes the ask's one line, and a blank name refuses
+          with the same one sentence the bubble uses. Esc or cancel forgets it. */}
+      {askNaming !== null && (
+        <div
+          className="ground-selection ground-ask-naming"
+          role="group"
+          aria-label="name the ask card"
+        >
+          <input
+            className="ground-selection-name"
+            value={askNaming.name}
+            autoFocus
+            aria-label="name the ask card"
+            disabled={busy}
+            onChange={(e) => {
+              setAskNaming({ name: e.target.value });
+              if (problem !== null) setProblem(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") {
+                if (e.key !== "Escape") return;
+                // Esc cancels THIS field only (the card stays open).
+                e.preventDefault();
+                e.stopPropagation();
+                cancelAsk();
+                return;
+              }
+              e.preventDefault();
+              void makeAsk();
+            }}
+          />
+          <div className="ground-selection-actions">
+            <button
+              type="button"
+              className="ground-selection-make"
+              disabled={busy}
+              onClick={() => void makeAsk()}
+            >
+              make the card
+            </button>
+            <button
+              type="button"
+              className="ground-selection-cancel"
+              disabled={busy}
+              onClick={cancelAsk}
+            >
+              cancel
+            </button>
+          </div>
+        </div>
+      )}
       {/* STORY 16.12 — THE NAME, before anything is written. The field is
           PRE-FILLED with the proposed name and is the person's to edit; the
           confirm writes the excerpt verbatim, and a blank name refuses with
@@ -1489,6 +1686,20 @@ function GroundCard({
         </div>
       )}
       <div className="ground-actions">
+          {/* STORY 17.1 — THE ASK VERB: a card about this reference. It only
+              PROPOSES a name (the person edits or accepts it); the confirm is
+              the one write, and the reference card itself is never touched.
+              The card's own ask panel stays until story 17.7 retires it. */}
+          {open && onCreateAsk !== undefined && askNaming === null && (
+            <button
+              type="button"
+              className="ground-ask-card"
+              disabled={busy}
+              onClick={askAboutCard}
+            >
+              ask about this
+            </button>
+          )}
           {/* STORY 16.12 — the ONE selection affordance: it exists while a
               selection sits inside the expanded reading and vanishes when it
               collapses. It only PROPOSES the name field (onMouseDown keeps the

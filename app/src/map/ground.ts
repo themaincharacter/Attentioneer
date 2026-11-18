@@ -161,19 +161,25 @@ export interface GroundAddition {
 
 /**
  * Append a coined name at a point, minting its slug against the references
- * already on the ground map (the concept map's dedupe rule). PURE: the caller
- * writes the file, so a test can assert the line without a disk. A blank name
- * is the caller's refusal (the bubble asks for one first); this function only
- * names and places. Coordinates are rounded to whole map units because the
- * provisional line shape carries ints.
+ * already on the ground map (the concept map's dedupe rule). STORY 17.1 (the
+ * epic's ONE SLUG SPACE): the caller may hand in the SHARED set of ground AND
+ * ask-card slugs, because a link, a mention or an anchor must resolve to
+ * exactly one card; the default stays the references alone, so a caller that
+ * knows no asks mints exactly as it did. PURE: the caller writes the file, so a
+ * test can assert the line without a disk. A blank name is the caller's refusal
+ * (the bubble asks for one first); this function only names and places.
+ * Coordinates are rounded to whole map units because the provisional line shape
+ * carries ints.
  */
 export function addGroundReference(
   references: readonly GroundReference[],
   name: string,
   x: number,
   y: number,
+  taken: ReadonlySet<string> = new Set(
+    references.map((reference) => reference.on),
+  ),
 ): GroundAddition {
-  const taken = new Set(references.map((reference) => reference.on));
   const reference: GroundReference = {
     on: nextSlug(slugName(name), taken),
     name,

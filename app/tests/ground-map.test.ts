@@ -155,7 +155,9 @@ describe("the ground map's own content, and only its own", () => {
 
 describe("the ground map's own creation affordance", () => {
   test("double-click at ground opens the reference bubble, not the word menu", () => {
-    expect(APP).toContain("useGround(workspace?.path ?? \"\")");
+    // STORY 17.1: the same hook now also owns the ask cards' records, and it
+    // takes the app's ONE turn port (the card-ask path reused, not a second).
+    expect(APP).toContain('useGround(workspace?.path ?? "", turnPort)');
     expect(APP).toContain('level === "ground" && (');
     expect(APP).toContain("<GroundLayer");
     expect(APP).toContain("<GroundBubble");

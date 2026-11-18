@@ -433,6 +433,28 @@ export const CONTENT_CLASSES = [
   "ground-selection-make",
   "ground-selection-cancel",
   "ground-from",
+  // STORY 17.1: the ASK CARD (its face, its conversation crop, its question
+  // field and send/close/open verbs) and the reference card's ask verb with its
+  // proposed-name field. They live inside `.ground-layer`/`.ground-reference`,
+  // which are already content; listed for the same belt-and-braces reason — a
+  // press on any of them must never pan the plane, create anything or drag.
+  "ground-ask-card",
+  "ground-ask-naming",
+  "ask-card",
+  "ask-card-name",
+  "ask-card-kind",
+  "ask-card-body",
+  "ask-card-exchange",
+  "ask-card-empty",
+  "ask-card-stream",
+  "ask-card-ask",
+  "ask-card-question",
+  "ask-card-actions",
+  "ask-card-send",
+  "ask-card-close",
+  "ask-card-problem",
+  "ask-card-footer",
+  "ask-card-open",
   // Epic 10 story 3's ghost: the ONLY ghost element inside the plane is the
   // opened preview's faint diamond at the target. It is read-only by
   // construction (pointer-events: none), and it exists only inside the

@@ -625,7 +625,10 @@ describe("the card: a chip opens a card, and nothing else changed", () => {
     // The opened slug is plain view state; every card's face reads it.
     expect(LAYER).toContain("const [openOn, setOpenOn] = useState<string | null>(null)");
     expect(LAYER).toContain("open={openOn === reference.on}");
-    expect(LAYER).toContain("onOpenCard={(slug) => setOpenOn(slug)}");
+    // STORY 17.1 widens the same seam: opening a card also closes an ask
+    // card's editor, so the plane never offers two faces at once.
+    expect(LAYER).toContain("onOpenCard={(slug) => {");
+    expect(LAYER).toContain("setOpenOn(slug)");
     // A card's own press opens it through the same seam (no second truth).
     expect(LAYER).toContain("onOpen();");
     // The open path never reaches a writer: it is state and nothing else.
