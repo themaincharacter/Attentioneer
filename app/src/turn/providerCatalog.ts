@@ -83,6 +83,24 @@ export interface CatalogModelExample {
   attachment: boolean;
 }
 
+/**
+ * ONE MODEL AS THE EXPORT LISTS IT (story 15.14). The add dialog's Models block
+ * shows exactly these facts and nothing it would have to guess: the id to send,
+ * the name to read, whether the catalogue says it takes tools, whether it takes
+ * images, and whether it reasons. The reasoning flag is CARRIED but not shown
+ * today — the form has no checkbox for it, and this story does not invent one.
+ */
+export interface CatalogModel {
+  id: string;
+  name: string;
+  /** The export's `tool_call`: pre-ticks the form's tools box. */
+  toolCall: boolean;
+  /** The export's `attachment`: pre-ticks the form's vision box. */
+  attachment: boolean;
+  /** The export's `reasoning`; carried, not surfaced by this story. */
+  reasoning: boolean;
+}
+
 /** One provider the app can offer as a starting point. Data, never a promise. */
 export interface ProviderCatalogEntry {
   /** Stable id for the picker; not the id the person's row will get. */
@@ -101,6 +119,14 @@ export interface ProviderCatalogEntry {
    * fetch models offers.
    */
   modelExample?: CatalogModelExample;
+  /**
+   * EVERY model the export lists for this provider, in its order (story
+   * 15.14). The add dialog's Models block reads this list; a tick copies the
+   * chosen model's id, name and capabilities into the form, which stays
+   * editable. Data only — the list is a catalogue, not a promise about the
+   * person's account, and it is never fetched here.
+   */
+  models: readonly CatalogModel[];
   /** The one fact a person needs about the key or the docs. */
   note: string;
   /** Where the entry came from, in one word. */
@@ -159,6 +185,13 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] =
     envName: provider.env,
     doc: provider.doc,
     modelExample: exampleOf(provider.models),
+    models: provider.models.map((model) => ({
+      id: model.id,
+      name: model.name,
+      toolCall: model.tool_call === true,
+      attachment: model.attachment === true,
+      reasoning: model.reasoning === true,
+    })),
     note: noteOf(provider.env, provider.doc),
     source: CATALOG_SOURCE,
     verified: false,
@@ -214,4 +247,47 @@ export function catalogFill(entry: ProviderCatalogEntry): ProviderCatalogFill {
     tools: entry.modelExample?.toolCall === true,
     vision: entry.modelExample?.attachment === true,
   };
+}
+
+/** The four fields a tick in the Models block writes. Pure, like the fill. */
+export interface CatalogModelFill {
+  modelId: string;
+  modelName: string;
+  /** The export's tool-use: a starting tick, changeable below. */
+  tools: boolean;
+  /** The export's attachment: a starting tick, changeable below. */
+  vision: boolean;
+}
+
+/**
+ * WHAT A TICK IN THE MODELS BLOCK DOES (story 15.14): the model's id, its name
+ * and the export's two capabilities — four setters, nothing else. The person
+ * can still edit the id, the name and both boxes afterwards; the catalogue is a
+ * starting point, never a verdict. It writes no row and asks no request: the
+ * add button is still the only write.
+ */
+export function catalogModelFill(model: CatalogModel): CatalogModelFill {
+  return {
+    modelId: model.id,
+    modelName: model.name,
+    tools: model.toolCall === true,
+    vision: model.attachment === true,
+  };
+}
+
+/**
+ * THE ENTRY A ROW CAME FROM, BY BASE URL (story 15.14; PROVISIONAL). The row
+ * shape has no "came from the catalogue" field — this story adds no record
+ * field — so the badge reads the one fact a pick does write: the base URL.
+ * A row whose URL the catalogue lists was picked from it; any other endpoint
+ * is the person's own and carries Custom. Matching is exact and trimmed: a
+ * person who edits the URL has made it their own, and the badge follows.
+ */
+export function catalogEntryForBaseUrl(
+  baseUrl: string,
+): ProviderCatalogEntry | null {
+  const trimmed = baseUrl.trim();
+  return (
+    PROVIDER_CATALOG.find((entry) => entry.baseUrl === trimmed) ?? null
+  );
 }

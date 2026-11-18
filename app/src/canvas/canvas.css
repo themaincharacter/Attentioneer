@@ -6587,33 +6587,6 @@ body {
   animation: rise-in 160ms ease-out;
 }
 
-.providers-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.providers-title {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: #3b3d42;
-}
-
-.providers-close {
-  border: none;
-  background: transparent;
-  padding: 0 2px;
-  font-size: 15px;
-  line-height: 1;
-  color: #8d887c;
-  cursor: pointer;
-}
-
-.providers-close:hover {
-  color: #1e2126;
-}
-
 .providers-status {
   font-size: 10.5px;
   line-height: 1.4;
@@ -6702,6 +6675,18 @@ body {
 .providers-name {
   font-weight: 500;
   color: #3b3d42;
+}
+
+/* THE CUSTOM BADGE (story 14): the reference list's mark for a row the person
+   typed. Quiet by design — it is a fact about provenance, not a warning. */
+.providers-custom-badge {
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #8a5a3a;
+  border: 1px solid #e5cdb8;
+  border-radius: 3px;
+  padding: 0 4px;
 }
 
 .providers-id {
@@ -6834,9 +6819,132 @@ body {
   gap: 6px;
 }
 
+/* THE DASHED ADD BUTTON (story 14): the industry-standard list puts a
+   full-width "+ Add provider" under the rows. It opens the two-tab dialog and
+   writes nothing itself. */
+.providers-add-open {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+  font-size: 11.5px;
+  color: #6f6a5f;
+  background: transparent;
+  border: 1px dashed #cfc8ba;
+  border-radius: 5px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.providers-add-open:hover {
+  color: #1e2126;
+  border-color: #a39c8d;
+}
+
 .providers-add {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+/* THE TWO TABS (story 14): a known provider | a custom endpoint. The current
+   one reads as chosen; neither hides the other's footer. */
+.providers-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #eee9dd;
+  padding-bottom: 4px;
+}
+
+.providers-tab {
+  font: inherit;
+  font-size: 11px;
+  color: #8d887c;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.providers-tab.is-current {
+  color: #3b3d42;
+  border-color: #e4dfd4;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.providers-tab:hover {
+  color: #1e2126;
+}
+
+/* THE KNOWN-PROVIDER LIST (story 14): the catalogue as a list, each still
+   carrying its unverified mark. It scrolls because the export is a window onto
+   a public catalogue, not a hand-written dozen. */
+.providers-known-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 150px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.providers-known-option {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11px;
+  color: #3b3d42;
+}
+
+.providers-known-name {
+  line-height: 1.4;
+}
+
+/* THE MODELS BLOCK (story 14): the picked provider's models from the vendored
+   export, each marked for tools and images; a tick fills the form. The list is
+   bounded so a 300-model catalogue cannot push the footer out of reach. */
+.providers-models-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 2px;
+}
+
+.providers-model-hint {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #8d887c;
+}
+
+.providers-catalog-models {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 2px 0;
+  border-top: 1px solid #f0ece3;
+  border-bottom: 1px solid #f0ece3;
+}
+
+.providers-catalog-model {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #3b3d42;
+}
+
+.providers-catalog-model-name {
+  line-height: 1.4;
+}
+
+/* CANCEL / ADD, bottom right, on both tabs (story 14). */
+.providers-add-footer {
+  display: flex;
+  justify-content: flex-end;
   gap: 6px;
   padding-top: 4px;
 }

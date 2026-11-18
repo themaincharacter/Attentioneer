@@ -52,8 +52,11 @@ import {
   CUSTOM_FILL,
   PROVIDER_CATALOG,
   catalogEntry,
+  catalogEntryForBaseUrl,
   catalogFill,
   catalogLabel,
+  catalogModelFill,
+  type CatalogModel,
   type ProviderCatalogFill,
 } from "../turn/providerCatalog";
 import {
@@ -122,8 +125,25 @@ import { probeSpec } from "../turn/cliBridge";
  * this point" — is why the facts moved into a committed export we import
  * instead of rows we assert.
  *
- * PROVISIONAL (ADR-0003's rendering seam): the layout, the field order and the
- * wording of the refusals.
+ * STORY 14 GIVES THE LIST THE SHAPE EVERYONE KNOWS (the user's screenshots of
+ * the industry-standard provider UI): a row is a status dot, a name, a Custom
+ * badge when the person typed the endpoint, and its verbs; a dashed
+ * "+ Add provider" opens a two-tab dialog — "a known provider" (the picker and
+ * a Models block fed by the vendored models.dev export, each model marked for
+ * tools and images) and "a custom endpoint" (TODAY'S FORM, moved, not
+ * changed) — with Cancel/Add at the footer of both. The reference app's other
+ * habits are DELIBERATELY NOT COPIED: no retry policy on the verbs, and no
+ * account or "signed in" row. A tick in the Models block only fills the four
+ * model fields; it writes nothing, requests nothing, and goes through the same
+ * validator and the same write queue as every other add.
+ *
+ * NO KEY ECHO, EVER: a masked prefix is NOT copied from the reference shape
+ * (its rows show one). The store is write-only, so a row says "a key is set"
+ * and NOTHING more — no prefix, no length, no last four, no masked value. Only
+ * existence can be known.
+ *
+ * PROVISIONAL (ADR-0003's rendering seam): the layout, the field order, the tab
+ * wording, the dot and badge treatments, and the wording of the refusals.
  */
 
 /**
@@ -169,6 +189,26 @@ export async function addRowThenKey(
     };
   }
   return { kind: "added", key: "kept" };
+}
+
+/**
+ * IS THIS ROW THE PERSON'S OWN? (story 15.14; PROVISIONAL). The row shape has no
+ * "where it came from" field — this story adds no record field — so the Custom
+ * badge is DERIVED, never stored: an endpoint whose base URL no catalogue entry
+ * lists was typed (or edited) by the person, and a command or local runtime
+ * whose id no shipped spec owns was typed too. A row picked from the catalogue,
+ * or added from a shipped spec, is not Custom. The test of a URL is
+ * catalogEntryForBaseUrl's; the test of a spec is its own data.
+ */
+export function customRow(provider: ProviderRow): boolean {
+  if (provider.kind === "http") {
+    return catalogEntryForBaseUrl(provider.baseUrl) === null;
+  }
+  const shipped =
+    provider.kind === "cli"
+      ? CLI_SPECS.map((spec) => spec.id)
+      : LOCAL_SPECS.map((spec) => spec.id);
+  return !shipped.includes(provider.id);
 }
 
 /**
@@ -289,6 +329,20 @@ export function ProvidersPanel({
   // drives only what the picker shows — the fields are the truth.
   const [catalogId, setCatalogId] = useState(CUSTOM_CATALOG_ID);
 
+  // THE TWO TABS AND THE COLLAPSED BUTTON (story 14): the industry-standard
+  // shape puts the form behind a dashed "+ Add provider" and splits it into
+  // "a known provider" and "a custom endpoint". The known tab is the
+  // catalogue pick plus its Models block; the custom tab is today's form,
+  // moved and otherwise unchanged. `adding` is only whether the dialog is
+  // open — it writes nothing.
+  const [adding, setAdding] = useState(false);
+  const [tab, setTab] = useState<"known" | "custom">("known");
+
+  // WHICH CATALOGUE MODEL IS TICKED (story 14). It is a VIEW value: the tick
+  // copies the model's four fields into the form, and the form is the truth.
+  // The id is kept here only so the radio can show which one was ticked.
+  const [catalogModelId, setCatalogModelId] = useState("");
+
   // THE KEY FIELD, so a pick can put the caret where the person pastes. Focus
   // is the whole bridge between the list and the key: no read, no request.
   const keyFieldRef = useRef<HTMLInputElement>(null);
@@ -358,21 +412,98 @@ export function ProvidersPanel({
   /**
    * PICK A KNOWN PROVIDER (story 13). The catalogue is DATA and this function
    * is all a pick does: fill the four text fields with the entry's name, base
-   * URL and example model, then focus the key field so the next paste lands
-   * where it belongs. Choosing "a custom endpoint" clears the fill back to
-   * today's empty form. NO request, NO validation, NO add — the person's press
-   * on add is still the only thing that writes a row.
+   * URL and example model, tick that example in the Models block (story 14),
+   * then focus the key field so the next paste lands where it belongs. Choosing
+   * the custom tab clears the fill (chooseTab). NO request, NO validation, NO
+   * add — the person's press on add is still the only thing that writes a row.
    *
    * The key draft is cleared on a pick: a credential pasted for one endpoint is
    * not carried to another.
    */
   function pickCatalog(entryId: string): void {
     setCatalogId(entryId);
+    setTab(entryId === CUSTOM_CATALOG_ID ? "custom" : "known");
     const entry = catalogEntry(entryId);
     applyCatalogFill(entry === null ? CUSTOM_FILL : catalogFill(entry));
+    setCatalogModelId(entry?.modelExample?.id ?? "");
     setAddKey("");
     setSentence(null);
     if (entry !== null) keyFieldRef.current?.focus();
+  }
+
+  /**
+   * TICK ONE MODEL IN THE MODELS BLOCK (story 14). Four setters, nothing else:
+   * the model's id and name and the export's tools/vision flags. The person can
+   * still type over them or change the boxes below; no row is written and no
+   * request is made — the add button remains the only write.
+   */
+  function tickCatalogModel(model: CatalogModel): void {
+    setCatalogModelId(model.id);
+    const fill = catalogModelFill(model);
+    setModelId(fill.modelId);
+    setModelName(fill.modelName);
+    setTools(fill.tools);
+    setVision(fill.vision);
+    setSentence(null);
+  }
+
+  /**
+   * SWITCH TABS (story 14). The known tab offers no kind but an endpoint; the
+   * custom tab is today's form, so its kind select still offers a command and a
+   * local runtime. Choosing custom CLEARS a catalogue fill, exactly as story
+   * 15.13 did when the old picker chose "a custom endpoint": a credential
+   * pasted for one endpoint is not carried to another.
+   */
+  function chooseTab(next: "known" | "custom"): void {
+    setTab(next);
+    setSentence(null);
+    if (next === "known") {
+      setKind("http");
+      return;
+    }
+    setCatalogId(CUSTOM_CATALOG_ID);
+    setCatalogModelId("");
+    applyCatalogFill(CUSTOM_FILL);
+    setAddKey("");
+  }
+
+  /** Open the add dialog on the known tab, from today's clean form. */
+  function openAddDialog(): void {
+    resetAddForm();
+    setKind("http");
+    setTab("known");
+    setAdding(true);
+  }
+
+  /** Close it without adding: the fields go back to empty. */
+  function closeAddDialog(): void {
+    resetAddForm();
+    setAdding(false);
+  }
+
+  /**
+   * TODAY'S EMPTY FORM, in one place: every field the add dialog owns, back to
+   * its start. It is called after a successful add, on Cancel, and on opening;
+   * it resets no row and writes nothing.
+   */
+  function resetAddForm(): void {
+    setCatalogId(CUSTOM_CATALOG_ID);
+    setCatalogModelId("");
+    setName("");
+    setBaseUrl("");
+    setModelId("");
+    setModelName("");
+    setTools(false);
+    setVision(false);
+    setCommand("");
+    setVersionArgs("--version");
+    setRunArgs("{prompt}");
+    setAuthArgs("");
+    setOkPattern("");
+    setLocalModel("");
+    setProbe(null);
+    setSentence(null);
+    setAddKey("");
   }
 
   /**
@@ -451,7 +582,11 @@ export function ProvidersPanel({
     );
     setAddKey("");
     if (outcome.kind === "row-refused") return;
+    // The dialog closes on a successful add and starts from the custom tab
+    // next time: the row (and its key) are the result, not the form.
+    setAdding(false);
     setCatalogId(CUSTOM_CATALOG_ID);
+    setCatalogModelId("");
     setName("");
     setBaseUrl("");
     setModelId("");
@@ -1033,6 +1168,14 @@ export function ProvidersPanel({
                 />
               )}
               <span className="providers-name">{provider.name}</span>
+              {/* CUSTOM (story 14): the reference list's badge for a row the
+                  person typed. It is DERIVED from what the row already says
+                  (base URL vs the catalogue; a shipped spec's id), so this
+                  story stores no new record field. A row with no badge came
+                  from data, not from a claim we made about it. */}
+              {customRow(provider) && (
+                <span className="providers-custom-badge">Custom</span>
+              )}
               <span className="providers-id">{provider.id}</span>
             </div>
             {editing === provider.id ? (
@@ -1492,287 +1635,397 @@ export function ProvidersPanel({
 
       {settings !== null && (
         <>
-        <div className="providers-add">
-          <span className="providers-add-title">add a provider</span>
-          <label className="providers-field">
-            <span>kind</span>
-            <select
-              value={kind}
-              aria-label="the kind of provider"
-              onChange={(e) => {
-                const next =
-                  e.target.value === "cli"
-                    ? "cli"
-                    : e.target.value === "local"
-                      ? "local"
-                      : "http";
-                setKind(next);
-                if (next === "local") useLocalPreset(DEFAULT_LOCAL_SPEC);
-                setProbe(null);
-                setSentence(null);
-              }}
-            >
-              <option value="http">an HTTP endpoint</option>
-              <option value="cli">a command (CLI)</option>
-              <option value="local">a model on this machine</option>
-            </select>
-          </label>
-          {/* PICK A KNOWN PROVIDER (story 13): the catalogue is DATA. A pick
-              fills the fields below and focuses the key field; "a custom
-              endpoint" is today's empty form. Nothing is requested or added. */}
-          {kind === "http" && (
-            <>
-              <label className="providers-field">
-                <span>a known provider, or a custom endpoint</span>
-                <select
-                  value={catalogId}
-                  aria-label="a known provider, or a custom endpoint"
-                  onChange={(e) => pickCatalog(e.target.value)}
-                >
-                  <option value={CUSTOM_CATALOG_ID}>a custom endpoint</option>
-                  <optgroup label="a known provider">
-                    {PROVIDER_CATALOG.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {catalogLabel(entry)}
-                      </option>
-                    ))}
-                  </optgroup>
-                </select>
-              </label>
-              {pickedCatalog !== null && (
-                <div className="providers-note">
-                  {pickedCatalog.note} {pickedCatalog.source}.
-                </div>
-              )}
-            </>
-          )}
-          <label className="providers-field">
-            <span>name</span>
-            <input
-              type="text"
-              value={name}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder={
-                kind === "cli"
-                  ? "My script"
-                  : kind === "local"
-                    ? "My local model"
-                    : "A hosted endpoint"
-              }
-              onChange={(e) => setName(e.target.value)}
-            />
-          </label>
-          {kind === "http" ? (
-            <>
-              <label className="providers-field">
-                <span>base URL</span>
-                <input
-                  type="text"
-                  value={baseUrl}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="http://127.0.0.1:8080/v1"
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                />
-              </label>
-              {/* THE KEY, IN THE FORM ITSELF (story 12). Optional: a local
-                  endpoint may need none. Write-only like the row's — the
-                  field is never filled from the store, and what is typed is
-                  written only AFTER the row exists. */}
-              <label className="providers-field">
-                <span>the key (kept; never shown again)</span>
-                <input
-                  type="password"
-                  value={addKey}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="optional"
-                  aria-label="the key to keep with the new provider"
-                  ref={keyFieldRef}
-                  onChange={(e) => setAddKey(e.target.value)}
-                />
-              </label>
-              {store !== null && (
-                <span className="providers-key-store">
-                  {secretStatusWords(store)}
-                </span>
-              )}
-              <div className="providers-add-model">
-                <label className="providers-field">
-                  <span>model id</span>
-                  <input
-                    type="text"
-                    value={modelId}
-                    spellCheck={false}
-                    autoComplete="off"
-                    placeholder="qwen"
-                    onChange={(e) => setModelId(e.target.value)}
-                  />
-                </label>
-                <label className="providers-field">
-                  <span>model name</span>
-                  <input
-                    type="text"
-                    value={modelName}
-                    spellCheck={false}
-                    autoComplete="off"
-                    placeholder="Qwen"
-                    onChange={(e) => setModelName(e.target.value)}
-                  />
-                </label>
-                <label className="providers-cap-toggle">
-                  <input
-                    type="checkbox"
-                    checked={tools}
-                    onChange={(e) => setTools(e.target.checked)}
-                  />
-                  <span>tools</span>
-                </label>
-                <label className="providers-cap-toggle">
-                  <input
-                    type="checkbox"
-                    checked={vision}
-                    onChange={(e) => setVision(e.target.checked)}
-                  />
-                  <span>vision</span>
-                </label>
-              </div>
-            </>
-          ) : kind === "cli" ? (
-            <>
-              <label className="providers-field">
-                <span>command</span>
-                <input
-                  type="text"
-                  value={command}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="a path, or a name on PATH"
-                  onChange={(e) => setCommand(e.target.value)}
-                />
-              </label>
-              <label className="providers-field">
-                <span>version args</span>
-                <input
-                  type="text"
-                  value={versionArgs}
-                  spellCheck={false}
-                  autoComplete="off"
-                  onChange={(e) => setVersionArgs(e.target.value)}
-                />
-              </label>
-              <label className="providers-field">
-                <span>run args</span>
-                <input
-                  type="text"
-                  value={runArgs}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="{prompt}"
-                  onChange={(e) => setRunArgs(e.target.value)}
-                />
-              </label>
-              <label className="providers-field">
-                <span>sign-in args (empty: the probe does not apply)</span>
-                <input
-                  type="text"
-                  value={authArgs}
-                  spellCheck={false}
-                  autoComplete="off"
-                  onChange={(e) => setAuthArgs(e.target.value)}
-                />
-              </label>
-              <label className="providers-field">
-                <span>sign-in pattern</span>
-                <input
-                  type="text"
-                  value={okPattern}
-                  spellCheck={false}
-                  autoComplete="off"
-                  onChange={(e) => setOkPattern(e.target.value)}
-                />
-              </label>
-              <div className="providers-actions">
-                <button
-                  type="button"
-                  className="providers-check"
-                  disabled={probing || command.trim() === ""}
-                  onClick={() => void checkTyped()}
-                >
-                  check
-                </button>
-              </div>
-              {probe !== null && <ProbeReadout probe={probe} />}
-            </>
-          ) : (
-            <>
-              <label className="providers-field">
-                <span>server command</span>
-                <input
-                  type="text"
-                  value={localCommand}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="llama-server"
-                  onChange={(e) => setLocalCommand(e.target.value)}
-                />
-              </label>
-              <label className="providers-field">
-                <span>model path (the file this machine has)</span>
-                <input
-                  type="text"
-                  value={localModel}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="/home/me/models/qwen.gguf"
-                  onChange={(e) => setLocalModel(e.target.value)}
-                />
-              </label>
-              <label className="providers-field">
-                <span>{"server args (with {port} and {key} as separate entries)"}</span>
-                <input
-                  type="text"
-                  value={localArgs}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="-m {model} --host 127.0.0.1 --port {port}"
-                  onChange={(e) => setLocalArgs(e.target.value)}
-                />
-              </label>
-              <label className="providers-field">
-                <span>ready line (empty: the port answering is enough)</span>
-                <input
-                  type="text"
-                  value={localReady}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="server is listening"
-                  onChange={(e) => setLocalReady(e.target.value)}
-                />
-              </label>
-              <label className="providers-field">
-                <span>idle minutes before it is stopped</span>
-                <input
-                  type="text"
-                  value={localIdle}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="10"
-                  onChange={(e) => setLocalIdle(e.target.value)}
-                />
-              </label>
-            </>
-          )}
+        {/* THE INDUSTRY-STANDARD LIST (story 14): a dashed full-width button
+            opens the two-tab dialog. While it is closed the rows are the whole
+            panel; the add button is how the person starts one. */}
+        {!adding && (
           <button
             type="button"
-            className="providers-add-save"
-            disabled={busy}
-            onClick={() => void addProvider()}
+            className="providers-add-open"
+            onClick={openAddDialog}
           >
-            add
+            + Add provider
           </button>
-        </div>
+        )}
+
+        {adding && (
+          <div className="providers-add">
+            <span className="providers-add-title">add a provider</span>
+            {/* TWO TABS (story 14): a known provider is the catalogue pick and
+                its Models block; a custom endpoint is today's form, moved.
+                Both tabs share the fields below and the same footer, so there
+                is one add path, not two. */}
+            <div
+              className="providers-tabs"
+              role="tablist"
+              aria-label="how to add a provider"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "known"}
+                className={
+                  "providers-tab" + (tab === "known" ? " is-current" : "")
+                }
+                onClick={() => chooseTab("known")}
+              >
+                a known provider
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "custom"}
+                className={
+                  "providers-tab" + (tab === "custom" ? " is-current" : "")
+                }
+                onClick={() => chooseTab("custom")}
+              >
+                a custom endpoint
+              </button>
+            </div>
+
+            {tab === "known" ? (
+              <>
+                {/* THE PROVIDER PICKER (story 13; fed by 15's export): data
+                    only. A pick fills the fields, ticks its example model and
+                    focuses the key. Nothing is requested or added. */}
+                <div
+                  className="providers-known-list"
+                  role="radiogroup"
+                  aria-label="a known provider"
+                >
+                  {PROVIDER_CATALOG.map((entry) => (
+                    <label className="providers-known-option" key={entry.id}>
+                      <input
+                        type="radio"
+                        name="known-provider"
+                        checked={catalogId === entry.id}
+                        onChange={() => pickCatalog(entry.id)}
+                      />
+                      <span className="providers-known-name">
+                        {catalogLabel(entry)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {pickedCatalog !== null && (
+                  <div className="providers-note">
+                    {pickedCatalog.note} {pickedCatalog.source}.
+                  </div>
+                )}
+              </>
+            ) : (
+              /* TODAY'S FORM, MOVED (story 14): the kind select is still how a
+                 command or a local runtime is added, and choosing custom clears
+                 a catalogue fill. Nothing else about it changes. */
+              <label className="providers-field">
+                <span>kind</span>
+                <select
+                  value={kind}
+                  aria-label="the kind of provider"
+                  onChange={(e) => {
+                    const next =
+                      e.target.value === "cli"
+                        ? "cli"
+                        : e.target.value === "local"
+                          ? "local"
+                          : "http";
+                    setKind(next);
+                    if (next === "local") useLocalPreset(DEFAULT_LOCAL_SPEC);
+                    setProbe(null);
+                    setSentence(null);
+                  }}
+                >
+                  <option value="http">an HTTP endpoint</option>
+                  <option value="cli">a command (CLI)</option>
+                  <option value="local">a model on this machine</option>
+                </select>
+              </label>
+            )}
+            <label className="providers-field">
+              <span>name</span>
+              <input
+                type="text"
+                value={name}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder={
+                  kind === "cli"
+                    ? "My script"
+                    : kind === "local"
+                      ? "My local model"
+                      : "A hosted endpoint"
+                }
+                onChange={(e) => setName(e.target.value)}
+              />
+            </label>
+            {kind === "http" ? (
+              <>
+                <label className="providers-field">
+                  <span>base URL</span>
+                  <input
+                    type="text"
+                    value={baseUrl}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="http://127.0.0.1:8080/v1"
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                  />
+                </label>
+                {/* THE KEY, IN THE FORM ITSELF (story 12). Optional: a local
+                    endpoint may need none. Write-only like the row's — the
+                    field is never filled from the store, and what is typed is
+                    written only AFTER the row exists. */}
+                <label className="providers-field">
+                  <span>the key (kept; never shown again)</span>
+                  <input
+                    type="password"
+                    value={addKey}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="optional"
+                    aria-label="the key to keep with the new provider"
+                    ref={keyFieldRef}
+                    onChange={(e) => setAddKey(e.target.value)}
+                  />
+                </label>
+                {store !== null && (
+                  <span className="providers-key-store">
+                    {secretStatusWords(store)}
+                  </span>
+                )}
+                {/* THE MODELS BLOCK (story 14): every model the vendored export
+                    lists, with the catalogue's tools/vision marks. A tick copies
+                    the model's four fields below; the person still edits them.
+                    No request, no write — the export is local data. */}
+                {tab === "known" && pickedCatalog !== null && (
+                  <div className="providers-models-block">
+                    <span className="providers-add-title">
+                      models from models.dev
+                    </span>
+                    <span className="providers-model-hint">
+                      a tick fills the model fields from the export; tools and
+                      vision stay yours to change
+                    </span>
+                    <div
+                      className="providers-catalog-models"
+                      role="radiogroup"
+                      aria-label="the provider's models"
+                    >
+                      {pickedCatalog.models.map((model) => (
+                        <label
+                          className="providers-catalog-model"
+                          key={model.id}
+                        >
+                          <input
+                            type="radio"
+                            name="catalog-model"
+                            checked={catalogModelId === model.id}
+                            onChange={() => tickCatalogModel(model)}
+                          />
+                          <span className="providers-catalog-model-name">
+                            {model.name}
+                          </span>
+                          <span className="providers-model-id">{model.id}</span>
+                          {model.toolCall && (
+                            <span className="providers-cap">tools</span>
+                          )}
+                          {model.attachment && (
+                            <span className="providers-cap">vision</span>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="providers-add-model">
+                  <label className="providers-field">
+                    <span>model id</span>
+                    <input
+                      type="text"
+                      value={modelId}
+                      spellCheck={false}
+                      autoComplete="off"
+                      placeholder="qwen"
+                      onChange={(e) => setModelId(e.target.value)}
+                    />
+                  </label>
+                  <label className="providers-field">
+                    <span>model name</span>
+                    <input
+                      type="text"
+                      value={modelName}
+                      spellCheck={false}
+                      autoComplete="off"
+                      placeholder="Qwen"
+                      onChange={(e) => setModelName(e.target.value)}
+                    />
+                  </label>
+                  <label className="providers-cap-toggle">
+                    <input
+                      type="checkbox"
+                      checked={tools}
+                      onChange={(e) => setTools(e.target.checked)}
+                    />
+                    <span>tools</span>
+                  </label>
+                  <label className="providers-cap-toggle">
+                    <input
+                      type="checkbox"
+                      checked={vision}
+                      onChange={(e) => setVision(e.target.checked)}
+                    />
+                    <span>vision</span>
+                  </label>
+                </div>
+              </>
+            ) : kind === "cli" ? (
+              <>
+                <label className="providers-field">
+                  <span>command</span>
+                  <input
+                    type="text"
+                    value={command}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="a path, or a name on PATH"
+                    onChange={(e) => setCommand(e.target.value)}
+                  />
+                </label>
+                <label className="providers-field">
+                  <span>version args</span>
+                  <input
+                    type="text"
+                    value={versionArgs}
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(e) => setVersionArgs(e.target.value)}
+                  />
+                </label>
+                <label className="providers-field">
+                  <span>run args</span>
+                  <input
+                    type="text"
+                    value={runArgs}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="{prompt}"
+                    onChange={(e) => setRunArgs(e.target.value)}
+                  />
+                </label>
+                <label className="providers-field">
+                  <span>sign-in args (empty: the probe does not apply)</span>
+                  <input
+                    type="text"
+                    value={authArgs}
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(e) => setAuthArgs(e.target.value)}
+                  />
+                </label>
+                <label className="providers-field">
+                  <span>sign-in pattern</span>
+                  <input
+                    type="text"
+                    value={okPattern}
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(e) => setOkPattern(e.target.value)}
+                  />
+                </label>
+                <div className="providers-actions">
+                  <button
+                    type="button"
+                    className="providers-check"
+                    disabled={probing || command.trim() === ""}
+                    onClick={() => void checkTyped()}
+                  >
+                    check
+                  </button>
+                </div>
+                {probe !== null && <ProbeReadout probe={probe} />}
+              </>
+            ) : (
+              <>
+                <label className="providers-field">
+                  <span>server command</span>
+                  <input
+                    type="text"
+                    value={localCommand}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="llama-server"
+                    onChange={(e) => setLocalCommand(e.target.value)}
+                  />
+                </label>
+                <label className="providers-field">
+                  <span>model path (the file this machine has)</span>
+                  <input
+                    type="text"
+                    value={localModel}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="/home/me/models/qwen.gguf"
+                    onChange={(e) => setLocalModel(e.target.value)}
+                  />
+                </label>
+                <label className="providers-field">
+                  <span>{"server args (with {port} and {key} as separate entries)"}</span>
+                  <input
+                    type="text"
+                    value={localArgs}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="-m {model} --host 127.0.0.1 --port {port}"
+                    onChange={(e) => setLocalArgs(e.target.value)}
+                  />
+                </label>
+                <label className="providers-field">
+                  <span>ready line (empty: the port answering is enough)</span>
+                  <input
+                    type="text"
+                    value={localReady}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="server is listening"
+                    onChange={(e) => setLocalReady(e.target.value)}
+                  />
+                </label>
+                <label className="providers-field">
+                  <span>idle minutes before it is stopped</span>
+                  <input
+                    type="text"
+                    value={localIdle}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="10"
+                    onChange={(e) => setLocalIdle(e.target.value)}
+                  />
+                </label>
+              </>
+            )}
+            {/* THE FOOTER (story 14): Cancel and Add, bottom right, on BOTH
+                tabs. Cancel closes without writing; Add is still the one verb
+                that goes through the validator and the write queue. */}
+            <div className="providers-add-footer">
+              <button
+                type="button"
+                className="providers-cancel"
+                onClick={closeAddDialog}
+              >
+                cancel
+              </button>
+              <button
+                type="button"
+                className="providers-add-save"
+                disabled={busy}
+                onClick={() => void addProvider()}
+              >
+                add
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* THE SHIPPED SPECS: data, offered by name. Adding one is the SAME
             validator and the SAME row a typed command makes. */}
