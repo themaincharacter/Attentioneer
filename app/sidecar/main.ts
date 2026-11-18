@@ -134,6 +134,17 @@ function say(line: string): void {
     });
 }
 
+/**
+ * THE SESSION ID EVERY TURN NAMES (2026-11-18, PROVISIONAL). A subscription
+ * gateway may refuse a chat request that names no session — it cannot route or
+ * cache it — and a coding-agent client is expected to send one. The header
+ * below is the GENERIC name for that fact (not a product's private knob), and
+ * a provider that does not know it ignores it. One id per sidecar process is
+ * stable enough for routing; a per-ask id would need a field on the wire and is
+ * deliberately not invented here.
+ */
+const TURN_SESSION_ID = crypto.randomUUID();
+
 /** The turns in flight, by id, so `stop` can abort one. */
 const inFlight = new Map<number, AbortController>();
 /** Ids already answered `cancelled`: the abort's rejection must stay quiet. */
@@ -361,6 +372,10 @@ async function runTurn(request: TurnRequest): Promise<void> {
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${request.provider.apiKey}`,
+          // The stable session this process names to every provider: a
+          // gateway that needs one to route the request answers 200 instead
+          // of 400, and everyone else ignores it.
+          "x-session-id": TURN_SESSION_ID,
         },
         // stream:true — the answer arrives as deltas (story 7). A provider
         // that ignores this answers one JSON body, handled below.

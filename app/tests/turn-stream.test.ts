@@ -63,8 +63,12 @@ type Mode = "stream" | "json" | "malformed" | "mid-error" | "slow";
 
 let mode: Mode = "stream";
 let requests = 0;
-let lastRequest: { url: string; stream?: unknown; body: RequestBody } | null =
-  null;
+let lastRequest: {
+  url: string;
+  stream?: unknown;
+  session: string | null;
+  body: RequestBody;
+} | null = null;
 
 function delta(text: string): string {
   return "data: " + JSON.stringify({ choices: [{ delta: { content: text } }] }) + "\n\n";
@@ -102,7 +106,12 @@ const stub = Bun.serve({
   async fetch(request) {
     requests += 1;
     const body = (await request.json()) as RequestBody;
-    lastRequest = { url: request.url, stream: body.stream, body };
+    lastRequest = {
+      url: request.url,
+      stream: body.stream,
+      session: request.headers.get("x-session-id"),
+      body,
+    };
     if (mode === "json") {
       return Response.json({
         choices: [{ message: { role: "assistant", content: "one whole answer" } }],
@@ -292,6 +301,23 @@ describe("streaming is real and ordered", () => {
     ]);
     expect(lastRequest?.stream).toBe(true);
     expect(lastRequest?.url).toBe(`${PROVIDER.baseUrl}/chat/completions`);
+  });
+
+  test("every turn names the same session id, so a gateway can route it", async () => {
+    mode = "stream";
+    const transport = transportOf(child, lines);
+    const first = await askTurn(transport, PROVIDER, "one", {
+      timeoutMs: 5_000,
+    });
+    expect(first.kind).toBe("answer");
+    const session = lastRequest?.session;
+    expect(session).toBeTruthy();
+    const second = await askTurn(transport, PROVIDER, "two", {
+      timeoutMs: 5_000,
+    });
+    expect(second.kind).toBe("answer");
+    // Stable across turns: a gateway can cache and route one conversation.
+    expect(lastRequest?.session).toBe(session);
   });
 
   test("a provider that ignores stream:true still answers ONE part", async () => {
