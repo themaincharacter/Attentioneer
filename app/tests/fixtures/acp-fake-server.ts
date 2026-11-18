@@ -9,7 +9,11 @@
  *
  * Modes, selected by the first argument:
  *   normal        handshake, session, a prompt with one permission prompt,
- *                 ordered updates, a second prompt that answers a cancel.
+ *                 ordered updates, a second prompt that answers a cancel. STORY
+ *                 18.4 makes the prompt offer an "always" option beside the
+ *                 once pair, so the client's no-always rule is proven against
+ *                 a server that really offers one; the reply still WAITS for
+ *                 the client's answer.
  *   malformed     writes one non-JSON line before the initialize answer.
  *   die-mid-turn  writes one update for the first prompt, then exits 3.
  *   hang-mid-turn writes one update, then waits for session/cancel before
@@ -125,8 +129,12 @@ function requestPermission(): void {
           kind: "read",
           status: "pending",
         },
+        // STORY 18.4: a server may offer a REMEMBERED yes. The fake offers
+        // one precisely so the client's rule ("never present or send it") can
+        // be tested against the real shape rather than a promise.
         options: [
           { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+          { optionId: "allow-always", name: "Allow always", kind: "allow_always" },
           { optionId: "reject-once", name: "Reject", kind: "reject_once" },
         ],
       },

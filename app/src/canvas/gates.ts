@@ -425,6 +425,17 @@ export const CONTENT_CLASSES = [
   "session-card-open",
   "session-card-footer",
   "session-card-problem",
+  // STORY 18.4: the pending permission block (what the tool asks, its two
+  // verbs and the no-allow-once note) and the result card's one verb. Inside
+  // the card, which is content already; listed so a press on allow/refuse or
+  // "make a card from this" can never fall through to the plane.
+  "session-permission",
+  "session-permission-ask",
+  "session-permission-note",
+  "session-permission-actions",
+  "session-permission-allow",
+  "session-permission-refuse",
+  "session-card-make",
   // Story 16.6: the card's NOTE (its face, its edit and done verbs and its
   // textarea). They live inside the card, which is already content; listed
   // anyway for the same belt-and-braces reason — a press on the note or in its

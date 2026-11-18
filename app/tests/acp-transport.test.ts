@@ -177,7 +177,13 @@ describe("the prompt turn", () => {
       options?: { optionId: string; kind: string }[];
     };
     expect(params.toolCall?.title).toBe("Read the working directory");
-    expect(params.options?.map((option) => option.kind)).toEqual(["allow_once", "reject_once"]);
+    // STORY 18.4: the fake offers an "always" option too; the TRANSPORT relays
+    // the server's options verbatim (choosing is the run lane's/card's job).
+    expect(params.options?.map((option) => option.kind)).toEqual([
+      "allow_once",
+      "allow_always",
+      "reject_once",
+    ]);
 
     await transport.respondToPermission(request.id, "reject-once");
     const result = await turn;

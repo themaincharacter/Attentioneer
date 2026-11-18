@@ -20,6 +20,14 @@
  * The key rides INSIDE the `run` request's `env` payload — a resolved map,
  * exactly as a turn carries its key — never an argv and never a log line.
  *
+ * STORY 18.4 ADDS THE PERMISSION PAIR (names PROVISIONAL): `run-permission`
+ * carries a server's `session/request_permission` DOWN to the person — the
+ * tool call and the options the server offered — and `run-permission-reply`
+ * carries ONE choice UP (`allow-once` or `refuse`). It carries no option id:
+ * the sidecar turns the verb into the matching option against the ask it is
+ * holding, so an "always" option can never be selected on the wire. A request
+ * left unanswered settles as the run's own timeout.
+ *
  * Newline-delimited JSON travels in BOTH directions over stdio, so every
  * builder here answers exactly one line (JSON.stringify never emits a raw
  * newline) and every reader REFUSES rather than guesses: a malformed line is
@@ -39,6 +47,8 @@
 
 import type {
   AcpEnding,
+  AcpPermissionAsk,
+  AcpPermissionChoice,
   AcpPermissionOption,
   AcpProgressEntry,
 } from "./acpEntries";
@@ -221,6 +231,37 @@ export interface RunRequest {
   prompt: string;
 }
 
+/**
+ * A SERVER'S PERMISSION REQUEST, down to the person (story 18.4). `id` is the
+ * run's originating request id, so the window's run subscription hears it; `ask`
+ * is the ACP request id the reply must echo. The tool call and the options are
+ * the protocol's own fields, carried whole: the card decides what to show, and
+ * the sidecar decides what an answer may mean.
+ */
+export interface RunPermissionLine {
+  id: number;
+  kind: "run-permission";
+  run: number;
+  /** The JSON-RPC request id of the server's ask. */
+  ask: number;
+  method: string;
+  toolCall: unknown;
+  options: AcpPermissionOption[];
+}
+
+/**
+ * THE PERSON'S ANSWER, up (story 18.4). It names the run and the exact ask, and
+ * carries a VERB — never an option id. The sidecar maps the verb against the ask
+ * it is holding, so an "always" option can never cross this wire.
+ */
+export interface RunPermissionReplyRequest {
+  id: number;
+  kind: "run-permission-reply";
+  run: number;
+  ask: number;
+  choice: AcpPermissionChoice;
+}
+
 /** Ask the sidecar to cancel a live run. That run's OWN `run-end` answers. */
 export interface RunCancelRequest {
   id: number;
@@ -261,6 +302,7 @@ export type SidecarLine =
   | VideoLine
   | ThumbLine
   | RunPartLine
+  | RunPermissionLine
   | RunEndLine;
 
 /** One turn's request. The messages are ALL that leaves the app. */
@@ -297,6 +339,7 @@ export type SidecarRequest =
   | ThumbRequest
   | RunRequest
   | RunCancelRequest
+  | RunPermissionReplyRequest
   | StopRequest;
 
 /* ------------------------------------------------------------------ *
@@ -407,6 +450,46 @@ export function runRequestLine(
 /** The cancel's request line: a run number, and the cancel's own request id. */
 export function runCancelLine(id: number, run: number): string {
   return JSON.stringify({ id, kind: "run-cancel", run });
+}
+
+/**
+ * ONE permission request, down: the run it belongs to, the exact ask, and the
+ * protocol's own fields (the tool call and the offered options). The options
+ * are carried WHOLE — an "always" offer is visible on this wire, and is never
+ * turned into a presented verb by the card.
+ */
+export function runPermissionLine(
+  id: number,
+  run: number,
+  ask: AcpPermissionAsk,
+): string {
+  return JSON.stringify({
+    id,
+    kind: "run-permission",
+    run,
+    ask: ask.id,
+    method: ask.method,
+    toolCall: ask.toolCall,
+    options: ask.options.map((option) => ({
+      optionId: option.optionId,
+      name: option.name,
+      kind: option.kind,
+    })),
+  });
+}
+
+/**
+ * The person's answer, up: the run, the exact ask and ONE verb. The option id
+ * is derived by the sidecar from what the server actually offered, so this line
+ * cannot smuggle an "always" choice.
+ */
+export function runPermissionReplyLine(
+  id: number,
+  run: number,
+  ask: number,
+  choice: AcpPermissionChoice,
+): string {
+  return JSON.stringify({ id, kind: "run-permission-reply", run, ask, choice });
 }
 
 /** ONE progress entry, one line, in the order the run reported it. */
@@ -606,6 +689,17 @@ function readProgressEntry(value: unknown): AcpProgressEntry | null {
         reply: { outcome: "selected", optionId: reply.optionId },
       };
     }
+    // STORY 18.4 — a request the budget left waiting is its own outcome. It is
+    // neither a selection nor a cancellation, and the transcript states it.
+    if (reply.outcome === "unanswered") {
+      return {
+        kind: "permission",
+        method: value.method,
+        toolCall: value.toolCall,
+        options,
+        reply: { outcome: "unanswered" },
+      };
+    }
     if (reply.outcome !== "cancelled") return null;
     return {
       kind: "permission",
@@ -760,6 +854,22 @@ export function parseSidecarLine(raw: string): SidecarLine | null {
     if (entry === null) return null;
     return { id: value.id, kind: "run-part", run: value.run, entry };
   }
+  if (value.kind === "run-permission") {
+    if (!isId(value.run)) return null;
+    if (!isId(value.ask)) return null;
+    if (typeof value.method !== "string" || value.method === "") return null;
+    const options = readPermissionOptions(value.options);
+    if (options === null) return null;
+    return {
+      id: value.id,
+      kind: "run-permission",
+      run: value.run,
+      ask: value.ask,
+      method: value.method,
+      toolCall: value.toolCall,
+      options,
+    };
+  }
   if (value.kind === "run-end") {
     if (!isId(value.run)) return null;
     if (!isEnding(value.ending)) return null;
@@ -820,6 +930,23 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
   if (value.kind === "run-cancel") {
     if (!isId(value.run)) return null;
     return { id: value.id, kind: "run-cancel", run: value.run };
+  }
+  if (value.kind === "run-permission-reply") {
+    if (!isId(value.run)) return null;
+    if (!isId(value.ask)) return null;
+    if (
+      value.choice !== "allow-once" &&
+      value.choice !== "refuse"
+    ) {
+      return null;
+    }
+    return {
+      id: value.id,
+      kind: "run-permission-reply",
+      run: value.run,
+      ask: value.ask,
+      choice: value.choice,
+    };
   }
   if (value.kind === "run") {
     if (!isId(value.run)) return null;

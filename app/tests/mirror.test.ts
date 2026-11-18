@@ -557,12 +557,13 @@ describe("the hook queues the mirror after every ground write", () => {
     });
   }
 
-  test("exactly seventeen call sites (one per write path, not on load)", () => {
+  test("exactly eighteen call sites (one per write path, not on load)", () => {
     // Story 16.12 added the selection card as the ninth authored write path;
     // story 16.13 adds restore as the tenth; story 16.14 the page card and
     // story 16.15 the video card. STORY 17.8 adds four ask moves (create, fork,
     // re-anchor, remove) and the ask restore inside the one toast handler.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(17);
+    // STORY 18.4 adds the run's result card, which is an ordinary reference.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(18);
   });
 
   test("opening never writes the mirror", () => {

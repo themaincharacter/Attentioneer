@@ -7777,6 +7777,65 @@ body {
   color: var(--ink-soft);
 }
 
+/* STORY 18.4 — THE PENDING PERMISSION: what the tool asks, and the person's
+   TWO verbs. No option list is drawn here: an "always" offer on the wire never
+   becomes a press. The accept verb is the marker ink because it is the one that
+   acts; refuse stays body ink. */
+.session-permission {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 7px;
+  border: 1px solid rgba(141, 136, 124, 0.24);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.session-permission-ask {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-strong);
+}
+
+.session-permission-note {
+  font-size: 10.5px;
+  line-height: 1.4;
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
+.session-permission-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.session-permission-actions button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.session-permission-allow {
+  color: var(--ink-marker);
+}
+
+.session-permission-refuse {
+  color: var(--ink-soft);
+}
+
+.session-permission-actions button:hover {
+  color: var(--ink-strong);
+}
+
+.session-permission-actions button:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+}
+
 .session-card-problem {
   font-size: 11.5px;
   color: var(--ink-marker);

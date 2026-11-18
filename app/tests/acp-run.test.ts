@@ -24,11 +24,15 @@ import {
   ACP_RUN_SENTENCES,
   acpInheritedEnvironment,
   acpRunEnvironment,
-  sessionPermissionReply,
   startAcpRun,
   type AcpProgressEntry,
   type AcpRunOptions,
 } from "../src/turn/acpRun";
+import {
+  allowOnceOption,
+  optionIdForChoice,
+  refuseOption,
+} from "../src/turn/acpEntries";
 import { bunSpawn } from "../src/turn/acp";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
 
@@ -387,6 +391,52 @@ describe("the env rule is a sentence and a pair of names", () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * STORY 18.4 — the no-always rule, as a value.
+ * ------------------------------------------------------------------ */
+
+describe("an always option is never a choice this app can make", () => {
+  const once = { optionId: "allow-once", name: "Allow once", kind: "allow_once" };
+  const always = {
+    optionId: "allow-always",
+    name: "Allow always",
+    kind: "allow_always",
+  };
+  const reject = { optionId: "reject-once", name: "Reject", kind: "reject_once" };
+
+  test("allow-once matches only allow_once, and refuse matches a reject", () => {
+    const offered = [once, always, reject];
+    expect(allowOnceOption(offered)).toEqual(once);
+    expect(refuseOption(offered)).toEqual(reject);
+    expect(optionIdForChoice("allow-once", offered)).toBe("allow-once");
+    expect(optionIdForChoice("refuse", offered)).toBe("reject-once");
+  });
+
+  test("a server that offers only always cannot produce an allow", () => {
+    const offered = [always, reject];
+    expect(allowOnceOption(offered)).toBeNull();
+    // No fallback to the remembered yes: the only possible allow is null, which
+    // the transport sends as a cancelled outcome.
+    expect(optionIdForChoice("allow-once", offered)).toBeNull();
+    expect(optionIdForChoice("allow-once", offered)).not.toBe("allow-always");
+  });
+
+  test("the fake server really offers one, so the rule is tested against it", async () => {
+    const run = begin("normal", {
+      replyToPermission: () => ({ optionId: "allow-once" }),
+    });
+    const result = await run.handle.result;
+    const permission = result.entries.find((entry) => entry.kind === "permission");
+    if (permission === undefined || permission.kind !== "permission") {
+      throw new Error("no permission entry");
+    }
+    expect(permission.options.map((option) => option.kind)).toContain(
+      "allow_always",
+    );
+    expect(JSON.stringify(permission.reply)).not.toContain("allow-always");
+  });
+});
+
+/* ------------------------------------------------------------------ *
  * The run — every ending, against the fake server.
  * ------------------------------------------------------------------ */
 
@@ -425,8 +475,12 @@ describe("one headless run, every ending", () => {
     if (permission === undefined || permission.kind !== "permission") {
       throw new Error("no permission entry");
     }
+    // STORY 18.4: the fake offers an "always" option, and the run carries the
+    // server's options WHOLE. What it never does is choose one: the caller's
+    // allow-once reply is the only allow that crossed.
     expect(permission.options.map((option) => option.kind)).toEqual([
       "allow_once",
+      "allow_always",
       "reject_once",
     ]);
     expect(permission.reply).toEqual({

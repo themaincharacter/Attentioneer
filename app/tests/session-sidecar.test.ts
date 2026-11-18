@@ -17,6 +17,8 @@ import {
   runCancelLine,
   runEndLine,
   runPartLine,
+  runPermissionLine,
+  runPermissionReplyLine,
   runRequestLine,
   type RunRequest,
   type SidecarLine,
@@ -233,6 +235,60 @@ describe("the run wire", () => {
     });
   });
 
+  test("the permission ask and the person's reply round-trip, and a bad verb is refused", () => {
+    const ask = {
+      id: 100,
+      method: "session/request_permission",
+      toolCall: { title: "Read the folder", kind: "read" },
+      options: [
+        { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+        { optionId: "allow-always", name: "Allow always", kind: "allow_always" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+    };
+    // The ask goes DOWN whole: tool call, options and the ask's own id.
+    expect(parseSidecarLine(runPermissionLine(7, 7, ask))).toEqual({
+      id: 7,
+      kind: "run-permission",
+      run: 7,
+      ask: 100,
+      method: ask.method,
+      toolCall: ask.toolCall,
+      options: ask.options,
+    });
+    // The reply goes UP as a VERB, never an option id: an "always" choice has
+    // no spelling on this wire.
+    expect(
+      parseRequestLine(runPermissionReplyLine(8, 7, 100, "allow-once")),
+    ).toEqual({
+      id: 8,
+      kind: "run-permission-reply",
+      run: 7,
+      ask: 100,
+      choice: "allow-once",
+    });
+    expect(
+      parseRequestLine(JSON.stringify({
+        id: 9,
+        kind: "run-permission-reply",
+        run: 7,
+        ask: 100,
+        choice: "allow-always",
+      })),
+    ).toBeNull();
+    expect(
+      parseSidecarLine(JSON.stringify({
+        id: 7,
+        kind: "run-permission",
+        run: 7,
+        ask: 100,
+        method: "session/request_permission",
+        toolCall: {},
+        options: [{ optionId: "x", name: "X", kind: 4 }],
+      })),
+    ).toBeNull();
+  });
+
   test("a malformed run, entry, env name or ending is refused, never guessed", () => {
     const good = {
       id: 1,
@@ -393,6 +449,137 @@ describe("a run, streamed by the sidecar", () => {
     expect(end.kind === "run-end" ? end.sentence : null).toContain("budget");
     const report = await reportOf(reportPath);
     expect(await gone(report.pid)).toBe(true);
+  });
+
+  test("a permission waits for the person; an allow-once continues the run", async () => {
+    const pipe = await sidecar();
+    const base = workspace();
+    const reportPath = join(base, "report.json");
+    const request = runRequest(16, "normal", reportPath);
+    const permissions: Array<Extract<SidecarLine, { kind: "run-permission" }>> = [];
+    const parts: Array<Extract<SidecarLine, { kind: "run-part" }>> = [];
+    const ended = new Promise<Extract<SidecarLine, { kind: "run-end" }>>(
+      (resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("the run never ended")), 10_000);
+        pipe.transport.subscribe(request.run, (line) => {
+          if (line.kind === "run-permission" && line.run === request.run) {
+            permissions.push(line);
+            return;
+          }
+          if (line.kind === "run-part" && line.run === request.run) {
+            parts.push(line);
+            return;
+          }
+          if (line.kind === "run-end" && line.run === request.run) {
+            clearTimeout(timer);
+            resolve(line);
+          }
+        });
+      },
+    );
+    await send(pipe, JSON.stringify(request));
+
+    // Nothing answers until a person does: the run is waiting on the ask.
+    for (let at = 0; at < 400 && permissions.length === 0; at += 1) {
+      await Bun.sleep(10);
+    }
+    expect(permissions).toHaveLength(1);
+    const permission = permissions[0]!;
+    expect(permission.method).toBe("session/request_permission");
+    expect(permission.toolCall).toMatchObject({
+      title: "Read the working directory",
+    });
+    // The fake really offered a remembered yes; the wire carries it whole.
+    expect(permission.options.map((option) => option.kind)).toEqual([
+      "allow_once",
+      "allow_always",
+      "reject_once",
+    ]);
+
+    // The PERSON's verb, not an option id: the lane maps it.
+    await send(
+      pipe,
+      runPermissionReplyLine(500, request.run, permission.ask, "allow-once"),
+    );
+    const end = await ended;
+    expect(end.kind === "run-end" ? end.ending : null).toBe("completed");
+
+    const permissionEntry = parts
+      .map((line) => line.entry)
+      .find((entry) => entry.kind === "permission");
+    expect(permissionEntry).toMatchObject({
+      kind: "permission",
+      reply: { outcome: "selected", optionId: "allow-once" },
+    });
+    // The offer is on the wire, but the SELECTED option never is the always
+    // one: the reply names allow-once and only allow-once.
+    const reply =
+      permissionEntry !== undefined && permissionEntry.kind === "permission"
+        ? permissionEntry.reply
+        : null;
+    expect(JSON.stringify(reply)).not.toContain("allow-always");
+    expect(await gone((await reportOf(reportPath)).pid)).toBe(true);
+  });
+
+  test("an unanswered permission settles as the run's timeout, stated as unanswered", async () => {
+    const pipe = await sidecar();
+    const base = workspace();
+    const reportPath = join(base, "report.json");
+    // A TEST-ONLY short budget. Nobody answers the ask.
+    const request = runRequest(17, "normal", reportPath, { timeoutMinutes: 0.003 });
+    const parts: Array<Extract<SidecarLine, { kind: "run-part" }>> = [];
+    const permissions: Array<Extract<SidecarLine, { kind: "run-permission" }>> = [];
+    const ended = new Promise<Extract<SidecarLine, { kind: "run-end" }>>(
+      (resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("the run never ended")), 10_000);
+        pipe.transport.subscribe(request.run, (line) => {
+          if (line.kind === "run-permission" && line.run === request.run) {
+            permissions.push(line);
+            return;
+          }
+          if (line.kind === "run-part" && line.run === request.run) {
+            parts.push(line);
+            return;
+          }
+          if (line.kind === "run-end" && line.run === request.run) {
+            clearTimeout(timer);
+            resolve(line);
+          }
+        });
+      },
+    );
+    await send(pipe, JSON.stringify(request));
+    const end = await ended;
+    expect(permissions).toHaveLength(1);
+    expect(end.kind === "run-end" ? end.ending : null).toBe("timed-out");
+    const sentence = end.kind === "run-end" ? end.sentence : null;
+    expect(sentence).toContain("unanswered");
+    // The run recorded the ask as unanswered, never as a refusal.
+    const permissionEntry = parts
+      .map((line) => line.entry)
+      .find((entry) => entry.kind === "permission");
+    expect(permissionEntry).toMatchObject({
+      kind: "permission",
+      reply: { outcome: "unanswered" },
+    });
+    expect(await gone((await reportOf(reportPath)).pid)).toBe(true);
+  });
+
+  test("a reply naming no waiting ask is answered with one sentence", async () => {
+    const pipe = await sidecar();
+    const answer = new Promise<SidecarLine>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no answer")), 5_000);
+      pipe.transport.subscribe(501, (line) => {
+        clearTimeout(timer);
+        resolve(line);
+      });
+    });
+    await send(pipe, runPermissionReplyLine(501, 404, 1, "allow-once"));
+    const line = await answer;
+    expect(line.kind).toBe("error");
+    expect(line.kind === "error" ? line.message : "").toContain(
+      "no permission request",
+    );
   });
 
   test("a busy run number is refused in one sentence, and the first run still ends", async () => {

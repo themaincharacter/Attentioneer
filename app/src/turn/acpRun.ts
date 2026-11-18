@@ -79,12 +79,14 @@ import {
 // file — its `node:fs`, `node:os` and spawner are what the window lacks.
 import type {
   AcpEnding,
+  AcpPermissionAsk,
   AcpPermissionOption,
   AcpProgressEntry,
 } from "./acpEntries";
 
 export type {
   AcpEnding,
+  AcpPermissionAsk,
   AcpPermissionOption,
   AcpPermissionOutcome,
   AcpProgressEntry,
@@ -106,20 +108,17 @@ export const ACP_SESSION_PREFIX = "attentioneer-acp-session-";
 export const ACP_RUN_SENTENCES = {
   timedOut:
     "the run ran out of its budget, so what arrived is a partial, not a result",
+  /**
+   * STORY 18.4 — the run waited for a person, nobody answered, and the budget
+   * ran out. The transcript states that the request went UNANSWERED; it is
+   * never a refusal the person did not make and never a silent yes.
+   */
+  permissionUnanswered:
+    "the run ran out of its budget with a permission request unanswered, so what arrived is a partial, not a result",
   noDirectory: "the run's session directory could not be made",
   noSession:
     "the server did not create a session, so the run is not a finished run",
 } as const;
-
-/** What the server asked, as the caller's decider sees it. */
-export interface AcpPermissionAsk {
-  method: string;
-  sessionId: string | null;
-  toolCall: unknown;
-  options: AcpPermissionOption[];
-  /** The request's params verbatim, for a surface that wants the whole shape. */
-  params: unknown;
-}
 
 /**
  * The caller's reply: one option id, or null for "cancelled". The policy is
@@ -174,10 +173,22 @@ export interface AcpRunOptions {
    * logged, never written, never placed in an argv.
    */
   resolvedEnv?: Readonly<Record<string, string>>;
-  /** The caller's answer to a permission request (the person's choice). */
+  /**
+   * THE CALLER'S ANSWER to a permission request (the person's choice). STORY
+   * 18.4: the run WAITS on this promise — the sidecar's lane resolves it when a
+   * person presses allow-once or refuse, and leaves it pending when nobody
+   * does (the budget then ends the run as a timeout). There is no default and
+   * no fallback answer here: an unanswered await means the run waits.
+   */
   replyToPermission: (
     request: AcpPermissionAsk,
   ) => AcpPermissionReply | Promise<AcpPermissionReply>;
+  /**
+   * STORY 18.4 — the ask AS IT ARRIVES, before any reply. The sidecar turns it
+   * into one `run-permission` line so the card can show what the tool wants
+   * and offer its two verbs. Optional: a run with nobody watching simply waits.
+   */
+  onPermissionAsk?: (ask: AcpPermissionAsk) => void;
   /** Injected for tests; the default is the Bun runtime's spawn. */
   spawn?: AcpSpawner;
   /** The environment the run may inherit FROM; only PATH/HOME are read. */
@@ -244,25 +255,6 @@ export function acpRunEnvironment(
 }
 
 /**
- * THE RUN'S PERMISSION POLICY (PROVISIONAL, and deliberately the smallest one):
- * every request is REFUSED — the first option whose kind is a reject, or no
- * option at all when the server offered none, which reads as cancelled. WHO
- * decides (and the Allow/Reject surface) is story 18.4's; this story only
- * carries the answer to the wire and says what it was.
- *
- * It lives beside the run, not in the card, because 18.3b put the run in the
- * sidecar: the policy has to travel with the process that answers the server.
- */
-export function sessionPermissionReply(
-  ask: AcpPermissionAsk,
-): AcpPermissionReply {
-  const reject =
-    ask.options.find((option) => option.kind === "reject_once") ??
-    ask.options.find((option) => option.kind.startsWith("reject"));
-  return { optionId: reject === undefined ? null : reject.optionId };
-}
-
-/**
  * Make the run's fresh session directory under the app's temp root. There is
  * no other cwd policy: a run must not start in whatever directory the window
  * happened to have.
@@ -310,11 +302,10 @@ function permissionAsk(request: AcpServerRequest): AcpPermissionAsk {
     }
   }
   return {
+    id: request.id,
     method: request.method,
-    sessionId: textOf(params.sessionId) === "" ? null : textOf(params.sessionId),
     toolCall: params.toolCall,
     options,
-    params: request.params,
   };
 }
 
@@ -361,6 +352,13 @@ export function startAcpRun(
   let cancelled = false;
   let timedOut = false;
   let settled = false;
+  /**
+   * STORY 18.4 — WHAT THE RUN IS WAITING FOR, if anything. Set before the
+   * caller is asked and cleared when its answer arrives. If the run ends while
+   * it is still here, the ending records the outcome honestly: unanswered for
+   * a budget that ran out, cancelled for a stop.
+   */
+  let pendingPermission: AcpPermissionAsk | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let grace: ReturnType<typeof setTimeout> | null = null;
 
@@ -404,6 +402,22 @@ export function startAcpRun(
       await live.close();
       childExitCode = live.exited;
     }
+    // STORY 18.4 — A REQUEST STILL WAITING WHEN THE RUN ENDS is recorded as it
+    // stood: unanswered when the budget ran out, cancelled when the run was
+    // stopped or closed. It is never dressed as an answer nobody gave.
+    if (pendingPermission !== null) {
+      const ask = pendingPermission;
+      pendingPermission = null;
+      emit({
+        kind: "permission",
+        method: ask.method,
+        toolCall: ask.toolCall,
+        options: ask.options,
+        reply: {
+          outcome: ending === "timed-out" ? "unanswered" : "cancelled",
+        },
+      });
+    }
     const partialText = answerText === "" ? null : answerText;
     emit({
       kind: "ended",
@@ -442,6 +456,15 @@ export function startAcpRun(
   /** Answer one permission request with the caller's reply, then record it. */
   async function answerPermission(request: AcpServerRequest): Promise<void> {
     const ask = permissionAsk(request);
+    // STORY 18.4: the run is WAITING from this line on. The ask is reported to
+    // the caller's surface first, and nothing answers it but the person (or
+    // the budget, honestly).
+    pendingPermission = ask;
+    try {
+      options.onPermissionAsk?.(ask);
+    } catch {
+      // A surface that broke is not permission to act.
+    }
     let reply: AcpPermissionReply;
     try {
       reply = await options.replyToPermission(ask);
@@ -449,22 +472,24 @@ export function startAcpRun(
       // A decider that broke is not permission to act.
       reply = { optionId: null };
     }
+    // A run that ended while waiting recorded its own outcome in finish(); the
+    // late answer changes nothing.
+    if (settled) return;
+    pendingPermission = null;
     const optionId =
       typeof reply.optionId === "string" && reply.optionId !== ""
         ? reply.optionId
         : null;
-    if (!settled) {
-      emit({
-        kind: "permission",
-        method: ask.method,
-        toolCall: ask.toolCall,
-        options: ask.options,
-        reply:
-          optionId === null
-            ? { outcome: "cancelled" }
-            : { outcome: "selected", optionId },
-      });
-    }
+    emit({
+      kind: "permission",
+      method: ask.method,
+      toolCall: ask.toolCall,
+      options: ask.options,
+      reply:
+        optionId === null
+          ? { outcome: "cancelled" }
+          : { outcome: "selected", optionId },
+    });
     try {
       await transport?.respondToPermission(request.id, optionId);
     } catch {
@@ -499,8 +524,14 @@ export function startAcpRun(
   timer = setTimeout(() => {
     if (settled) return;
     timedOut = true;
+    // STORY 18.4: a request nobody answered is SAID as unanswered, not folded
+    // into the ordinary budget sentence.
+    const waiting = pendingPermission !== null;
     if (sessionId !== null) transport?.cancel(sessionId);
-    void finish("timed-out", ACP_RUN_SENTENCES.timedOut);
+    void finish(
+      "timed-out",
+      waiting ? ACP_RUN_SENTENCES.permissionUnanswered : ACP_RUN_SENTENCES.timedOut,
+    );
   }, budgetMs);
 
   void (async () => {

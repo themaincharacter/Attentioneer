@@ -4429,8 +4429,11 @@ function App() {
             sessions={ground.sessions}
             sessionEntries={ground.sessionEntries}
             sessionRunning={ground.sessionRunning}
+            sessionPermission={ground.sessionPermission}
             onRunSession={ground.runSession}
             onStopSession={ground.stopSession}
+            onAnswerSessionPermission={ground.answerSessionPermission}
+            onMakeSessionResult={ground.makeCardFromRun}
             onChooseSessionTool={ground.bindSessionTool}
             /* STORY 17.8 — an ask card is removable through the same one toast
                every other card uses (16.13's immediate delete + Restore). */

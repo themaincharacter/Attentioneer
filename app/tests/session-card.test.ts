@@ -32,11 +32,15 @@ import {
   serializeSessionEntryLine,
   serializeSessions,
   serializeSessionLine,
+  SESSION_RESULT_EMPTY_SENTENCE,
+  SESSION_RESULT_UNFINISHED_SENTENCE,
   sessionEndingLine,
   sessionEntryLine,
   sessionKindLine,
   sessionNewestEntry,
   sessionRefusal,
+  sessionResultName,
+  sessionRunResult,
   sessionsPath,
   sessionTranscriptPath,
   type SessionCard as SessionCardRecord,
@@ -50,9 +54,12 @@ import {
   beginSessionRun,
   bindSessionCard,
   sessionEntryOf,
+  writeResultCard,
   writeSessionCard,
 } from "../src/canvas/useGround";
-import { sessionPermissionReply } from "../src/turn/acpRun";
+import { serializeReadingLine } from "../src/map/readings";
+import type { AcpPermissionAsk } from "../src/turn/acpEntries";
+import { allowOnceOption, refuseOption } from "../src/turn/acpEntries";
 import { type SidecarStart } from "../src/turn/sidecar";
 import { type TurnTransport } from "../src/turn/turn";
 import {
@@ -572,24 +579,102 @@ describe("a run's transcript, appended as it arrives", () => {
     expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
   });
 
-  test("a permission is recorded with the reply that crossed the wire", async () => {
+  test("a permission waits for the person, and the REFUSAL crosses the wire", async () => {
     const fx = fixture("normal");
     const base = workspace();
-    const started = beginSessionRun(base, fx.row, "one", {
+    // The run WAITS; this watcher is the person, pressing refuse. The ask's own
+    // options include an always offer, and the transcript records only the
+    // rejection that crossed.
+    let started: ReturnType<typeof beginSessionRun> | null = null;
+    started = beginSessionRun(base, fx.row, "one", {
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
+      onPermission: (ask) => {
+        started?.handle.answerPermission(ask.id, "refuse");
+      },
     });
     const done = await started.done;
-    // 18.3's policy is the smallest one: every request is refused (18.4
-    // decides who decides). The transcript says exactly that.
     expect(done.entries).toContainEqual({
       kind: "permission",
       name: "Read the working directory",
       reply: "refused",
     });
     expect(done.ending).toBe("completed");
+    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
+  });
+
+  test("an ALLOW-ONCE is the only allow the transcript can state", async () => {
+    const fx = fixture("normal");
+    const base = workspace();
+    let started: ReturnType<typeof beginSessionRun> | null = null;
+    started = beginSessionRun(base, fx.row, "one", {
+      readKey: async () => "",
+      transport: await lane(),
+      start: async () => STARTED,
+      transcriptIo: fx.transcriptIo,
+      onPermission: (ask) => {
+        // The fake offers allow-always beside allow-once. The card's verb is
+        // allow-once, so that is what the sidecar turns it into.
+        expect(ask.options.map((option) => option.kind)).toContain(
+          "allow_always",
+        );
+        started?.handle.answerPermission(ask.id, "allow-once");
+      },
+    });
+    const done = await started.done;
+    expect(done.entries).toContainEqual({
+      kind: "permission",
+      name: "Read the working directory",
+      reply: "allowed-once",
+    });
+    expect(
+      done.entries.some(
+        (entry) => entry.kind === "text" && entry.text === "allowed ",
+      ),
+    ).toBe(true);
+    expect(done.ending).toBe("completed");
+    const text = readFileSync(sessionTranscriptPath(base, "one"), "utf8");
+    expect(text).toContain('"reply":"allowed-once"');
+    expect(text).not.toContain("always");
+    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
+  });
+
+  test("an unanswered permission times out and the transcript says so", async () => {
+    // A short budget: nobody presses either verb, so the request outlives it.
+    const fx = fixture("normal", { timeoutMinutes: 0.003 });
+    const base = workspace();
+    const asks: string[] = [];
+    const started = beginSessionRun(base, fx.row, "one", {
+      readKey: async () => "",
+      transport: await lane(),
+      start: async () => STARTED,
+      transcriptIo: fx.transcriptIo,
+      onPermission: (ask) => {
+        asks.push(ask.method);
+        // Deliberately no answer: the run's own budget is the only way out.
+      },
+    });
+    const done = await started.done;
+    expect(asks).toEqual(["session/request_permission"]);
+    expect(done.ending).toBe("timed-out");
+    // The permission line records unanswered, never a refusal nobody made.
+    expect(done.entries).toContainEqual({
+      kind: "permission",
+      name: "Read the working directory",
+      reply: "unanswered",
+    });
+    const last = done.entries[done.entries.length - 1]!;
+    expect(last.kind).toBe("ended");
+    expect(last.kind === "ended" ? last.sentence : "").toContain("unanswered");
+    // And the file says the same after a reopen.
+    const parsed = await loadSessionTranscript(base, "one", nodeIo());
+    expect(parsed.entries).toContainEqual({
+      kind: "permission",
+      name: "Read the working directory",
+      reply: "unanswered",
+    });
     expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
   });
 
@@ -872,30 +957,26 @@ describe("a run's transcript, appended as it arrives", () => {
         at,
       ),
     ).toEqual({ kind: "ended", ending: "failed", t: at, sentence: "broke" });
-    // The decider's policy is the smallest one: refuse, or cancel when the
-    // server offered no way to refuse. It lives with the run now (the sidecar
-    // answers the server), not in the card's hook.
+    // STORY 18.4 — THE NO-ALWAYS RULE, as values. allow-once matches ONLY the
+    // protocol's allow_once kind, refuse matches a reject kind, and an offer
+    // that has only an always option can produce no allow at all.
+    const offered = [
+      { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+      { optionId: "allow-always", name: "Always", kind: "allow_always" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ];
+    expect(allowOnceOption(offered)?.optionId).toBe("allow-once");
+    expect(refuseOption(offered)?.optionId).toBe("reject-once");
     expect(
-      sessionPermissionReply({
-        method: "session/request_permission",
-        sessionId: "s",
-        toolCall: {},
-        options: [
-          { optionId: "allow-once", name: "Allow", kind: "allow_once" },
-          { optionId: "reject-once", name: "Reject", kind: "reject_once" },
-        ],
-        params: {},
-      }),
-    ).toEqual({ optionId: "reject-once" });
+      allowOnceOption([
+        { optionId: "allow-always", name: "Always", kind: "allow_always" },
+      ]),
+    ).toBeNull();
     expect(
-      sessionPermissionReply({
-        method: "session/request_permission",
-        sessionId: "s",
-        toolCall: {},
-        options: [],
-        params: {},
-      }),
-    ).toEqual({ optionId: null });
+      refuseOption([
+        { optionId: "allow-always", name: "Always", kind: "allow_always" },
+      ]),
+    ).toBeNull();
   });
 });
 
@@ -1204,11 +1285,296 @@ describe("the session seam's rules", () => {
     expect(APP).toContain("onRunSession={ground.runSession}");
     expect(APP).toContain("onStopSession={ground.stopSession}");
     expect(APP).toContain("onChooseSessionTool={ground.bindSessionTool}");
+    // STORY 18.4: the pending ask, its two verbs and the result copy are wired
+    // from the same hook, through the same layer.
+    expect(APP).toContain("sessionPermission={ground.sessionPermission}");
+    expect(APP).toContain(
+      "onAnswerSessionPermission={ground.answerSessionPermission}",
+    );
+    expect(APP).toContain("onMakeSessionResult={ground.makeCardFromRun}");
+    expect(HOOK).toContain("handle.answerPermission(ask.id, choice)");
+    expect(HOOK).toContain("writeResultCard(");
     expect(LAYER).toContain("<SessionCardView");
     // The layer resolves the row this build ships; a record that names another
     // one is a stated hole, never a repaired record.
     expect(LAYER).toContain("ACP_SPECS.find(");
     expect(LAYER).toContain("acpDeclaration(row)");
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * STORY 18.4 — allow or refuse, and a result becomes a card.
+ * ------------------------------------------------------------------ */
+
+const PERMISSION: AcpPermissionAsk = {
+  id: 100,
+  method: "session/request_permission",
+  toolCall: {
+    toolCallId: "call-1",
+    title: "Read the working directory",
+    kind: "read",
+    status: "pending",
+  },
+  options: [
+    { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+    { optionId: "allow-always", name: "Allow always", kind: "allow_always" },
+    { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+  ],
+};
+
+/** A selection bridge that writes its text to the real folder and counts. */
+function selectionIo(root: string): {
+  io: {
+    storeSelectionText: (workspacePath: string, on: string, text: string) => Promise<void>;
+    saveReadings: () => Promise<void>;
+    saveGround: () => Promise<void>;
+  };
+  texts: Map<string, string>;
+} {
+  const texts = new Map<string, string>();
+  return {
+    texts,
+    io: {
+      async storeSelectionText(_workspacePath, on, text) {
+        mkdirSync(join(root, "map", "readings"), { recursive: true });
+        writeFileSync(join(root, "map", "readings", on + ".md"), text);
+        texts.set(on, text);
+      },
+      async saveReadings() {},
+      async saveGround() {},
+    },
+  };
+}
+
+describe("the pending permission", () => {
+  test("the card says what the tool asks and offers only allow once or refuse", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionCard, {
+        session: SESSION,
+        toolName: "DeepSeek Harness (ACP)",
+        declaration: acpDeclaration(ACP_SPECS[0]!),
+        tools: [],
+        entries: [],
+        running: true,
+        open: true,
+        previewLines: 6,
+        permission: PERMISSION,
+        onOpen: () => {},
+        onClose: () => {},
+        onAllowOnce: () => {},
+        onRefuse: () => {},
+      }),
+    );
+    expect(html).toContain("Read the working directory");
+    expect(html).toContain("allow once");
+    expect(html).toContain("refuse");
+    // The server offered all three; the card presents TWO verbs and never the
+    // remembered yes it was offered.
+    expect(html.toLowerCase()).not.toContain("always");
+    expect(html).not.toContain("allow-always");
+  });
+
+  test("with no allow-once option, allow is disabled and the card says why", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionCard, {
+        session: SESSION,
+        toolName: "DeepSeek Harness (ACP)",
+        declaration: null,
+        tools: [],
+        entries: [],
+        running: true,
+        open: true,
+        previewLines: 6,
+        permission: {
+          ...PERMISSION,
+          options: [
+            { optionId: "allow-always", name: "Allow always", kind: "allow_always" },
+            { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+          ],
+        },
+        onOpen: () => {},
+        onClose: () => {},
+        onAllowOnce: () => {},
+        onRefuse: () => {},
+      }),
+    );
+    expect(html).toContain("no allow-once option");
+    expect(html).toContain("allow once");
+    expect(html).toContain("disabled");
+    expect(html.toLowerCase()).not.toContain("always option");
+  });
+});
+
+describe("a finished run's text becomes a card", () => {
+  const entries: SessionEntry[] = [
+    { kind: "started", t: "2026-11-18T00:00:00.000Z" },
+    { kind: "text", text: "the answer " },
+    { kind: "text", text: "in two chunks" },
+    { kind: "ended", ending: "completed", t: "2026-11-18T00:01:00.000Z" },
+  ];
+
+  test("the result is the run's text entries joined in order, and a partial is no result", () => {
+    expect(sessionRunResult(entries)).toEqual({
+      ending: "completed",
+      text: "the answer in two chunks",
+    });
+    // The NEWEST run is the result, even when an earlier one finished.
+    const second: SessionEntry[] = [
+      ...entries,
+      { kind: "started", t: "2" },
+      { kind: "text", text: " the second" },
+      { kind: "ended", ending: "completed", t: "3" },
+    ];
+    expect(sessionRunResult(second).text).toBe(" the second");
+    // A stopped run's words are a partial, never a result.
+    expect(
+      sessionRunResult([
+        { kind: "started", t: "1" },
+        { kind: "text", text: "half an answer" },
+        { kind: "ended", ending: "stopped", t: "2" },
+      ]),
+    ).toEqual({ ending: "stopped", text: "" });
+    expect(sessionRunResult([])).toEqual({ ending: null, text: "" });
+  });
+
+  test("the copy is the selection form, byte for byte, and later edits leave it alone", async () => {
+    const base = workspace();
+    const bridge = selectionIo(base);
+    const result = await writeResultCard(
+      base,
+      [],
+      [],
+      [],
+      [],
+      SESSION,
+      entries,
+      "2026-11-18T00:02:00.000Z",
+      bridge.io,
+      { taken: new Set([SESSION.on]) },
+    );
+    expect(result.kind).toBe("written");
+    if (result.kind !== "written") throw new Error("no result card");
+    const { records, text } = result;
+
+    // The reading IS the answer, verbatim, and its provenance is the SESSION
+    // card, not a file — the existing selection form, unchanged.
+    expect(text).toBe("the answer in two chunks");
+    expect(records.reading).toMatchObject({
+      form: "selection",
+      from: "card://rain-gauge-session",
+      taken: "2026-11-18T00:02:00.000Z",
+    });
+    expect(records.reading.on).not.toBe(SESSION.on);
+    expect(serializeReadingLine(records.reading)).toContain(
+      " | form: selection | from: card://rain-gauge-session | ",
+    );
+    expect(bridge.texts.get(records.reading.on)).toBe("the answer in two chunks");
+    expect(
+      readFileSync(join(base, "map", "readings", records.reading.on + ".md"), "utf8"),
+    ).toBe("the answer in two chunks");
+
+    // The card is the session's name plus a short suffix, placed beside it in
+    // the EXISTING selection placement idiom (the same 320-unit offset).
+    const placed = records.references.find(
+      (reference) => reference.on === records.reading.on,
+    )!;
+    expect(placed.name).toBe("Rain gauge session result");
+    expect(placed.x).toBe(SESSION.x + 320);
+    expect(placed.y).toBe(SESSION.y);
+
+    // Updating the session afterwards does NOT change the copy: it is a copy,
+    // not a link. A second result card is a second, separate copy.
+    const oldFile = join(base, "map", "readings", records.reading.on + ".md");
+    const before = readFileSync(oldFile, "utf8");
+    const edited: SessionCardRecord = { ...SESSION, name: "Renamed session" };
+    const second = await writeResultCard(
+      base,
+      records.references,
+      records.readings,
+      [],
+      [],
+      edited,
+      [...entries, { kind: "text", text: " added later" }],
+      "2026-11-18T00:03:00.000Z",
+      bridge.io,
+      { taken: new Set([...records.references.map((r) => r.on), SESSION.on]) },
+    );
+    expect(second.kind).toBe("written");
+    if (second.kind !== "written") throw new Error("no second card");
+    expect(second.records.reading.from).toBe("card://rain-gauge-session");
+    expect(readFileSync(oldFile, "utf8")).toBe(before);
+    expect(readFileSync(oldFile, "utf8")).toBe(text);
+    expect(second.records.reading.on).not.toBe(records.reading.on);
+  });
+
+  test("no text, or a last run that did not finish, refuses with one sentence and writes nothing", async () => {
+    const base = workspace();
+    const bridge = selectionIo(base);
+    const empty = await writeResultCard(
+      base,
+      [],
+      [],
+      [],
+      [],
+      SESSION,
+      [
+        { kind: "started", t: "1" },
+        { kind: "ended", ending: "completed", t: "2" },
+      ],
+      "t",
+      bridge.io,
+    );
+    expect(empty).toEqual({
+      kind: "refused",
+      message: SESSION_RESULT_EMPTY_SENTENCE,
+    });
+
+    const unfinished = await writeResultCard(
+      base,
+      [],
+      [],
+      [],
+      [],
+      SESSION,
+      [
+        { kind: "started", t: "1" },
+        { kind: "text", text: "half" },
+        { kind: "ended", ending: "timed-out", t: "2" },
+      ],
+      "t",
+      bridge.io,
+    );
+    expect(unfinished).toEqual({
+      kind: "refused",
+      message: SESSION_RESULT_UNFINISHED_SENTENCE,
+    });
+    // Nothing at all was written: no text, no line, no card.
+    expect(bridge.texts.size).toBe(0);
+    expect(readdirSync(join(base, "map")).sort()).toEqual([]);
+  });
+
+  test("the result verb is offered only once a run has ended", () => {
+    const props = {
+      session: SESSION,
+      toolName: "DeepSeek Harness (ACP)",
+      declaration: acpDeclaration(ACP_SPECS[0]!),
+      tools: [],
+      entries: [] as SessionEntry[],
+      running: false,
+      open: true,
+      previewLines: 6,
+      onOpen: () => {},
+      onClose: () => {},
+      onMakeResult: async () => ({ ok: true as const }),
+    };
+    expect(renderToStaticMarkup(createElement(SessionCard, props))).not.toContain(
+      "make a card from this",
+    );
+    expect(
+      renderToStaticMarkup(
+        createElement(SessionCard, { ...props, entries }),
+      ),
+    ).toContain("make a card from this");
   });
 });
 

@@ -1,12 +1,18 @@
 import {
   runCancelLine,
+  runPermissionReplyLine,
   runRequestLine,
   type RunTool,
 } from "./protocol";
 import { createSidecarTransport, startSidecar } from "./sidecar";
 import { errorSentence, type TurnTransport } from "./turn";
 import { acpMissingKeySentence, type AcpSpec } from "./acpSpecs";
-import type { AcpEnding, AcpProgressEntry } from "./acpEntries";
+import type {
+  AcpEnding,
+  AcpPermissionAsk,
+  AcpPermissionChoice,
+  AcpProgressEntry,
+} from "./acpEntries";
 import { readSecret } from "../lib/secret";
 import type { SidecarStart } from "./sidecar";
 
@@ -69,12 +75,17 @@ export interface SessionRunEnded {
   sentence: string | null;
 }
 
-/** The caller's side of one run: watch its entries, stop it, hear the ending. */
+/** The caller's side of one run: watch it, answer it, stop it, hear the ending. */
 export interface SessionRunHandle {
   /** Settles once the sidecar stated how the run ended (or the lane refused). */
   readonly ended: Promise<SessionRunEnded>;
   /** Stop it: `run-cancel`, answered by the run's own `run-end`. */
   cancel(): void;
+  /**
+   * STORY 18.4 — answer the pending ask with ONE verb. The sidecar turns the
+   * verb into the matching option; this seam never names an option id.
+   */
+  answerPermission(ask: number, choice: AcpPermissionChoice): void;
 }
 
 /** What one run needs from the app; everything here is injected and testable. */
@@ -87,6 +98,12 @@ export interface SessionRunWiring {
   start?: () => Promise<SidecarStart>;
   /** Every progress entry as it arrives, in order. */
   onEntry?: (entry: AcpProgressEntry) => void;
+  /**
+   * STORY 18.4 — a server's permission request, as it arrives. The person's
+   * surface shows it and answers with the handle's `answerPermission`. Nothing
+   * answers it here: an unwatched run waits for its budget.
+   */
+  onPermission?: (ask: AcpPermissionAsk) => void;
 }
 
 /** One counter for the window's runs and their cancels: ids never collide. */
@@ -143,6 +160,18 @@ export function startSessionRun(
     void transport.send(runCancelLine(nextRunId++, run)).catch(() => {});
   };
 
+  /**
+   * STORY 18.4 — THE PERSON'S ONE VERB, sent up. A reply that cannot leave is
+   * simply not heard: the run then waits for its budget, which is the honest
+   * ending rather than an invented one.
+   */
+  const answerPermission = (ask: number, choice: AcpPermissionChoice): void => {
+    if (settled || run === 0) return;
+    void transport
+      .send(runPermissionReplyLine(nextRunId++, run, ask, choice))
+      .catch(() => {});
+  };
+
   void (async () => {
     // THE KEY FIRST, exactly as a turn reads its key: one store read per
     // declared entry, in memory, into a map that rides the payload.
@@ -183,6 +212,17 @@ export function startSessionRun(
       // A hello is the start's business; it never carries a run.
       if (line.kind === "hello") return;
       if (line.id !== id) return;
+      // STORY 18.4: the server's ask reaches the person's surface. Nothing is
+      // answered here — the card's two verbs call `answerPermission`.
+      if (line.kind === "run-permission") {
+        wiring.onPermission?.({
+          id: line.ask,
+          method: line.method,
+          toolCall: line.toolCall,
+          options: line.options,
+        });
+        return;
+      }
       if (line.kind === "run-part") {
         wiring.onEntry?.(line.entry);
         return;
@@ -215,5 +255,5 @@ export function startSessionRun(
     }
   })();
 
-  return { ended, cancel };
+  return { ended, cancel, answerPermission };
 }

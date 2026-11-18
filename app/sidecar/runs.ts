@@ -29,27 +29,41 @@
  * the `ended` entry is NOT streamed twice: it rides `run-end` alone, so the
  * window appends each entry exactly once and the transcript stays append-only.
  *
- * PROVISIONAL: the run numbers, the two refusals below and the choice to route
- * the ending through `run-end` rather than a final `run-part`.
+ * STORY 18.4 — THE RUN WAITS FOR A PERSON. 18.3's lane auto-refused every
+ * permission request; that is gone. A `session/request_permission` becomes one
+ * `run-permission` line DOWN with the server's own tool call and options, and
+ * the run's envelope sits on a promise until ONE `run-permission-reply` comes
+ * UP (allow-once or refuse). The lane turns the verb into the matching option
+ * against the held ask, so an "always" option on the wire can never be chosen;
+ * a request nobody answers is the run's own timeout, and the run records it as
+ * unanswered. No default allow exists on any path here.
+ *
+ * PROVISIONAL: the run numbers, the three refusals below and the choice to
+ * route the ending through `run-end` rather than a final `run-part`.
  */
 
 import {
   errorLine,
   runEndLine,
   runPartLine,
+  runPermissionLine,
+  type RunPermissionReplyRequest,
   type RunRequest,
 } from "../src/turn/protocol.ts";
 import {
-  sessionPermissionReply,
   startAcpRun,
+  type AcpPermissionAsk,
+  type AcpPermissionReply,
   type AcpRunHandle,
 } from "../src/turn/acpRun.ts";
+import { optionIdForChoice } from "../src/turn/acpEntries.ts";
 import type { AcpSpec } from "../src/turn/acpSpecs.ts";
 
-/** The lane's own two refusals, in the sidecar's one-sentence voice. */
+/** The lane's own refusals, in the sidecar's one-sentence voice. */
 export const RUN_LANE_SENTENCES = {
   busy: "that run number is already running.",
   unknown: "no run is live with that number.",
+  noPermission: "no permission request is waiting on that run.",
 } as const;
 
 /**
@@ -63,16 +77,38 @@ export interface RunLaneOptions {
   say: (line: string) => void;
 }
 
-/** One live run: the run's originating request id, and its handle. */
+/**
+ * ONE PERMISSION REQUEST WHILE THE RUN WAITS (story 18.4). The ask is held
+ * exactly as the server gave it; the one resolver is what lets the run go on.
+ * The choice becomes an option id HERE against those options, so a wire that
+ * sent an "always" id still cannot select it.
+ */
+interface PendingPermission {
+  ask: AcpPermissionAsk;
+  resolve: (reply: AcpPermissionReply) => void;
+}
+
+/**
+ * One live run: the run's originating request id, its handle, and the ONE wait
+ * it can have at a time. The holder is filled by the reply path and read by the
+ * person's answer, so neither has to know the other's order.
+ */
 interface LiveRun {
   id: number;
   handle: AcpRunHandle;
+  permission: { current: PendingPermission | null };
 }
 
-/** The lane's contract with main.ts: start, cancel, close everything. */
+/** The lane's contract with main.ts: start, answer, cancel, close everything. */
 export interface RunLane {
   /** Start one run from a parsed `run` request. Never awaited by the reader. */
   start(request: RunRequest): void;
+  /**
+   * STORY 18.4 — the person's answer to a pending ask. It names the run and
+   * the exact ask; the verb becomes the matching option against what the
+   * server offered. No default, no always: an unmatched ask is refused.
+   */
+  answerPermission(reply: RunPermissionReplyRequest): void;
   /** Cancel one live run by its number; its own `run-end` is the answer. */
   cancel(run: number, requestId: number): void;
   /** Close every live run (sidecar shutdown, or a dead stdout). Idempotent. */
@@ -111,27 +147,71 @@ export function createRunLane(options: RunLaneOptions): RunLane {
       options.say(errorLine(request.id, RUN_LANE_SENTENCES.busy));
       return;
     }
+    // ONE WAIT PER RUN. It is filled when the server asks and resolved by the
+    // person's reply (or, after the run has ended, with null so nothing leaks).
+    const waitFor: { current: PendingPermission | null } = { current: null };
     const handle = startAcpRun(runSpecOf(request), request.prompt, {
       // THE KEY IS ALREADY HERE, and it is the only road: no store, no row.
       readKey: async () => "",
       resolvedEnv: request.env,
-      // 18.3's smallest permission policy stays where the run is (18.4 decides
-      // who decides; this story moves the lane, not the policy).
-      replyToPermission: sessionPermissionReply,
-      onProgress: (entry) => {
+      // STORY 18.4 — THE RUN WAITS FOR A PERSON. The ask goes DOWN the wire;
+      // the promise settles only when an answer comes UP, and the run's own
+      // budget is the only other way out. There is no default allow.
+      replyToPermission: (ask: AcpPermissionAsk) =>
+        new Promise<AcpPermissionReply>((resolve) => {
+          waitFor.current = { ask, resolve };
+          options.say(runPermissionLine(request.id, request.run, ask));
+        }),
+      onProgress: (progress) => {
         // The ending is run-end's, said ONCE — never a second run-part.
-        if (entry.kind === "ended") return;
-        options.say(runPartLine(request.id, request.run, entry));
+        if (progress.kind === "ended") return;
+        options.say(runPartLine(request.id, request.run, progress));
       },
     });
-    live.set(request.run, { id: request.id, handle });
+    const entry: LiveRun = {
+      id: request.id,
+      handle,
+      permission: waitFor,
+    };
+    live.set(request.run, entry);
     // The window's subscription is by the run's OWN request id, so the ending
     // arrives on the id it asked with even when the answer is a cancel's.
     void handle.result.then((result) => {
       live.delete(request.run);
+      // A run that ended with a request still pending settles the waiter so
+      // the run's own answer path can finish; it changes no record (the run
+      // already stated the outcome).
+      const waiting = entry.permission.current;
+      entry.permission.current = null;
+      waiting?.resolve({ optionId: null });
       options.say(
         runEndLine(request.id, request.run, result.ending, result.sentence),
       );
+    });
+  };
+
+  /**
+   * THE PERSON'S ANSWER (story 18.4). The verb is turned into an option id
+   * against the ask the server actually made: allow-once matches ONLY the
+   * protocol's allow_once kind, refuse matches a reject kind, and anything else
+   * is a cancelled outcome. An ask that is not waiting is answered with one
+   * sentence rather than guessed at.
+   */
+  const answerPermission = (reply: RunPermissionReplyRequest): void => {
+    const entry = live.get(reply.run);
+    const pending = entry?.permission.current ?? null;
+    if (entry === undefined || pending === null) {
+      options.say(errorLine(reply.id, RUN_LANE_SENTENCES.noPermission));
+      return;
+    }
+    if (pending.ask.id !== reply.ask) {
+      // A reply must name the ask it answers; a stale id answers nothing.
+      options.say(errorLine(reply.id, RUN_LANE_SENTENCES.noPermission));
+      return;
+    }
+    entry.permission.current = null;
+    pending.resolve({
+      optionId: optionIdForChoice(reply.choice, pending.ask.options),
     });
   };
 
@@ -165,5 +245,5 @@ export function createRunLane(options: RunLaneOptions): RunLane {
     );
   };
 
-  return { start, cancel, shutdown };
+  return { start, answerPermission, cancel, shutdown };
 }

@@ -47,7 +47,11 @@ import {
 } from "./groundDrag";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
-import type { Point } from "./geometry";
+import {
+  BESIDE_OFFSET_X,
+  besidePlacement,
+  type Point,
+} from "./geometry";
 import { AskCard } from "./AskCard";
 import { SessionCard as SessionCardView } from "./SessionCard";
 import {
@@ -55,6 +59,10 @@ import {
   type SessionEntry,
 } from "../map/sessions";
 import { ACP_SPECS, acpDeclaration } from "../turn/acpSpecs";
+import type {
+  AcpPermissionAsk,
+  AcpPermissionChoice,
+} from "../turn/acpEntries";
 import { GroundConceptPanel, GroundNote } from "./GroundNote";
 import {
   applyMention,
@@ -213,10 +221,10 @@ export function pullToDismiss(
  * offset by a little more than a card's own width so the two never overlap.
  * PURE, so the placement is not the confirm handler's only truth.
  */
-export const SELECTION_OFFSET_X = 320;
+export const SELECTION_OFFSET_X = BESIDE_OFFSET_X;
 
 export function selectionPlacement(x: number, y: number): Point {
-  return { x: x + SELECTION_OFFSET_X, y };
+  return besidePlacement(x, y);
 }
 
 /**
@@ -429,6 +437,15 @@ interface GroundLayerProps {
     slug: string,
     tool: string,
   ) => Promise<GroundAddResult>;
+  /** STORY 18.4 — each card's PENDING permission ask, as view state. */
+  sessionPermission?: Readonly<Record<string, AcpPermissionAsk>>;
+  /** Answer the pending ask with the person's one verb. */
+  onAnswerSessionPermission?: (
+    slug: string,
+    choice: AcpPermissionChoice,
+  ) => Promise<void>;
+  /** Make the last completed run's text into a copy card. */
+  onMakeSessionResult?: (slug: string) => Promise<GroundAddResult>;
   /**
    * STORY 17.7b — WHETHER THE ONE SETTINGS SELECTION RESOLVES. The ask card
    * says "nothing configured" BEFORE the send and offers only the settings
@@ -523,6 +540,7 @@ export function GroundLayer({
   sessions = [],
   sessionEntries = {},
   sessionRunning = [],
+  sessionPermission = {},
   onCreateAsk,
   onForkAsk,
   onReanchorAsk,
@@ -532,6 +550,8 @@ export function GroundLayer({
   onRunSession,
   onStopSession,
   onChooseSessionTool,
+  onAnswerSessionPermission,
+  onMakeSessionResult,
   hasProvider,
   onOpenSettings,
   onMove,
@@ -654,6 +674,17 @@ export function GroundLayer({
     references.map((reference) => [reference.on, reference.name] as const),
   );
   /**
+   * STORY 18.4 — WHERE A COPY'S PROVENANCE FINDS A NAME. A selection card made
+   * from a SESSION card names its source, and a session card is not a mention
+   * target (it holds a run, not a reading). So the provenance lookup sees one
+   * map and the mention picker keeps the references-only one: adding session
+   * names to the picker would offer a card the note's click cannot open.
+   */
+  const sourceNames = new Map<string, string>([
+    ...cardNames,
+    ...sessions.map((session) => [session.on, session.name] as const),
+  ]);
+  /**
    * STORY 18.3 — THE ROWS THIS BUILD SHIPS, as the session card's picker offers
    * them. A tool row is DATA (`turn/acpSpecs.ts`): a second tool is an entry
    * there, never code here, and the picker only ever offers what ships.
@@ -716,6 +747,7 @@ export function GroundLayer({
           }}
           onClose={() => setOpenOn(null)}
           cardNames={cardNames}
+          sourceNames={sourceNames}
           wordSlugs={wordSlugs}
           concepts={concepts}
           readWord={readWord}
@@ -860,6 +892,24 @@ export function GroundLayer({
                 ? undefined
                 : (tool) => onChooseSessionTool(session.on, tool)
             }
+            // STORY 18.4 — the pending ask and its two verbs. The layer holds
+            // no permission state: the hook does, and this only forwards.
+            permission={sessionPermission[session.on] ?? null}
+            onAllowOnce={
+              onAnswerSessionPermission === undefined
+                ? undefined
+                : () => void onAnswerSessionPermission(session.on, "allow-once")
+            }
+            onRefuse={
+              onAnswerSessionPermission === undefined
+                ? undefined
+                : () => void onAnswerSessionPermission(session.on, "refuse")
+            }
+            onMakeResult={
+              onMakeSessionResult === undefined
+                ? undefined
+                : () => onMakeSessionResult(session.on)
+            }
           />
         );
       })}
@@ -952,6 +1002,7 @@ function GroundCard({
   onNarrate,
   previewLines,
   noteLines,
+  sourceNames,
 }: {
   reference: GroundReference;
   reading: Reading | null;
@@ -972,6 +1023,11 @@ function GroundCard({
   onClose: () => void;
   /** Every ground card's name, for a chip's label fallback and the picker. */
   cardNames: ReadonlyMap<string, string>;
+  /**
+   * STORY 18.4 — every card a copy may name, references AND session cards, for
+   * the reading's provenance only. The mention picker stays references-only.
+   */
+  sourceNames: ReadonlyMap<string, string>;
   /** Every concept word's slug, or null when the concept map was not read. */
   wordSlugs: ReadonlySet<string> | null;
   /** The concept index the picker offers (null: not read). */
@@ -1336,7 +1392,7 @@ function GroundCard({
   const fileReading = reading !== null && isFileReading(reading);
   // The footer's one attribution: a file's NAME, or a selection's SOURCE NAME.
   const provenance =
-    reading === null ? null : readingProvenance(reading, cardNames);
+    reading === null ? null : readingProvenance(reading, sourceNames);
 
   async function run(action: () => Promise<GroundAddResult>) {
     if (busy) return;
@@ -1588,7 +1644,7 @@ function GroundCard({
           WHAT THIS IS — the copy kept from a file, a copy of text selected from
           another card, or a reference with no reading. Never a broken box. */}
       <div className="ground-kind">
-        {readingKind(reading, cardNames, pageTitle)}
+        {readingKind(reading, sourceNames, pageTitle)}
       </div>
       <div className="ground-body" ref={bodyRef}>
         {/* STORY 16.14: the page's image line — above the note and the reading,

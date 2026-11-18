@@ -30,7 +30,7 @@ import { SESSION_RECORD_FILE, SESSION_TRANSCRIPTS_DIR, mapDir } from "./records"
  *   {"kind":"session","id":"<session id>"}
  *   {"kind":"text","text":"<the agent's words, verbatim>"}
  *   {"kind":"tool","name":"<what the tool call was>","status":"<its status>"}
- *   {"kind":"permission","name":"<what was asked>","reply":"refused"}
+ *   {"kind":"permission","name":"<what was asked>","reply":"allowed-once"|"refused"|"cancelled"|"unanswered"}
  *   {"kind":"ended","ending":"stopped","t":"<ISO>","sentence":"<why, when failed>"}
  *
  * WHAT IS NOT ONE OF THESE: a thought (the agent's private reasoning), a plan
@@ -97,14 +97,25 @@ export const SESSION_ENDINGS: readonly SessionEnding[] = [
   "timed-out",
 ];
 
-/** The three replies the run can give a permission request (provisional). */
-export type SessionPermissionReply = "allowed" | "refused" | "cancelled";
+/**
+ * The replies the run can record for a permission request (PROVISIONAL). STORY
+ * 18.4 changes 18.3's "allowed" to `allowed-once`: the app can only ever send
+ * the protocol's allow_once option, and the record says which one it was.
+ * `unanswered` is the budget running out while a request waited; `cancelled`
+ * is a run stopped or closed with the ask still pending.
+ */
+export type SessionPermissionReply =
+  | "allowed-once"
+  | "refused"
+  | "cancelled"
+  | "unanswered";
 
 /** The replies a transcript line may carry. */
 export const SESSION_PERMISSION_REPLIES: readonly SessionPermissionReply[] = [
-  "allowed",
+  "allowed-once",
   "refused",
   "cancelled",
+  "unanswered",
 ];
 
 /**
@@ -293,9 +304,10 @@ export function parseSessionEntryLine(line: string): SessionEntry | null {
     const reply = value.reply;
     if (typeof value.name !== "string") return null;
     if (
-      reply !== "allowed" &&
+      reply !== "allowed-once" &&
       reply !== "refused" &&
-      reply !== "cancelled"
+      reply !== "cancelled" &&
+      reply !== "unanswered"
     ) {
       return null;
     }
@@ -532,6 +544,25 @@ export function sessionEndingLine(
 }
 
 /**
+ * ONE PERMISSION REPLY AS THE CARD'S WORDS (PURE, PROVISIONAL). The record's
+ * value is precise (`allowed-once`); the card's line is the person's language.
+ * "allowed once" is the strongest claim this app can ever make — there is no
+ * "always" spelling here because there is no always answer.
+ */
+export function permissionReplyWord(reply: SessionPermissionReply): string {
+  switch (reply) {
+    case "allowed-once":
+      return "allowed once";
+    case "refused":
+      return "refused";
+    case "cancelled":
+      return "cancelled";
+    case "unanswered":
+      return "unanswered";
+  }
+}
+
+/**
  * ONE ENTRY AS THE LINE THE CARD READS (PURE): a quiet sentence per kind, never
  * a count, a percentage or a step number. Text is the agent's words VERBATIM;
  * a tool call is its name plus its status; a permission is what was asked plus
@@ -550,7 +581,7 @@ export function sessionEntryLine(entry: SessionEntry): string {
         ? entry.name
         : entry.name + " — " + entry.status;
     case "permission":
-      return entry.name + " — " + entry.reply;
+      return entry.name + " — " + permissionReplyWord(entry.reply);
     case "ended":
       return sessionEndingLine(entry.ending, entry.sentence ?? null);
   }
@@ -572,6 +603,74 @@ export function sessionNewestEntry(
 /** What this session card runs, as its second line (PURE, PROVISIONAL). */
 export function sessionKindLine(toolName: string | null): string {
   return "a run of " + (toolName === null ? "a tool that is not here" : toolName);
+}
+
+/**
+ * STORY 18.4 — THE RESULT OF THE LAST RUN (PURE). This is the run's TEXT
+ * entries, IN ORDER, JOINED — the run's result as it was, stated plainly. The
+ * join is the empty string: the transcript records the agent's chunks one at a
+ * time, verbatim, so concatenating them in arrival order reconstructs exactly
+ * the words that were streamed (a newline would invent one mid-sentence). A
+ * run that did not complete has NO result, even when text arrived: a partial is
+ * never a result (18.2's rule). An absent or empty result means "nothing to
+ * copy", never an empty card.
+ */
+export interface SessionRunResult {
+  /** The latest run's ending, or null when the card has never run. */
+  ending: SessionEnding | null;
+  /** The latest COMPLETED run's text entries joined in order ("" otherwise). */
+  text: string;
+}
+
+export function sessionRunResult(
+  entries: readonly SessionEntry[],
+): SessionRunResult {
+  let lastEnd = -1;
+  for (let at = entries.length - 1; at >= 0; at -= 1) {
+    if (entries[at]!.kind === "ended") {
+      lastEnd = at;
+      break;
+    }
+  }
+  if (lastEnd < 0) return { ending: null, text: "" };
+  const ended = entries[lastEnd]!;
+  if (ended.kind !== "ended" || ended.ending !== "completed") {
+    return { ending: ended.kind === "ended" ? ended.ending : null, text: "" };
+  }
+  // The run's own span: from the PREVIOUS ending (exclusive) to this one.
+  let start = 0;
+  for (let at = lastEnd - 1; at >= 0; at -= 1) {
+    if (entries[at]!.kind === "ended") {
+      start = at + 1;
+      break;
+    }
+  }
+  let text = "";
+  for (let at = start; at < lastEnd; at += 1) {
+    const entry = entries[at]!;
+    if (entry.kind === "text") text += entry.text;
+  }
+  return { ending: "completed", text };
+}
+
+/**
+ * The one sentence a result that is not there answers (PROVISIONAL). Nothing is
+ * written for either: an empty card is never invented.
+ */
+export const SESSION_RESULT_EMPTY_SENTENCE =
+  "this run left no text, so there is no card to make.";
+
+/** The one sentence for a last run that did not complete (PROVISIONAL). */
+export const SESSION_RESULT_UNFINISHED_SENTENCE =
+  "the last run did not finish, so it has no result to copy.";
+
+/**
+ * The name the result card PROPOSES (PROVISIONAL): the session card's name plus
+ * a short suffix, so the copy says where it came from before its reading does.
+ * The person's naming rule still applies — the suffix is only a proposal.
+ */
+export function sessionResultName(sessionName: string): string {
+  return sessionName.trim() + " result";
 }
 
 /** The quiet line a session card that has never run shows (PROVISIONAL). */

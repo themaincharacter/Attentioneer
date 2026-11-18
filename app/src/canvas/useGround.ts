@@ -65,7 +65,11 @@ import {
   loadSessionTranscripts,
   loadSessions,
   saveSessions,
+  SESSION_RESULT_EMPTY_SENTENCE,
+  SESSION_RESULT_UNFINISHED_SENTENCE,
   sessionRefusal,
+  sessionResultName,
+  sessionRunResult,
   type SessionCard,
   type SessionEntry,
   type SessionIo,
@@ -86,7 +90,13 @@ import {
 // small seam (`turn/acpSession.ts`) and reads the run's vocabulary from the
 // window-safe `turn/acpEntries.ts`, never from the run's module.
 import { startSessionRun, type SessionRunHandle } from "../turn/acpSession";
-import type { AcpEnding, AcpProgressEntry } from "../turn/acpEntries";
+import type {
+  AcpEnding,
+  AcpPermissionAsk,
+  AcpPermissionChoice,
+  AcpProgressEntry,
+} from "../turn/acpEntries";
+import { besidePlacement } from "./geometry";
 import type { SidecarStart } from "../turn/sidecar";
 import { shippedAcpSpec, type AcpSpec } from "../turn/acpSpecs";
 import {
@@ -413,6 +423,14 @@ export interface GroundView {
    * never outlive the run.
    */
   sessionRunning: readonly string[];
+  /**
+   * STORY 18.4 — each session card's PENDING permission ask, keyed by slug.
+   * VIEW STATE, never a record: it is filled by the `run-permission` line as
+   * it arrives and dropped the moment it is answered (or the run settles). The
+   * card shows what the tool wants and its two verbs from here; nothing in the
+   * map folder holds a pending request.
+   */
+  sessionPermission: Readonly<Record<string, AcpPermissionAsk>>;
   readings: readonly Reading[];
   /**
    * Each media-bearing card's line (story 16.14): the page's title and its
@@ -611,6 +629,22 @@ export interface GroundView {
    * with nothing running does nothing at all.
    */
   stopSession: (slug: string) => Promise<void>;
+  /**
+   * STORY 18.4 — ANSWER the pending permission ask with the person's ONE verb.
+   * `allow-once` can only become the protocol's allow_once option; there is no
+   * always path here or on the wire. The sidecar answers the server; this only
+   * forwards the press.
+   */
+  answerSessionPermission: (
+    slug: string,
+    choice: AcpPermissionChoice,
+  ) => Promise<void>;
+  /**
+   * STORY 18.4 — MAKE A CARD OUT OF THE LAST COMPLETED RUN'S TEXT: a COPY, in
+   * the existing selection form (`from: card://<session-slug>`), placed beside
+   * the session card. No text means one sentence and nothing written.
+   */
+  makeCardFromRun: (slug: string) => Promise<GroundAddResult>;
   /** Add one reference from a picked text file (the one create write). */
   create: (
     name: string,
@@ -716,6 +750,8 @@ type GroundLoaded = Omit<
   | "bindSessionTool"
   | "runSession"
   | "stopSession"
+  | "answerSessionPermission"
+  | "makeCardFromRun"
   | "create"
   | "createSelection"
   | "createPage"
@@ -743,6 +779,7 @@ const EMPTY: GroundLoaded = {
   sessionEntries: {},
   malformedSessions: [],
   sessionRunning: [],
+  sessionPermission: {},
   readings: [],
   media: [],
   orphanMedia: [],
@@ -1573,6 +1610,74 @@ export async function writeSelectionCard(
 }
 
 /* ------------------------------------------------------------------------- *
+ * STORY 18.4 — A FINISHED RUN'S RESULT BECOMES A CARD.
+ *
+ * THE RESULT IS A COPY, NOT A LINK. What is written is exactly the run's text
+ * entries, in order, joined (see `sessionRunResult`: the empty string, because
+ * the transcript's chunks are verbatim and contiguous). It lands in the
+ * EXISTING selection form — `form: selection`, `from: card://<session-slug>`,
+ * the text as the reading — so links, mentions, asks, the pull and the mirror
+ * treat it as any other card. Nothing behind it is read, stat'ed or re-taken:
+ * editing the session card or its transcript later cannot change the copy.
+ *
+ * NO TEXT ⇒ ONE SENTENCE AND NOTHING WRITTEN. A last run that did not complete
+ * has no result at all, even when a partial arrived: a partial is never a
+ * result. Only a completed run's words can become a card.
+ * ------------------------------------------------------------------------- */
+
+/** What making the result card produced, or why it wrote nothing. */
+export type RunResultCard =
+  | { kind: "written"; records: SelectionRecords; text: string }
+  | { kind: "refused"; message: string };
+
+/**
+ * WRITE THE RESULT CARD, in the selection form's house order: the excerpt's
+ * text FIRST, its reading line NEXT, the ground line LAST — the same three
+ * writes every selection card makes, because this IS one. PURE apart from the
+ * bridges it is handed; the caller has already loaded the transcript.
+ */
+export async function writeResultCard(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+  malformedGround: readonly string[],
+  malformedReadings: readonly string[],
+  session: SessionCard,
+  entries: readonly SessionEntry[],
+  taken: string,
+  io: SelectionIo = SELECTION_IO,
+  options: { taken?: ReadonlySet<string> } = {},
+): Promise<RunResultCard> {
+  const result = sessionRunResult(entries);
+  if (result.ending === null) {
+    return { kind: "refused", message: SESSION_RESULT_EMPTY_SENTENCE };
+  }
+  if (result.ending !== "completed") {
+    return { kind: "refused", message: SESSION_RESULT_UNFINISHED_SENTENCE };
+  }
+  if (result.text === "") {
+    return { kind: "refused", message: SESSION_RESULT_EMPTY_SENTENCE };
+  }
+  const at = besidePlacement(session.x, session.y);
+  const records = await writeSelectionCard(
+    workspacePath,
+    references,
+    readings,
+    malformedGround,
+    malformedReadings,
+    session.on,
+    sessionResultName(session.name),
+    at.x,
+    at.y,
+    result.text,
+    taken,
+    io,
+    options,
+  );
+  return { kind: "written", records, text: result.text };
+}
+
+/* ------------------------------------------------------------------------- *
  * STORY 17.1 — THE ASK CARD'S RECORD: one `map/asks.txt` line, and one
  * append-only conversation write.
  *
@@ -2040,11 +2145,18 @@ function permissionReplyOf(entry: {
   reply: { outcome: string; optionId?: string };
   options: readonly { optionId: string; kind: string }[];
 }): SessionPermissionReply {
+  // STORY 18.4: a request that waited past the budget is recorded as exactly
+  // that, never as a refusal the person did not make.
+  if (entry.reply.outcome === "unanswered") return "unanswered";
   if (entry.reply.outcome !== "selected") return "cancelled";
   const optionId = entry.reply.optionId ?? "";
   const option = entry.options.find((candidate) => candidate.optionId === optionId);
   if (option === undefined) return "cancelled";
-  if (option.kind.startsWith("allow")) return "allowed";
+  // ONLY the protocol's allow_once kind can become an allow in the record. An
+  // `allow_always` option is never sent (the lane cannot choose it); if a
+  // record somehow carried one, it is not an answer this app can state as an
+  // allow, so it is treated like a cancelled outcome — never as "allowed".
+  if (option.kind === "allow_once") return "allowed-once";
   if (option.kind.startsWith("reject")) return "refused";
   return "cancelled";
 }
@@ -2144,6 +2256,12 @@ export interface SessionRunOptions {
   now?: () => string;
   /** Each entry as it is written, for the view that watches the run. */
   onEntry?: (entry: SessionEntry) => void;
+  /**
+   * STORY 18.4 — the server's permission ask as it arrives. The card holds it
+   * as view state and answers through the run's handle; an ask nobody answers
+   * ends as the run's own timeout.
+   */
+  onPermission?: (ask: AcpPermissionAsk) => void;
   /** The transcript bridges (a test's fake, or the map's own files). */
   transcriptIo?: SessionIo;
 }
@@ -2204,6 +2322,9 @@ export function beginSessionRun(
       : { transport: options.transport }),
     ...(options.start === undefined ? {} : { start: options.start }),
     onEntry: (entry: AcpProgressEntry) => record(sessionEntryOf(entry, now())),
+    ...(options.onPermission === undefined
+      ? {}
+      : { onPermission: options.onPermission }),
   });
 
   const done: Promise<SessionRunDone> = handle.ended.then(
@@ -2745,6 +2866,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   const malformedSessionsRef = useRef<string[]>([]);
   const sessionRunningRef = useRef<string[]>([]);
   const sessionRunsRef = useRef<Record<string, SessionRunHandle>>({});
+  // STORY 18.4: a pending permission ask per card. VIEW STATE — the run WAITS
+  // in the sidecar; this map is only what the card draws and answers.
+  const sessionPermissionRef = useRef<Record<string, AcpPermissionAsk>>({});
   const readingsRef = useRef<Reading[]>([]);
   // Story 16.14: the media lines and their READ thumbnail sources. Both are
   // view mirrors of the map folder — the thumb's bytes live in map/media/.
@@ -2906,6 +3030,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     sessionEntries: sessionEntriesRef.current,
     malformedSessions: malformedSessionsRef.current,
     sessionRunning: sessionRunningRef.current,
+    sessionPermission: sessionPermissionRef.current,
     readings: readingsRef.current,
     media: mediaRef.current,
     thumbs: thumbsRef.current,
@@ -3047,6 +3172,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     }
     sessionRunsRef.current = {};
     sessionRunningRef.current = [];
+    sessionPermissionRef.current = {};
     // Story 16.13: a restore belongs to the workspace its bytes came from
     // (story 17.8's ask-card restore rides the same one).
     restorableRef.current = null;
@@ -3064,6 +3190,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       malformedSessionsRef.current = [];
       sessionRunningRef.current = [];
       sessionRunsRef.current = {};
+      sessionPermissionRef.current = {};
       readingsRef.current = [];
       mediaRef.current = [];
       malformedMediaRef.current = [];
@@ -3927,6 +4054,16 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           };
           setState(snapshot());
         },
+        // STORY 18.4 — THE PERSON'S SURFACE. The ask is held as view state so
+        // the card can say what the tool wants and offer allow-once/refuse; the
+        // run itself is WAITING in the sidecar until this card answers.
+        onPermission: (ask) => {
+          sessionPermissionRef.current = {
+            ...sessionPermissionRef.current,
+            [slug]: ask,
+          };
+          setState(snapshot());
+        },
       });
       sessionRunsRef.current = {
         ...sessionRunsRef.current,
@@ -3942,6 +4079,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           sessionRunningRef.current = sessionRunningRef.current.filter(
             (running) => running !== slug,
           );
+          // A settled run has no pending ask: the card's two verbs go with the
+          // run that offered them, whether it was answered or timed out.
+          const permissions = { ...sessionPermissionRef.current };
+          delete permissions[slug];
+          sessionPermissionRef.current = permissions;
           // Read the transcript BACK from the file: the card then shows the
           // same bytes a reopen would, never a second in-memory truth.
           const transcript = await loadSessionTranscript(workspacePath, slug);
@@ -3973,6 +4115,107 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     if (handle === undefined) return;
     handle.cancel();
   }, []);
+
+  /**
+   * STORY 18.4 — THE PERSON'S ANSWER. One press, one verb, one line up. The
+   * pending block clears at once so a second press cannot answer the same ask
+   * twice; a reply that cannot leave leaves the run to its budget, which is the
+   * honest ending. No default allow exists here: with nothing pending the press
+   * does nothing.
+   */
+  const answerSessionPermission = useCallback(
+    async (slug: string, choice: AcpPermissionChoice): Promise<void> => {
+      const ask = sessionPermissionRef.current[slug];
+      const handle = sessionRunsRef.current[slug];
+      if (ask === undefined || handle === undefined) return;
+      const permissions = { ...sessionPermissionRef.current };
+      delete permissions[slug];
+      sessionPermissionRef.current = permissions;
+      setState(snapshot());
+      handle.answerPermission(ask.id, choice);
+    },
+    [],
+  );
+
+  /**
+   * STORY 18.4 — MAKE A CARD OUT OF THE LAST COMPLETED RUN'S TEXT. It goes
+   * through the same queue as every write, and it writes the selection form's
+   * three pieces (text, reading line, ground line) in the house order. A run
+   * with no text, or a last run that did not complete, answers one sentence and
+   * writes NOTHING — an empty card is never invented.
+   */
+  const makeCardFromRun = useCallback(
+    (slug: string): Promise<GroundAddResult> => {
+      const session = sessionsRef.current.find((entry) => entry.on === slug);
+      if (session === undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const written = await writeResultCard(
+            workspacePath,
+            referencesRef.current,
+            readingsRef.current,
+            malformedGroundRef.current,
+            malformedReadingsRef.current,
+            session,
+            sessionEntriesRef.current[slug] ?? [],
+            new Date().toISOString(),
+            undefined,
+            // STORY 18.3 — ALL THREE FAMILIES: the copy's slug joins the same
+            // shared space every new card mints against.
+            {
+              taken: sharedSlugs(
+                referencesRef.current,
+                asksRef.current,
+                sessionsRef.current,
+              ),
+            },
+          );
+          if (written.kind === "refused") {
+            outcome = { ok: false, message: written.message };
+            return;
+          }
+          const { records, text } = written;
+          referencesRef.current = records.references;
+          readingsRef.current = records.readings;
+          textsRef.current = {
+            ...textsRef.current,
+            [records.reading.on]: text,
+          };
+          statesRef.current = {
+            ...statesRef.current,
+            [records.reading.on]: "current" as ReadingState,
+          };
+          setState(snapshot());
+          outcome = { ok: true };
+          // The copy is an ordinary card: its appearance is an authored move,
+          // and the derived index follows like any other add.
+          const placed = records.references.find(
+            (reference) => reference.on === records.reading.on,
+          );
+          queueHistory(() => [
+            cardAddEvent(
+              Date.now(),
+              records.reading.on,
+              placed?.x ?? Math.round(session.x),
+              placed?.y ?? Math.round(session.y),
+            ),
+          ]);
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
 
   /**
    * STORY 17.1 — ASK ONE QUESTION inside an ask card. STORY 17.3 makes the
@@ -4884,6 +5127,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     sessionEntries: state.sessionEntries,
     malformedSessions: state.malformedSessions,
     sessionRunning: state.sessionRunning,
+    sessionPermission: state.sessionPermission,
     readings: state.readings,
     media: state.media,
     thumbs: state.thumbs,
@@ -4915,6 +5159,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     bindSessionTool,
     runSession,
     stopSession,
+    answerSessionPermission,
+    makeCardFromRun,
     create,
     createSelection,
     createPage,

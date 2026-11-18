@@ -10,6 +10,19 @@ export type Box = { w: number; h: number };
 /** Fallback word box before measurement (a single line of text). */
 export const DEFAULT_BOX: Box = { w: 96, h: 28 };
 
+/**
+ * STORY 18.4 — WHERE A NEW CARD GOES BESIDE THE ONE IT CAME FROM: the same
+ * scale, offset by a little more than a card's own width so the two never
+ * overlap. The selection card (16.12) has always used this offset; the run's
+ * result card reuses it so "beside" means one thing on this plane. PROVISIONAL:
+ * the side and the offset (ADR-0003's rendering seam).
+ */
+export const BESIDE_OFFSET_X = 320;
+
+export function besidePlacement(x: number, y: number): Point {
+  return { x: x + BESIDE_OFFSET_X, y };
+}
+
 /** The box's center, given its top-left position on the plane. */
 export function centerOf(pos: Point, box: Box): Point {
   return { x: pos.x + box.w / 2, y: pos.y + box.h / 2 };

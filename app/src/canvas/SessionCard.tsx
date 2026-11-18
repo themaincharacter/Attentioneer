@@ -11,6 +11,11 @@ import {
   type SessionEntry,
 } from "../map/sessions";
 import type { GroundAddResult } from "./useGround";
+import {
+  allowOnceOption,
+  refuseOption,
+  type AcpPermissionAsk,
+} from "../turn/acpEntries";
 
 /**
  * THE SESSION CARD (Epic 18 story 3).
@@ -120,6 +125,27 @@ export function SessionEntryLine({
   );
 }
 
+/**
+ * WHAT THE SERVER IS ASKING, in one line (PURE, PROVISIONAL): the tool call's
+ * own title and kind, never the request's raw params. A call with no title
+ * still says a permission is being asked, so the card is never blank.
+ */
+export function permissionAskLine(toolCall: unknown): string {
+  const call =
+    typeof toolCall === "object" && toolCall !== null && !Array.isArray(toolCall)
+      ? (toolCall as Record<string, unknown>)
+      : {};
+  const title =
+    typeof call.title === "string" && call.title.trim() !== ""
+      ? call.title.trim()
+      : "a tool call";
+  const kind =
+    typeof call.kind === "string" && call.kind.trim() !== ""
+      ? call.kind.trim()
+      : "";
+  return kind === "" ? title : title + " (" + kind + ")";
+}
+
 /** One tool row a picker may offer: its id and the name the person reads. */
 export interface SessionToolChoice {
   id: string;
@@ -140,6 +166,10 @@ export function SessionCard({
   onRun,
   onStop,
   onChooseTool,
+  permission = null,
+  onAllowOnce,
+  onRefuse,
+  onMakeResult,
 }: {
   session: SessionCardRecord;
   /** The bound row's display name, or null when this build does not ship it. */
@@ -167,6 +197,16 @@ export function SessionCard({
   onStop?: () => Promise<void>;
   /** Bind the card to another row (one field's change). */
   onChooseTool?: (tool: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 18.4 — THE SERVER'S PENDING ASK, as view state. While this is here
+   * the run is WAITING; the card offers allow-once and refuse and nothing else.
+   */
+  permission?: AcpPermissionAsk | null;
+  /** The person's two verbs. Allow-once is offered only when it exists. */
+  onAllowOnce?: () => void;
+  onRefuse?: () => void;
+  /** Make the last completed run's text into a card (a copy, never a link). */
+  onMakeResult?: () => Promise<GroundAddResult>;
 }) {
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -252,6 +292,17 @@ export function SessionCard({
       // The run's own line settles it; a stop that cannot reach the server
       // leaves the run to its budget.
     }
+  }
+
+  async function makeResult(): Promise<void> {
+    if (busy || onMakeResult === undefined) return;
+    setBusy(true);
+    setProblem(null);
+    const result = await onMakeResult();
+    setBusy(false);
+    // A run with no text (or one that did not finish) writes NOTHING and says
+    // one sentence; a made card leaves this card at once.
+    if (!result.ok) setProblem(result.message);
   }
 
   async function usePickedTool(): Promise<void> {
@@ -366,6 +417,49 @@ export function SessionCard({
               )}
             </div>
           )}
+          {/* STORY 18.4 — THE PENDING PERMISSION, and the person's TWO verbs.
+              The server's options are NEVER presented as choices: only
+              allow-once and refuse exist here, so an "always" offer on the wire
+              cannot become a press. When no allow-once option was offered, the
+              allow verb is disabled and the card says why — it never falls back
+              to an always option. */}
+          {permission !== null && (
+            <div className="session-permission" role="status">
+              <div className="session-permission-ask">
+                the run is asking: {permissionAskLine(permission.toolCall)}
+              </div>
+              {allowOnceOption(permission.options) === null && (
+                <div className="session-permission-note">
+                  the server offered no allow-once option, so only refuse is
+                  available.
+                </div>
+              )}
+              <div className="session-permission-actions">
+                <button
+                  type="button"
+                  className="session-permission-allow"
+                  disabled={
+                    onAllowOnce === undefined ||
+                    allowOnceOption(permission.options) === null
+                  }
+                  onClick={onAllowOnce}
+                >
+                  allow once
+                </button>
+                <button
+                  type="button"
+                  className="session-permission-refuse"
+                  disabled={
+                    onRefuse === undefined ||
+                    refuseOption(permission.options) === null
+                  }
+                  onClick={onRefuse}
+                >
+                  refuse
+                </button>
+              </div>
+            </div>
+          )}
           {/* THE DECLARATION FOR THE NEXT RUN: 18.2's one sentence, computed
               from the row alone. It names a provider ROW, never a key. */}
           {declaration !== null && (
@@ -394,6 +488,19 @@ export function SessionCard({
                 onClick={() => void startRun()}
               >
                 run
+              </button>
+            )}
+            {/* STORY 18.4 — A FINISHED RUN'S RESULT BECOMES A COPY. Offered
+                once a run has ended; a run with no text refuses with the ONE
+                sentence in the problem line and writes nothing. */}
+            {entries.some((entry) => entry.kind === "ended") && (
+              <button
+                type="button"
+                className="session-card-make"
+                disabled={busy || onMakeResult === undefined}
+                onClick={() => void makeResult()}
+              >
+                make a card from this
               </button>
             )}
             <button type="button" className="session-card-close" onClick={onClose}>

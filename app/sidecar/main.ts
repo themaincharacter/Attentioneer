@@ -47,6 +47,10 @@
  * the child receives that map plus PATH/HOME and nothing else. Every live run is
  * killed on this process's own exit paths, including a closed stdout.
  *
+ * STORY 18.4 adds the permission pair: a `run-permission` line carries a
+ * server's ask down, and a `run-permission-reply` carries the person's verb up.
+ * The run waits in between; nobody watching means the budget ends it.
+ *
  * The wire's types and its strict readers/builders live in
  * `app/src/turn/protocol.ts` — the SAME file the window imports, so the two
  * ends cannot drift. The line format, the part vocabulary and the sentence
@@ -943,6 +947,12 @@ function handleLine(raw: string): void {
   }
   if (request.kind === "run-cancel") {
     runLane?.cancel(request.run, request.id);
+    return;
+  }
+  // STORY 18.4: the person's answer to a permission request. It names the run
+  // and the exact ask; the lane derives the option from what was offered.
+  if (request.kind === "run-permission-reply") {
+    runLane?.answerPermission(request);
     return;
   }
   void runTurn(request);
