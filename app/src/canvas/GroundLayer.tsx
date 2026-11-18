@@ -36,6 +36,7 @@ import {
   type GroundDragState,
 } from "./groundDrag";
 import { isGestureArmed, type GestureMode } from "./gates";
+import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import type { Point } from "./geometry";
 import { AskSidecarPanel } from "./AskSidecarPanel";
 import { GroundConceptPanel, GroundNote } from "./GroundNote";
@@ -390,6 +391,13 @@ interface GroundLayerProps {
    * test needs no workspace; the app always passes the real root.
    */
   workspacePath?: string;
+  /**
+   * STORY 16.16 (shortlist item 4) — tell the app what the hand is doing, so
+   * the cursor chip can say it (a moving card by its own name, a link drag).
+   * VIEW STATE only: the layer reports the gesture, it never writes anything
+   * for it, and the chip is mounted in screen space by App.
+   */
+  onNarrate?: (gesture: GestureNarration) => void;
   /** How a gesture is armed right now — a drag stands still while armed. */
   interactionMode?: GestureMode;
   /**
@@ -421,6 +429,7 @@ export function GroundLayer({
   onConfigure,
   providersRev = 0,
   workspacePath = "",
+  onNarrate,
   interactionMode = "idle",
   zoom = 1,
 }: GroundLayerProps) {
@@ -544,6 +553,7 @@ export function GroundLayer({
           onConfigure={onConfigure}
           providersRev={providersRev}
           workspacePath={workspacePath}
+          onNarrate={onNarrate}
         />
       ))}
       {refusal !== null && (
@@ -634,6 +644,7 @@ function GroundCard({
   onConfigure,
   providersRev,
   workspacePath,
+  onNarrate,
 }: {
   reference: GroundReference;
   reading: Reading | null;
@@ -686,6 +697,8 @@ function GroundCard({
   providersRev?: number;
   /** The workspace root, for the card ask's ONE follow-up read (story 3b). */
   workspacePath?: string;
+  /** STORY 16.16: the app's one narration sink (the cursor chip's state). */
+  onNarrate?: (gesture: GestureNarration) => void;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -805,10 +818,15 @@ function GroundCard({
       if ((e.target as HTMLElement).closest(".ground-link-handle")) {
         if (isGestureArmed(interactionMode) || onLink === undefined) return;
         e.preventDefault();
+        // STORY 16.16 (shortlist item 4): the wiring drag is a gesture with a
+        // sentence of its own, and the chip says it until the release. The
+        // report is view state — the wire itself is still one write, below.
+        onNarrate?.({ kind: "wiring" });
         let cancelled = false;
         const finish = () => {
           window.removeEventListener("mouseup", onLinkUp);
           window.removeEventListener("keydown", onLinkKey);
+          onNarrate?.(GESTURE_IDLE);
         };
         const onLinkKey = (ev: KeyboardEvent) => {
           if (ev.key !== "Escape") return;
@@ -859,8 +877,16 @@ function GroundCard({
       dragRef.current = drag;
 
       const onMouseMove = (ev: MouseEvent) => {
+        const wasMoving = drag.moved;
         drag = moveGroundDrag(drag, { x: ev.clientX, y: ev.clientY });
         dragRef.current = drag;
+        // STORY 16.16 (shortlist item 4): the chip speaks ONCE, when the press
+        // crosses the drag threshold — the card is being moved, by its name.
+        // Reported on the crossing, not on every frame: the sentence does not
+        // change and the app is not asked to re-render for it.
+        if (drag.moved && !wasMoving) {
+          onNarrate?.({ kind: "moving", name: reference.name });
+        }
         if (drag.moved) setDragPos(drag.at);
       };
       const onMouseUp = () => {
@@ -868,6 +894,8 @@ function GroundCard({
         window.removeEventListener("mouseup", onMouseUp);
         const dropped = dropGroundDrag(drag);
         dragRef.current = null;
+        // The gesture is over, moved or not: the chip clears with the release.
+        onNarrate?.(GESTURE_IDLE);
         setDragPos(null);
         // ONE write, on release: the drag's path is never a record.
         const point = dropped[0];

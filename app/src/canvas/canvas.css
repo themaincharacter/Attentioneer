@@ -3,7 +3,28 @@
    language is not settled by any ADR yet.
 
    Motion rules: short, soft, ease-out; nothing bounces, nothing celebrates.
-   Positions are composited (translate3d / scaleX) so dragging stays fluid. */
+   Positions are composited (translate3d / scaleX) so dragging stays fluid.
+
+   STORY 16.16 (shortlist item 6) — THE MOTION CONTRACT. Durations and easings
+   are TOKENS now, stated once, so calm-or-fast is a number here and not a
+   hundred ad-hoc decisions spread down the file: `--motion-fast` (a fader's
+   step), `--motion-base` (the ordinary transition) and `--motion-slow` (the
+   longest a panel takes). Two easings only — `--ease-out` (a gentle
+   decelerate, used for things arriving) and `--ease-soft` (a gentle in-out for
+   colour and opacity), and NEITHER overshoots: no spring, no bounce. The
+   ground styles below are converted to the tokens; the rest of the sheet
+   follows in the type-system story rather than all at once (PROVISIONAL, the
+   token values). The real reduce-motion path lives beside the new chip and bar
+   at the end of this file: it REMOVES the motion, it does not merely shorten
+   it. */
+
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 260ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-soft: cubic-bezier(0.33, 0, 0.2, 1);
+}
 
 @keyframes fade-in {
   from {
@@ -5359,7 +5380,7 @@ body {
   border-radius: 8px;
   box-shadow: 0 1px 5px rgba(40, 35, 25, 0.06);
   user-select: none;
-  animation: fade-in 180ms ease-out;
+  animation: fade-in var(--motion-base) var(--ease-out);
   /* A drag moves the card: the grab cursor says the press can, and the live
      frame is quiet (no shadow, no scale) — one write follows the release. */
   cursor: grab;
@@ -5715,7 +5736,7 @@ body {
   border: 1px solid rgba(141, 136, 124, 0.26);
   border-radius: 6px;
   box-shadow: 0 2px 10px rgba(40, 35, 25, 0.12);
-  animation: fade-in 140ms ease-out;
+  animation: fade-in var(--motion-fast) var(--ease-out);
 }
 
 .ground-mention-option {
@@ -5777,7 +5798,7 @@ body {
   border: 1px solid rgba(120, 104, 148, 0.28);
   border-radius: 7px;
   box-shadow: 0 2px 12px rgba(40, 35, 25, 0.12);
-  animation: fade-in 140ms ease-out;
+  animation: fade-in var(--motion-fast) var(--ease-out);
 }
 
 .ground-concept-name {
@@ -5876,7 +5897,7 @@ body {
   display: flex;
   gap: 8px;
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity var(--motion-fast) var(--ease-soft);
 }
 
 .ground-reference:hover .ground-actions,
@@ -5956,7 +5977,7 @@ body {
   font-size: 12px;
   line-height: 1.4;
   color: #4b473f;
-  animation: rise-in 160ms ease-out;
+  animation: rise-in var(--motion-base) var(--ease-out);
 }
 
 .ground-toast-sentence {
@@ -6007,7 +6028,7 @@ body {
   border-radius: 5px;
   pointer-events: auto;
   cursor: pointer;
-  animation: fade-in 140ms ease-out;
+  animation: fade-in var(--motion-fast) var(--ease-out);
 }
 
 /* STORY 16.12 — A SELECTION BECOMES A CARD. The one affordance lives in the
@@ -6106,7 +6127,7 @@ body {
   transform-origin: 0 0;
   pointer-events: none;
   will-change: transform;
-  animation: fade-in 240ms ease-out;
+  animation: fade-in var(--motion-slow) var(--ease-out);
 }
 
 /* The hover band: it takes the press only to reveal the remove mark, and a
@@ -6145,7 +6166,7 @@ body {
   opacity: 0;
   pointer-events: none;
   cursor: pointer;
-  transition: opacity 120ms ease;
+  transition: opacity var(--motion-fast) var(--ease-soft);
 }
 
 /* Revealed by hovering the band (the sibling combinator, because the wire
@@ -6180,7 +6201,7 @@ body {
   box-shadow: 0 1px 5px rgba(40, 35, 25, 0.06);
   pointer-events: auto;
   white-space: nowrap;
-  animation: fade-in 140ms ease-out;
+  animation: fade-in var(--motion-fast) var(--ease-out);
 }
 
 .ground-wire-confirm-question {
@@ -6228,7 +6249,7 @@ body {
   color: #a0522d;
   pointer-events: auto;
   cursor: pointer;
-  animation: fade-in 140ms ease-out;
+  animation: fade-in var(--motion-fast) var(--ease-out);
 }
 
 /* The card's link handle: a NEW small affordance on the edge, hover-revealed
@@ -6249,7 +6270,7 @@ body {
   opacity: 0;
   pointer-events: none;
   cursor: crosshair;
-  transition: opacity 120ms ease;
+  transition: opacity var(--motion-fast) var(--ease-soft);
 }
 
 .ground-reference:hover .ground-link-handle,
@@ -6282,7 +6303,7 @@ body {
   border: 1px solid rgba(141, 136, 124, 0.26);
   border-radius: 7px;
   box-shadow: 0 2px 10px rgba(40, 35, 25, 0.1);
-  animation: fade-in 140ms ease-out;
+  animation: fade-in var(--motion-fast) var(--ease-out);
 }
 
 .ground-bubble-title {
@@ -7174,4 +7195,103 @@ body {
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
+}
+
+
+/* ------------------------------------------------------------------------- *
+ * STORY 16.16 (shortlist items 4 and 5) — THE GESTURE LAYER's two surfaces.
+ *
+ * Both live in SCREEN space and take NO pointer events, so neither can pan,
+ * zoom or sit between the hand and the map. The chip follows the pointer while
+ * a gesture is in flight and is gone the moment it ends (its sentence is the
+ * pure table's, `canvas/gestureWord.ts`); the bar names the armed tool and is
+ * absent when nothing is armed. Neither is clickable, dismissable, counted,
+ * animated for attention, or persisted — they are captions, not messages.
+ * ------------------------------------------------------------------------- */
+
+.gesture-chip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  max-width: 220px;
+  padding: 3px 9px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid rgba(141, 136, 124, 0.24);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(40, 35, 25, 0.08);
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #6b675e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  user-select: none;
+  /* The chip's PLACEMENT is left/top (the pointer's client coordinates), never
+     a transform: nothing about the gesture layer slides, so the reduce-motion
+     path below can remove transforms outright. */
+  animation: fade-in var(--motion-fast) var(--ease-out);
+}
+
+.armed-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 16px;
+  margin-inline: auto;
+  width: fit-content;
+  z-index: 9;
+  max-width: min(520px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 5px 14px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid #e4dfd4;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(40, 35, 25, 0.08);
+  font-size: 12px;
+  line-height: 1.4;
+  color: #6b675e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  user-select: none;
+  /* Centred by left/right + auto margins, not by a transform (see the chip). */
+  animation: rise-in var(--motion-base) var(--ease-out);
+}
+
+/* The armed thing itself is the one emphasised word: the sentence is a state,
+   not a shout. */
+.armed-bar-noun {
+  color: #1e2126;
+}
+
+/* ------------------------------------------------------------------------- *
+ * STORY 16.16 (shortlist item 6) — THE REAL REDUCE-MOTION PATH.
+ *
+ * The global rule above collapses every duration to nothing. That is not the
+ * same as removing the motion: a zero-length rise still changes a transform,
+ * and a layout that animates for information would still gate it. This block
+ * REMOVES the motion of the gesture layer outright — no entry animation, no
+ * transition, no transformed position — so the chip and the bar simply appear
+ * and disappear, fully readable on the first frame. The map is usable the
+ * instant the setting is on; nothing here gates information.
+ *
+ * Opacity-only fades are the one thing allowed to stay, at the SHORTEST
+ * duration: they move nothing and cannot hide anything for long.
+ * ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .gesture-chip,
+  .armed-bar {
+    animation: none !important;
+    transform: none !important;
+    transition: opacity var(--motion-fast) linear !important;
+  }
+
+  /* The toast's rise is motion too; its fade is all that is left. */
+  .ground-toast {
+    animation: none !important;
+    transition: none !important;
+  }
 }

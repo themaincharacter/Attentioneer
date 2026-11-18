@@ -61,6 +61,13 @@ import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
 import { GroundEmpty, GroundLayer } from "./canvas/GroundLayer";
 import { GroundToast } from "./canvas/GroundToast";
+import { GestureChip } from "./canvas/GestureChip";
+import { ArmedBar } from "./canvas/ArmedBar";
+import {
+  armedKind,
+  GESTURE_IDLE,
+  type GestureNarration,
+} from "./canvas/gestureWord";
 import { createTurnPort } from "./turn/sidecar";
 import { loadTurnSettings } from "./turn/provider";
 import {
@@ -649,6 +656,17 @@ function App() {
   // gesture's meaning, so the arming discipline is identical. The choice
   // outlives one arm: putting the pen down and picking it up keeps the tool.
   const [penTool, setPenTool] = useState<DrawTool>(DEFAULT_DRAW_TOOL);
+  // STORY 16.16 (shortlist items 4 and 5) — THE GESTURE IN FLIGHT. ONE piece of
+  // VIEW state says what the hand is doing right now; the card's drag, the link
+  // drag, the plane's pan/zoom and the pen REPORT it (they own the raw
+  // listeners and the single threshold), and the chip only renders its sentence
+  // in screen space. `idle` is not a gesture: nothing is drawn for it, and the
+  // state is forgotten on release and on window blur — it is never a record.
+  const [gesture, setGesture] = useState<GestureNarration>(GESTURE_IDLE);
+  const narrate = useCallback(
+    (next: GestureNarration) => setGesture(next),
+    [],
+  );
   // THE SELECTION TOOL (PROVISIONAL, added 2026-11-16 per the lead's brief): a
   // concept-map arm that draws a shape and makes a LANGUAGE GAME of the words
   // inside it. Its own gate mode (`select`), its own shape mode (freeform is
@@ -1424,6 +1442,18 @@ function App() {
   // outside render (a focusout microtask, a post-render focus refresh).
   const gestureModeRef = useRef<GestureMode>(gestureMode);
   gestureModeRef.current = gestureMode;
+
+  // STORY 16.16 (shortlist items 4 and 5) — WHAT IS ARMED, AS ONE READING. The
+  // bar shows while a tool is down (the pen or the eraser), while a link drag
+  // is in flight, or while the ground bubble is asking for a reference — the
+  // pure rule in `canvas/gestureWord.ts` decides; this only feeds it the
+  // running state, so the chip and the bar can never disagree about the tool.
+  const armedTool = armedKind(
+    drawArmed,
+    penTool,
+    gesture,
+    level === "ground" && groundAt !== null,
+  );
 
   // Every coined word, as the selector's world-space layer needs it.
   const selectorWords = useMemo(
@@ -3987,13 +4017,19 @@ function App() {
         intents={intents}
         onPlaneDoubleClick={handlePlaneDoubleClick}
         gestureMode={gestureMode}
+        onNarrate={narrate}
         hint={
-          // STORY 16.13 (shortlist item 3): an empty ground map says ONE muted
-          // sentence and nothing else, so the ordinary hint (which offers a
-          // verb) is suppressed while there is nothing on it.
-          level === "ground" && ground.loaded && ground.references.length === 0
+          // STORY 16.16 (shortlist item 5): the bar is the ACTIVE channel, so
+          // while a tool is armed the idle hint yields its place — one voice at
+          // the bottom of the plane at a time.
+          armedTool !== null
             ? ""
-            : planeHint(level)
+            : // STORY 16.13 (shortlist item 3): an empty ground map says ONE
+              // muted sentence and nothing else, so the ordinary hint (which
+              // offers a verb) is suppressed while there is nothing on it.
+              level === "ground" && ground.loaded && ground.references.length === 0
+              ? ""
+              : planeHint(level)
         }
         lassoArmed={selectorOpen && lassoArmed}
         boxArmed={veilArmed}
@@ -4340,6 +4376,7 @@ function App() {
             onConfigure={() => openSettings("providers")}
             providersRev={providersRev}
             workspacePath={workspace.path}
+            onNarrate={narrate}
             interactionMode={gestureMode}
             zoom={camera.zoom}
           />
@@ -4788,6 +4825,23 @@ function App() {
           <GhostDiamond at={ghostPoint} />
         )}
       </CanvasPlane>
+
+      {/* STORY 16.16 (shortlist item 4): the CURSOR CHIP. One translucent pill
+          near the pointer while a gesture is in flight, saying what the hand is
+          doing in the map's words; gone on release and on window blur. It is
+          mounted OUTSIDE `.plane` (like the app's other quiet surfaces), so no
+          camera value can move it, and the sentence is the pure table's
+          (`canvas/gestureWord.ts`) — no advice, no count, no persistence. */}
+      {gesture.kind !== "idle" && (
+        <GestureChip gesture={gesture} onClear={() => narrate(GESTURE_IDLE)} />
+      )}
+
+      {/* STORY 16.16 (shortlist item 5): the ARMED BAR. One sentence at the
+          bottom-centre, in screen space, whose subject is the armed tool — the
+          pen or the eraser, a link drag, the ground bubble's reference. When
+          nothing is armed it is simply absent (the plane's idle hint has the
+          floor again). */}
+      {armedTool !== null && <ArmedBar kind={armedTool} level={level} />}
 
       {/* STORY 16.13 (shortlist item 3): an empty ground map says so in one
           muted sentence, centred in screen space — no verb, no illustration.

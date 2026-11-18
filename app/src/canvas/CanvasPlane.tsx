@@ -49,6 +49,11 @@ import { boxIsDrawable, capturedBox } from "./veilRules";
 import type { VeilBox } from "../map/veils";
 import { MAX_ZOOM, MIN_ZOOM, type Camera, type CameraIntents } from "./useCamera";
 import { closesPair, DOUBLE_CLICK_MS, type PlanePress } from "./planePress";
+import {
+  GESTURE_IDLE,
+  planeGestureWord,
+  type GestureNarration,
+} from "./gestureWord";
 import { centeringZoom, zoomChipPercent } from "../workspace/level";
 import "./canvas.css";
 
@@ -144,6 +149,13 @@ interface CanvasPlaneProps {
    * deprecated sweep.
    */
   hint?: string;
+  /**
+   * STORY 16.16 (shortlist item 4): tell the app which gesture the plane's own
+   * handlers see — a pan, a zoom, a pen stroke, an erase. The plane REPORTS
+   * them; it never renders the chip (that is App's, in screen space) and never
+   * keeps the sentence.
+   */
+  onNarrate?: (gesture: GestureNarration) => void;
   /** True while the playing-set selector's draw tool is armed (story 1). */
   lassoArmed?: boolean;
   /**
@@ -238,6 +250,7 @@ export function CanvasPlane({
   // fourth review): the app always passes `planeHint(level)`, and this fallback
   // is that same sentence, folded no longer.
   hint = "drag to pan · scroll to zoom · double-click: word",
+  onNarrate,
   lassoArmed = false,
   boxArmed = false,
   drawArmed = false,
@@ -299,6 +312,8 @@ export function CanvasPlane({
   onSelectShapeRef.current = onSelectShape;
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
+  const onNarrateRef = useRef(onNarrate);
+  onNarrateRef.current = onNarrate;
 
   const planeApi = useMemo<PlaneApi>(
     () => ({
@@ -390,9 +405,22 @@ export function CanvasPlane({
       })
       .on("start.cursor", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
         if (event.sourceEvent?.type === "mousedown") el.classList.add("dragging");
+        // STORY 16.16 (shortlist item 4): a real pan or zoom says so (the
+        // pure rule reads the source event, never the transform). The chip
+        // itself follows the pointer; this is only the sentence.
+        const source = event.sourceEvent;
+        const touches =
+          source !== null && typeof source?.touches?.length === "number"
+            ? source.touches.length
+            : 0;
+        const narrated = planeGestureWord(source?.type, touches);
+        if (narrated !== null) onNarrateRef.current?.(narrated);
       })
       .on("end.camera", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
         el.classList.remove("dragging");
+        // The release ends the gesture: the chip clears. A programmatic camera
+        // move (no sourceEvent) never narrated anything, so it clears nothing.
+        if (event.sourceEvent) onNarrateRef.current?.(GESTURE_IDLE);
         // A REAL gesture settled (wheel, pinch or pan). Programmatic camera
         // moves — the jump, the open-restore, a centering — also emit an end
         // (d3-zoom dispatches it for zoom.transform too), but they carry no
@@ -527,6 +555,12 @@ export function CanvasPlane({
       // The gesture's meaning is fixed at the PRESS: toggling the tool with the
       // button held must not turn a stroke into an erase halfway through.
       const tool = drawToolRef.current;
+      // STORY 16.16 (shortlist item 4): the pen says "drawing"; the eraser
+      // lifts the ink, so it says "lifting the pen". The gesture's meaning was
+      // fixed at the press above, and the sentence is that same choice.
+      onNarrateRef.current?.(
+        tool === "eraser" ? { kind: "erasing" } : { kind: "drawing" },
+      );
       const rect = plane.getBoundingClientRect();
       const toWorld = (clientX: number, clientY: number): SketchPoint => {
         const cam = cameraRef.current;
@@ -553,6 +587,8 @@ export function CanvasPlane({
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
         setStrokeDraft(null);
+        // The release ends the stroke: the chip clears with it.
+        onNarrateRef.current?.(GESTURE_IDLE);
         // Esc (or a game switch) ended the arm mid-stroke: nothing is written.
         if (!drawArmedRef.current) return;
         if (tool === "eraser") {
@@ -566,7 +602,12 @@ export function CanvasPlane({
       window.addEventListener("mouseup", onUp);
     };
     surface.addEventListener("mousedown", onDown);
-    return () => surface.removeEventListener("mousedown", onDown);
+    return () => {
+      surface.removeEventListener("mousedown", onDown);
+      // A game switch (or Esc) can put the pen down mid-stroke; the arm is the
+      // gesture's surface, so leaving it clears the chip too.
+      onNarrateRef.current?.(GESTURE_IDLE);
+    };
   }, [drawArmed]);
 
   // THE SELECTION TOOL (PROVISIONAL, added 2026-11-16 per the lead's brief):

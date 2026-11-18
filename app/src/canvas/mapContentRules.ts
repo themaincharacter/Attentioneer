@@ -135,6 +135,22 @@ export function wordCreationOffered(
 }
 
 /**
+ * STORY 16.16 (shortlist items 4 and 5) — THE CREATION NOUN, said once.
+ *
+ * The idle hint below says what a double-click makes; the armed bar
+ * (`canvas/ArmedBar.tsx`) says what is being made while the bubble is open.
+ * Both must name the SAME thing — a second vocabulary for one tool would make
+ * the map speak in two voices — so the noun lives here and the hint's clause is
+ * built from it. Ground's noun is the reference (story 16.1); concept's is the
+ * word (`wordCreationOffered`); dynamics still has only the pen.
+ * PROVISIONAL: the wording (ADR-0003's rendering seam).
+ */
+export function creationNoun(level: Level): string {
+  if (wordCreationOffered(level)) return "word";
+  return level === "ground" ? "reference" : "draw";
+}
+
+/**
  * The plane's quiet hint, in the game's own words.
  *
  * DEPRECATED (hidden 2026-11-16 per user review): the SHELF is gone, so the
@@ -156,16 +172,7 @@ export function planeHint(
   level: Level,
   shelfHidden: boolean = SHELF_HIDDEN,
 ): string {
-  // Story 16.1 gives the ground map its OWN creation affordance (a reference:
-  // a name plus a text file, canvas/GroundBubble.tsx), so the hint names that
-  // noun there rather than the pen. Dynamics still has only the pen while it
-  // waits for its own modelling surfaces (PROVISIONAL, the separate-maps
-  // review's wording).
-  const creation = wordCreationOffered(level)
-    ? "double-click: word"
-    : level === "ground"
-      ? "double-click: reference"
-      : "double-click: draw";
+  const creation = "double-click: " + creationNoun(level);
   const base = "drag to pan · scroll to zoom · " + creation;
   if (!showsMapContent(level)) return base;
   return shelfHidden ? base : base + " · drag past the fold to set aside";
