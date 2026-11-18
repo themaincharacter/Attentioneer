@@ -60,7 +60,7 @@ import { GhostPreview } from "./canvas/GhostPreview";
 import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
 import { GroundEmpty, GroundLayer } from "./canvas/GroundLayer";
-import { GroundToast } from "./canvas/GroundToast";
+import { ASK_RESTORE_SENTENCE, GroundToast } from "./canvas/GroundToast";
 import { GestureChip } from "./canvas/GestureChip";
 import { ArmedBar } from "./canvas/ArmedBar";
 import {
@@ -4408,6 +4408,9 @@ function App() {
             onReanchorAsk={ground.reanchorAskTo}
             onAskTurn={ground.askTurn}
             onStopAskTurn={ground.askStop}
+            /* STORY 17.8 — an ask card is removable through the same one toast
+               every other card uses (16.13's immediate delete + Restore). */
+            onRemoveAsk={ground.removeAsk}
             // STORY 17.7b — the card says "nothing configured" BEFORE a send.
             // The one selection still lives in Settings; no per-ask selector
             // comes back here by design (story 17.7).
@@ -4907,6 +4910,11 @@ function App() {
       {(ground.restorable !== null || ground.restoreNotice !== null) && (
         <GroundToast
           notice={ground.restoreNotice}
+          sentence={
+            ground.restorableAsk !== null
+              ? ASK_RESTORE_SENTENCE
+              : undefined
+          }
           onRestore={() => void ground.restore()}
           onDismiss={ground.dismissRestore}
         />
@@ -5232,6 +5240,7 @@ function App() {
         orphanGroundLinks={ground.orphanLinks}
         orphanGroundNotes={ground.orphanNotes}
         orphanGroundMedia={ground.orphanMedia}
+        orphanAskTurns={ground.orphanAskTurns}
         mirrorNotice={ground.mirrorNotice}
         malformedHistory={ground.malformedHistory}
         historyNotice={ground.historyNotice}
@@ -5314,6 +5323,7 @@ function MarkNotices({
   orphanGroundLinks,
   orphanGroundNotes,
   orphanGroundMedia,
+  orphanAskTurns,
   mirrorNotice,
   malformedHistory,
   historyNotice,
@@ -5417,6 +5427,11 @@ function MarkNotices({
    */
   orphanGroundMedia: readonly Media[];
   /**
+   * STORY 17.8 — conversation files whose ask card is gone: kept in
+   * `map/asks/` and named here, never adopted and never deleted.
+   */
+  orphanAskTurns: readonly string[];
+  /**
    * The mirror's one failure sentence (story 16.9), or null. The mirror is
    * DERIVED, so its failure is a notice and never a failed move; it rides the
    * ground group only, because the mirror speaks for no other map.
@@ -5490,6 +5505,7 @@ function MarkNotices({
       orphanGroundLinks.length > 0 ||
       orphanGroundNotes.length > 0 ||
       orphanGroundMedia.length > 0 ||
+      orphanAskTurns.length > 0 ||
       mirrorNotice !== null ||
       malformedHistory.length > 0 ||
       historyNotice !== null);
@@ -5759,6 +5775,18 @@ function MarkNotices({
                 >
                   a media line for “{entry.on}” has no card — kept in
                   map/media.jsonl
+                </div>
+              ))}
+              {/* STORY 17.8, the conversation's honesty surface: a file whose
+                  ask card is gone is KEPT and named here — never adopted into a
+                  card, never deleted, and never read as a thread. */}
+              {orphanAskTurns.map((slug) => (
+                <div
+                  className="mark-notice"
+                  key={`orphan-ask-turn-${slug}`}
+                >
+                  a conversation for “{slug}” has no ask card — kept in
+                  map/asks/{slug}.jsonl
                 </div>
               ))}
               {/* STORY 16.5, the links' two honesty surfaces: a record line the

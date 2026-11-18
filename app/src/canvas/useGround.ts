@@ -7,6 +7,12 @@ import {
 } from "../lib/fs";
 import { createWriteQueue } from "../lib/writeQueue";
 import {
+  askAddEvent,
+  askForkEvent,
+  askReanchorEvent,
+  askRemoveEvent,
+  askRestoreEvent,
+  askTurnEvent,
   cardAddEvent,
   cardMoveEvent,
   cardRemovalEvents,
@@ -20,6 +26,7 @@ import {
   readingRefreshEvent,
   readingRepointEvent,
   readingTakeEvent,
+  type AskTurnEnding,
   type HistoryEvent,
 } from "../map/history";
 import {
@@ -30,13 +37,18 @@ import {
   appendExchange,
   askQuestionRefusal,
   askRefusal,
+  askTurnPath,
   forkAsk,
   forkThread,
-  loadAskTurns,
+  insertAskAt,
+  loadAskConversations,
   loadAsks,
+  loadTurns,
   reanchorAsk,
+  restoreConversation,
   saveAsks,
   sharedSlugs,
+  withoutAsk,
   type AskCard,
   type AskForkThread,
   type AskTurn,
@@ -134,7 +146,7 @@ import { readSecret } from "../lib/secret";
 import { isPointerForm, pointerKey } from "../map/pointers";
 import type { Prism } from "../map/prisms";
 import { appendAskCardMove } from "../contacts/prismLog";
-import type { AskEnding } from "../contacts/ask";
+import { askOutcomeOf, type AskEnding } from "../contacts/ask";
 import {
   cardAskContext,
   fetchAskBlock,
@@ -255,6 +267,17 @@ import {
  *     byte-identical. A media line whose card is gone is an ORPHAN: kept
  *     where it is, named in the ground notices group and in the mirror's
  *     unknowns, never adopted and never deleted.
+ *   - THE ASKS' TWO MEMORIES (17.8): every ask move above also appends its
+ *     structural line to the history — `ask.add`, `ask.fork`, `ask.reanchor`,
+ *     `ask.remove`, `ask.restore`, and one `ask.turn` per SENDING turn whose
+ *     ending is the PRISM's own outcome (same fact, two records that never
+ *     disagree; the PRISM first, then the words, then the line) — and the
+ *     mirror's asks section says each card's name, what it is about and its
+ *     parent, never a word, a count or a preview. Removing an ask card is the
+ *     same immediate-delete + Restore promise as every other card: the record
+ *     line and the conversation's BYTES are read before the unlink and written
+ *     back verbatim, and a conversation whose card is gone is an ORPHAN named
+ *     in the notices group and the mirror, never adopted and never deleted.
  *   - A SELECTION CARD (16.12): the person selects text inside an expanded
  *     card's reading, names the new card, and `createSelection` writes the
  *     excerpt's text file, its reading line (provenance `card://<source>`) and
@@ -333,6 +356,13 @@ export interface GroundView {
   askTurns: Readonly<Record<string, readonly AskTurn[]>>;
   /** Unreadable `map/asks.txt` lines, preserved and surfaced. */
   malformedAsks: readonly string[];
+  /**
+   * STORY 17.8 — conversation files whose ask card is gone: kept in
+   * `map/asks/`, named in the ground notices group and in the mirror's
+   * unknowns, never adopted and never deleted (the notes' rule, one family
+   * over). Computed from the load's listing and every write that can make one.
+   */
+  orphanAskTurns: readonly string[];
   readings: readonly Reading[];
   /**
    * Each media-bearing card's line (story 16.14): the page's title and its
@@ -419,6 +449,13 @@ export interface GroundView {
    */
   restorable: RemovedCard | null;
   /**
+   * STORY 17.8 — the ONE pending ask-card deletion the toast can put back,
+   * with the record line's position and the conversation's exact bytes read
+   * before the unlink. ONE toast for both kinds: a second delete of EITHER
+   * kind commits the first.
+   */
+  restorableAsk: RemovedAsk | null;
+  /**
    * STORY 16.13 — one sentence when a restore only partly came back. It rides
    * the toast in place of the Restore verb; a full restore leaves it null.
    */
@@ -442,9 +479,10 @@ export interface GroundView {
    * STORY 17.1 — ASK ONE QUESTION inside an ask card: the existing card-ask
    * turn path (the packet anchored on the reference, the person's question),
    * and then ONE append-only write of the exchange — the person's line always,
-   * the answer line only when the turn answered. No PRISM yet (story 17.4 owns
-   * it), no history line and no mirror (story 17.8), and the reference card is
-   * never touched.
+   * the answer line only when the turn answered. Stories 17.4 and 17.8 add the
+   * records beside it: ONE PRISM for the sending turn, then the words, then the
+   * history's `ask.turn` line with the PRISM's own ending. The reference card
+   * is never touched, and a turn adds nothing to MAP.md.
    */
   askTurn: (
     slug: string,
@@ -482,6 +520,15 @@ export interface GroundView {
     slug: string,
     anchor: string,
   ) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.8 — REMOVE one ask card, immediately and reversibly: the record
+   * line and the conversation's BYTES are read first, the `asks.txt` line is
+   * written without it, and the conversation file is unlinked. The toast's
+   * Restore writes the same bytes back (folder comparison). A refused unlink
+   * answers one sentence after the line has gone, and the orphan conversation
+   * is SAID, never adopted and never deleted.
+   */
+  removeAsk: (slug: string) => Promise<GroundAddResult>;
   /** Add one reference from a picked text file (the one create write). */
   create: (
     name: string,
@@ -582,6 +629,7 @@ type GroundLoaded = Omit<
   | "askStop"
   | "forkAskAt"
   | "reanchorAskTo"
+  | "removeAsk"
   | "create"
   | "createSelection"
   | "createPage"
@@ -604,6 +652,7 @@ const EMPTY: GroundLoaded = {
   asks: [],
   askTurns: {},
   malformedAsks: [],
+  orphanAskTurns: [],
   readings: [],
   media: [],
   orphanMedia: [],
@@ -622,6 +671,7 @@ const EMPTY: GroundLoaded = {
   historyNotice: null,
   malformedHistory: [],
   restorable: null,
+  restorableAsk: null,
   restoreNotice: null,
   loaded: false,
 };
@@ -927,11 +977,15 @@ export async function removeGroundNote(
  */
 export const RESTORE_WINDOW_MS = 10_000;
 
-/** One pending restore can exist; a second delete COMMITS the first. */
-export function pendingRestoreAfter(
-  previous: RemovedCard | null,
-  next: RemovedCard | null,
-): RemovedCard | null {
+/**
+ * One pending restore can exist; a second delete COMMITS the first. Generic
+ * because the toast now holds TWO kinds of deletion (a reference card and, from
+ * story 17.8, an ask card) and exactly one of them at a time.
+ */
+export function pendingRestoreAfter<T>(
+  previous: T | null,
+  next: T | null,
+): T | null {
   // The newest deletion is the only one the toast can put back. Keeping the
   // older one too would be an undo stack, which the story deliberately leaves
   // out (the shortlist's item 1 is a toast, not a history UI).
@@ -1161,6 +1215,201 @@ export async function restoreGroundCard(
     cameBack,
     didNot,
   };
+}
+
+/* ------------------------------------------------------------------------- *
+ * STORY 17.8 — REMOVING AN ASK CARD, and putting it back.
+ *
+ * The same promise every other card makes (story 16.13): the delete is
+ * IMMEDIATE, and the toast's Restore writes the SAME BYTES back. What a delete
+ * keeps in memory is the record line (as the card, with its file position) and
+ * the CONVERSATION'S BYTES, read BEFORE any write or unlink — so a restore is
+ * a byte-identical folder, never a re-serialization of what was said.
+ *
+ * NOT ONE WORD LEAVES the card's files here: the bytes are read into memory and
+ * written back verbatim; nothing is parsed, trimmed, previewed or logged. The
+ * history line beside the move names the slug only.
+ * ------------------------------------------------------------------------- */
+
+/** What an ask-card delete keeps in memory, so Restore can put it back. */
+export interface RemovedAsk {
+  ask: AskCard;
+  /** Where the line sat in `asks.txt`'s file order. */
+  askIndex: number;
+  /**
+   * The conversation file's bytes, read before its unlink; null when the card
+   * had no conversation (a card made but never asked in — a quiet absence, not
+   * an invented empty file).
+   */
+  conversation: string | null;
+}
+
+/** The bridges an ask-card delete needs; a test passes its own fakes. */
+export interface AskRemovalIo {
+  saveAsks: typeof saveAsks;
+  readTextFile: (path: string) => Promise<string | null>;
+  removeFile: (path: string) => Promise<void>;
+}
+
+const ASK_REMOVAL_IO: AskRemovalIo = {
+  saveAsks,
+  readTextFile: fsReadTextFile,
+  removeFile,
+};
+
+/** What deleting one ask card left: the next lines, the held bytes, a sentence. */
+export interface AskRemoval {
+  asks: AskCard[];
+  /** The card and its conversation as they were; null if it was not on the map. */
+  removed: RemovedAsk | null;
+  /**
+   * One sentence when the conversation file could not be unlinked; null when
+   * it went. The line is already gone either way — one sentence, never a
+   * repair, and the leftover file is an ORPHAN the notices group names.
+   */
+  refusal: string | null;
+}
+
+/** The one sentence a refused conversation unlink answers (PROVISIONAL). */
+export const ASK_CONVERSATION_REMOVAL_REFUSAL =
+  "the ask card was removed, but its conversation file could not be removed.";
+
+/**
+ * THE ASK DELETE'S ONE SEQUENCE, pure apart from the bridges:
+ *
+ *   1. READ the conversation's bytes and the line's position (before anything);
+ *   2. write `asks.txt` without the card — the record is the truth;
+ *   3. unlink the conversation file; a refusal answers one sentence and leaves
+ *      the file exactly where it is (an orphan, reported, never deleted twice).
+ */
+export async function removeAskRecords(
+  workspacePath: string,
+  slug: string,
+  asks: readonly AskCard[],
+  malformedAsks: readonly string[],
+  io: AskRemovalIo = ASK_REMOVAL_IO,
+): Promise<AskRemoval> {
+  const askIndex = asks.findIndex((ask) => ask.on === slug);
+  const ask = askIndex >= 0 ? asks[askIndex] ?? null : null;
+  let conversation: string | null = null;
+  try {
+    conversation = await io.readTextFile(askTurnPath(workspacePath, slug));
+  } catch {
+    conversation = null;
+  }
+  const next = withoutAsk(asks, slug);
+  await io.saveAsks(workspacePath, next, malformedAsks);
+  let refusal: string | null = null;
+  try {
+    await io.removeFile(askTurnPath(workspacePath, slug));
+  } catch {
+    refusal = ASK_CONVERSATION_REMOVAL_REFUSAL;
+  }
+  return {
+    asks: next,
+    removed:
+      ask === null
+        ? null
+        : { ask, askIndex, conversation },
+    refusal,
+  };
+}
+
+/** The bridges an ask-card restore needs; a test passes its own fakes. */
+export interface AskRestoreIo {
+  saveAsks: typeof saveAsks;
+  restoreConversation: typeof restoreConversation;
+}
+
+const ASK_RESTORE_IO: AskRestoreIo = {
+  saveAsks,
+  restoreConversation,
+};
+
+/** What putting an ask card back did: the next lines, what came back and what did not. */
+export interface AskRestoreResult {
+  asks: AskCard[];
+  /** True when the card's own `asks.txt` line went back. */
+  restoredAsk: boolean;
+  cameBack: readonly string[];
+  didNot: readonly string[];
+  /** One sentence when a write failed; null when everything came back. */
+  refusal: string | null;
+}
+
+/**
+ * STORY 17.8 — PUT AN ASK CARD BACK, SAME BYTES, in the house order:
+ *
+ *   1. the conversation file (exactly the bytes read before its unlink);
+ *   2. the `asks.txt` line, at its old file position — last, so a crash can
+ *      never leave a card whose conversation is missing.
+ *
+ * Every write is attempted even after an earlier one fails, so the one sentence
+ * can name BOTH what came back and what did not. A card with no conversation
+ * restores none and invents nothing.
+ */
+export async function restoreAskCard(
+  workspacePath: string,
+  removed: RemovedAsk,
+  asks: readonly AskCard[],
+  malformedAsks: readonly string[],
+  io: AskRestoreIo = ASK_RESTORE_IO,
+): Promise<AskRestoreResult> {
+  const cameBack: string[] = [];
+  const didNot: string[] = [];
+  let nextAsks = [...asks];
+
+  // 1. the conversation, byte for byte.
+  if (removed.conversation !== null) {
+    try {
+      await io.restoreConversation(
+        workspacePath,
+        removed.ask.on,
+        removed.conversation,
+      );
+      cameBack.push("the conversation");
+    } catch {
+      didNot.push("the conversation");
+    }
+  }
+  // 2. the record line, back where it sat.
+  const candidate = insertAskAt(nextAsks, removed.askIndex, removed.ask);
+  let restoredAsk = false;
+  try {
+    await io.saveAsks(workspacePath, candidate, malformedAsks);
+    nextAsks = candidate;
+    restoredAsk = true;
+    cameBack.push("the ask card");
+  } catch {
+    didNot.push("the ask card");
+  }
+
+  return {
+    asks: nextAsks,
+    restoredAsk,
+    cameBack,
+    didNot,
+    refusal: restoreSentence(cameBack, didNot),
+  };
+}
+
+/**
+ * STORY 17.8 — THE TURN'S HISTORY LINE, from the SAME fact the PRISM records.
+ * A sending turn's ending becomes the PRISM's round trip (let the turn send),
+ * the card's sentence (what happened) and this log line, all through ONE
+ * mapping; `askTurn`'s ending is therefore the PRISM's outcome by
+ * construction. A turn that never left the app appended no PRISM and gets no
+ * line here — null, never a line that disagrees.
+ */
+export function askTurnHistoryEvent(
+  t: number,
+  slug: string,
+  ending: AskEnding,
+  prism: Prism | null,
+): HistoryEvent | null {
+  if (prism === null) return null;
+  const outcome: AskTurnEnding = askOutcomeOf(ending);
+  return askTurnEvent(t, slug, outcome);
 }
 
 /** The bridges a selection's creation needs; a test passes its own fakes. */
@@ -2052,6 +2301,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   const asksRef = useRef<AskCard[]>([]);
   const askTurnsRef = useRef<Record<string, readonly AskTurn[]>>({});
   const malformedAsksRef = useRef<string[]>([]);
+  // STORY 17.8: conversations whose ask card is gone. The load's one folder
+  // listing computes them; a refused unlink adds the one it could not take.
+  const orphanAskTurnsRef = useRef<string[]>([]);
   const readingsRef = useRef<Reading[]>([]);
   // Story 16.14: the media lines and their READ thumbnail sources. Both are
   // view mirrors of the map folder — the thumb's bytes live in map/media/.
@@ -2084,6 +2336,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   // restore answers. Both are VIEW state — the removed bytes are held here, in
   // memory, and written nowhere until Restore puts them back.
   const restorableRef = useRef<RemovedCard | null>(null);
+  // STORY 17.8: the ask card's own pending restore. ONE toast holds exactly one
+  // of the two kinds; a delete of either clears the other.
+  const restorableAskRef = useRef<RemovedAsk | null>(null);
   const restoreNoticeRef = useRef<string | null>(null);
   // One queue for the ground family's files: an add's ground line must land
   // after its own readings line, never under a stale one; the link and the
@@ -2122,8 +2377,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         // error; this is why reopening works with the network unplugged.
         loadThumbSrcs(workspacePath, loadedMedia.media),
         // STORY 17.1: one read per ask card's conversation. An absent file is
-        // an empty conversation, never an invented one.
-        loadAskTurns(workspacePath, askSlugs),
+        // an empty conversation, never an invented one. STORY 17.8 adds the
+        // folder's ONE listing, which also names an ORPHAN conversation.
+        loadAskConversations(workspacePath, askSlugs),
       ]);
     const states = statesOf(
       ground.references,
@@ -2142,9 +2398,12 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     malformedAsksRef.current = asks.malformed;
     const askTurns: Record<string, readonly AskTurn[]> = {};
     for (const slug of askSlugs) {
-      askTurns[slug] = loadedAskTurns[slug]?.turns ?? [];
+      askTurns[slug] = loadedAskTurns.turns[slug]?.turns ?? [];
     }
     askTurnsRef.current = askTurns;
+    // STORY 17.8: a conversation with no ask card is kept and SAID, never
+    // adopted into a card and never deleted.
+    orphanAskTurnsRef.current = loadedAskTurns.orphans;
     readingsRef.current = readings.readings;
     mediaRef.current = loadedMedia.media;
     malformedMediaRef.current = loadedMedia.malformed;
@@ -2171,6 +2430,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     asks: asksRef.current,
     askTurns: askTurnsRef.current,
     malformedAsks: malformedAsksRef.current,
+    // STORY 17.8: computed from the load's listing and every write that can
+    // make one, never stored as a record.
+    orphanAskTurns: orphanAskTurnsRef.current,
     readings: readingsRef.current,
     media: mediaRef.current,
     thumbs: thumbsRef.current,
@@ -2209,6 +2471,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     // STORY 16.13: the toast's one pending restore, held in memory until the
     // window ends, its × is pressed, or a second delete commits it.
     restorable: restorableRef.current,
+    restorableAsk: restorableAskRef.current,
     restoreNotice: restoreNoticeRef.current,
     loaded: true,
   });
@@ -2221,6 +2484,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    */
   const mirrorView = (): MirrorView => ({
     references: referencesRef.current,
+    // STORY 17.8: the ask cards' names, anchors and parents — the mirror never
+    // reads a conversation, so not one word of one can reach MAP.md.
+    asks: asksRef.current,
+    malformedAsks: malformedAsksRef.current,
+    orphanAskTurns: orphanAskTurnsRef.current,
     readings: readingsRef.current,
     texts: textsRef.current,
     states: statesRef.current,
@@ -2293,8 +2561,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     pulledRef.current = {};
     mirrorNoticeRef.current = null;
     historyNoticeRef.current = null;
-    // Story 16.13: a restore belongs to the workspace its bytes came from.
+    // Story 16.13: a restore belongs to the workspace its bytes came from
+    // (story 17.8's ask-card restore rides the same one).
     restorableRef.current = null;
+    restorableAskRef.current = null;
     restoreNoticeRef.current = null;
     queueRef.current = createWriteQueue();
     if (workspacePath === "") {
@@ -2302,6 +2572,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       asksRef.current = [];
       askTurnsRef.current = {};
       malformedAsksRef.current = [];
+      orphanAskTurnsRef.current = [];
       readingsRef.current = [];
       mediaRef.current = [];
       malformedMediaRef.current = [];
@@ -2316,6 +2587,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       orphanNotesRef.current = [];
       malformedHistoryRef.current = [];
       restorableRef.current = null;
+      restorableAskRef.current = null;
       restoreNoticeRef.current = null;
       setState(EMPTY);
       return;
@@ -2755,8 +3027,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * appears with the first turn, not here: a card that has never been asked in
    * has no conversation to invent.
    *
-   * No history line and no mirror write: story 17.8 owns the asks' authored
-   * moves in the log and the index.
+   * STORY 17.8 adds the authored move to the log (`ask.add`, a slug and its
+   * anchor) and the new line to MAP.md's asks section.
    */
   const createAsk = useCallback(
     (
@@ -2789,6 +3061,12 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           asksRef.current = written.asks;
           setState(snapshot());
           outcome = { ok: true };
+          // STORY 17.8: the authored move joins the log (the slug and the
+          // anchor it is about — no words), and MAP.md's asks section follows.
+          queueHistory(() => [
+            askAddEvent(Date.now(), written.ask.on, written.ask.anchor),
+          ]);
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -2845,6 +3123,18 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           asksRef.current = written.asks;
           setState(snapshot());
           outcome = { ok: true, created: written.ask.on };
+          // STORY 17.8: one line names the branch (the new card, its parent and
+          // the carried turn count — structure, never the parent's words), and
+          // MAP.md gains the fork's line with its parent.
+          queueHistory(() => [
+            askForkEvent(
+              Date.now(),
+              written.ask.on,
+              parentSlug,
+              written.ask.carry ?? 0,
+            ),
+          ]);
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -2899,6 +3189,88 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           asksRef.current = next;
           setState(snapshot());
           outcome = { ok: true };
+          // STORY 17.8: one field's change, one line (the NEW anchor's slug),
+          // and the mirror's about-line follows it.
+          queueHistory(() => [
+            askReanchorEvent(Date.now(), slug, anchor),
+          ]);
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 17.8 — REMOVE one ask card, immediately and reversibly. The same
+   * promise the reference cards make: the record line and the conversation's
+   * BYTES are read BEFORE anything is written or unlinked, the line leaves
+   * first (the record is the truth), then the conversation file goes. The
+   * toast's Restore writes both back verbatim.
+   *
+   * A conversation file that could not be unlinked answers ONE sentence after
+   * the line is already gone and becomes an ORPHAN the notices group names —
+   * kept where it is, never adopted, never deleted a second time.
+   */
+  const removeAsk = useCallback(
+    (slug: string): Promise<GroundAddResult> => {
+      if (!asksRef.current.some((ask) => ask.on === slug)) {
+        return Promise.resolve({ ok: false, message: ASK_MISSING_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const removal = await removeAskRecords(
+            workspacePath,
+            slug,
+            asksRef.current,
+            malformedAsksRef.current,
+          );
+          // Belt and braces: the list checked before the queue is the list the
+          // task runs against; if it moved, nothing was kept and nothing is
+          // logged (a delete of a card that is already gone is not a move).
+          if (removal.removed === null) {
+            outcome = { ok: false, message: ASK_MISSING_REFUSAL };
+            return;
+          }
+          asksRef.current = removal.asks;
+          const turns = { ...askTurnsRef.current };
+          delete turns[slug];
+          askTurnsRef.current = turns;
+          // A conversation the unlink could not take is an ORPHAN now: said in
+          // the notices group and in the mirror's unknowns, and never deleted.
+          if (removal.refusal !== null) {
+            orphanAskTurnsRef.current = [
+              ...new Set([...orphanAskTurnsRef.current, slug]),
+            ].sort();
+          }
+          // ONE TOAST: the ask card's deletion replaces any pending reference
+          // restore (a second delete commits the first).
+          restorableRef.current = null;
+          restorableAskRef.current = pendingRestoreAfter(
+            restorableAskRef.current,
+            removal.removed,
+          );
+          restoreNoticeRef.current = null;
+          setState(snapshot());
+          outcome =
+            removal.refusal === null
+              ? { ok: true }
+              : {
+                  ok: false,
+                  message: removal.refusal,
+                  recordsRemoved: true,
+                };
+          // STORY 17.8: the removal is an authored move — the slug only.
+          queueHistory(() => [askRemoveEvent(Date.now(), slug)]);
+          queueMirror();
         })
         .then(() => outcome)
         .catch(() => ({
@@ -3010,6 +3382,24 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
               ...askTurnsRef.current,
               [slug]: recorded.turns,
             };
+            // STORY 17.8 — THE TURN'S LINE, in the stated order: the PRISM and
+            // the conversation line are already written by `writeAskTurn` (the
+            // Move first, so the answer line can name its id), and the history
+            // line follows them in this same queue. Its ending is the PRISM's
+            // own outcome through ONE mapping (askTurnHistoryEvent), so the two
+            // records can never disagree; a turn that never left the app made
+            // no Move and gets no line. The mirror is NOT queued: a turn adds
+            // no name, anchor or parent to MAP.md, so nothing it describes
+            // changed.
+            queueHistory(() => {
+              const event = askTurnHistoryEvent(
+                Date.now(),
+                slug,
+                sent.ending,
+                recorded.prism,
+              );
+              return event === null ? [] : [event];
+            });
             setState(snapshot());
             // STORY 17.7b: the turn's hit facts ride out with the words, on
             // either ending — the card says what happened beside the turn.
@@ -3346,6 +3736,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             restorableRef.current,
             removedCard,
           );
+          // STORY 17.8: ONE toast — a reference delete commits any pending ask
+          // card restore, exactly as it commits an earlier reference's.
+          restorableAskRef.current = null;
           restoreNoticeRef.current = null;
           setState(snapshot());
           const refusal =
@@ -3584,13 +3977,21 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   // the held bytes are dropped and nothing can put the card back. No countdown
   // is drawn; the span is stated once in the story and lived with.
   useEffect(() => {
-    if (state.restorable === null) return;
+    // STORY 17.8: the ONE window covers whichever deletion the toast holds — a
+    // reference card's or an ask card's. Both are committed together so a
+    // kind-switch can never leave a stale snapshot behind.
+    if (state.restorable === null && state.restorableAsk === null) return;
     const timer = setTimeout(() => {
       restorableRef.current = null;
-      setState((current) => ({ ...current, restorable: null }));
+      restorableAskRef.current = null;
+      setState((current) => ({
+        ...current,
+        restorable: null,
+        restorableAsk: null,
+      }));
     }, RESTORE_WINDOW_MS);
     return () => clearTimeout(timer);
-  }, [state.restorable]);
+  }, [state.restorable, state.restorableAsk]);
 
   /**
    * STORY 16.13 — RESTORE. Through the same queue as every write, the held
@@ -3600,6 +4001,64 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * came back and what did not; either way the pending restore is spent.
    */
   const restore = useCallback((): Promise<GroundAddResult> => {
+    // STORY 17.8 — THE ASK CARD'S OWN RESTORE, first because the one toast
+    // holds one deletion: its conversation's bytes go back first, then its line,
+    // and the one history line says the card came back. Sharing the sentence,
+    // the window and the queue with the reference card's restore is the whole
+    // point of one toast.
+    const pendingAsk = restorableAskRef.current;
+    if (pendingAsk !== null) {
+      const askSlug = pendingAsk.ask.on;
+      let askOutcome: GroundAddResult = {
+        ok: false,
+        message: "nothing came back.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const restored = await restoreAskCard(
+            workspacePath,
+            pendingAsk,
+            asksRef.current,
+            malformedAsksRef.current,
+          );
+          asksRef.current = restored.asks;
+          if (restored.restoredAsk) {
+            // The card is back: its conversation is whatever the file holds
+            // now (the bytes that just went back, or none).
+            const turns = await loadTurns(workspacePath, askSlug);
+            askTurnsRef.current = {
+              ...askTurnsRef.current,
+              [askSlug]: turns.turns,
+            };
+            orphanAskTurnsRef.current = orphanAskTurnsRef.current.filter(
+              (orphan) => orphan !== askSlug,
+            );
+          } else if (restored.cameBack.includes("the conversation")) {
+            // The bytes came back but the line did not: the conversation has no
+            // card, so it is an ORPHAN — kept, said, never adopted.
+            orphanAskTurnsRef.current = [
+              ...new Set([...orphanAskTurnsRef.current, askSlug]),
+            ].sort();
+          }
+          restorableAskRef.current = null;
+          restoreNoticeRef.current = restored.refusal;
+          setState(snapshot());
+          askOutcome =
+            restored.refusal === null
+              ? { ok: true }
+              : { ok: false, message: restored.refusal };
+          // A restore is an AUTHORED move (story 16.13's rule, one family over).
+          if (restored.restoredAsk) {
+            queueHistory(() => [askRestoreEvent(Date.now(), askSlug)]);
+          }
+          if (restored.cameBack.length > 0) queueMirror();
+        })
+        .then(() => askOutcome)
+        .catch(() => ({
+          ok: false,
+          message: "the map folder could not take the ask card back.",
+        }));
+    }
     const pending = restorableRef.current;
     if (pending === null) {
       return Promise.resolve({
@@ -3704,14 +4163,20 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
 
   /** CLOSE THE TOAST: the pending deletion is committed and forgotten. */
   const dismissRestore = useCallback((): void => {
-    if (restorableRef.current === null && restoreNoticeRef.current === null) {
+    if (
+      restorableRef.current === null &&
+      restorableAskRef.current === null &&
+      restoreNoticeRef.current === null
+    ) {
       return;
     }
     restorableRef.current = null;
+    restorableAskRef.current = null;
     restoreNoticeRef.current = null;
     setState((current) => ({
       ...current,
       restorable: null,
+      restorableAsk: null,
       restoreNotice: null,
     }));
   }, []);
@@ -3721,6 +4186,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     asks: state.asks,
     askTurns: state.askTurns,
     malformedAsks: state.malformedAsks,
+    orphanAskTurns: state.orphanAskTurns,
     readings: state.readings,
     media: state.media,
     thumbs: state.thumbs,
@@ -3739,6 +4205,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     historyNotice: state.historyNotice,
     malformedHistory: state.malformedHistory,
     restorable: state.restorable,
+    restorableAsk: state.restorableAsk,
     restoreNotice: state.restoreNotice,
     loaded: state.loaded,
     createAsk,
@@ -3746,6 +4213,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     askStop,
     forkAskAt,
     reanchorAskTo,
+    removeAsk,
     create,
     createSelection,
     createPage,

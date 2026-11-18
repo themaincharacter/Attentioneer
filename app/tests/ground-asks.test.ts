@@ -691,11 +691,24 @@ describe("the ask path reuses the existing card-ask turn (story 17.3 adds the th
     expect(APP).toContain('useGround(workspace?.path ?? "", turnPort)');
     expect(APP).toContain("onCreateAsk={ground.createAsk}");
     expect(APP).toContain("onAskTurn={ground.askTurn}");
-    // No PRISM, no history and no mirror write in the ask paths (17.4/17.8).
+    // The ask paths own no mirror write: a turn adds no name, anchor or parent
+    // to MAP.md. 17.4/17.8 own the PRISM and the history line.
     const askBlock = HOOK.slice(HOOK.indexOf("const createAsk = useCallback"));
     const turnBlock = askBlock.slice(askBlock.indexOf("const askTurn = useCallback"));
     const sendBlock = turnBlock.slice(0, turnBlock.indexOf("const move = useCallback"));
-    expect(sendBlock).not.toContain("queueHistory(");
+    // STORY 17.8: a sending turn now DOES log ask.turn (the slug and the
+    // PRISM's ending, never a word). What must stay true is that no history
+    // line can carry the words: the only event built here is askTurnHistoryEvent.
+    expect(sendBlock).toContain("askTurnHistoryEvent(");
+    expect(sendBlock).toContain("queueHistory(");
+    // The event can only name the slug and the PRISM's ending: no word of the
+    // question or the answer can reach it.
+    const historyCall = sendBlock.slice(
+      sendBlock.indexOf("askTurnHistoryEvent("),
+      sendBlock.indexOf("return event === null"),
+    );
+    expect(historyCall).not.toContain("question");
+    expect(historyCall).not.toContain("recorded.turns");
     expect(sendBlock).not.toContain("queueMirror(");
   });
 

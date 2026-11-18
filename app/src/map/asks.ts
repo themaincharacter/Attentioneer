@@ -1,4 +1,9 @@
-import { createDirAll, readTextFile, writeTextFile } from "../lib/fs";
+import {
+  createDirAll,
+  listDir,
+  readTextFile,
+  writeTextFile,
+} from "../lib/fs";
 import { canonicalJsonlLine, canonicalText, nextSlug, slugName } from "../lib/serialize";
 import { utf8ByteLength } from "../lib/textBytes";
 import type { GroundReference } from "./ground";
@@ -59,8 +64,9 @@ import { ASK_RECORD_FILE, ASK_TURNS_DIR, mapDir } from "./records";
  * tail, the divider and missing-parent wording, the choice that a fork carries
  * one level only, and — STORY 17.6's addition — the optional `anchorName` tail:
  * the name the anchor had, so a dangling anchor can be SAID by name and never
- * repaired. Story 17.7 retired the embedded panel and 17.8 puts asks in the
- * mirror and the history — neither is written here.
+ * repaired. Story 17.7 retired the embedded panel; 17.8 puts asks in the
+ * mirror and the history (neither is written here) and adds the folder's one
+ * listing, the restore's exact bytes and the two removal helpers below.
  */
 
 /** One ask card: the person's name at their point, about one reference. */
@@ -147,10 +153,22 @@ export interface AskIo {
   readTextFile(path: string): Promise<string | null>;
   writeTextFile(path: string, content: string): Promise<void>;
   createDirAll(path: string): Promise<void>;
+  /**
+   * STORY 17.8 — the conversations folder's ONE listing, so a conversation
+   * whose ask card is gone can be REPORTED (kept, never adopted, never
+   * deleted). Optional so the older fakes and the write paths need not list
+   * anything: absent means "no listing", never "no conversations".
+   */
+  listDir?(path: string): Promise<string[]>;
 }
 
 /** The real bridges, bound once so the module stays importable in bun tests. */
-export const ASK_IO: AskIo = { readTextFile, writeTextFile, createDirAll };
+export const ASK_IO: AskIo = {
+  readTextFile,
+  writeTextFile,
+  createDirAll,
+  listDir,
+};
 
 /** The ask cards' lines file: `<workspace>/map/asks.txt`. */
 export function asksPath(workspacePath: string): string {
@@ -502,6 +520,91 @@ export async function loadAskTurns(
   const turns: Record<string, ParsedTurns> = {};
   for (const [slug, parsed] of entries) turns[slug] = parsed;
   return turns;
+}
+
+/**
+ * STORY 17.8 — EVERY CONVERSATION THE FOLDER HOLDS, and the ones whose ask card
+ * is gone. ONE listing of `map/asks/`, then one read per card that is on the
+ * map; a `.jsonl` whose slug `asks.txt` does not carry is an ORPHAN — named
+ * for the notices group and the mirror, kept exactly where it is, never read
+ * into a card, never adopted and never deleted (the notes' rule, one family
+ * over). A missing folder is a fresh workspace, not an error.
+ */
+export interface LoadedAskConversations {
+  /** Each ask card's turns, keyed by the slug the card carries. */
+  turns: Record<string, ParsedTurns>;
+  /** Slugs whose conversation file exists but whose ask card is gone. */
+  orphans: string[];
+}
+
+export async function loadAskConversations(
+  workspacePath: string,
+  slugs: readonly string[],
+  io: AskIo = ASK_IO,
+): Promise<LoadedAskConversations> {
+  const names = io.listDir === undefined
+    ? slugs.map((slug) => slug + ".jsonl")
+    : await io.listDir(askTurnsDir(workspacePath));
+  const onMap = new Set(slugs);
+  const turns: Record<string, ParsedTurns> = {};
+  const orphans: string[] = [];
+  // A stray file that is not a conversation is left alone: the folder is the
+  // person's, and only `.jsonl` names a conversation here.
+  const candidates = names.filter(
+    (name) => name.endsWith(".jsonl") && name.length > ".jsonl".length,
+  );
+  await Promise.all(
+    candidates.map(async (name) => {
+      const slug = name.slice(0, -".jsonl".length);
+      if (!onMap.has(slug)) {
+        orphans.push(slug);
+        return;
+      }
+      turns[slug] = await loadTurns(workspacePath, slug, io);
+    }),
+  );
+  // A card whose conversation file is absent still has an empty conversation;
+  // an absent file is never invented into turns.
+  for (const slug of slugs) {
+    if (turns[slug] === undefined) turns[slug] = { turns: [], malformed: [] };
+  }
+  orphans.sort();
+  return { turns, orphans };
+}
+
+/**
+ * STORY 17.8 — RESTORE one conversation EXACTLY: the bytes the delete read into
+ * memory go back verbatim, whole. This is deliberately NOT a turn append: a
+ * restored conversation is the same document it was, malformed lines and all,
+ * and the writer never re-serializes what it did not author.
+ */
+export async function restoreConversation(
+  workspacePath: string,
+  slug: string,
+  text: string,
+  io: AskIo = ASK_IO,
+): Promise<void> {
+  await io.createDirAll(askTurnsDir(workspacePath));
+  await io.writeTextFile(askTurnPath(workspacePath, slug), text);
+}
+
+/** The ask lines without one slug (the removal's next record). */
+export function withoutAsk(
+  asks: readonly AskCard[],
+  slug: string,
+): AskCard[] {
+  return asks.filter((ask) => ask.on !== slug);
+}
+
+/** Put one ask line back at its old file position (clamped, never out of range). */
+export function insertAskAt(
+  asks: readonly AskCard[],
+  index: number,
+  ask: AskCard,
+): AskCard[] {
+  const without = withoutAsk(asks, ask.on);
+  const at = index < 0 || index > without.length ? without.length : index;
+  return [...without.slice(0, at), ask, ...without.slice(at)];
 }
 
 /**

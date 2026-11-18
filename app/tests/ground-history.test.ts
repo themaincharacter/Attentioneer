@@ -337,16 +337,18 @@ describe("authored moves only: the look leaves no line", () => {
     expect(existsSync(historyPath(workspace))).toBe(false);
   });
 
-  test("the hook appends from the twelve authored write paths, no more", () => {
+  test("the hook appends from the eighteen authored write paths, no more", () => {
     // The only call form the verbs use; the definition is not a call site.
     // Story 16.12 added the selection card as the ninth authored write path;
     // story 16.13 adds the restore as the tenth; story 16.14 the page card and
-    // story 16.15 the video card.
+    // story 16.15 the video card. STORY 17.8 adds five ask moves (create, fork,
+    // re-anchor, remove, a turn) and the ask restore inside the one toast
+    // handler, where the reference restore already lives.
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(12);
+    expect(calls.length).toBe(18);
   });
 
-  test("the mirror and the history own the same twelve verbs", () => {
+  test("the mirror and the history own the same verbs", () => {
     const verbs = [
       "create",
       "createSelection",
@@ -361,6 +363,12 @@ describe("authored moves only: the look leaves no line", () => {
       "setNote",
       // STORY 16.13: a restore is an authored move, and it logs its own line.
       "restore",
+      // STORY 17.8: the ask cards' authored moves.
+      "createAsk",
+      "forkAskAt",
+      "reanchorAskTo",
+      "removeAsk",
+      "askTurn",
     ];
     for (const verb of verbs) {
       const start = HOOK.indexOf("const " + verb + " = useCallback");
@@ -589,6 +597,12 @@ describe("the whole log", () => {
       "link",
       "unlink",
       "setNote",
+      // STORY 17.8 — the ask moves append AFTER their own record write.
+      "createAsk",
+      "forkAskAt",
+      "reanchorAskTo",
+      "removeAsk",
+      "askTurn",
     ];
     for (const verb of verbs) {
       const start = HOOK.indexOf("const " + verb + " = useCallback");
@@ -603,6 +617,12 @@ describe("the whole log", () => {
         // Story 16.14: so does the page card's.
         body.lastIndexOf("await writePageCard"),
         body.lastIndexOf("await createFetchedPage"),
+        // STORY 17.8: the ask moves delegate their one record write; a turn's
+        // writes are the PRISM and the conversation line, both inside it.
+        body.lastIndexOf("await writeAskCard"),
+        body.lastIndexOf("await writeForkAsk"),
+        body.lastIndexOf("await removeAskRecords"),
+        body.lastIndexOf("await writeAskTurn"),
       );
       expect(writeAt).toBeGreaterThan(-1);
       expect(writeAt).toBeLessThan(historyAt);

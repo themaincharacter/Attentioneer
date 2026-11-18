@@ -1,5 +1,6 @@
 import { writeTextFile } from "../lib/fs";
 import { canonicalText } from "../lib/serialize";
+import { isFork, type AskCard } from "./asks";
 import type { GroundReference } from "./ground";
 import { serializeGroundLinkLine, type GroundLink } from "./groundLinks";
 import { serializeMediaLine, type Media } from "./media";
@@ -40,11 +41,17 @@ import {
  * if it earns one (the epic's separate-maps rule); nothing here reads or
  * names a concept record.
  *
- * ASK CARDS ARE NOT IN THE MIRROR YET (story 17.6's boundary, checked there):
- * this renderer speaks for `ground.txt` and the reading families only, so a
- * dangling ask anchor has no line to draw here. The asks section — name,
- * anchor, last turn's time — and the gone-anchor sentence in MAP.md belong to
- * story 17.8. Nothing is invented for them here in the meantime.
+ * ASK CARDS ARE HERE NOW (story 17.8), in their own section and with NOT ONE
+ * WORD of any conversation. One line per ask card, in the record's own order:
+ * its NAME, what it is ABOUT (the anchor reference's name, or the name the
+ * record remembered with a gone mark), and its PARENT when it is a fork. No
+ * counts of turns, no previews, no last-turn time, no content — the record's
+ * own file holds the words, and the mirror is a shareable derived file. The
+ * gone mark is the SAME fact the card states (story 17.6): the anchor does not
+ * resolve, and this renderer says so rather than repairing, replacing or
+ * dropping the card. A fork's parent that is gone is marked the same way.
+ * An orphan conversation (a `map/asks/<slug>.jsonl` whose card is gone) is an
+ * UNKNOWN like the orphan notes and media lines: named, kept, never adopted.
  *
  * NO FULL PATHS: a mirror may be shared with another agent or pasted into a
  * message, so a card names its reading's FILE NAME only (readingFileName).
@@ -103,6 +110,19 @@ export interface MirrorView {
   orphanMedia: readonly Media[];
   links: readonly GroundLink[];
   orphanLinks: readonly GroundLink[];
+  /**
+   * STORY 17.8 — every ask card, in the record's own order. The section names
+   * each card, what it is about and (for a fork) its parent; the CONVERSATION
+   * is never read here, so not one word of it can reach the mirror.
+   */
+  asks: readonly AskCard[];
+  /** Unreadable `map/asks.txt` lines, kept and named under "What is unknown". */
+  malformedAsks: readonly string[];
+  /**
+   * STORY 17.8 — conversation files whose ask card is gone: kept where they
+   * are, named under "What is unknown", never adopted into a card.
+   */
+  orphanAskTurns: readonly string[];
   malformedGround: readonly string[];
   malformedReadings: readonly string[];
   malformedLinks: readonly string[];
@@ -150,6 +170,43 @@ function sortedLinks(links: readonly GroundLink[]): GroundLink[] {
     if (a.to !== b.to) return a.to < b.to ? -1 : 1;
     return 0;
   });
+}
+
+/**
+ * STORY 17.8 — THE ONE LINE AN ASK CARD GETS IN THE MIRROR (PURE, PROVISIONAL
+ * wording): its name, what it is about, and its parent when it is a fork.
+ *
+ * The ABOUT is the anchor reference's LIVE name; when the anchor does not
+ * resolve it is the name the record REMEMBERED, marked gone — the same fact the
+ * card says (story 17.6), said in this derived file and never repaired. A card
+ * that never remembered a name (recorded before 17.6) falls back to the generic
+ * phrase rather than inventing one. A fork's parent is named the same way: its
+ * live name, or its slug marked gone.
+ *
+ * NOT A WORD OF THE CONVERSATION: the words, the turn count, the last turn's
+ * time and every size live in the record's files. This line has one format and
+ * no slot for any of them.
+ */
+export const MIRROR_ASK_GONE = " (gone)";
+export const MIRROR_ASK_UNKNOWN = "a card that is not here";
+
+export function mirrorAskLine(
+  ask: AskCard,
+  anchorName: string | null,
+  parentName: string | null,
+): string {
+  const remembered = ask.anchorName === undefined ? null : ask.anchorName;
+  const about = anchorName ?? remembered ?? MIRROR_ASK_UNKNOWN;
+  // The gone mark follows the FIELD, not the name: a resolved anchor is never
+  // marked, and an unresolved one is marked whether or not a name was kept.
+  let line = ask.name + " — about " + about;
+  if (anchorName === null) line += MIRROR_ASK_GONE;
+  if (isFork(ask) && ask.from !== undefined) {
+    line +=
+      "; forked from " +
+      (parentName === null ? ask.from + MIRROR_ASK_GONE : parentName);
+  }
+  return flat(line);
 }
 
 /**
@@ -209,6 +266,21 @@ export function renderMirror(view: MirrorView): string {
     lines.push("");
   }
 
+  // STORY 17.8 — THE ASKS. One line per card, in the record's order: what it
+  // is, what it is about, and its parent when it is a fork. The conversation
+  // is never read: this section cannot say a word of it, a count of turns or a
+  // preview, because neither is in hand here.
+  lines.push("## Asks", "");
+  if (view.asks.length === 0) lines.push("none yet.", "");
+  const askNameOf = new Map(view.asks.map((ask) => [ask.on, ask.name]));
+  for (const ask of view.asks) {
+    const anchorName = nameOf.get(ask.anchor) ?? null;
+    const parentName =
+      ask.from === undefined ? null : (askNameOf.get(ask.from) ?? null);
+    lines.push(mirrorAskLine(ask, anchorName, parentName));
+  }
+  if (view.asks.length > 0) lines.push("");
+
   lines.push("## Links", "");
   const links = sortedLinks(view.links);
   if (links.length === 0) {
@@ -234,6 +306,17 @@ export function renderMirror(view: MirrorView): string {
   }
   for (const line of view.malformedLinks) {
     unknown.push("unreadable line in ground-links.txt: " + flat(line));
+  }
+  // STORY 17.8 — the asks' two kept-but-unplaceable kinds, reproduced as the
+  // records hold them: an unreadable ask line, and a conversation whose card is
+  // gone (the notes' and the media lines' rule, one family over).
+  for (const line of view.malformedAsks) {
+    unknown.push("unreadable line in asks.txt: " + flat(line));
+  }
+  for (const slug of [...view.orphanAskTurns].sort()) {
+    unknown.push(
+      "a conversation with no ask card, kept in map/asks/" + slug + ".jsonl",
+    );
   }
   for (const link of view.orphanLinks) {
     unknown.push(

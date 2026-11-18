@@ -803,6 +803,9 @@ describe("the wire and the record agree", () => {
       malformedGround: [],
       malformedReadings: [],
       malformedLinks: [],
+      asks: [],
+      malformedAsks: [],
+      orphanAskTurns: [],
     } as never);
     expect(render).toContain("page: example.com");
     expect(render).not.toContain("/a/b");

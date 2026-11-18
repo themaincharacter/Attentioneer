@@ -170,6 +170,9 @@ function fullView(): MirrorView {
     malformedGround: ["this ground line is not a reference"],
     malformedReadings: ["a broken readings line"],
     malformedLinks: ["a broken link line"],
+    asks: [],
+    malformedAsks: [],
+    orphanAskTurns: [],
   };
 }
 
@@ -238,6 +241,9 @@ describe("the render: pure, reproducible, plain", () => {
       malformedGround: [],
       malformedReadings: [],
       malformedLinks: [],
+      asks: [],
+      malformedAsks: [],
+      orphanAskTurns: [],
     });
     expect(text).toContain("none yet.");
     expect(text).toContain("nothing is unknown.");
@@ -388,6 +394,9 @@ describe("what is unknown: reproduced, marked unreadable", () => {
       malformedGround: ground.malformed,
       malformedReadings: readings.malformed,
       malformedLinks: links.malformed,
+      asks: [],
+      malformedAsks: [],
+      orphanAskTurns: [],
     });
     expect(text).toContain("### Rain gauge");
     expect(text).toContain("state: the file is missing");
@@ -507,6 +516,12 @@ describe("the hook queues the mirror after every ground write", () => {
     "setNote",
     // STORY 16.13: a restore is a tenth authored write and re-derives the map.
     "restore",
+    // STORY 17.8: the ask cards' authored moves. A turn is NOT here: it adds
+    // no name, anchor or parent, so MAP.md did not change.
+    "createAsk",
+    "forkAskAt",
+    "reanchorAskTo",
+    "removeAsk",
   ];
 
   for (const verb of verbs) {
@@ -530,17 +545,24 @@ describe("the hook queues the mirror after every ground write", () => {
         // ground line last) and then mirrors.
         body.lastIndexOf("await createFetchedPage"),
         body.lastIndexOf("await createFetchedVideo"),
+        // STORY 17.8: the ask moves delegate their one record write (and an
+        // ask restore its two) and then mirror.
+        body.lastIndexOf("await writeAskCard"),
+        body.lastIndexOf("await writeForkAsk"),
+        body.lastIndexOf("await removeAskRecords"),
+        body.lastIndexOf("await restoreAskCard"),
       );
       expect(writeAt).toBeGreaterThan(-1);
       expect(writeAt).toBeLessThan(mirrorAt);
     });
   }
 
-  test("exactly twelve call sites (one per write path, not on load)", () => {
+  test("exactly seventeen call sites (one per write path, not on load)", () => {
     // Story 16.12 added the selection card as the ninth authored write path;
     // story 16.13 adds restore as the tenth; story 16.14 the page card and
-    // story 16.15 the video card.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(12);
+    // story 16.15 the video card. STORY 17.8 adds four ask moves (create, fork,
+    // re-anchor, remove) and the ask restore inside the one toast handler.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(17);
   });
 
   test("opening never writes the mirror", () => {
@@ -583,6 +605,9 @@ describe("the hook queues the mirror after every ground write", () => {
       malformedGround: [],
       malformedReadings: [],
       malformedLinks: [],
+      asks: [],
+      malformedAsks: [],
+      orphanAskTurns: [],
     };
     const first = renderMirror(view);
     await writeMirror(workspace, first, fsTextIo);

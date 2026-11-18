@@ -761,6 +761,9 @@ describe("a video card is copied beside the map and reopens OFFLINE", () => {
         malformedGround: [],
         malformedReadings: [],
         malformedLinks: [],
+        asks: [],
+        malformedAsks: [],
+        orphanAskTurns: [],
       });
       expect(mirror).toContain("video: www.youtube.com");
       expect(mirror).not.toContain("reading:");

@@ -38,6 +38,27 @@ import { mapDir } from "./records";
  * notices group and every append leaves the earlier bytes exactly as they
  * were. An append that fails is ONE sentence in that group too — the move
  * itself already landed (the records are the truth) and is never undone.
+
+ * STORY 17.8 — THE ASK CARDS' OWN MOVES, STRUCTURE ONLY. Six events name
+ * what happened to an ask card and never a word of it: `ask.add` (the slug and
+ * the anchor it is about), `ask.remove` and `ask.restore` (the slug),
+ * `ask.reanchor` (the slug and the NEW anchor), `ask.fork` (the new slug, the
+ * parent's slug and how many of the parent's turns it carries) and `ask.turn`
+ * (the slug and the turn's ENDING). A conversation is a document held by its
+ * own file (`map/asks/<slug>.jsonl`); it is never quoted, previewed, sized or
+ * counted here — the same rule the notes and the readings already live by.
+ *
+ * THE TURN'S ENDING IS THE PRISM'S OUTCOME. `ask.turn` carries exactly the two
+ * words the `ask` Change's outcome carries — `answered` or `no-response` —
+ * because the same fact is said twice and the two records must never disagree.
+ * A stopped, broken or timed-out turn is `no-response` in BOTH, even when the
+ * card still shows a partial (the partial is a view, never an answer).
+ *
+ * WHERE A TURN'S LINE SITS (the stated order, story 17.4 plus this story):
+ * first the PRISM the sending turn made, then the conversation line that names
+ * its id, then `ask.turn`. The two records join by the PRISM's id; this log
+ * only says the turn happened and how it ended. A turn that never left the app
+ * makes no PRISM and therefore no `ask.turn` line either.
  *
  * Written through the ground family's per-file queue (useGround), AFTER the
  * record write the line describes, so a reader never sees a line for a move
@@ -62,6 +83,23 @@ export function historyPath(workspacePath: string): string {
 
 /** The line's version, so a later shape can be told apart from this one. */
 export const HISTORY_VERSION = 1;
+
+/**
+ * How an ask card's sending turn ended, in the PRISM's own two words (story
+ * 17.8). The closed pair is the `ask` Change's outcome vocabulary: a completed
+ * turn is `answered`; a stop, a break and a timeout are all `no-response`.
+ * PROVISIONAL with the rest of the event shape.
+ */
+export const ASK_TURN_ENDINGS = ["answered", "no-response"] as const;
+export type AskTurnEnding = (typeof ASK_TURN_ENDINGS)[number];
+
+/** Is a value one of the two endings an ask turn's line may carry? */
+export function isAskTurnEnding(value: unknown): value is AskTurnEnding {
+  return (
+    typeof value === "string" &&
+    (ASK_TURN_ENDINGS as readonly string[]).includes(value)
+  );
+}
 
 /**
  * The event vocabulary. Each line carries only what the move needs: a slug,
@@ -129,6 +167,49 @@ export type HistoryEvent =
       readonly type: "link.add" | "link.remove";
       readonly from: string;
       readonly to: string;
+    }
+  // STORY 17.8 — the ask cards' own moves. Every one names structure only:
+  // slugs, an anchor, a fork's parent and branch count, a turn's ending. There
+  // is no key here for a word, a preview or a content size, by construction.
+  | {
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "ask.add";
+      readonly slug: string;
+      /** The reference the new card is ABOUT (a slug, never a link). */
+      readonly anchor: string;
+    }
+  | {
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "ask.remove" | "ask.restore";
+      readonly slug: string;
+    }
+  | {
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "ask.reanchor";
+      readonly slug: string;
+      /** The NEW anchor's slug; the old one is not restated. */
+      readonly anchor: string;
+    }
+  | {
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "ask.fork";
+      readonly slug: string;
+      /** The ask card this one was forked from (a slug). */
+      readonly from: string;
+      /** How many of the parent's turns the fork carries (a count of TURNS). */
+      readonly carry: number;
+    }
+  | {
+      readonly v: 1;
+      readonly t: number;
+      readonly type: "ask.turn";
+      readonly slug: string;
+      /** The SAME two words the PRISM's ask outcome carries. */
+      readonly ending: AskTurnEnding;
     };
 
 /**
@@ -231,6 +312,75 @@ export function linkRemoveEvent(
   to: string,
 ): HistoryEvent {
   return { v: HISTORY_VERSION, t, type: "link.remove", from, to };
+}
+
+/* ------------------------------------------------------------------------- *
+ * THE ASK CARDS' MOVES (story 17.8) — six structural events, no words.
+ *
+ * Each constructor takes only what the line needs: a slug, an anchor, a fork's
+ * parent and branch count, or a turn's ending. Nothing here can accept a
+ * question, an answer, a preview or a size of content, because the payload's
+ * key set has no slot for one (the PRISM's structural rule, one family over).
+ * ------------------------------------------------------------------------- */
+
+/** One ask card was made, about one reference. */
+export function askAddEvent(
+  t: number,
+  slug: string,
+  anchor: string,
+): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "ask.add", slug, anchor };
+}
+
+/** One ask card was removed (its conversation goes with it, restored by Restore). */
+export function askRemoveEvent(t: number, slug: string): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "ask.remove", slug };
+}
+
+/** The toast's Restore put the ask card (and its conversation) back. */
+export function askRestoreEvent(t: number, slug: string): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "ask.restore", slug };
+}
+
+/** One ask card was re-anchored: the NEW anchor's slug, nothing else. */
+export function askReanchorEvent(
+  t: number,
+  slug: string,
+  anchor: string,
+): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "ask.reanchor", slug, anchor };
+}
+
+/** One ask card was forked: the new card, the parent and the carried count. */
+export function askForkEvent(
+  t: number,
+  slug: string,
+  from: string,
+  carry: number,
+): HistoryEvent {
+  return {
+    v: HISTORY_VERSION,
+    t,
+    type: "ask.fork",
+    slug,
+    from,
+    carry: Math.max(0, Math.floor(carry)),
+  };
+}
+
+/**
+ * One sending turn happened, with the ENDING the PRISM recorded for the same
+ * turn. `answered` and `no-response` are the PRISM's own two words; the
+ * caller forms it from the same function the PRISM's outcome comes from, so the
+ * two records can never disagree. A turn that never left the app is no Move and
+ * gets no line.
+ */
+export function askTurnEvent(
+  t: number,
+  slug: string,
+  ending: AskTurnEnding,
+): HistoryEvent {
+  return { v: HISTORY_VERSION, t, type: "ask.turn", slug, ending };
 }
 
 /**
@@ -367,6 +517,43 @@ export function parseHistoryEvent(line: string): HistoryEvent | null {
       return record.type === "link.add"
         ? linkAddEvent(t, pair.from, pair.to)
         : linkRemoveEvent(t, pair.from, pair.to);
+    }
+    // STORY 17.8 — the ask cards' moves. Each reads exactly the keys its
+    // constructor writes; a line missing one, or carrying a turn ending outside
+    // the PRISM's two words, stays PRESERVED and reported, never guessed at.
+    case "ask.add": {
+      const slug = stringField(record, "slug");
+      const anchor = stringField(record, "anchor");
+      if (slug === null || anchor === null) return null;
+      return askAddEvent(t, slug, anchor);
+    }
+    case "ask.remove":
+    case "ask.restore": {
+      const slug = stringField(record, "slug");
+      if (slug === null) return null;
+      return record.type === "ask.remove"
+        ? askRemoveEvent(t, slug)
+        : askRestoreEvent(t, slug);
+    }
+    case "ask.reanchor": {
+      const slug = stringField(record, "slug");
+      const anchor = stringField(record, "anchor");
+      if (slug === null || anchor === null) return null;
+      return askReanchorEvent(t, slug, anchor);
+    }
+    case "ask.fork": {
+      const slug = stringField(record, "slug");
+      const from = stringField(record, "from");
+      const carry = numberField(record, "carry");
+      if (slug === null || from === null || carry === null) return null;
+      if (!Number.isSafeInteger(carry) || carry < 0) return null;
+      return askForkEvent(t, slug, from, carry);
+    }
+    case "ask.turn": {
+      const slug = stringField(record, "slug");
+      if (slug === null) return null;
+      if (!isAskTurnEnding(record.ending)) return null;
+      return askTurnEvent(t, slug, record.ending);
     }
     default:
       return null;

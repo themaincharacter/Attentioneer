@@ -97,7 +97,9 @@ import { askAnchorOf, askThreadOf, type GroundAddResult } from "./useGround";
  * STORY 16.3's DELETE was a two-step inline confirm; STORY 16.13 REMOVES it
  * (shortlist item 1): `remove` deletes at once and the app's toast is the only
  * guard, with Restore writing the same bytes back. The layer still hands the
- * one write path (`useGround.remove`) — the card never touches a file. When a
+ * one write path (`useGround.remove`) — the card never touches a file. STORY
+ * 17.8 gives an ASK card the same verb through the same one toast
+ * (`useGround.removeAsk`), so every card on the ground map goes the same way. When a
  * refused unlink answers its one sentence the card is already gone, so the
  * sentence is shown where it stood.
  *
@@ -389,6 +391,12 @@ interface GroundLayerProps {
     slug: string,
     anchor: string,
   ) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.8 — remove one ask card: the immediate delete (16.13's rule) with
+   * the toast's Restore as its guard. The layer holds the bytes; this prop only
+   * forwards the person's press.
+   */
+  onRemoveAsk?: (on: string) => Promise<GroundAddResult>;
   /** Ask one question inside an ask card (the existing card-ask turn path). */
   onAskTurn?: (
     slug: string,
@@ -491,6 +499,7 @@ export function GroundLayer({
   onCreateAsk,
   onForkAsk,
   onReanchorAsk,
+  onRemoveAsk,
   onAskTurn,
   onStopAskTurn,
   hasProvider,
@@ -679,8 +688,9 @@ export function GroundLayer({
           face, 17.5 the fork and the re-anchor, and 17.6 the dangling ANCHOR's
           one quiet line (a fork's missing parent is a different, stated hole).
           THE MIRROR DOES NOT KNOW ASK CARDS YET (map/mirror.ts renders ground
-          references and their readings only): no asks section is invented here
-          — story 17.8 owns putting asks in MAP.md and the history. */}
+          references and their readings only): the ask cards draw here, and
+          MAP.md's asks section is the mirror's own render of the same record
+          (story 17.8). */}
       {asks.map((ask) => {
         // STORY 17.5 — THE COMPOSED THREAD: a fork reads its carried prefix
         // from the parent's record HERE, on every render, and appends its own
@@ -740,6 +750,11 @@ export function GroundLayer({
               onReanchorAsk === undefined
                 ? undefined
                 : (anchor) => onReanchorAsk(ask.on, anchor)
+            }
+            onRemove={
+              onRemoveAsk === undefined
+                ? undefined
+                : () => onRemoveAsk(ask.on)
             }
           />
         );

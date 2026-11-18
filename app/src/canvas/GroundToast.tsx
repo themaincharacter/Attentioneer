@@ -17,6 +17,13 @@
 /** The toast's one sentence for a deletion that can still be restored. */
 export const RESTORE_SENTENCE = "this reference was removed";
 
+/**
+ * STORY 17.8 — the same bar, the ask card's one word. One toast serves both
+ * kinds of deletion (exactly one is pending at a time), so the sentence is the
+ * caller's and the bar's look, verbs and window are unchanged.
+ */
+export const ASK_RESTORE_SENTENCE = "this ask card was removed";
+
 export interface GroundToastProps {
   /**
    * A partial restore's one sentence. When set, the Restore verb is gone (the
@@ -27,17 +34,24 @@ export interface GroundToastProps {
   onRestore?: () => void;
   /** Close the bar: commits any pending deletion and forgets the notice. */
   onDismiss: () => void;
+  /**
+   * What was removed, in one sentence (PROVISIONAL). Omitted means the
+   * reference card's sentence (story 16.13); story 17.8 passes the ask card's
+   * when that is what the toast holds.
+   */
+  sentence?: string;
 }
 
 export function GroundToast({
   notice = null,
   onRestore,
   onDismiss,
+  sentence = RESTORE_SENTENCE,
 }: GroundToastProps) {
   return (
     <div className={`ground-toast${notice === null ? "" : " notice"}`} role="status">
       <span className="ground-toast-sentence">
-        {notice === null ? RESTORE_SENTENCE : notice}
+        {notice === null ? sentence : notice}
       </span>
       {notice === null && onRestore !== undefined && (
         <button

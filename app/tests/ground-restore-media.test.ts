@@ -535,6 +535,9 @@ describe("a media line whose card is gone is an orphan: kept, reported, never ad
       malformedGround: ground.malformed,
       malformedReadings: [],
       malformedLinks: [],
+      asks: [],
+      malformedAsks: [],
+      orphanAskTurns: [],
     });
     expect(text).toContain("## What is unknown");
     expect(text).toContain(

@@ -91,6 +91,11 @@ import type { GroundAddResult } from "./useGround";
  * red, no icon. They are VIEW facts: the conversation file still holds only
  * words, so a reload forgets them.
  *
+ * STORY 17.8 — THE CARD CAN BE REMOVED, like every other card: one press, no
+ * confirming step, and the toast's Restore is the guard (story 16.13). The
+ * layer owns the bytes (the record line and the conversation, read before the
+ * unlink) and this component only presses the verb — it never touches a file.
+ *
  * PROVISIONAL (ADR-0003's rendering seam): the card's size, the crop, the
  * scrollbox height and slack, the role marks, the stopped/incomplete wording,
  * story 17.5's divider and missing-parent lines and the fork/re-anchor
@@ -328,6 +333,7 @@ export function AskCard({
   onStopTurn,
   onForkTurn,
   onReanchor,
+  onRemove,
 }: {
   ask: AskCardRecord;
   /**
@@ -407,6 +413,13 @@ export function AskCard({
    * the writer's one sentence.
    */
   onReanchor?: (anchor: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.8 — REMOVE this ask card: immediate, with the toast's Restore as
+   * the only guard (the reference card's idiom). The layer reads the record
+   * line and the conversation's bytes before the unlink and writes them back
+   * verbatim on Restore. Optional so a render test needs no write path.
+   */
+  onRemove?: () => Promise<GroundAddResult>;
 }) {
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState<AskPending | null>(null);
@@ -608,6 +621,23 @@ export function AskCard({
       return;
     }
     setReanchorTo(null);
+  }
+
+  /**
+   * STORY 17.8 — remove is IMMEDIATE (16.13's rule): one press, no confirming
+   * step. A refusal that kept the card shows its one sentence here; the
+   * refused-unlink sentence is the layer's, because the card is gone with its
+   * records. A running turn is never cut by a delete — the verb waits.
+   */
+  async function removeCard(): Promise<void> {
+    if (busy || running || onRemove === undefined) return;
+    setBusy(true);
+    setProblem(null);
+    const result = await onRemove();
+    if (!result.ok && result.recordsRemoved !== true) {
+      setBusy(false);
+      setProblem(result.message);
+    }
   }
 
   async function stop(): Promise<void> {
@@ -942,6 +972,19 @@ export function AskCard({
                     onClick={() => void stop()}
                   >
                     stop
+                  </button>
+                )}
+                {/* STORY 17.8 — the card's remove, beside close: immediate,
+                    reversible through the one toast. While a turn runs there is
+                    nothing to remove yet (the words are still arriving). */}
+                {onRemove !== undefined && (
+                  <button
+                    type="button"
+                    className="ask-card-remove"
+                    disabled={busy || running}
+                    onClick={() => void removeCard()}
+                  >
+                    remove
                   </button>
                 )}
                 <button
