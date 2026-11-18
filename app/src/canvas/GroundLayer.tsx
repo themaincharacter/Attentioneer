@@ -42,6 +42,11 @@ import type { AskCallsFacts } from "./contactRules";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
 import { attachGroundCardDrag } from "./groundDrag";
+import {
+  frameGroundCard,
+  settleGroundCard,
+  type GroundDragChannel,
+} from "./groundDragRef";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
 import type { GroundLink } from "../map/groundLinks";
@@ -242,6 +247,16 @@ import {
  * and both names — the layer writes none of it. The drag rule is still the
  * layer's ONE raw listener on the reference card: the pill is a child of the
  * card it names, so the press reaches that rule wherever a card can move.
+ *
+ * STORY 16.25 TAKES THE DRAG OFF REACT STATE. A press that became a move used
+ * to write component state on every pointer event, so one pointer event was one
+ * render of the whole card — counted at 60 renders for a 60-move drag — while
+ * the wires, which read the RECORDS, stood still until the drop: the card
+ * trailed the hand and the wire trailed the card. The card now carries the hand
+ * on its own element (`frameGroundCard`) and publishes the live point to the
+ * map's one drag channel (`groundDragRef.ts`), which only the wires that touch
+ * it read. Nothing is written until the drop: the same threshold, one record
+ * line, one `card.move`, the same no-op rule.
  *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
@@ -641,6 +656,14 @@ interface GroundLayerProps {
    * render test needs no plane; the app always passes the real camera.
    */
   zoom?: number;
+  /**
+   * STORY 16.25 — THE ONE IN-FLIGHT DRAG, shared with the wires (App makes it
+   * once, beside both layers). A card publishes its live point here instead of
+   * writing React state, so the only thing that follows a moving card is the
+   * wires that touch it. Optional so a render test needs no channel; a card
+   * then moves its own element and no wire follows.
+   */
+  drag?: GroundDragChannel;
 }
 
 export function GroundLayer({
@@ -694,6 +717,7 @@ export function GroundLayer({
   previewLines = READING_PREVIEW_LINES,
   noteLines = NOTE_PREVIEW_LINES,
   zoom = 1,
+  drag,
 }: GroundLayerProps) {
   const readingsBySlug = new Map(readings.map((reading) => [reading.on, reading]));
   const mediaBySlug = new Map(media.map((entry) => [entry.on, entry]));
@@ -1034,6 +1058,7 @@ export function GroundLayer({
           onNarrate={onNarrate}
           previewLines={previewLines}
           noteLines={noteLines}
+          drag={drag}
         />
       ))}
       {/* STORY 17.1 — THE ASK CARDS, beside the reference cards on the same
@@ -1132,6 +1157,7 @@ export function GroundLayer({
             onLink={onLink}
             interactionMode={interactionMode}
             onNarrate={onNarrate}
+            drag={drag}
           />
         );
       })}
@@ -1219,6 +1245,7 @@ export function GroundLayer({
             onLink={onLink}
             interactionMode={interactionMode}
             onNarrate={onNarrate}
+            drag={drag}
           />
         );
       })}
@@ -1327,6 +1354,7 @@ function GroundCard({
   previewLines,
   noteLines,
   sourceNames,
+  drag,
 }: {
   reference: GroundReference;
   reading: Reading | null;
@@ -1360,6 +1388,8 @@ function GroundCard({
   readWord: (slug: string) => Promise<ConceptWord | null>;
   interactionMode: GestureMode;
   zoom: number;
+  /** STORY 16.25: the map's one in-flight drag (absent in a render test). */
+  drag?: GroundDragChannel;
   onMove: GroundLayerProps["onMove"];
   /** STORY 16.21: the name pill's one writer (absent in a render test). */
   onRename?: GroundLayerProps["onRename"];
@@ -1407,7 +1437,13 @@ function GroundCard({
   // (a card's small face is a crop, so there is nothing to select there).
   const readingRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
-  const [dragPos, setDragPos] = useState<Point | null>(null);
+  // STORY 16.25 — THE DRAG'S LIVE POINT IS NOT STATE. While the hand is down
+  // the card is moved by its own element (`frameGroundCard`) and its point is
+  // published to the shared channel for the wires; React is not asked to render
+  // at all. These two refs are what the release needs: where the hand let go,
+  // and the whole-unit point the record is about to hold.
+  const liveRef = useRef<Point | null>(null);
+  const droppedRef = useRef<Point | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // STORY 16.7 — the picker and the concept panel are VIEW state too. The
@@ -1481,6 +1517,30 @@ function GroundCard({
     return () => el.removeEventListener("mousedown", handleLinkPress);
   });
 
+  /**
+   * STORY 16.25 — PUT THE FRAME BACK ON THE RECORD'S OWN POINT, and let the
+   * wires go. Called at the only three moments a frame can end without a
+   * record change: a drop that rounded onto the card's own point (no write
+   * follows, so nothing would ever release it), a refused write, and a write
+   * whose point has arrived. The point is the record's, never the hand's: the
+   * map may not show a position the file does not hold.
+   */
+  function settleFrame(): void {
+    liveRef.current = null;
+    droppedRef.current = null;
+    settleGroundCard(cardRef.current, { x: reference.x, y: reference.y });
+    drag?.publish(null);
+  }
+
+  /**
+   * STORY 16.25 — THE CARD FOLLOWS THE HAND ON ITS OWN ELEMENT. One press, one
+   * frame per pointer event, and NOT ONE React render: the card's `left`/`top`
+   * are written where React wrote them, and the live point goes to the wires
+   * through the shared channel (a wire reads it in a subscriber and repaints;
+   * it does not re-render). The write on release is still the ONLY write: the
+   * drop hands the point to the same `onMove`, once, and `card.move` follows
+   * from the hook exactly as before.
+   */
   useEffect(() => {
     const el = cardRef.current;
     if (!el) return;
@@ -1489,18 +1549,42 @@ function GroundCard({
       // where it now sits (the props are fresh on every render).
       at: () => ({ x: reference.x, y: reference.y }),
       zoom: () => zoom,
-      onPreview: setDragPos,
+      onPreview: (at) => {
+        // Null is the release's own news, and the release below decides what
+        // stays; a press that is still a press never reaches here at all.
+        if (at === null) return;
+        liveRef.current = at;
+        frameGroundCard(el, at);
+        drag?.publish({ slug: reference.on, x: at.x, y: at.y });
+      },
       // STORY 16.16: the chip speaks ONCE, when the press crosses the
       // threshold — the card is being moved, by its name or its body.
       onMoved: () => onNarrate?.({ kind: "moving", name: reference.name }),
       onDrop: (point) => {
         // ONE write, on release: the drag's path is never a record.
-        void onMove(reference.on, point.x, point.y);
+        void onMove(reference.on, point.x, point.y).then((result) => {
+          // The record never moved, so neither may the card or its wires.
+          if (!result.ok) settleFrame();
+        });
       },
-      onRelease: () => {
+      onRelease: (moved) => {
         // The gesture is over, moved or not: the chip clears with the release.
         onNarrate?.(GESTURE_IDLE);
-        setDragPos(null);
+        if (!moved) return;
+        const at = liveRef.current;
+        if (at === null) return;
+        // The record keeps whole units (`moveGroundReference` rounds), so the
+        // frame commits to the point the line will hold: the card and its
+        // wires land where they stay instead of flicking through a fraction.
+        const landed = { x: Math.round(at.x), y: Math.round(at.y) };
+        if (landed.x === reference.x && landed.y === reference.y) {
+          // A drop that rounds onto the card's own point is not a move: no
+          // write follows, so nothing else would ever release this frame.
+          settleFrame();
+          return;
+        }
+        droppedRef.current = landed;
+        drag?.publish({ slug: reference.on, x: landed.x, y: landed.y });
       },
       isArmed: () => isGestureArmed(interactionMode),
       // An open card's reading is a SELECTION surface (story 16.12): a press
@@ -1514,6 +1598,19 @@ function GroundCard({
         if (!onPill) onOpen();
       },
     });
+  });
+
+  /**
+   * THE FRAME IS RELEASED WHEN THE RECORD CATCHES UP, never on the release:
+   * the new point arrives as a prop only after the queued write has landed, so
+   * holding the frame until then is what keeps the card and its wires on the
+   * dropped point instead of snapping back through the old one.
+   */
+  useEffect(() => {
+    const dropped = droppedRef.current;
+    if (dropped === null) return;
+    if (reference.x !== dropped.x || reference.y !== dropped.y) return;
+    settleFrame();
   });
 
   /* STORY 16.19 — CATCH THE SELECTION ON MOUSE-UP, and never an empty one.
@@ -1612,8 +1709,10 @@ function GroundCard({
   }, [open]);
 
   const word = readingStateWord(state, reading);
-  const x = dragPos ? dragPos.x : reference.x;
-  const y = dragPos ? dragPos.y : reference.y;
+  // STORY 16.25 — the RECORD's point is what React renders; the hand's own
+  // frame is written on the card's element, so a drag re-renders nothing here.
+  const x = reference.x;
+  const y = reference.y;
   const shownText = text === undefined || text === "" ? null : text;
   // Story 16.6: the note is the person's own text, never joined with the
   // reading. The small face crops it with the SAME pure helper; the expanded
@@ -1850,9 +1949,7 @@ function GroundCard({
   return (
     <div
       ref={cardRef}
-      className={`ground-reference${dragPos ? " dragging" : ""}${
-        open ? " expanded" : ""
-      }`}
+      className={`ground-reference${open ? " expanded" : ""}`}
       style={
         {
           left: x,

@@ -104,6 +104,7 @@ import type { AskPacket } from "./turn/packet";
 import { readingFor } from "./map/readings";
 import type { Media } from "./map/media";
 import { GroundWires } from "./canvas/GroundWires";
+import { createGroundDragChannel } from "./canvas/groundDragRef";
 import { GroundBubble, type GroundIntent } from "./canvas/GroundBubble";
 import { GroundDropNotice } from "./canvas/GroundDropNotice";
 import {
@@ -611,6 +612,14 @@ function App() {
   // retired the card's embedded panel, so this is the ONE turn port every ask
   // card sends through — the existing card-ask path, not a second one.
   const ground = useGround(workspace?.path ?? "", turnPort);
+
+  /**
+   * STORY 16.25 — THE MAP'S ONE IN-FLIGHT DRAG. The layer's cards publish the
+   * point the hand is carrying and the wires read it; both halves of the story
+   * share this one channel, made once for the mounted map. It holds view state
+   * only: nothing here is a record, and the release is still the one write.
+   */
+  const groundDrag = useRef(createGroundDragChannel()).current;
 
   // The step's run (Epic 8 story 3, ADR-0022): an EPHEMERAL read of the ACTIVE
   // model, held in memory and never written. The key is the model's identity —
@@ -4561,6 +4570,7 @@ function App() {
             asks={ground.asks}
             sessions={ground.sessions}
             onRemoveLink={ground.unlink}
+            drag={groundDrag}
           />
         )}
 
@@ -4588,6 +4598,7 @@ function App() {
         {level === "ground" && (
           <GroundLayer
             references={ground.references}
+            drag={groundDrag}
             readings={ground.readings}
             media={ground.media}
             thumbs={ground.thumbs}

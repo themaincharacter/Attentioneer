@@ -17,6 +17,11 @@ import type { GroundAddResult } from "./useGround";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
 import { attachGroundCardDrag } from "./groundDrag";
+import {
+  frameGroundCard,
+  settleGroundCard,
+  type GroundDragChannel,
+} from "./groundDragRef";
 import type { Point } from "./geometry";
 import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import {
@@ -214,6 +219,7 @@ export function SessionCard({
   onLink,
   interactionMode = "idle",
   onNarrate,
+  drag,
 }: {
   session: SessionCardRecord;
   /** The bound row's display name, or null when this build does not ship it. */
@@ -236,6 +242,13 @@ export function SessionCard({
    * render test that only cares about the transcript is at 100%.
    */
   zoom?: number;
+  /**
+   * STORY 16.25 — the map's ONE in-flight drag, shared with the wires. A card
+   * publishes its live point here while the hand is down instead of writing
+   * React state, so only the wires that touch it follow. Optional so a render
+   * test needs no channel; the card then moves its own element alone.
+   */
+  drag?: GroundDragChannel;
   open: boolean;
   /** How many lines the small face crops at (the stated preference). */
   previewLines: number;
@@ -292,10 +305,13 @@ export function SessionCard({
   const [picked, setPicked] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  // STORY 16.23 — THE CARD IS MOVABLE BY THE SAME ONE RULE as a reference: its
-  // stored point comes from the record, and `dragPos` is the live preview while
-  // the hand is down. View state only: the drop is what writes.
-  const [dragPos, setDragPos] = useState<Point | null>(null);
+  // STORY 16.23 — THE CARD IS MOVABLE BY THE SAME ONE RULE as a reference.
+  // STORY 16.25 — and like the reference card, the live frame is NOT React
+  // state: the element carries the hand (`frameGroundCard`) and the point goes
+  // to the wires through the shared channel. These two refs are the release's:
+  // where the hand let go, and the whole-unit point the record will hold.
+  const liveRef = useRef<Point | null>(null);
+  const droppedRef = useRef<Point | null>(null);
   // Whether the body still follows the newest entry; a person scrolling up
   // turns it off until they reach the bottom again.
   const pinnedRef = useRef(true);
@@ -354,35 +370,74 @@ export function SessionCard({
     return () => el.removeEventListener("mousedown", handleMouseDown);
   }, [session.on, interactionMode, onLink, onNarrate]);
 
+  /**
+   * STORY 16.25 — PUT THE FRAME BACK ON THE RECORD'S OWN POINT and let the
+   * wires go: for a drop that rounded onto the card's own point, a refused
+   * write, or the write whose point has arrived. The map may never show a
+   * position the file does not hold.
+   */
+  function settleFrame(): void {
+    liveRef.current = null;
+    droppedRef.current = null;
+    settleGroundCard(cardRef.current, { x: session.x, y: session.y });
+    drag?.publish(null);
+  }
+
   // STORY 16.23 — THE SESSION CARD MOVES BY THE SAME ONE RULE. The press
   // reaches the shared wiring (groundDrag.ts), so the threshold, the live
-  // preview and the one write on release are the reference card's — there is
-  // no second drag here. The name pill is a child of this card, so a press on
-  // it lands in the same listener: the pill is the handle, and a press that
-  // never moves on it opens nothing.
+  // frame and the one write on release are the reference card's — there is no
+  // second drag here. The name pill is a child of this card, so a press on it
+  // lands in the same listener: the pill is the handle, and a press that never
+  // moves on it opens nothing. STORY 16.25 — the frame is the element's and
+  // the shared channel's, so a move renders nothing; the drop is ONE write.
   useEffect(() => {
     const el = cardRef.current;
     if (el === null) return;
     return attachGroundCardDrag(el, {
       at: () => ({ x: session.x, y: session.y }),
       zoom: () => zoom,
-      onPreview: setDragPos,
+      onPreview: (at) => {
+        // Null is the release's own news; the release below decides what stays.
+        if (at === null) return;
+        liveRef.current = at;
+        frameGroundCard(el, at);
+        drag?.publish({ slug: session.on, x: at.x, y: at.y });
+      },
       onMoved: () =>
         onNarrate?.({
           kind: "moving",
           name: sessionDisplayName(session.name),
         }),
       onDrop: (point) => {
-        if (onMove === undefined) return;
+        if (onMove === undefined) {
+          settleFrame();
+          return;
+        }
         void onMove(point.x, point.y).then((result) => {
           // A refused write is one sentence on the card, never a point that
-          // quietly snaps back for no stated reason.
-          if (!result.ok) setProblem(result.message);
+          // quietly snaps back for no stated reason — and the card goes back
+          // to the point the record still holds.
+          if (!result.ok) {
+            settleFrame();
+            setProblem(result.message);
+          }
         });
       },
-      onRelease: () => {
+      onRelease: (moved) => {
         onNarrate?.(GESTURE_IDLE);
-        setDragPos(null);
+        if (!moved) return;
+        const at = liveRef.current;
+        if (at === null) return;
+        // The record keeps whole units, so the frame commits to the point the
+        // line will hold: the card and its wires land where they stay.
+        const landed = { x: Math.round(at.x), y: Math.round(at.y) };
+        if (landed.x === session.x && landed.y === session.y) {
+          // A no-op drop writes nothing, so nothing else would release this.
+          settleFrame();
+          return;
+        }
+        droppedRef.current = landed;
+        drag?.publish({ slug: session.on, x: landed.x, y: landed.y });
       },
       isArmed: () => isGestureArmed(interactionMode),
       // The card's verbs, fields and the link handle are already the helper's
@@ -394,7 +449,19 @@ export function SessionCard({
         onOpen();
       },
     });
-  }, [session.on, session.x, session.y, zoom, onMove, onOpen, onNarrate, interactionMode]);
+  }, [session.on, session.x, session.y, zoom, onMove, onOpen, onNarrate, interactionMode, drag]);
+
+  /**
+   * THE FRAME IS RELEASED WHEN THE RECORD CATCHES UP: the new point arrives as
+   * a prop only after the queued write landed, so the card and its wires stay
+   * on the dropped point instead of snapping back through the old one.
+   */
+  useEffect(() => {
+    const dropped = droppedRef.current;
+    if (dropped === null) return;
+    if (session.x !== dropped.x || session.y !== dropped.y) return;
+    settleFrame();
+  }, [session.x, session.y]);
 
   // Opening starts AT THE NEWEST ENTRY again.
   useEffect(() => {
@@ -493,11 +560,13 @@ export function SessionCard({
   return (
     <div
       ref={cardRef}
-      className={`session-card${open ? " expanded" : ""}${dragPos ? " dragging" : ""}`}
+      className={`session-card${open ? " expanded" : ""}`}
       style={
         {
-          left: dragPos ? dragPos.x : session.x,
-          top: dragPos ? dragPos.y : session.y,
+          // STORY 16.25: the RECORD's point is what React renders; the hand's
+          // own frame is written on the element, so a drag re-renders nothing.
+          left: session.x,
+          top: session.y,
           "--preview-lines": previewLines,
         } as CSSProperties
       }

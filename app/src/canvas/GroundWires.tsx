@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { GroundReference } from "../map/ground";
 import { linkKey, type GroundLink } from "../map/groundLinks";
+import {
+  wireEndsUnderDrag,
+  type GroundDragChannel,
+} from "./groundDragRef";
 import type { GroundAddResult } from "./useGround";
 
 /**
@@ -24,6 +28,16 @@ import type { GroundAddResult } from "./useGround";
  * delete's question ("remove this link?"), and only its own remove removes.
  * Any other press or Esc backs out. The two cards stay: unlinking is not
  * deleting.
+ *
+ * STORY 16.25 — A WIRE FOLLOWS THE CARD THE HAND IS CARRYING. The cards used
+ * to drag on React state, and the wires read RECORDS, so a wire stood still
+ * until the drop and then jumped: "the wire doesn't really follow very well."
+ * The drag now publishes ONE in-flight point on a shared channel
+ * (`groundDragRef.ts`), and each wire subscribes to it: a wire whose two ends
+ * do not name the dragged card does NOTHING for that frame, and the wires that
+ * do touch it recompute the same pure `wireGeometry` from the live point and
+ * repaint their own elements. No wire re-renders, no wire is recomputed that the
+ * drag does not touch, and the geometry rule is the one this module already had.
  *
  * PROVISIONAL: the card box used for the edge anchors (300 x 220, mirrored
  * from canvas.css's `.ground-reference`), the hit band's width, the mark's
@@ -125,6 +139,12 @@ interface GroundWiresProps {
   sessions?: readonly WireCard[];
   /** Remove one exact ordered pair; the cards stay (the person's press). */
   onRemoveLink: (from: string, to: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 16.25 — THE LIVE DRAG: the dragged card's slug and point while the
+   * hand is down. Optional so a render test needs no channel; a wire with no
+   * channel simply paints where the records say, exactly as before.
+   */
+  drag?: GroundDragChannel;
 }
 
 export function GroundWires({
@@ -133,6 +153,7 @@ export function GroundWires({
   asks = [],
   sessions = [],
   onRemoveLink,
+  drag,
 }: GroundWiresProps) {
   const bySlug = new Map<string, WireCard>(
     [
@@ -155,8 +176,11 @@ export function GroundWires({
           <GroundWire
             key={`${linkKey(link.from, link.to)}-${index}`}
             link={link}
+            from={from}
+            to={to}
             geometry={geometry}
             onRemoveLink={onRemoveLink}
+            drag={drag}
           />
         );
       })}
@@ -184,16 +208,27 @@ export function linkConfirmed(step: GroundLinkStep): boolean {
 /** ONE link's wire: the line, its midpoint mark and the two-step confirm. */
 function GroundWire({
   link,
+  from,
+  to,
   geometry,
   onRemoveLink,
+  drag,
 }: {
   link: GroundLink;
+  /** The two cards this wire runs between, so the live drag can move one end. */
+  from: WireCard;
+  to: WireCard;
   geometry: WireGeometry;
   onRemoveLink: (from: string, to: string) => Promise<GroundAddResult>;
+  /** STORY 16.25: the map's one in-flight drag (absent in a render test). */
+  drag?: GroundDragChannel;
 }) {
   const wireRef = useRef<HTMLDivElement>(null);
+  const lineRef = useRef<HTMLDivElement>(null);
+  const hitRef = useRef<HTMLDivElement>(null);
   const markRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLDivElement>(null);
+  const problemRef = useRef<HTMLDivElement>(null);
   const [step, setStep] = useState<GroundLinkStep>("idle");
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -235,6 +270,56 @@ function GroundWire({
     };
   }, [step]);
 
+  /**
+   * STORY 16.25 — PAINT ONE LIVE FRAME where the drag put this wire's ends.
+   * Only the two transformed bands and the three midpoint marks are written;
+   * this wire is not re-rendered and no other wire is touched. A frame that
+   * puts the cards exactly on top of each other answers `null` from the same
+   * `wireGeometry` rule that declines to draw the line at all, so the wire is
+   * hidden for those frames instead of inventing a direction.
+   */
+  function paintWire(live: WireGeometry | null): void {
+    const line = lineRef.current;
+    const hit = hitRef.current;
+    if (live === null) {
+      if (line !== null) line.style.opacity = "0";
+      if (hit !== null) hit.style.opacity = "0";
+      return;
+    }
+    const transform = `translate3d(${live.from.x}px, ${live.from.y}px, 0) rotate(${live.angle}deg) scaleX(${live.length})`;
+    if (line !== null) {
+      line.style.opacity = "";
+      line.style.transform = transform;
+    }
+    if (hit !== null) {
+      hit.style.opacity = "";
+      hit.style.transform = transform;
+    }
+    for (const el of [markRef.current, confirmRef.current, problemRef.current]) {
+      if (el === null) continue;
+      el.style.left = `${live.mid.x}px`;
+      el.style.top = `${live.mid.y}px`;
+    }
+  }
+
+  // STORY 16.25 — THE WIRE READS THE LIVE DRAG, and only when the drag names
+  // one of its own ends: a wire anywhere else on the map does nothing at all
+  // for that frame. The listener leaves with the component, like every raw
+  // listener here.
+  useEffect(() => {
+    if (drag === undefined) return;
+    return drag.subscribe((at) => {
+      if (at === null) {
+        // The hand is up: the records are the truth again.
+        paintWire(wireGeometry(from, to));
+        return;
+      }
+      if (at.slug !== from.on && at.slug !== to.on) return;
+      const ends = wireEndsUnderDrag(from, to, at);
+      paintWire(wireGeometry(ends.from, ends.to));
+    });
+  }, [drag, from, to]);
+
   async function remove() {
     if (busy || !linkConfirmed(step)) return;
     setBusy(true);
@@ -256,12 +341,14 @@ function GroundWire({
       data-to={link.to}
     >
       <div
+        ref={lineRef}
         className="ground-wire-line"
         style={{ transform: `${lineTransform} scaleX(${geometry.length})` }}
       />
       {/* The hover band: a press on it is a press on the plane (the wire has
           no press of its own), but hovering it reveals the remove mark. */}
       <div
+        ref={hitRef}
         className="ground-wire-hit"
         style={{ transform: `${lineTransform} scaleX(${geometry.length})` }}
       />
@@ -311,6 +398,7 @@ function GroundWire({
       )}
       {problem !== null && (
         <div
+          ref={problemRef}
           className="ground-wire-problem"
           style={{ left: geometry.mid.x, top: geometry.mid.y }}
           role="status"
