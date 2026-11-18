@@ -390,8 +390,17 @@ export interface AskRequest {
 
 /** What the app holds while the question is out: the Move is in flight. */
 export interface InFlightAsk {
-  /** The anchor reference's slug. */
+  /** The anchor reference's slug — or, on an ask card's turn, the CARD's slug. */
   on: string;
+  /**
+   * THE ANCHOR, NAMED STRUCTURALLY (Epic 17 story 4) — PROVISIONAL, the one
+   * record-shape addition of the story. An ASK CARD's turn rides no pointer
+   * (`pointer` is null: the anchored card is the material), so the reference
+   * the conversation is about is named in the `ask` Change instead, by slug.
+   * Absent on the concept map's Ask, whose pointer is named at the top of the
+   * line: that route's record is byte-identical to before the story.
+   */
+  anchor?: string;
   /** The workspace root the intake's attachment rule resolves against. */
   workspacePath: string;
   /** The reach the question rides, or null for none. */
@@ -695,6 +704,9 @@ function askChange(ask: InFlightAsk): AskChange {
       ask.pointer === null
         ? null
         : pointerKey(ask.on, ask.pointer.form, ask.pointer.value),
+    // PROVISIONAL (story 17.4): the anchor rides only the ask card's turn. A
+    // slug is structure; no word, preview or content size ever rides with it.
+    ...(ask.anchor === undefined ? {} : { anchor: ask.anchor }),
     outcome: "no-response",
     included: ask.included,
     responseSize: null,
@@ -771,4 +783,96 @@ export async function abandonAsk(
 ): Promise<AskAbandonResult> {
   const prism = await commitAsk(ask, askChange(ask), deps);
   return { kind: "moved", prism };
+}
+
+/* ------------------------------------------------------------------------- *
+ * THE ASK CARD'S SENDING TURN (Epic 17 story 4) — the record catches up with
+ * the card. The conversation file is the words' home; a sending turn's Move is
+ * ONE PRISM here, and they join by the Move's id. Same writer, same queue, no
+ * second log and no second shape family.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The one thing an ask card's turn must name structurally: the card the Move
+ * belongs to (the PRISM's `on`), the reference the card is about (the
+ * Change's `anchor`) and the inclusion set (the anchor's natural key, or null
+ * when nothing pointer-identified rode — an anchor that is gone has no key, and
+ * a card with no reading has no pointer to name).
+ */
+export interface AskCardTurn {
+  /** The ask card's slug — the node the Move is made in. */
+  on: string;
+  /** The anchored reference's slug, exactly as `map/asks.txt` names it. */
+  anchor: string;
+  /** The inclusion set's pointer natural keys, or null for none. */
+  included: string[] | null;
+}
+
+/**
+ * The in-flight Ask for one ask-card turn: no pointer (there is none — the
+ * anchored card is the material), the anchor named in the Change, and the
+ * inclusion set already reduced to pointer keys by the caller. The packet this
+ * turn sends is the CARD's, assembled and declared in the card before the
+ * press; this value never carries it, because the record never carries words.
+ */
+export function askCardInFlight(
+  workspacePath: string,
+  turn: AskCardTurn,
+): InFlightAsk {
+  return {
+    on: turn.on,
+    anchor: turn.anchor,
+    workspacePath,
+    pointer: null,
+    included: turn.included,
+    question: "",
+    packet: "",
+    transport: "app",
+  };
+}
+
+/** What one ask-card turn's record was: the ONE PRISM it appended. */
+export interface AskCardMoveResult {
+  prism: Prism;
+}
+
+/**
+ * RECORD ONE ASK-CARD SENDING TURN as exactly ONE PRISM (Epic 17 story 4).
+ *
+ * THE ENDING FORMS THE RECORD, exactly as story 15.7b settled for the concept
+ * map's Ask: a COMPLETED turn is `answered` with the response's exact byte size
+ * and decode; a stop, a break or the turn's own budget is the existing
+ * no-response Change with null size and decode — even when a partial is
+ * visible on the card (the partial is a view, never an answer). No words, no
+ * preview and no content size beyond `responseSize` ever enter the record: the
+ * words stay in the conversation file, and the answer line names this PRISM's
+ * id.
+ *
+ * A turn that never left the app is NOT a Move: the caller asks for this
+ * record only after the packet actually went out, so a missing provider or an
+ * unconfigured turn writes nothing at all.
+ */
+export async function recordAskCardTurn(
+  ask: InFlightAsk,
+  ending: AskEnding,
+  answer: string | null,
+  deps: AskContactDeps,
+): Promise<AskCardMoveResult> {
+  if (askOutcomeOf(ending) !== "answered") {
+    // The no-response Change is the SAME one the abandon path commits: no
+    // size, no decode, no words — a partial on the card never counts.
+    const closed = await commitAsk(ask, askChange(ask), deps);
+    return { prism: closed };
+  }
+  // A completed turn is an ANSWER, whatever the words were — an empty one is
+  // size zero, said exactly, never invented into a refusal.
+  const response = wrapAskResponse(answer ?? "");
+  const change: AskChange = {
+    ...askChange(ask),
+    outcome: "answered",
+    responseSize: response.size,
+    decode: response.decode,
+  };
+  const prism = await commitAsk(ask, change, deps);
+  return { prism };
 }

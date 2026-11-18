@@ -127,6 +127,10 @@ import {
   type VideoFetchAnswer,
 } from "../turn/pageFetch";
 import { readSecret } from "../lib/secret";
+import { isPointerForm, pointerKey } from "../map/pointers";
+import type { Prism } from "../map/prisms";
+import { appendAskCardMove } from "../contacts/prismLog";
+import type { AskEnding } from "../contacts/ask";
 import {
   cardAskContext,
   fetchAskBlock,
@@ -1246,6 +1250,27 @@ export interface AskTurnIo {
   appendExchange: typeof appendExchange;
 }
 
+/**
+ * THE ANCHOR'S NATURAL KEY (Epic 17 story 4), PURE: the inclusion set an ask
+ * card's turn logs. The packet rides the ANCHORED card's block, so the thing
+ * included is that card's reading — named by the pointer key of the reading's
+ * form and value (on + form + value, the map's own citation vocabulary).
+ *
+ * NULL MEANS NOTHING POINTER-IDENTIFIED RODE: an anchor the map no longer
+ * carries has no key, and a card with no reading has no pointer to name (its
+ * block carried the name and state only). PROVISIONAL: the story allows the
+ * anchor's natural key; the case where there is no reading is stated here, not
+ * invented into a synthetic key.
+ */
+export function askAnchorInclusion(
+  anchor: string | null,
+  reading: Reading | null,
+): string[] | null {
+  if (anchor === null || reading === null) return null;
+  if (!isPointerForm(reading.form)) return null;
+  return [pointerKey(anchor, reading.form, reading.from)];
+}
+
 /** The real bridges, bound once so the hook's path is the tested one. */
 const ASK_TURN_IO: AskTurnIo = { appendExchange };
 
@@ -1275,6 +1300,39 @@ export function askSendResult(
   return readback === undefined ? base : { ...base, readback };
 }
 
+/**
+ * HOW THE TURN ENDED, mapped from the transport's own result (Epic 15 story
+ * 7b's vocabulary): a completed turn ANSWERED; a cancel the person pressed is
+ * STOPPED; the turn's own budget is TIMED-OUT; anything else broke. The
+ * record's outcome is formed from THIS, never from what arrived — a partial is
+ * a view, and the card says it was stopped or that it broke.
+ */
+export function askEndingOf(result: TurnResult): AskEnding {
+  switch (result.kind) {
+    case "answer":
+      return "answered";
+    case "cancelled":
+      return "stopped";
+    case "timeout":
+      return "timed-out";
+    case "error":
+      return "failed";
+  }
+}
+
+/**
+ * What one ask-card turn's SEND produced: what the card and the conversation
+ * read, HOW IT ENDED, and whether the question actually left. `left` is false
+ * only when the turn never ran (no turn port, no configured provider): nothing
+ * left the machine, so nothing is recorded — a draft and a missing provider
+ * alike write no PRISM (story 17.4's rule 6).
+ */
+export interface AskTurnSend {
+  result: AskSendResult;
+  ending: AskEnding;
+  left: boolean;
+}
+
 /** What recording one ask turn did: the whole conversation and its sentence. */
 export interface AskTurnRecords {
   /** Every turn the file now holds, in order (the new exchange appended). */
@@ -1296,13 +1354,89 @@ export async function recordAskTurn(
   question: string,
   sent: AskSendResult,
   io: AskTurnIo = ASK_TURN_IO,
+  move: string | null = null,
 ): Promise<AskTurnRecords> {
   const answer = sent.kind === "answer" ? sent.text : null;
-  const turns = await io.appendExchange(workspacePath, slug, question, answer);
+  const turns = await io.appendExchange(
+    workspacePath,
+    slug,
+    question,
+    answer,
+    undefined,
+    undefined,
+    move,
+  );
   return {
     turns,
     sentence: sent.kind === "answer" ? null : sent.sentence,
   };
+}
+
+/** The two bridges one sent turn's record needs; a test passes its own fakes. */
+export interface AskTurnWriteIo {
+  appendExchange: typeof appendExchange;
+  /** The Ask machinery's ONE PRISM append (contacts/prismLog.ts's queue). */
+  appendMove: typeof appendAskCardMove;
+}
+
+/** The real bridges, bound once so the hook's path is the tested one. */
+const ASK_TURN_WRITE_IO: AskTurnWriteIo = {
+  appendExchange,
+  appendMove: appendAskCardMove,
+};
+
+/** What writing one sent turn's record did: the Move, the words and the sentence. */
+export interface AskTurnWrite {
+  /** The ONE PRISM the sending turn made; null when the turn never left. */
+  prism: Prism | null;
+  /** Every turn the file now holds, in order. */
+  turns: readonly AskTurn[];
+  /** The one sentence when the turn did not answer; null when it did. */
+  sentence: string | null;
+}
+
+/**
+ * STORY 17.4 — WRITE ONE SENDING TURN'S RECORD, in the house order: the MOVE
+ * first (exactly one PRISM, through the Ask machinery), then the words (the
+ * person's line always, the answer line only when the turn answered, carrying
+ * the Move's id). The Move lands first because the answer line's `move` field
+ * needs it — PROVISIONAL ordering, the story's own note. A turn that never
+ * left the machine makes NO Move (nothing is appended to the log); the
+ * person's line is still the conversation's, because they did ask.
+ *
+ * The record's facts never include a word: the PRISM holds the card, the
+ * anchor, the inclusion set, the ending and the response's size and decode;
+ * the conversation holds what was said. PURE apart from the bridges it is
+ * handed, so a test calls the same order the hook runs.
+ */
+export async function writeAskTurn(
+  workspacePath: string,
+  slug: string,
+  anchor: string,
+  included: string[] | null,
+  question: string,
+  sent: AskTurnSend,
+  io: AskTurnWriteIo = ASK_TURN_WRITE_IO,
+): Promise<AskTurnWrite> {
+  const prism = sent.left
+    ? await io.appendMove(
+        workspacePath,
+        slug,
+        anchor,
+        included,
+        sent.ending,
+        sent.result.kind === "answer" ? sent.result.text : null,
+      )
+    : null;
+  const recorded = await recordAskTurn(
+    workspacePath,
+    slug,
+    question,
+    sent.result,
+    io,
+    prism === null ? null : prism.id,
+  );
+  return { prism, turns: recorded.turns, sentence: recorded.sentence };
 }
 
 /** The bridges a page card's creation needs; a test passes its own fakes. */
@@ -2365,7 +2499,13 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * provider rows, the same streaming, and the packet the card declared before
    * the press (story 17.3's assembler; the READ set stays the anchored block).
    * This is the only new send site; the provider rows and the step ceiling are
-   * unchanged (story 17.4 owns the sending turn's PRISM).
+   * unchanged.
+   *
+   * STORY 17.4: it reports HOW THE TURN ENDED alongside the words, and whether
+   * the question actually LEFT. The two pre-flight refusals (no turn port, no
+   * configured provider) never leave the machine, so they are `left: false`
+   * and the caller records nothing; once the packet is handed to the turn, the
+   * ending — not the bytes — forms the ONE PRISM.
    *
    * It runs OUTSIDE the write queue: a turn may take its whole budget, and a
    * card drag must never wait for a provider. Only the record write goes
@@ -2376,14 +2516,22 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       packet: AskPacket,
       context: AskContext,
       onPart?: (text: string) => void,
-    ): Promise<AskSendResult> => {
+    ): Promise<AskTurnSend> => {
       if (turn === undefined) {
-        return { kind: "failed", sentence: TURN_SENTENCES.unreachable };
+        return {
+          result: { kind: "failed", sentence: TURN_SENTENCES.unreachable },
+          ending: "failed",
+          left: false,
+        };
       }
       const current = await loadTurnSettings();
       const resolved = resolveSelection(current);
       if (resolved.kind !== "resolved") {
-        return { kind: "failed", sentence: PROVIDER_SENTENCES.nothing };
+        return {
+          result: { kind: "failed", sentence: PROVIDER_SENTENCES.nothing },
+          ending: "failed",
+          left: false,
+        };
       }
       // The key is read NOW, for this provider only, and handed straight to the
       // request line — never rendered, never kept in state.
@@ -2402,11 +2550,17 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         onPart === undefined ? {} : { onPart },
       );
       // The bytes that left, handed back so the card's surface can open them
-      // after the send exactly as the embedded panel's readback does.
-      return askSendResult(answered.result, {
-        messages: answered.messages,
-        read: answered.read,
-      });
+      // after the send exactly as the embedded panel's readback does. The
+      // ENDING rides beside them (story 7b): a cancel is a stop, a timeout is
+      // the budget, a break is a failure — none of them is an answer.
+      return {
+        result: askSendResult(answered.result, {
+          messages: answered.messages,
+          read: answered.read,
+        }),
+        ending: askEndingOf(answered.result),
+        left: true,
+      };
     },
     [turn, workspacePath],
   );
@@ -2471,8 +2625,16 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * the anchor's own block, never a turn. Then ONE append-only write records
    * the exchange: the person's line always, the answer line only when the turn
    * answered. A failed or stopped turn leaves the person's line alone and
-   * answers the ONE sentence in the card — no PRISM (17.4) and no map write
-   * beyond the ask card's conversation.
+   * answers the ONE sentence in the card.
+   *
+   * STORY 17.4 — EVERY SENDING TURN IS A MOVE: when the packet actually left,
+   * ONE PRISM is appended through the Ask machinery (contacts/prismLog.ts's
+   * queue, the Ask's own commit), naming the card the Move is made in, the
+   * anchor's slug, the inclusion set, the ending and — only when one came back
+   * — the response's exact size and decode. NOT ONE WORD rides in it. The
+   * PRISM lands BEFORE the conversation so the answer line can name its id
+   * (PROVISIONAL ordering, the story's own note); a turn that never left (no
+   * provider) appends nothing, and neither does a draft.
    */
   const askTurn = useCallback(
     (
@@ -2519,6 +2681,13 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         ASK_THREAD_BOUND,
         context.retrievable,
       );
+      // THE ANCHOR'S NATURAL KEY (story 17.4): the packet rides the ANCHORED
+      // card's block, so the inclusion set names that reading's pointer — null
+      // when the anchor is gone or the card has no reading to name.
+      const inclusion = askAnchorInclusion(
+        anchor === null ? null : anchor.on,
+        facts.reading,
+      );
       let outcome: GroundAddResult = {
         ok: false,
         message: "nothing was written.",
@@ -2526,9 +2695,15 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       return sendAskQuestion(packet, context, onPart)
         .then((sent) =>
           queueRef.current.push(async () => {
-            const recorded = await recordAskTurn(
+            // ONE PRISM PER SENDING TURN (story 17.4), then the words: the
+            // Move lands first because the answer line names its id. A turn
+            // that never left the machine — no provider, no port — is not a
+            // Move and records nothing.
+            const recorded = await writeAskTurn(
               workspacePath,
               slug,
+              ask.anchor,
+              inclusion,
               question,
               sent,
             );
@@ -2539,11 +2714,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             setState(snapshot());
             outcome =
               recorded.sentence === null
-                ? { ok: true, readback: sent.readback }
+                ? { ok: true, readback: sent.result.readback }
                 : {
                     ok: false,
                     message: recorded.sentence,
-                    readback: sent.readback,
+                    readback: sent.result.readback,
                   };
           }),
         )

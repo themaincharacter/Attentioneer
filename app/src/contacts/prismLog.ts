@@ -38,13 +38,16 @@ import {
 import type { AskPacket } from "../turn/packet";
 import {
   abandonAsk,
+  askCardInFlight,
   askOutcomeOf,
   intakeAskResponse,
+  recordAskCardTurn,
   sendAsk,
   type AskAbandonResult,
   type AskAppSend,
   type AskAttachment,
   type AskContactDeps,
+  type AskEnding,
   type AskIntakeResult,
   type AskRequest,
   type AskSendResult,
@@ -318,6 +321,42 @@ export async function sendAskOut(
     );
     if (intake.kind === "refused") return { ...sent, note: intake.reason };
     return { ...sent, response: intake.response, prism: intake.prism };
+  });
+}
+
+/**
+ * ONE ASK CARD'S SENDING TURN IS ONE MOVE (Epic 17 story 4). The turn itself
+ * runs OUTSIDE this queue (a provider may take its whole budget); only the
+ * record write is queued, in the same order as every other contact write.
+ *
+ * THE ENDING FORMS THE RECORD, exactly as story 15.7b settled: a completed
+ * turn is `answered` with the response's exact size and decode, and a stop, a
+ * break or the turn's budget is the existing no-response, even when the card
+ * still shows a partial. The anchored reference is named in the Change by its
+ * slug (pointer is null: the anchored card is the material), the inclusion set
+ * is the anchor's natural key when the packet carried it, and NOT ONE WORD of
+ * the question, the answer or the thread is written here — the conversation
+ * file keeps those, and its answer line names this PRISM's id.
+ *
+ * The caller appends this BEFORE the conversation line, because the answer
+ * line carries the Move's id (PROVISIONAL ordering, the story's own note).
+ */
+export function appendAskCardMove(
+  workspacePath: string,
+  on: string,
+  anchor: string,
+  included: string[] | null,
+  ending: AskEnding,
+  answer: string | null,
+): Promise<Prism | null> {
+  return enqueue(async () => {
+    const moved = await recordAskCardTurn(
+      askCardInFlight(workspacePath, { on, anchor, included }),
+      ending,
+      answer,
+      askContactDeps(workspacePath),
+    );
+    return moved.prism;
   });
 }
 

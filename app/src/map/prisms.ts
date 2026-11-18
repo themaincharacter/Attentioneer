@@ -50,18 +50,21 @@ import { POINTER_FORMS, pointerKey, type PointerForm } from "./pointers";
  *                      only knows the handoff).
  *   - `ask`          {pointer (or null for none), outcome (answered /
  *                      no-response), included (the pointer natural keys that
- *                      rode, or null for none), responseSize, decode}
+ *                      rode, or null for none), responseSize, decode, and —
+ *                      ONLY on an ask card's turn (Epic 17 story 4,
+ *                      PROVISIONAL) — anchor (the anchored reference's slug)}
  * The union is CLOSED: a Change carrying an unknown key or an outcome outside
  * its kind's list makes the LINE malformed — preserved verbatim and surfaced,
- * never guessed at.
+ * never guessed at. `anchor` is the ONE optional key in the whole union (see
+ * CHANGE_OPTIONAL_KEYS); every other key is required, exactly.
  *
  * NO CONTENT FIELD, STRUCTURALLY. The key set has no slot for the head's
  * bytes, the question's prose, the response's text or any other content: the
  * kept response's only home is the Memory backstop (a Finding -> memory prose,
  * ADR-0017 decision 4), and the inclusion set is logged as pointer keys, never
- * bytes. `PRISM_KEYS` and `CHANGE_KEYS` below are the whole declared key set;
- * a source scan can read them, and the parser refuses a Change with any key
- * outside its kind's set.
+ * bytes. `PRISM_KEYS`, `CHANGE_KEYS` and `CHANGE_OPTIONAL_KEYS` below are the
+ * whole declared key set; a source scan can read them, and the parser refuses
+ * a Change with any key outside its kind's set (required plus optional).
  *
  * THE PERSON'S EXPLANATION is prose, stored VERBATIM and never interpreted,
  * trimmed, searched or compared. It is the field's only author; the app writes
@@ -235,6 +238,19 @@ export interface AskChange {
   kind: "ask";
   /** The pointer the question rides (its natural key), or null for none. */
   pointer: string | null;
+  /**
+   * THE ANCHOR, NAMED STRUCTURALLY (Epic 17 story 4) — PROVISIONAL, the one
+   * record-shape addition of the story. An ASK CARD's turn rides no pointer
+   * (`pointer` is null: there is no pointer line; the anchored card is the
+   * material), so the reference the ask is about is named here instead, by its
+   * slug, exactly as `map/asks.txt`'s own `anchor` field names it. The union
+   * stays CLOSED TO CONTENT: a slug is structure, and no words, previews or
+   * content sizes ride with it. Absent on the concept map's Ask, which names
+   * its pointer at the top of the line (the two routes never share a line).
+   * The name and position of this field are provisional (story 17.4's own
+   * note), not a settled record shape.
+   */
+  anchor?: string;
   outcome: AskOutcome;
   /** The inclusion set: pointer natural keys that rode, or null for none. */
   included: string[] | null;
@@ -320,6 +336,23 @@ export const CHANGE_KEYS: Readonly<Record<ChangeKind, readonly string[]>> = {
     "pointer",
     "responseSize",
   ],
+};
+
+/**
+ * The OPTIONAL keys of each Change kind (the union stays closed: required plus
+ * these, and nothing else). Today ONE field is optional in the whole union:
+ * the `ask` Change's `anchor`, the ask card's structural name for the
+ * reference it is about (Epic 17 story 4, PROVISIONAL). A concept map Ask
+ * omits it and its line is byte-identical to before the story.
+ */
+export const CHANGE_OPTIONAL_KEYS: Readonly<
+  Record<ChangeKind, readonly string[]>
+> = {
+  "read-head": [],
+  "mint-pointer": [],
+  "write-text": [],
+  "open-os": [],
+  ask: ["anchor"],
 };
 
 /** The key's pointer-less suffix (an Ask may ride no pointer at all). */
@@ -415,11 +448,12 @@ function headBoundsFields(bounds: HeadBounds): Record<string, unknown> {
 function hasExactKeys(
   object: Record<string, unknown>,
   keys: readonly string[],
+  optional: readonly string[] = [],
 ): boolean {
   const present = Object.keys(object);
-  return (
-    present.length === keys.length && keys.every((key) => key in object)
-  );
+  if (present.length < keys.length) return false;
+  if (!keys.every((key) => key in object)) return false;
+  return present.every((key) => keys.includes(key) || optional.includes(key));
 }
 
 function isIn<const T extends string>(
@@ -436,7 +470,9 @@ export function parsePrismChange(value: unknown): Change | null {
   if (!isPlainObject(value)) return null;
   const kind = value.kind;
   if (!isChangeKind(kind)) return null;
-  if (!hasExactKeys(value, CHANGE_KEYS[kind])) return null;
+  if (!hasExactKeys(value, CHANGE_KEYS[kind], CHANGE_OPTIONAL_KEYS[kind])) {
+    return null;
+  }
   switch (kind) {
     case "read-head": {
       if (!isNonEmptyString(value.pointer)) return null;
@@ -482,6 +518,9 @@ export function parsePrismChange(value: unknown): Change | null {
     case "ask": {
       const pointer = value.pointer;
       if (pointer !== null && !isNonEmptyString(pointer)) return null;
+      // The optional anchor is a SLUG when present — structure, never content.
+      const anchor = value.anchor;
+      if (anchor !== undefined && !isNonEmptyString(anchor)) return null;
       if (!isIn(ASK_OUTCOMES, value.outcome)) return null;
       let included: string[] | null = null;
       if (value.included !== null) {
@@ -510,6 +549,7 @@ export function parsePrismChange(value: unknown): Change | null {
       return {
         kind,
         pointer,
+        ...(anchor === undefined ? {} : { anchor }),
         outcome: value.outcome,
         included,
         responseSize,
@@ -617,6 +657,9 @@ function changeFields(change: Change): Record<string, unknown> {
       return {
         kind: change.kind,
         pointer: change.pointer,
+        // PROVISIONAL (story 17.4): the ask card's anchor rides only when the
+        // Move was made in a card; a concept map Ask's line is unchanged.
+        ...(change.anchor === undefined ? {} : { anchor: change.anchor }),
         outcome: change.outcome,
         included: change.included === null ? null : [...change.included],
         responseSize: change.responseSize,

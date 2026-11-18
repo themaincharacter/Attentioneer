@@ -560,12 +560,13 @@ describe("an empty question refuses and writes nothing", () => {
     expect(() =>
       readFileSync(askTurnPath(workspace, "rain-gauge-question"), "utf8"),
     ).toThrow();
-    // The hook's own order: refuse, then the turn, then the record.
+    // The hook's own order: refuse, then the turn, then the record (story
+    // 17.4 moved the record into writeAskTurn, which writes the Move first).
     const turnBlock = HOOK.slice(
       HOOK.indexOf("const askTurn = useCallback"),
     );
     expect(turnBlock.indexOf("askQuestionRefusal(question)")).toBeLessThan(
-      turnBlock.indexOf("recordAskTurn("),
+      turnBlock.indexOf("writeAskTurn("),
     );
     expect(turnBlock.indexOf("askQuestionRefusal(question)")).toBeLessThan(
       turnBlock.indexOf("sendAskQuestion("),

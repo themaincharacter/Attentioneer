@@ -37,10 +37,12 @@ import { ASK_RECORD_FILE, ASK_TURNS_DIR, mapDir } from "./records";
  *
  * PROVISIONAL (the story's record shapes, before an ADR settles them): the
  * `asks.txt` name, the line shape and its key order, the turn line's shape,
- * the coordinates as ints and the `asks/` folder name. Story 17.4 owns PRISM
- * (a sending turn's Move), 17.5 owns fork (`from`/`carry`), 17.6 owns dangling
- * anchors, 17.7 retires the embedded panel and 17.8 puts asks in the mirror and
- * the history — none of that is written here.
+ * the coordinates as ints, the `asks/` folder name and — story 17.4's addition
+ * — a turn's optional `move` field (the answer line's join to its PRISM; the
+ * words themselves stay the conversation's and the record carries none of
+ * them). Story 17.5 owns fork (`from`/`carry`), 17.6 owns dangling anchors,
+ * 17.7 retires the embedded panel and 17.8 puts asks in the mirror and the
+ * history — none of that is written here.
  */
 
 /** One ask card: the person's name at their point, about one reference. */
@@ -78,6 +80,15 @@ export interface AskTurn {
   text: string;
   /** ISO-8601, the writer's clock (provisional). */
   t: string;
+  /**
+   * THE JOIN (Epic 17 story 4) — the Move's id, on an ANSWER line only. The
+   * sending turn appended ONE PRISM and this points at it, so a thread line and
+   * its record point at each other without either copying the other. The
+   * person's line never carries one: no Move happened until the turn sent, and
+   * a stopped or broken turn's answer line is never written at all. PROVISIONAL
+   * (the field's name and position, with the story's record-shape note).
+   */
+  move?: string;
 }
 
 /** A read of one conversation file: what parsed, and what is kept unreadable. */
@@ -253,12 +264,23 @@ export function parseTurnLine(line: string): AskTurn | null {
   const t = record.t;
   if (role !== "person" && role !== "answer") return null;
   if (typeof text !== "string" || typeof t !== "string") return null;
-  return { role, text, t };
+  // The optional join, read as written: a non-empty id on an answer line, or
+  // the key absent. Anything else is out of shape and stays a preserved line.
+  const move = record.move;
+  if (move !== undefined && (typeof move !== "string" || move === "")) return null;
+  const turn: AskTurn = { role, text, t };
+  if (move !== undefined) turn.move = move;
+  return turn;
 }
 
 /** One turn as its canonical JSONL line (keys sorted by the house seam). */
 export function serializeTurnLine(turn: AskTurn): string {
-  return canonicalJsonlLine({ role: turn.role, text: turn.text, t: turn.t });
+  return canonicalJsonlLine({
+    role: turn.role,
+    text: turn.text,
+    t: turn.t,
+    ...(turn.move === undefined ? {} : { move: turn.move }),
+  });
 }
 
 /** Read a conversation's bytes: unreadable lines kept, verbatim. */
@@ -353,6 +375,7 @@ export async function appendExchange(
   answer: string | null,
   io: AskIo = ASK_IO,
   now: () => string = () => new Date().toISOString(),
+  move: string | null = null,
 ): Promise<AskTurn[]> {
   const turns = await appendTurn(
     workspacePath,
@@ -361,10 +384,20 @@ export async function appendExchange(
     io,
   );
   if (answer === null) return turns;
+  // THE JOIN (story 17.4): the answer line names the Move the sending turn
+  // made, so the two records point at each other. The person's line above
+  // never does — no Move happened until the turn sent. The PRISM was written
+  // before this call, so its id exists; null means no Move was made (a turn
+  // that never left, which also has no answer line).
   return await appendTurn(
     workspacePath,
     slug,
-    { role: "answer", text: answer, t: now() },
+    {
+      role: "answer",
+      text: answer,
+      t: now(),
+      ...(move === null ? {} : { move }),
+    },
     io,
   );
 }
