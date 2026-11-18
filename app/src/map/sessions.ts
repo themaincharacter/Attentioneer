@@ -1088,6 +1088,37 @@ export function renameSession(
   );
 }
 
+/**
+ * STORY 16.23 — MOVE one session card to a dropped point: the ONE line's `x|y`
+ * changes in place and every other field — the name, the tool row — stays
+ * exactly as the record had it. PURE, so the drag's commit is one line a test
+ * can assert without a disk.
+ *
+ * Coordinates are rounded to whole map units like `addSession` places a new
+ * card. A slug this file does not carry answers `null`: a card that is gone is
+ * not moved into being, and the caller writes nothing. The transcript is never
+ * read or written — a point is not a run.
+ *
+ * NO HISTORY LINE, DELIBERATELY (the ask card's rule, one family over): the
+ * map's log has no move event for a session card and this story does not coin
+ * one. A move line for one of the new families — or one shared event with a
+ * kind — is ONE decision across all three families, and the hook's move verb
+ * says so beside the write.
+ */
+export function withSessionMoved(
+  sessions: readonly SessionCard[],
+  slug: string,
+  x: number,
+  y: number,
+): SessionCard[] | null {
+  if (!sessions.some((session) => session.on === slug)) return null;
+  return sessions.map((session) =>
+    session.on === slug
+      ? { ...session, x: Math.round(x), y: Math.round(y) }
+      : session,
+  );
+}
+
 /** The creation's ONE refusal rule, PURE: a blank name writes nothing. */
 export function sessionRefusal(name: string): string | null {
   return name.trim() === "" ? SESSION_NAME_REFUSAL : null;

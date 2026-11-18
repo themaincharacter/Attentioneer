@@ -241,11 +241,13 @@ describe("there is ONE drag rule", () => {
   });
 
   test("the card's existing listener is the only drag, on the same constant", () => {
-    // Exactly one begin and one drop in the layer; both from groundDrag.ts.
-    expect(LAYER.split("beginGroundDrag(").length - 1).toBe(1);
-    expect(LAYER.split("dropGroundDrag(").length - 1).toBe(1);
+    // STORY 16.23: the one press->threshold->drop join lives in DRAG's shared
+    // helper; exactly one begin and one drop exist in the tree, and the three
+    // cards reach them through one call each.
+    expect(DRAG.split("let drag = beginGroundDrag(").length - 1).toBe(1);
+    expect(DRAG.split("const dropped = dropGroundDrag(").length - 1).toBe(1);
     // The module's own threshold is passed by DEFAULT (no restated number).
-    expect(LAYER).toContain(
+    expect(DRAG).toContain(
       "moveGroundDrag(drag, { x: ev.clientX, y: ev.clientY })",
     );
     expect(LAYER).not.toContain("GROUND_DRAG_THRESHOLD");
@@ -256,9 +258,9 @@ describe("there is ONE drag rule", () => {
     // The pill is a child of the card, so a press on it reaches the card's raw
     // listener: the drag needs no second wiring.
     expect(LAYER).toContain("<CardNamePill");
-    expect(LAYER).toContain("const onPill = (e.target as HTMLElement).closest(\".ground-pill\") !== null;");
+    expect(DRAG).toContain('target.closest(".ground-pill") !== null');
     // A press on the name is the handle, not a door: it does not open the card.
-    expect(LAYER).toContain("if (!onPill) onOpen();");
+    expect(DRAG).toContain("if (!onPill) options.onClick?.(onPill);");
   });
 });
 

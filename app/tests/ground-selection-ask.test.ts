@@ -546,9 +546,11 @@ describe("the widget: one field, one ask verb, one dismiss", () => {
 
   test("it does not fight the card's reading scroll, link drag or card drag", () => {
     // The reading already owns its press as a selection surface, so the card
-    // never starts a drag there; the widget only listens on mouse-up.
+    // never starts a drag there; the widget only listens on mouse-up. STORY
+    // 16.23 moved the press rule into the shared drag wiring, where the open
+    // card's reading is still the caller's exclusion.
     expect(LAYER).toContain(
-      'if (open && (e.target as HTMLElement).closest(".ground-reading")) return;',
+      'open && target.closest(".ground-reading") !== null',
     );
     expect(LAYER).toContain('window.addEventListener("mouseup", onMouseUp)');
     // The widget stops its own presses and wheel before the plane hears them.

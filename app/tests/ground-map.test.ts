@@ -285,16 +285,19 @@ describe("story 16.2: the card says when the reading went stale, plainly", () =>
     expect(html).not.toMatch(/\d+\s*(of|\/)\s*\d+/);
   });
 
-  test("the drag is one write on release, and the layer owns the raw press", () => {
-    // The pure rule is groundDrag's; the LAYER calls drop exactly once and
-    // writes once, on mouseup — never per frame.
+  test("the drag is one write on release, and the shared rule owns the raw press", () => {
+    // STORY 16.23: the pure rule and its one press->drop join live in
+    // groundDrag.ts; the LAYER reaches it through the one call and hands the
+    // drop to the one writer, once, on mouseup — never per frame.
+    const drag = source("canvas/groundDrag.ts");
     expect(LAYER).toContain('from "./groundDrag"');
-    expect(LAYER).toContain("dropGroundDrag(drag)");
+    expect(LAYER).toContain("attachGroundCardDrag(el, {");
+    expect(drag).toContain("dropGroundDrag(drag)");
     expect(LAYER).toContain("onMove(reference.on, point.x, point.y)");
-    expect(LAYER).toContain('"mouseup"');
-    expect(LAYER).toContain("stopPropagation()");
+    expect(drag).toContain('"mouseup"');
+    expect(drag).toContain("stopPropagation()");
     expect(LAYER).not.toContain("setInterval");
-    expect(LAYER).not.toContain("addEventListener(\"change\"");
+    expect(LAYER).not.toContain('addEventListener("change"');
   });
 
   test("the app passes the computed states and the three person verbs only", () => {

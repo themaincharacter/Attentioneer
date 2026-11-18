@@ -59,6 +59,7 @@ import {
   restoreConversation,
   saveAsks,
   sharedSlugs,
+  withAskMoved,
   withoutAsk,
   type AskCard,
   type AskForkThread,
@@ -88,6 +89,7 @@ import {
   sessionResultName,
   sessionResultSize,
   sessionRunResult,
+  withSessionMoved,
   type RemovedSession,
   type SessionCard,
   type SessionEntry,
@@ -700,6 +702,22 @@ export interface GroundView {
    */
   renameSessionTo: (slug: string, name: string) => Promise<GroundAddResult>;
   /**
+   * STORY 16.23 — MOVE one ask card to its dropped point: ONE queued write of
+   * `map/asks.txt`, one line's `x|y`, through the SAME queue the reference
+   * cards' drop uses. The name, the anchor, a fork's fields and the chosen words
+   * are untouched, and the conversation is never read. A card that is gone
+   * writes NOTHING. No history line and no mirror rewrite (see the writer's
+   * note): a move event for these families is one decision across all three.
+   */
+  moveAsk: (slug: string, x: number, y: number) => Promise<GroundAddResult>;
+  /**
+   * STORY 16.23 — MOVE one session card to its dropped point: the same one
+   * queued write of `map/sessions.txt`, one line's `x|y`. The name, the tool
+   * row and the transcript are untouched, a card that is gone writes nothing,
+   * and no history line or mirror rewrite follows (the ask card's rule).
+   */
+  moveSession: (slug: string, x: number, y: number) => Promise<GroundAddResult>;
+  /**
    * STORY 17.8 — REMOVE one ask card, immediately and reversibly: the record
    * line and the conversation's BYTES are read first, the `asks.txt` line is
    * written without it, and the conversation file is unlinked. The toast's
@@ -862,6 +880,8 @@ type GroundLoaded = Omit<
   | "askFromSelection"
   | "renameAskTo"
   | "renameSessionTo"
+  | "moveAsk"
+  | "moveSession"
   | "removeAsk"
   | "removeSession"
   | "createSession"
@@ -1042,6 +1062,89 @@ export async function renameGroundRecords(
   return {
     references: next,
     renamed: next.find((reference) => reference.on === on) ?? null,
+  };
+}
+
+/**
+ * STORY 16.23 — A MOVE'S ONE WRITE, one family at a time. The drag's drop
+ * reaches the same per-file read-modify-write every other move uses, through
+ * the same write queue, and rewrites exactly ONE line: the dragged card's
+ * `x|y`. It is the ask card's version of `renameGroundRecords` above (and the
+ * session card's is its twin below), so the two new movers can never drift
+ * apart from the reference's shape.
+ *
+ * A card that is GONE answers `moved: null` and the bridge is NEVER CALLED:
+ * a drag that ended after its card left writes nothing, not the file back
+ * unchanged. Malformed lines ride back untouched (ADR-0009).
+ *
+ * NO HISTORY LINE and no mirror rewrite: a drop is not one of the log's
+ * move events for these two families yet (one decision across all three, as
+ * `withAskMoved` states), and MAP.md never printed a point, so there is
+ * nothing derived to bring up to date.
+ */
+export interface GroundAskMoveIo {
+  saveAsks: typeof saveAsks;
+}
+
+/** The real bridge, bound once so this module stays importable in tests. */
+const GROUND_ASK_MOVE_IO: GroundAskMoveIo = { saveAsks };
+
+/** What one ask move wrote: the new list and the moved card (null if gone). */
+export interface GroundAskMove {
+  asks: AskCard[];
+  moved: AskCard | null;
+}
+
+export async function moveAskRecords(
+  workspacePath: string,
+  slug: string,
+  x: number,
+  y: number,
+  asks: readonly AskCard[],
+  malformedAsks: readonly string[],
+  io: GroundAskMoveIo = GROUND_ASK_MOVE_IO,
+): Promise<GroundAskMove> {
+  const next = withAskMoved(asks, slug, x, y);
+  // A card that is gone is not a write: the file is not touched at all.
+  if (next === null) return { asks: [...asks], moved: null };
+  await io.saveAsks(workspacePath, next, malformedAsks);
+  return {
+    asks: next,
+    moved: next.find((ask) => ask.on === slug) ?? null,
+  };
+}
+
+/** The session card's twin: the same one-line write, its own family's file. */
+export interface GroundSessionMoveIo {
+  saveSessions: typeof saveSessions;
+}
+
+/** The real bridge, bound once so this module stays importable in tests. */
+const GROUND_SESSION_MOVE_IO: GroundSessionMoveIo = { saveSessions };
+
+/** What one session move wrote: the new list and the moved card (null if gone). */
+export interface GroundSessionMove {
+  sessions: SessionCard[];
+  moved: SessionCard | null;
+}
+
+export async function moveSessionRecords(
+  workspacePath: string,
+  slug: string,
+  x: number,
+  y: number,
+  sessions: readonly SessionCard[],
+  malformedSessions: readonly string[],
+  io: GroundSessionMoveIo = GROUND_SESSION_MOVE_IO,
+): Promise<GroundSessionMove> {
+  const next = withSessionMoved(sessions, slug, x, y);
+  // The transcript is not read, not written and not re-laid: a point is not a
+  // run, and a card that is gone writes nothing at all.
+  if (next === null) return { sessions: [...sessions], moved: null };
+  await io.saveSessions(workspacePath, next, malformedSessions);
+  return {
+    sessions: next,
+    moved: next.find((session) => session.on === slug) ?? null,
   };
 }
 
@@ -4670,6 +4773,94 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
+   * STORY 16.23 — MOVE one ask card: the card's ONE line gains its dropped
+   * point and nothing else changes. The write is the reference path's shape
+   * through the SAME queue — one read-modify-write, the record file only — so
+   * the two movers can never drift.
+   *
+   * WHY NO HISTORY LINE. A reference card's drop has appended `card.move` since
+   * story 16.10, but the log has no move event for an ask or a session card, and
+   * this story does not coin one: a move line for these two families (or one
+   * shared event with a kind) is ONE decision across all three, and taking it
+   * here would make even more of the map's history uneven than it already is.
+   * The absence is stated at the writer (`withAskMoved`) and again here, so a
+   * later reader knows it is a decision, not an oversight. There is no mirror
+   * rewrite either: MAP.md never printed a point, so nothing derived moved.
+   */
+  const moveAsk = useCallback(
+    (slug: string, x: number, y: number): Promise<GroundAddResult> => {
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const result = await moveAskRecords(
+            workspacePath,
+            slug,
+            x,
+            y,
+            asksRef.current,
+            malformedAsksRef.current,
+          );
+          // The card left before the drop landed: nothing is written, and no
+          // sentence is invented for a card that is no longer there.
+          if (result.moved === null) {
+            outcome = { ok: false, message: ASK_MISSING_REFUSAL };
+            return;
+          }
+          asksRef.current = result.asks;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 16.23 — MOVE one session card: the same one-line write, the same one
+   * queue, the same NO history line (the ask card's reason, one family over)
+   * and no mirror rewrite. The transcript is never read: a point is not a run.
+   */
+  const moveSession = useCallback(
+    (slug: string, x: number, y: number): Promise<GroundAddResult> => {
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const result = await moveSessionRecords(
+            workspacePath,
+            slug,
+            x,
+            y,
+            sessionsRef.current,
+            malformedSessionsRef.current,
+          );
+          if (result.moved === null) {
+            outcome = { ok: false, message: SESSION_MISSING_REFUSAL };
+            return;
+          }
+          sessionsRef.current = result.sessions;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
    * STORY 17.5 — FORK an ask card at a turn. ONE queued write of
    * `map/asks.txt`: the new line inherits the parent's anchor and records
    * `from`/`carry`, the slug is minted in the shared ground space, and the new
@@ -6463,6 +6654,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     askFromSelection,
     renameAskTo,
     renameSessionTo,
+    moveAsk,
+    moveSession,
     askTurn,
     askStop,
     forkAskAt,

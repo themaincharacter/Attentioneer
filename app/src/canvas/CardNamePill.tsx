@@ -60,13 +60,12 @@ import type { GroundAddResult } from "./useGround";
  * stored: a commit that changes no words calls no writer (and therefore logs
  * nothing — the history's own rule for a rename is one line per real change).
  *
- * NOT YET A MOVE FOR EVERY KIND. The handle is the CARD'S drag, reached through
- * the card's own mousedown rule — this file owns no drag. A reference card has
- * that rule (`groundDrag.ts`) and an ask or a session card has NONE: their
- * records carry a point that no shipped path rewrites after creation, so
- * dragging those names moves nothing today. The pill is already the handle they
- * would use (it adds no second rule); a move path for those two families is its
- * own story, and the pill will need no change to serve it.
+ * A HANDLE FOR EVERY MOVABLE KIND. The handle is the CARD'S drag, reached
+ * through the card's own raw press — this file owns no drag. STORY 16.23 gave
+ * the ask card and the session card the reference card's one rule
+ * (`groundDrag.ts`): every kind can be moved by its name or by its body, and
+ * the cursor says so for all three. `movable` remains a prop so a card with no
+ * move path would not promise one, but no shipped kind sets it false today.
  */
 
 /** The counter-scale never goes below the card's own scale (a zoomed-in pill). */
@@ -127,9 +126,11 @@ interface CardNamePillProps {
   renameLabel?: string;
   /**
    * WHETHER THIS CARD CAN BE MOVED BY ITS NAME (the handle's promise). True for
-   * a reference card, whose press reaches the layer's one drag rule; FALSE for
-   * a kind with no move path yet, so the cursor does not promise a drag the app
-   * cannot perform. The pill itself still owns no drag either way.
+   * every shipped kind since story 16.23 — a reference, an ask and a session
+   * card all reach the one drag rule through their own raw press — so the
+   * cursor is `grab` and never lies. A kind with no move path would pass
+   * `false` so the cursor did not promise a drag the app cannot perform; the
+   * pill itself owns no drag either way.
    */
   movable?: boolean;
 }
@@ -221,8 +222,8 @@ export function CardNamePill({
           // is to stay the same size on screen. CSS owns the transform so the
           // clamp's number is the only thing this component decides.
           "--pill-scale": pillCounterScale(zoom),
-          // The handle's cursor tells the truth: a card with no move path does
-          // not offer a grab (see NOT YET A MOVE FOR EVERY KIND above).
+          // The handle's cursor tells the truth: a movable card offers the grab
+          // (see A HANDLE FOR EVERY MOVABLE KIND above).
           "--pill-cursor": movable ? "grab" : "default",
         } as CSSProperties
       }

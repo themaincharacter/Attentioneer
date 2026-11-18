@@ -6159,6 +6159,14 @@ body {
   cursor: grabbing;
 }
 
+/* STORY 16.23 — the ask and session cards are drag handles too now: while a
+   press has become a move, the hand says so, exactly as the reference card's
+   does. One rule, one cursor. */
+.ask-card.dragging,
+.session-card.dragging {
+  cursor: grabbing;
+}
+
 /* The reading's state, one small line of type (story 16.2). It names what the
    metadata says and nothing else: "current" renders nothing, and "changed" is
    the file's metadata moving, never a claim about the text. */

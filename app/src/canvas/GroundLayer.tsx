@@ -41,12 +41,7 @@ import { askCardOf } from "../turn/context";
 import type { AskCallsFacts } from "./contactRules";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
-import {
-  beginGroundDrag,
-  dropGroundDrag,
-  moveGroundDrag,
-  type GroundDragState,
-} from "./groundDrag";
+import { attachGroundCardDrag } from "./groundDrag";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
 import type { GroundLink } from "../map/groundLinks";
@@ -527,6 +522,22 @@ interface GroundLayerProps {
    * identity and the transcript is untouched.
    */
   onRenameSession?: (slug: string, name: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 16.23 — MOVE one ask card to its dropped point: ONE record line's
+   * `x|y`, through the hook's one write queue. The SAME shared drag rule moves
+   * it, so the layer owns no second threshold. Optional so a render test needs
+   * no write path.
+   */
+  onMoveAsk?: (slug: string, x: number, y: number) => Promise<GroundAddResult>;
+  /**
+   * STORY 16.23 — MOVE one session card to its dropped point: the same one-line
+   * write through the same queue, the transcript untouched.
+   */
+  onMoveSession?: (
+    slug: string,
+    x: number,
+    y: number,
+  ) => Promise<GroundAddResult>;
   /** Start one session card's run (the 18.2 lifecycle, transcript included). */
   onRunSession?: (slug: string) => Promise<GroundAddResult>;
   /** Stop one session card's live run (the run's own cancel). */
@@ -662,6 +673,8 @@ export function GroundLayer({
   onMakeSessionResult,
   onRemoveSession,
   onRenameSession,
+  onMoveAsk,
+  onMoveSession,
   hasProvider,
   calls = null,
   onOpenSettings,
@@ -1111,6 +1124,11 @@ export function GroundLayer({
                 ? undefined
                 : () => onRemoveAsk(ask.on)
             }
+            onMove={
+              onMoveAsk === undefined
+                ? undefined
+                : (x, y) => onMoveAsk(ask.on, x, y)
+            }
             onLink={onLink}
             interactionMode={interactionMode}
             onNarrate={onNarrate}
@@ -1192,6 +1210,11 @@ export function GroundLayer({
               onRenameSession === undefined
                 ? undefined
                 : (name) => onRenameSession(session.on, name)
+            }
+            onMove={
+              onMoveSession === undefined
+                ? undefined
+                : (x, y) => onMoveSession(session.on, x, y)
             }
             onLink={onLink}
             interactionMode={interactionMode}
@@ -1384,7 +1407,6 @@ function GroundCard({
   // (a card's small face is a crop, so there is nothing to select there).
   const readingRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
-  const dragRef = useRef<GroundDragState | null>(null);
   const [dragPos, setDragPos] = useState<Point | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -1433,107 +1455,65 @@ function GroundCard({
     setAskNaming(null);
   }, [open]);
 
-  // Raw listener: d3-zoom stops mousedown at the plane (stopImmediatePropagation),
-  // so React's synthetic onMouseDown never fires under it. This raw listener is
-  // registered before d3 attaches and stops the press here, so a card press can
-  // never pan the plane, count as empty paper or start another gesture.
+  // STORY 16.23 — THE CARD'S RAW PRESSES, in two listeners with two jobs. The
+  // LINK HANDLE is its own gesture (linkDrag.ts): a press there wires cards and
+  // must never start a move. Every OTHER left press is the card's own, and it
+  // reaches the shared drag wiring (groundDrag.ts) — the SAME threshold, the
+  // same one write on release, and the same rule the ask and session cards use,
+  // so this file holds no second drag. d3-zoom stops mousedown at the plane, so
+  // a card's own raw listener is the only way its press is seen at all.
   useEffect(() => {
     const el = cardRef.current;
     if (!el) return;
-
-    function handleMouseDown(e: MouseEvent) {
+    function handleLinkPress(e: MouseEvent) {
       if (e.button !== 0) return;
-      e.stopPropagation();
-
-      // STORY 16.5 — THE LINK HANDLE: a NEW small affordance on the card's
-      // edge, never a new meaning for the card's own press. A drag from it
-      // wires this card to whichever card it is released on; a release on
-      // empty paper, on this card itself, or Esc cancels and writes nothing.
-      // It must be handled BEFORE the generic button check below, because it
-      // is a button whose press starts a gesture of its own.
-      if ((e.target as HTMLElement).closest(".ground-link-handle")) {
-        // STORY 17.9: the drag lives in ONE helper now (linkDrag.ts), so an ask
-        // card and a session card offer the same gesture and their release can
-        // land on any ground card. Story 16.16's sentence still rides it.
-        if (startGroundLinkDrag(e, reference.on, {
-          interactionMode,
-          onLink,
-          onNarrate,
-        })) {
-          return;
-        }
+      if ((e.target as HTMLElement).closest(".ground-link-handle") === null) {
         return;
       }
+      e.stopPropagation();
+      startGroundLinkDrag(e, reference.on, {
+        interactionMode,
+        onLink,
+        onNarrate,
+      });
+    }
+    el.addEventListener("mousedown", handleLinkPress);
+    return () => el.removeEventListener("mousedown", handleLinkPress);
+  });
 
-      // The affordances are ordinary buttons: their own click handlers own the
-      // press, and a press on one is never the start of a card drag. The note's
-      // textarea is the same kind of surface: a press in it edits text, never
-      // starts a drag (story 16.6).
-      if ((e.target as HTMLElement).closest("button")) return;
-      if ((e.target as HTMLElement).closest("textarea, input")) return;
-      // STORY 16.12: the EXPANDED card's reading is a SELECTION surface. A
-      // press there begins text selection, never a card drag — the small card
-      // stays a crop (there is nothing to select on it).
-      if (open && (e.target as HTMLElement).closest(".ground-reading")) return;
-      // While a gesture is armed every plane press stands still — the card's
-      // drag included (ADR-0016's gate).
-      if (isGestureArmed(interactionMode)) return;
-
-      // STORY 16.21 — was this press on the name PILL? The pill is the card's
-      // HANDLE, not its door: a press there that never moves opens nothing (a
-      // double-click on it opens the rename field). The drag itself is the very
-      // same rule below — the pill is a child of this card, so its press lands
-      // here like a press on the body, with the same threshold and the same one
-      // write on release. There is no second drag to keep in step.
-      const onPill = (e.target as HTMLElement).closest(".ground-pill") !== null;
-
-      let drag = beginGroundDrag(
-        { x: reference.x, y: reference.y },
-        { x: e.clientX, y: e.clientY },
-        zoom,
-      );
-      dragRef.current = drag;
-
-      const onMouseMove = (ev: MouseEvent) => {
-        const wasMoving = drag.moved;
-        drag = moveGroundDrag(drag, { x: ev.clientX, y: ev.clientY });
-        dragRef.current = drag;
-        // STORY 16.16 (shortlist item 4): the chip speaks ONCE, when the press
-        // crosses the drag threshold — the card is being moved, by its name.
-        // Reported on the crossing, not on every frame: the sentence does not
-        // change and the app is not asked to re-render for it.
-        if (drag.moved && !wasMoving) {
-          onNarrate?.({ kind: "moving", name: reference.name });
-        }
-        if (drag.moved) setDragPos(drag.at);
-      };
-      const onMouseUp = () => {
-        window.removeEventListener("mousemove", onMouseMove);
-        window.removeEventListener("mouseup", onMouseUp);
-        const dropped = dropGroundDrag(drag);
-        dragRef.current = null;
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    return attachGroundCardDrag(el, {
+      // Read at press, so a card that moved on an earlier drop starts from
+      // where it now sits (the props are fresh on every render).
+      at: () => ({ x: reference.x, y: reference.y }),
+      zoom: () => zoom,
+      onPreview: setDragPos,
+      // STORY 16.16: the chip speaks ONCE, when the press crosses the
+      // threshold — the card is being moved, by its name or its body.
+      onMoved: () => onNarrate?.({ kind: "moving", name: reference.name }),
+      onDrop: (point) => {
+        // ONE write, on release: the drag's path is never a record.
+        void onMove(reference.on, point.x, point.y);
+      },
+      onRelease: () => {
         // The gesture is over, moved or not: the chip clears with the release.
         onNarrate?.(GESTURE_IDLE);
         setDragPos(null);
-        // ONE write, on release: the drag's path is never a record.
-        const point = dropped[0];
-        if (point) {
-          void onMove(reference.on, point.x, point.y);
-          return;
-        }
-        // A press that never moved OPENS the card: the expanded face shows
-        // the stored reading. A drag never opens (the drop above returns
-        // first). STORY 16.13: there is no delete ask left to back out of.
-        // STORY 16.21: a press on the NAME is the handle, so it opens nothing —
-        // the double-click on the pill opens the rename field instead.
+      },
+      isArmed: () => isGestureArmed(interactionMode),
+      // An open card's reading is a SELECTION surface (story 16.12): a press
+      // there begins text selection, never a move. Buttons, fields and the
+      // link handle are already the helper's own exclusions.
+      ignores: (target) =>
+        open && target.closest(".ground-reading") !== null,
+      // STORY 16.21 — a press on the NAME is the handle, so it opens nothing;
+      // a press on the body still opens the card (a drag never does).
+      onClick: (onPill) => {
         if (!onPill) onOpen();
-      };
-      window.addEventListener("mousemove", onMouseMove);
-      window.addEventListener("mouseup", onMouseUp);
-    }
-
-    el.addEventListener("mousedown", handleMouseDown);
-    return () => el.removeEventListener("mousedown", handleMouseDown);
+      },
+    });
   });
 
   /* STORY 16.19 — CATCH THE SELECTION ON MOUSE-UP, and never an empty one.

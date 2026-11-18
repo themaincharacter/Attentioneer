@@ -14,9 +14,11 @@ import {
 } from "../map/sessions";
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
 import type { GroundAddResult } from "./useGround";
-import type { GestureMode } from "./gates";
+import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
-import type { GestureNarration } from "./gestureWord";
+import { attachGroundCardDrag } from "./groundDrag";
+import type { Point } from "./geometry";
+import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import {
   allowOnceOption,
   refuseOption,
@@ -208,6 +210,7 @@ export function SessionCard({
   onMakeResult,
   onRemove,
   onRename,
+  onMove,
   onLink,
   interactionMode = "idle",
   onNarrate,
@@ -267,6 +270,13 @@ export function SessionCard({
    */
   onRemove?: () => Promise<GroundAddResult>;
   /**
+   * STORY 16.23 — MOVE this card to its dropped point: ONE record line's
+   * `x|y`, through the hook's one write queue. The drag is the SHARED rule in
+   * groundDrag.ts (one threshold, one write on release); this prop only carries
+   * the drop to the writer. Optional so a render test needs no write path.
+   */
+  onMove?: (x: number, y: number) => Promise<GroundAddResult>;
+  /**
    * STORY 17.9 — WIRE this session card to another card (the source side): a
    * session card's completed run is context for an ask card, so it needs the
    * same small edge handle the other cards have.
@@ -282,6 +292,10 @@ export function SessionCard({
   const [picked, setPicked] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // STORY 16.23 — THE CARD IS MOVABLE BY THE SAME ONE RULE as a reference: its
+  // stored point comes from the record, and `dragPos` is the live preview while
+  // the hand is down. View state only: the drop is what writes.
+  const [dragPos, setDragPos] = useState<Point | null>(null);
   // Whether the body still follows the newest entry; a person scrolling up
   // turns it off until they reach the bottom again.
   const pinnedRef = useRef(true);
@@ -339,6 +353,48 @@ export function SessionCard({
     el.addEventListener("mousedown", handleMouseDown);
     return () => el.removeEventListener("mousedown", handleMouseDown);
   }, [session.on, interactionMode, onLink, onNarrate]);
+
+  // STORY 16.23 — THE SESSION CARD MOVES BY THE SAME ONE RULE. The press
+  // reaches the shared wiring (groundDrag.ts), so the threshold, the live
+  // preview and the one write on release are the reference card's — there is
+  // no second drag here. The name pill is a child of this card, so a press on
+  // it lands in the same listener: the pill is the handle, and a press that
+  // never moves on it opens nothing.
+  useEffect(() => {
+    const el = cardRef.current;
+    if (el === null) return;
+    return attachGroundCardDrag(el, {
+      at: () => ({ x: session.x, y: session.y }),
+      zoom: () => zoom,
+      onPreview: setDragPos,
+      onMoved: () =>
+        onNarrate?.({
+          kind: "moving",
+          name: sessionDisplayName(session.name),
+        }),
+      onDrop: (point) => {
+        if (onMove === undefined) return;
+        void onMove(point.x, point.y).then((result) => {
+          // A refused write is one sentence on the card, never a point that
+          // quietly snaps back for no stated reason.
+          if (!result.ok) setProblem(result.message);
+        });
+      },
+      onRelease: () => {
+        onNarrate?.(GESTURE_IDLE);
+        setDragPos(null);
+      },
+      isArmed: () => isGestureArmed(interactionMode),
+      // The card's verbs, fields and the link handle are already the helper's
+      // own exclusions; a session card has no selection surface to protect.
+      onClick: (onPill) => {
+        // A press on the name pill is the handle and opens nothing; a press
+        // that never moved on the body is the card's door.
+        if (onPill) return;
+        onOpen();
+      },
+    });
+  }, [session.on, session.x, session.y, zoom, onMove, onOpen, onNarrate, interactionMode]);
 
   // Opening starts AT THE NEWEST ENTRY again.
   useEffect(() => {
@@ -437,27 +493,15 @@ export function SessionCard({
   return (
     <div
       ref={cardRef}
-      className={`session-card${open ? " expanded" : ""}`}
+      className={`session-card${open ? " expanded" : ""}${dragPos ? " dragging" : ""}`}
       style={
         {
-          left: session.x,
-          top: session.y,
+          left: dragPos ? dragPos.x : session.x,
+          top: dragPos ? dragPos.y : session.y,
           "--preview-lines": previewLines,
         } as CSSProperties
       }
       data-slug={session.on}
-      onClick={
-        open
-          ? undefined
-          : (e) => {
-              // STORY 16.22 — a press on the NAME is the name's, not the door's
-              // (the reference card's rule, one family over).
-              if ((e.target as HTMLElement).closest(".ground-pill") !== null) {
-                return;
-              }
-              onOpen();
-            }
-      }
     >
       {/* STORY 16.22 — THE NAME FLOATS ABOVE THE SESSION CARD, in the SAME pill
           the reference and ask cards wear: one component, one counter-scale,
@@ -470,7 +514,6 @@ export function SessionCard({
         busy={busy}
         rules={SESSION_PILL_RULES}
         renameLabel="rename this session card"
-        movable={false}
         onRename={
           onRename === undefined
             ? undefined

@@ -4604,6 +4604,10 @@ function App() {
             onAskFromSelection={ground.askFromSelection}
             onForkAsk={ground.forkAskAt}
             onRenameAsk={ground.renameAskTo}
+            /* STORY 16.23 — an ask card is movable by its name or its body,
+               through the same one drag rule and the same queued line write
+               every other card uses. */
+            onMoveAsk={ground.moveAsk}
             revealAsk={revealAsk}
             onAskTurn={ground.askTurn}
             onStopAskTurn={ground.askStop}
@@ -4626,6 +4630,9 @@ function App() {
                hook's one session-name write path (one history line per real
                change, never a word of the transcript). */
             onRenameSession={ground.renameSessionTo}
+            /* STORY 16.23 — a session card is movable too: one line's x|y,
+               the transcript untouched (a point is not a run). */
+            onMoveSession={ground.moveSession}
             /* STORY 17.8 — an ask card is removable through the same one toast
                every other card uses (16.13's immediate delete + Restore). */
             onRemoveAsk={ground.removeAsk}

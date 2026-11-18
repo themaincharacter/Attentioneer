@@ -359,13 +359,15 @@ describe("the layer: the wire is the only ink", () => {
 
   test("the link handle is a NEW affordance, not a new meaning for the card", () => {
     const layer = source("canvas/GroundLayer.tsx");
+    const drag = source("canvas/groundDrag.ts");
     expect(layer).toContain("ground-link-handle");
-    // The card's own press rules survive: the 4px threshold and the button skip.
-    expect(layer).toContain("moveGroundDrag");
-    expect(layer).toContain('closest("button")');
+    // The card's own press rules survive in the shared drag wiring: the same
+    // threshold and the same button/field skip (story 16.23 kept them one rule).
+    expect(drag).toContain("moveGroundDrag");
+    expect(drag).toContain('closest("button, textarea, input")');
     // The handle is handled BEFORE the generic button skip (it is a button).
-    expect(layer.indexOf("ground-link-handle")).toBeLessThan(
-      layer.indexOf('closest("button")'),
+    expect(drag.indexOf(".ground-link-handle")).toBeLessThan(
+      drag.indexOf('closest("button, textarea, input")'),
     );
     for (const name of [
       "ground-link-handle",

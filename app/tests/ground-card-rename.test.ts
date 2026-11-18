@@ -82,6 +82,7 @@ const PILL = source("canvas/CardNamePill.tsx");
 const LAYER = source("canvas/GroundLayer.tsx");
 const ASK_CARD = source("canvas/AskCard.tsx");
 const SESSION_CARD = source("canvas/SessionCard.tsx");
+const DRAG = source("canvas/groundDrag.ts");
 const HOOK = source("canvas/useGround.ts");
 
 const ROOT = mkdtempSync(join(tmpdir(), "attentioneer-card-rename-"));
@@ -187,7 +188,10 @@ describe("three kinds, one pill, each family's own rules", () => {
     // The reference card's rule, one family over: the pill carries the rename
     // field, so a press there must not also open the card.
     for (const card of [ASK_CARD, SESSION_CARD]) {
-      expect(card).toContain('closest(".ground-pill")');
+      // STORY 16.23: the shared helper reads the pill and answers "the handle,
+      // not the door"; each card's click callback then returns before opening.
+      expect(card).toContain("attachGroundCardDrag");
+      expect(card).toContain("if (onPill) return;");
       expect(card).toContain("return;");
     }
     expect(LAYER).toContain("if (!onPill) onOpen();");
@@ -561,9 +565,28 @@ describe("the story's boundaries", () => {
     expect(renderedMapContent("ground")).toEqual([]);
   });
 
-  test("one drag rule stays the layer's, and the pill owns no pointer handling", () => {
-    expect(LAYER.split("beginGroundDrag(").length - 1).toBe(1);
-    expect(LAYER.split("dropGroundDrag(").length - 1).toBe(1);
+  test("one drag rule stays the shared helper's, and the pill owns no pointer handling", () => {
+    // STORY 16.23: the raw press/threshold/drop join lives in ONE function
+    // (groundDrag.ts's attachGroundCardDrag), and each of the three cards calls
+    // it exactly once. No card re-implements the rule.
+    expect(DRAG.split("let drag = beginGroundDrag(").length - 1).toBe(1);
+    expect(DRAG.split("const dropped = dropGroundDrag(").length - 1).toBe(1);
+    expect(LAYER.split("attachGroundCardDrag(").length - 1).toBe(1);
+    expect(ASK_CARD.split("attachGroundCardDrag(").length - 1).toBe(1);
+    expect(SESSION_CARD.split("attachGroundCardDrag(").length - 1).toBe(1);
+    for (const card of [ASK_CARD, SESSION_CARD, LAYER]) {
+      for (const forbidden of [
+        "beginGroundDrag",
+        "moveGroundDrag",
+        "dropGroundDrag",
+        "GROUND_DRAG_THRESHOLD",
+      ]) {
+        expect({ forbidden, present: card.includes(forbidden) }).toEqual({
+          forbidden,
+          present: false,
+        });
+      }
+    }
     for (const forbidden of [
       "beginGroundDrag",
       "moveGroundDrag",
@@ -579,13 +602,13 @@ describe("the story's boundaries", () => {
   });
 
   test("the handle promises a drag only where a drag exists", () => {
-    // A reference card moves by its name (the layer's one raw listener); an ask
-    // or a session card has no move path yet, so its pill sets the default
-    // cursor instead of a grab. The pill still owns no drag either way.
+    // STORY 16.23: every shipped kind moves, so every pill offers the grab. The
+    // prop is still honoured for a future kind with no move path; no card sets
+    // it false today.
     expect(PILL).toContain('"--pill-cursor": movable ? "grab" : "default"');
     expect(source("canvas/canvas.css")).toContain("cursor: var(--pill-cursor, grab)");
-    expect(ASK_CARD).toContain("movable={false}");
-    expect(SESSION_CARD).toContain("movable={false}");
+    expect(ASK_CARD).not.toContain("movable={false}");
+    expect(SESSION_CARD).not.toContain("movable={false}");
     // The reference card passes nothing, so the default (true) holds its grab.
     const at = LAYER.indexOf("<CardNamePill");
     const block = LAYER.slice(at, at + 900);

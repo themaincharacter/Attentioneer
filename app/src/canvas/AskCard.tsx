@@ -13,9 +13,11 @@ import {
 } from "../map/asks";
 import { assembleAskCardPacket, type AskPacketCard, type AskPacketReadback } from "../turn/packet";
 import { ASK_READ_MISSED, type AskCallsFacts } from "./contactRules";
-import type { GestureMode } from "./gates";
+import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
-import type { GestureNarration } from "./gestureWord";
+import { attachGroundCardDrag } from "./groundDrag";
+import type { Point } from "./geometry";
+import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import { previewOverflows, previewText } from "../map/readings";
 import { PacketSurface } from "./PacketSurface";
 import { STEP_LIMIT_SENTENCE } from "../turn/steps";
@@ -404,6 +406,7 @@ export function AskCard({
   onForkTurn,
   onRename,
   onRemove,
+  onMove,
   onLink,
   zoom = 1,
   autoAsk,
@@ -515,6 +518,14 @@ export function AskCard({
    */
   onRemove?: () => Promise<GroundAddResult>;
   /**
+   * STORY 16.23 — MOVE this card to its dropped point: ONE record line's
+   * `x|y`, through the hook's one write queue. The drag itself is the SHARED
+   * rule in groundDrag.ts (the same threshold and the same one write on
+   * release); this prop only carries the drop to the writer. Optional so a
+   * render test needs no write path.
+   */
+  onMove?: (x: number, y: number) => Promise<GroundAddResult>;
+  /**
    * STORY 17.9 — WIRE this ask card to another card (the source side). The
    * handle is the same small edge affordance a reference card has; a release on
    * another card draws one ordered pair. Optional so a render test needs no
@@ -577,6 +588,10 @@ export function AskCard({
    */
   const [noCard, setNoCard] = useState<string | null>(null);
   const running = pending !== null && pending.ending === "running";
+  // STORY 16.23 — THE CARD IS MOVABLE BY THE SAME ONE RULE as a reference: its
+  // stored point comes from the record, and `dragPos` is the live preview while
+  // the hand is down. View state only: the drop is what writes.
+  const [dragPos, setDragPos] = useState<Point | null>(null);
   // STORY 16.19 — the selection's question is asked ONCE per token. The ref is
   // the guard: the effect below can run on every render that changes the prop,
   // and a card that is closed, reopened or renamed must never ask again.
@@ -651,6 +666,45 @@ export function AskCard({
     el.addEventListener("mousedown", handleMouseDown);
     return () => el.removeEventListener("mousedown", handleMouseDown);
   }, [ask.on, interactionMode, onLink, onNarrate]);
+
+  // STORY 16.23 — THE ASK CARD MOVES BY THE SAME ONE RULE. The press reaches
+  // the shared wiring (groundDrag.ts), so the threshold, the live preview and
+  // the one write on release are the reference card's — there is no second
+  // drag here. The name pill is a child of this card, so a press on it lands in
+  // the same listener: the pill is the handle, and a press that never moves on
+  // it opens nothing.
+  useEffect(() => {
+    const el = cardRef.current;
+    if (el === null) return;
+    return attachGroundCardDrag(el, {
+      at: () => ({ x: ask.x, y: ask.y }),
+      zoom: () => zoom,
+      onPreview: setDragPos,
+      onMoved: () =>
+        onNarrate?.({ kind: "moving", name: askDisplayName(ask.name) }),
+      onDrop: (point) => {
+        if (onMove === undefined) return;
+        void onMove(point.x, point.y).then((result) => {
+          // A refused write is one sentence on the card, never a point that
+          // quietly snaps back for no stated reason.
+          if (!result.ok) setProblem(result.message);
+        });
+      },
+      onRelease: () => {
+        onNarrate?.(GESTURE_IDLE);
+        setDragPos(null);
+      },
+      isArmed: () => isGestureArmed(interactionMode),
+      // The composer's field and every verb are already the helper's own
+      // exclusions; an ask card has no selection surface to protect.
+      onClick: (onPill) => {
+        // A press on the name pill is the handle and opens nothing; a press
+        // that never moved on the body is the card's door.
+        if (onPill) return;
+        onOpen();
+      },
+    });
+  }, [ask.on, ask.x, ask.y, zoom, onMove, onOpen, onNarrate, interactionMode]);
 
   // THE CARD'S WHEEL NEVER ZOOMS THE PLANE. The scrollbox (and the card) stop
   // the event where it starts; passive, because this only stops the plane and
@@ -841,28 +895,15 @@ export function AskCard({
   return (
     <div
       ref={cardRef}
-      className={`ask-card${open ? " expanded" : ""}`}
+      className={`ask-card${open ? " expanded" : ""}${dragPos ? " dragging" : ""}`}
       style={
         {
-          left: ask.x,
-          top: ask.y,
+          left: dragPos ? dragPos.x : ask.x,
+          top: dragPos ? dragPos.y : ask.y,
           "--preview-lines": previewLines,
         } as CSSProperties
       }
       data-slug={ask.on}
-      onClick={
-        open
-          ? undefined
-          : (e) => {
-              // STORY 16.22 — A PRESS ON THE NAME IS THE NAME'S, NOT THE DOOR'S
-              // (the reference card's rule, one family over): the pill carries
-              // the rename field, so a press there must not also open the card.
-              if ((e.target as HTMLElement).closest(".ground-pill") !== null) {
-                return;
-              }
-              onOpen();
-            }
-      }
     >
       {/* STORY 16.22 — THE NAME FLOATS ABOVE THE ASK CARD, in the SAME pill the
           reference cards wear (one component, one counter-scale, one rename
@@ -877,7 +918,6 @@ export function AskCard({
         busy={busy}
         rules={ASK_PILL_RULES}
         renameLabel="rename this ask card"
-        movable={false}
         onRename={
           onRename === undefined
             ? undefined

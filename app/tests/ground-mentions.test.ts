@@ -648,7 +648,7 @@ describe("the card: a chip opens a card, and nothing else changed", () => {
 
   test("the earlier behaviours are untouched", () => {
     for (const kept of [
-      "beginGroundDrag",
+      "attachGroundCardDrag",
       "ground-link-handle",
       // STORY 16.13: the two-step confirm is gone; the remove verb is
       // immediate and the toast is the guard. The card's other verbs stay.

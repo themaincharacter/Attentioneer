@@ -508,6 +508,39 @@ export function renameAsk(
   return asks.map((ask) => (ask.on === slug ? { ...ask, name } : ask));
 }
 
+/**
+ * STORY 16.23 — MOVE one ask card to a dropped point: the ONE line's `x|y`
+ * changes in place and every other field — the name, the anchor, a fork's
+ * parent and carry, the chosen words — stays exactly as the record had it.
+ * PURE, so the drag's commit is one line a test can assert without a disk.
+ *
+ * Coordinates are rounded to whole map units because the provisional line
+ * shape carries ints, exactly as `addAsk` places a new card. A slug this file
+ * does not carry answers `null`: a card that is gone is not moved into being,
+ * and the caller writes nothing (the reference path's lettered rule, one family
+ * over). No reading or conversation is touched — an ask card owns neither, and
+ * its transcript is its own file.
+ *
+ * NO HISTORY LINE, DELIBERATELY. The map's log records a reference's drop
+ * (`card.move`) but has no move event for an ask card or a session card; this
+ * story does not coin one. Giving the two new families a line of their own —
+ * or one shared `card.move` with a kind — is ONE decision across all three
+ * families, not a side effect of making them draggable; the hook's move verb
+ * says so beside the write. Until that decision, the log's moves stay the
+ * reference cards' alone.
+ */
+export function withAskMoved(
+  asks: readonly AskCard[],
+  slug: string,
+  x: number,
+  y: number,
+): AskCard[] | null {
+  if (!asks.some((ask) => ask.on === slug)) return null;
+  return asks.map((ask) =>
+    ask.on === slug ? { ...ask, x: Math.round(x), y: Math.round(y) } : ask,
+  );
+}
+
 /* ------------------------------------------------------------------------- *
  * THE CONVERSATION — one JSON line per turn, append-only.
  *
