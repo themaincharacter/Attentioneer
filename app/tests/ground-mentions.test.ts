@@ -184,7 +184,7 @@ const CARD_MENTION = serializeMention("card", "sea", "Sea");
 const WORD_MENTION = serializeMention("word", "attention", "Attention");
 
 describe("the syntax: plain text in, plain text out", () => {
-  test("serialize writes the full Slashspace-style form", () => {
+  test("serialize writes the full markdown link form", () => {
     expect(serializeMention("card", "rain-gauge", "Rain gauge")).toBe(
       "[@Rain gauge](card://rain-gauge)",
     );

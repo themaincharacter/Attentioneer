@@ -86,10 +86,10 @@ import {
  * that the row "dumped the whole text into the map": so every reference is
  * now a CARD.
  *
- * THE CARD (story 16.3), copied in SHAPE from Slashspace's node cards (a
- * quiet surface, a title, a muted cropped body, a meta footer — fixed, never
- * stretching with its content; PROVISIONAL: the dimensions and the six-line
- * crop are ADR-0003's rendering seam, not a design system):
+ * THE CARD (story 16.3) is a NODE CARD: a quiet surface, a title, a muted
+ * cropped body, a meta footer — fixed, never stretching with its content
+ * (PROVISIONAL: the dimensions and the six-line crop are ADR-0003's rendering
+ * seam, not a design system):
  *   - SMALL (the default): the person's name (17px), the stored reading's
  *     first `READING_PREVIEW_LINES` lines cut by the PURE `previewText`
  *     helper (one trailing ellipsis), and a footer with the file's NAME and,

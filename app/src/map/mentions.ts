@@ -10,7 +10,7 @@
  *   [@Label](word://<slug>)   context: the chip shows that concept's name and
  *                             memory (read-only, from the CONCEPT map)
  *
- * The shape copies Slashspace's node links; the LABEL is display text and the
+ * The form is a markdown link: the LABEL is display text and the
  * SLUG is identity, so a hand-edited label never renames anything — the app
  * keeps the person's words and resolves by the slug. Identity is
  * `mentionKey(kind, slug)`; nothing here writes, and nothing here reaches a

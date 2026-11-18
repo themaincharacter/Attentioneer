@@ -112,10 +112,9 @@ import { probeSpec } from "../turn/cliBridge";
  * short catalogue (providerCatalog.ts), which fills name, base URL and an
  * example model and puts the caret in the key field. A pick is DATA ONLY — no
  * request, no validation, no automatic add — and "a custom endpoint" is
- * today's empty form, first-class. DeepSeek Harness's catalogue is the shape;
- * Slashspace's "add your own OpenAI-compatible API providers"
- * paste-and-validate flow is the feel. Every entry is marked unverified until
- * a person's account answers.
+ * today's empty form, first-class. The shape is the one every provider UI
+ * settles on: a catalogue to pick from, a key to paste, a test that runs
+ * itself. Every entry is marked unverified until a person's account answers.
  *
  * STORY 15 CHANGES THE SOURCE, NOT THE PICK: the catalogue is now a projection
  * of the vendored models.dev export (providerCatalog.ts), refreshed by an

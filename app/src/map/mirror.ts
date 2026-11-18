@@ -22,9 +22,9 @@ import {
  *
  * WHY IT EXISTS: the records are line-oriented and honest, but a person (or
  * another agent) should be able to read the board without parsing JSONL. The
- * mirror is the legible face of the same records — Slashspace's generated
- * Context.md, with our honesty rule added: it also says what is UNKNOWN (a
- * card whose file is missing, an orphan link, an unreadable record line)
+ * mirror is the legible face of the same records — one file a person can read
+ * without parsing JSONL — with the honesty rule that matters: it also says what
+ * is UNKNOWN (a card whose file is missing, an orphan link, an unreadable line)
  * instead of dropping the line that cannot be placed.
  *
  * WHY IT IS DERIVED: the records in map/ are the only truth. This file is

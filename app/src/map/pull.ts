@@ -56,9 +56,9 @@ import {
  * same budget and the same sentence vocabulary. Nothing is stat'ed, resolved
  * or re-read from a source, because there is no source to reach.
  *
- * PROVISIONAL: the 96 KiB budget (Slashspace's 96 KB per call is the
- * precedent, not a rule), the truncation wording, and the fact that a pull
- * does not survive closing the card.
+ * PROVISIONAL: the 96 KiB budget (a working number, not a rule), the
+ * truncation wording, and the fact that a pull does not survive closing the
+ * card.
  */
 
 /**

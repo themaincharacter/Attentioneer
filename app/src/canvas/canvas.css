@@ -5393,9 +5393,9 @@ body {
 
 /* STORY 16.3 — the reference is a CARD: a quiet surface, a title, a muted
    cropped body and a meta footer, FIXED in size (the body crops and scrolls;
-   the card never stretches with its content). Copied in SHAPE from Slashspace's
-   node cards, not in dimensions (its widths are chat cards on a multi-column
-   canvas). PROVISIONAL: the 300x200 / 520x420 sizes and the six-line crop are
+   the card never stretches with its content). A node card's dimensions are
+   OURS, not borrowed: 300x200 / 520x420 are sized for this map's zoom and
+   reading density. PROVISIONAL: the sizes and the six-line crop are
    ADR-0003's rendering seam — meant to be reshaped by play, not a design
    system. The reference is content, never empty paper: a press on it must not
    read as a plane creation (the gate's content list carries its classes). */
