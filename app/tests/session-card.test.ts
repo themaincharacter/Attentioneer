@@ -46,22 +46,26 @@ import {
 import { addAsk, sharedSlugs, type AskCard } from "../src/map/asks";
 import { addGroundReference, type GroundReference } from "../src/map/ground";
 import {
-  SESSION_NO_RUNTIME_SENTENCE,
   SESSION_PROMPT,
   beginSessionRun,
   bindSessionCard,
   sessionEntryOf,
-  sessionPermissionReply,
-  sessionRuntimeReady,
   writeSessionCard,
 } from "../src/canvas/useGround";
+import { sessionPermissionReply } from "../src/turn/acpRun";
+import { type SidecarStart } from "../src/turn/sidecar";
+import { type TurnTransport } from "../src/turn/turn";
+import {
+  openSidecar,
+  type SidecarPipe,
+} from "./fixtures/sidecar-pipe";
 import {
   SessionCard,
   SessionEntryLine,
   sessionAtBottom,
 } from "../src/canvas/SessionCard";
 import { ACP_SPECS, type AcpSpec } from "../src/turn/acpSpecs";
-import { acpDeclaration } from "../src/turn/acpRun";
+import { acpDeclaration } from "../src/turn/acpSpecs";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
 import { CONTENT_CLASSES } from "../src/canvas/gates";
 
@@ -186,6 +190,31 @@ function fixture(mode: string, extra: Partial<AcpSpec> = {}): RunFixture {
       ...extra,
     }),
   };
+}
+
+/**
+ * STORY 18.3b — ONE REAL SIDECAR FOR THIS CARD'S RUN. The run lane left the
+ * window (that is the story); these tests therefore drive the actual
+ * `sidecar/main.ts` pipe, exactly as the app does, with the fake ACP server as
+ * the real child. Killed with the suite.
+ */
+const PIPES: SidecarPipe[] = [];
+
+afterAll(() => {
+  for (const pipe of PIPES) pipe.stop();
+});
+
+const STARTED: SidecarStart = {
+  kind: "running",
+  status: { running: true, entry: "", entryKind: "dev-entry", bun: "" },
+};
+
+/** The app's own start (already running), and the app's own pipe. */
+async function lane(): Promise<TurnTransport> {
+  const pipe = openSidecar();
+  PIPES.push(pipe);
+  await pipe.hello();
+  return pipe.transport;
 }
 
 async function reportOf(path: string): Promise<{ pid: number; env: Record<string, string> }> {
@@ -483,7 +512,7 @@ describe("one slug space, three families", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * The run, against the fake server.
+ * The run, through the sidecar (18.3b: the lane left the window).
  * ------------------------------------------------------------------ */
 
 describe("a run's transcript, appended as it arrives", () => {
@@ -492,15 +521,15 @@ describe("a run's transcript, appended as it arrives", () => {
     const base = workspace();
     const started = beginSessionRun(base, fx.row, "one", {
       readKey: async () => "",
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
       now: () => "2026-11-18T00:00:00.000Z",
     });
     const done = await started.done;
 
-    expect(done.result.ending).toBe("completed");
-    expect(done.result.answer).toBe("one two");
+    expect(done.ending).toBe("completed");
+    expect(done.sentence).toBeNull();
     expect(done.notice).toBeNull();
     expect(done.entries.map((entry) => entry.kind)).toEqual([
       "started",
@@ -539,9 +568,6 @@ describe("a run's transcript, appended as it arrives", () => {
     );
     expect(text).toBe(serializeSessionTranscript(done.entries));
     expect(text.endsWith("\n")).toBe(true);
-
-    // The run wrote nothing into its own session directory (18.2's rule).
-    expect(readdirSync(done.result.directory!)).toEqual([]);
     // And the child is dead on this path, like every other.
     expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
   });
@@ -551,8 +577,8 @@ describe("a run's transcript, appended as it arrives", () => {
     const base = workspace();
     const started = beginSessionRun(base, fx.row, "one", {
       readKey: async () => "",
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
     });
     const done = await started.done;
@@ -563,7 +589,7 @@ describe("a run's transcript, appended as it arrives", () => {
       name: "Read the working directory",
       reply: "refused",
     });
-    expect(done.result.ending).toBe("completed");
+    expect(done.ending).toBe("completed");
     expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
   });
 
@@ -573,8 +599,8 @@ describe("a run's transcript, appended as it arrives", () => {
     const arrived: SessionEntry[] = [];
     const started = beginSessionRun(base, fx.row, "one", {
       readKey: async () => "",
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
       onEntry: (entry) => arrived.push(entry),
     });
@@ -585,10 +611,8 @@ describe("a run's transcript, appended as it arrives", () => {
     started.handle.cancel();
     const done = await started.done;
 
-    expect(done.result.ending).toBe("stopped");
+    expect(done.ending).toBe("stopped");
     // The partial is KEPT, and never presented as a result.
-    expect(done.result.answer).toBeNull();
-    expect(done.result.partial).toBe("working ");
     expect(done.entries.some((entry) => entry.kind === "text")).toBe(true);
     const last = done.entries[done.entries.length - 1]!;
     expect(last).toMatchObject({ kind: "ended", ending: "stopped" });
@@ -596,7 +620,6 @@ describe("a run's transcript, appended as it arrives", () => {
     // The file holds the same partial and the same ending.
     const parsed = await loadSessionTranscript(base, "one", nodeIo());
     expect(parsed.entries).toEqual([...done.entries]);
-    expect(readdirSync(done.result.directory!)).toEqual([]);
     expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
   });
 
@@ -605,18 +628,16 @@ describe("a run's transcript, appended as it arrives", () => {
     const base = workspace();
     const started = beginSessionRun(base, fx.row, "one", {
       readKey: async () => "",
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
     });
     const done = await started.done;
-    expect(done.result.ending).toBe("failed");
-    expect(done.result.sentence).toBeTruthy();
+    expect(done.ending).toBe("failed");
+    expect(done.sentence).toBeTruthy();
     const last = done.entries[done.entries.length - 1]!;
     expect(last.kind).toBe("ended");
-    expect(last.kind === "ended" ? last.sentence : null).toBe(
-      done.result.sentence,
-    );
+    expect(last.kind === "ended" ? last.sentence : null).toBe(done.sentence);
     // What arrived before the break is kept.
     expect(done.entries.some((entry) => entry.kind === "text")).toBe(true);
     expect(sessionEntryLine(last)).toContain("the run failed:");
@@ -624,18 +645,18 @@ describe("a run's transcript, appended as it arrives", () => {
   });
 
   test("a run that runs out of its budget is timed-out, never a result", async () => {
-    const fx = fixture("silent");
+    // The wire's budget is a number of minutes so a test can state a short
+    // one; a ROW still refuses anything under a minute (acpSpecs' rule).
+    const fx = fixture("silent", { timeoutMinutes: 0.003 });
     const base = workspace();
     const started = beginSessionRun(base, fx.row, "one", {
       readKey: async () => "",
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
-      timeoutMs: 150,
     });
     const done = await started.done;
-    expect(done.result.ending).toBe("timed-out");
-    expect(done.result.answer).toBeNull();
+    expect(done.ending).toBe("timed-out");
     const last = done.entries[done.entries.length - 1]!;
     expect(last).toMatchObject({ kind: "ended", ending: "timed-out" });
     expect(sessionEntryLine(last)).toBe(
@@ -660,16 +681,14 @@ describe("a run's transcript, appended as it arrives", () => {
       readKey: async () => {
         throw new Error("a row with no env entry must read no key");
       },
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
-      timeoutMs: 5_000,
     });
     const done = await started.done;
 
-    expect(done.result.ending).toBe("failed");
-    expect(done.result.answer).toBeNull();
-    expect(done.result.sentence).toContain("no API key");
+    expect(done.ending).toBe("failed");
+    expect(done.sentence).toContain("no API key");
     // The CARD's line says the same thing, and it survives a reopen because
     // the ending (with its one sentence) is the transcript's.
     const last = done.entries[done.entries.length - 1]!;
@@ -688,16 +707,16 @@ describe("a run's transcript, appended as it arrives", () => {
     const base = workspace();
     const first = await beginSessionRun(base, fx.row, "one", {
       readKey: async () => "",
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
     }).done;
     const afterFirst = readFileSync(sessionTranscriptPath(base, "one"), "utf8");
 
     const second = await beginSessionRun(base, fx.row, "one", {
       readKey: async () => "",
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
     }).done;
     const afterSecond = readFileSync(sessionTranscriptPath(base, "one"), "utf8");
@@ -729,8 +748,8 @@ describe("a run's transcript, appended as it arrives", () => {
         expect(providerId).toBe("row-1");
         return SENTINEL;
       },
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
       now: () => "2026-11-18T00:00:00.000Z",
     });
@@ -742,12 +761,11 @@ describe("a run's transcript, appended as it arrives", () => {
     );
     expect(acpDeclaration(fx.row)).not.toContain(SENTINEL);
 
-    // The key DID reach the child (there is no other path), and nothing else
-    // from our environment did.
+    // The key DID reach the child through the request's PAYLOAD (there is no
+    // other path: the sidecar holds no store), beside PATH/HOME and nothing
+    // else. The report is the child's own view.
     const report = await reportOf(fx.reportPath);
     expect(report.env.DEEPSEEK_API_KEY).toBe(SENTINEL);
-    expect(report.env.PATH).toBe("/usr/bin");
-    expect(report.env.HOME).toBe("/home/person");
     expect(Object.keys(report.env).sort()).toEqual([
       "DEEPSEEK_API_KEY",
       "HOME",
@@ -785,8 +803,8 @@ describe("a run's transcript, appended as it arrives", () => {
     const fx = fixture("tools");
     await beginSessionRun(base, fx.row, "a-run", {
       readKey: async () => "",
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
     }).done;
     for (const file of filesUnder(base)) {
@@ -855,7 +873,8 @@ describe("a run's transcript, appended as it arrives", () => {
       ),
     ).toEqual({ kind: "ended", ending: "failed", t: at, sentence: "broke" });
     // The decider's policy is the smallest one: refuse, or cancel when the
-    // server offered no way to refuse.
+    // server offered no way to refuse. It lives with the run now (the sidecar
+    // answers the server), not in the card's hook.
     expect(
       sessionPermissionReply({
         method: "session/request_permission",
@@ -969,8 +988,8 @@ describe("the session card", () => {
     const fx = fixture("tools");
     await beginSessionRun(base, fx.row, "rain-gauge-session", {
       readKey: async () => "",
-      environment: { PATH: "/usr/bin", HOME: "/home/person" },
-      sessionRoot: fx.sessionRoot,
+      transport: await lane(),
+      start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
       now: () => "2026-11-18T00:00:00.000Z",
     }).done;
@@ -1169,15 +1188,12 @@ describe("the session seam's rules", () => {
     expect(HOOK).toContain("loadSessionTranscript(workspacePath, slug)");
   });
 
-  test("a window that cannot start a process says so, and writes nothing", () => {
-    // The probe is pure, so it can be asked both ways without a browser.
-    expect(sessionRuntimeReady({})).toBe(false);
-    expect(sessionRuntimeReady({ Bun: {} })).toBe(false);
-    expect(sessionRuntimeReady({ Bun: { spawn: () => {} } })).toBe(true);
-    // This suite runs under Bun, so the real probe is true here.
-    expect(sessionRuntimeReady()).toBe(true);
-    expect(SESSION_NO_RUNTIME_SENTENCE).toContain("the run was not started");
-    expect(HOOK).toContain("if (!sessionRuntimeReady())");
+  test("the window no longer refuses to run, because it no longer starts one", () => {
+    // STORY 18.3b removed the probe AND its sentence: the reason for both (the
+    // window spawning a child) is gone. The run is asked of the sidecar.
+    expect(HOOK).not.toContain("sessionRuntimeReady");
+    expect(HOOK).not.toContain("this window cannot start a process");
+    expect(HOOK).toContain("startSessionRun(");
   });
 
   test("the app wires the card's creation, its run, its stop and its bind", () => {

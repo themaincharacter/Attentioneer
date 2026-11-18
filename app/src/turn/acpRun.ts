@@ -33,6 +33,16 @@
  * `finish`, so there is no path that leaves an orphan. The run writes nothing
  * to its session directory and nothing to the map.
  *
+ * 18.3b: WHERE THIS FILE RUNS NOW. Story 18.3 proved the card under Bun and
+ * then could not run it in the shipped app: this module needs `node:fs` and a
+ * spawner, and the window is a WebView with neither, so pressing RUN there was
+ * refused. The lane therefore lives in the Bun sidecar (`sidecar/runs.ts`),
+ * which is the app's only process that talks to the outside world. The sidecar
+ * hands this module a RESOLVED environment map (the key crossed the wire in the
+ * payload, exactly as a turn's does); the map is used as given, PATH/HOME are
+ * the only names added, and this module still reads no key store. The window
+ * no longer imports this file — it reads the vocabulary from `acpEntries.ts`.
+ *
  * WHAT STAYS UNPROVEN WITHOUT A REAL KEY. The spike saw no live
  * `session/update`, no live permission request, no live cancel and no
  * `session/close` (the transport kills the child instead), because the first
@@ -58,7 +68,27 @@ import {
   type AcpSpawner,
   type AcpTransport,
 } from "./acp";
-import type { AcpSpec } from "./acpSpecs";
+import {
+  acpDeclaration,
+  acpMissingKeySentence,
+  acpResolvedDeclaration,
+  type AcpSpec,
+} from "./acpSpecs";
+// 18.3b: the progress vocabulary lives in its own window-safe module (`acpEntries`),
+// because the card reads these entries off the wire and must never import this
+// file — its `node:fs`, `node:os` and spawner are what the window lacks.
+import type {
+  AcpEnding,
+  AcpPermissionOption,
+  AcpProgressEntry,
+} from "./acpEntries";
+
+export type {
+  AcpEnding,
+  AcpPermissionOption,
+  AcpPermissionOutcome,
+  AcpProgressEntry,
+} from "./acpEntries";
 
 /** The environment names a run inherits, and the complete list of them. */
 export const ACP_INHERITED_ENV = ["PATH", "HOME"] as const;
@@ -81,25 +111,6 @@ export const ACP_RUN_SENTENCES = {
     "the server did not create a session, so the run is not a finished run",
 } as const;
 
-/** The sentence for a declared key that is not in the store. */
-export function acpMissingKeySentence(providerId: string): string {
-  return (
-    "the key named " +
-    providerId +
-    " is not kept, so the run was not started"
-  );
-}
-
-/** How a run ended. Only "completed" is a result. */
-export type AcpEnding = "completed" | "stopped" | "failed" | "timed-out";
-
-/** One permission option the server offered (the ids a caller may pick). */
-export interface AcpPermissionOption {
-  optionId: string;
-  name: string;
-  kind: string;
-}
-
 /** What the server asked, as the caller's decider sees it. */
 export interface AcpPermissionAsk {
   method: string;
@@ -111,61 +122,12 @@ export interface AcpPermissionAsk {
 }
 
 /**
- * The caller's reply: one option id, or null for "cancelled". This story does
- * not decide policy (18.4 does); it only carries the answer the caller chose.
+ * The caller's reply: one option id, or null for "cancelled". The policy is
+ * the smallest one (18.4 decides who decides); this is only what crossed.
  */
 export interface AcpPermissionReply {
   optionId: string | null;
 }
-
-/** The reply as it crossed the wire, recorded in the progress sequence. */
-export type AcpPermissionOutcome =
-  | { outcome: "selected"; optionId: string }
-  | { outcome: "cancelled" };
-
-/**
- * One entry in the run's ordered progress sequence. The caller watches this
- * and nothing else; the result's `entries` is the same sequence kept.
- */
-export type AcpProgressEntry =
-  | {
-      kind: "started";
-      command: string;
-      args: string[];
-      cwd: string;
-      /** The one sentence, emitted BEFORE the spawn. Never contains a key. */
-      declaration: string;
-      /** Exactly the inherited names: PATH and HOME when they were set. */
-      inherited: string[];
-      /** The variable names the row filled, if any. Never their values. */
-      envNames: string[];
-    }
-  | { kind: "session"; sessionId: string }
-  | {
-      kind: "update";
-      /** `sessionUpdate`'s kind: agent_message_chunk, tool_call, plan, … */
-      updateKind: string;
-      /** The text this update carried ("" for kinds that carry none). */
-      text: string;
-      /** The update object verbatim, so a later surface can use all of it. */
-      update: unknown;
-    }
-  | {
-      kind: "permission";
-      method: string;
-      toolCall: unknown;
-      options: AcpPermissionOption[];
-      reply: AcpPermissionOutcome;
-    }
-  | { kind: "problem"; sentence: string }
-  | {
-      kind: "ended";
-      ending: AcpEnding;
-      stopReason: string | null;
-      sentence: string | null;
-      /** True when words arrived but the ending is not a result. */
-      partial: boolean;
-    };
 
 /** What one run produced. `answer` is the ONLY result; `partial` is not one. */
 export interface AcpRunResult {
@@ -200,8 +162,18 @@ export interface AcpRunHandle {
 
 /** What a run needs from the app. Everything here is injected and testable. */
 export interface AcpRunOptions {
-  /** The key for ONE provider row, read at run time and never logged. */
+  /**
+   * The key for ONE provider row, read at run time and never logged. Not used
+   * when `resolvedEnv` is given: the values already crossed a wire.
+   */
   readKey: (providerId: string) => Promise<string>;
+  /**
+   * STORY 18.3b — A RESOLVED ENVIRONMENT MAP, as the card's window sent it.
+   * The sidecar names no provider row and reads no key store: the payload's
+   * map IS the grant, and PATH/HOME are still the only other names. Never
+   * logged, never written, never placed in an argv.
+   */
+  resolvedEnv?: Readonly<Record<string, string>>;
   /** The caller's answer to a permission request (the person's choice). */
   replyToPermission: (
     request: AcpPermissionAsk,
@@ -226,29 +198,6 @@ export interface AcpRunOptions {
  * ------------------------------------------------------------------ */
 
 /**
- * The one sentence the run says BEFORE it starts: which key (by provider row,
- * never by value) it will receive, or that it receives none. This is the
- * env rule made audible; it is computed from the row alone, so no key read can
- * appear in it.
- */
-export function acpDeclaration(spec: AcpSpec): string {
-  const names = spec.env.map((entry) => entry.key);
-  if (names.length === 0) {
-    return "this run will receive no key: no environment entry names a provider row";
-  }
-  if (names.length === 1) {
-    return "this run will receive the key named " + names[0];
-  }
-  const last = names[names.length - 1];
-  return (
-    "this run will receive the keys named " +
-    names.slice(0, -1).join(", ") +
-    " and " +
-    last
-  );
-}
-
-/**
  * The ONLY names a child inherits from this process: PATH and HOME, when they
  * are set. A missing one is simply absent; nothing is synthesized.
  */
@@ -264,23 +213,53 @@ export function acpInheritedEnvironment(
 }
 
 /**
- * Compose the child's environment: PATH/HOME plus one value per declared env
- * entry. Nothing else from `environment` can ride along — in particular a key
- * this app holds is invisible unless a row names it. A missing key is the
- * caller's problem (the run refuses before spawning); here an absent value is
- * simply not set.
+ * Compose the child's environment: PATH/HOME plus the run's key values, and
+ * nothing else. A key reaches a child by ONE of two roads, never both:
+ *
+ *   - a ROW declares an env entry naming a provider row, and the value was
+ *     read from the store (18.2's rule, unchanged); or
+ *   - `resolved` is given because the value CROSSED A WIRE instead (18.3b: the
+ *     window resolved the row's keys and the sidecar uses that map as given —
+ *     the sidecar reads no key store and names no provider row).
+ *
+ * Either way an absent value is simply not set, and nothing else in
+ * `environment` can ride along: a key this process holds is invisible unless
+ * one of those two roads names it.
  */
 export function acpRunEnvironment(
   spec: AcpSpec,
   keys: ReadonlyMap<string, string>,
   environment: Record<string, string | undefined>,
+  resolved?: Readonly<Record<string, string>>,
 ): Record<string, string> {
   const env = acpInheritedEnvironment(environment);
   for (const entry of spec.env) {
     const value = keys.get(entry.key);
     if (value !== undefined && value !== "") env[entry.name] = value;
   }
+  for (const [name, value] of Object.entries(resolved ?? {})) {
+    if (value !== "") env[name] = value;
+  }
   return env;
+}
+
+/**
+ * THE RUN'S PERMISSION POLICY (PROVISIONAL, and deliberately the smallest one):
+ * every request is REFUSED — the first option whose kind is a reject, or no
+ * option at all when the server offered none, which reads as cancelled. WHO
+ * decides (and the Allow/Reject surface) is story 18.4's; this story only
+ * carries the answer to the wire and says what it was.
+ *
+ * It lives beside the run, not in the card, because 18.3b put the run in the
+ * sidecar: the policy has to travel with the process that answers the server.
+ */
+export function sessionPermissionReply(
+  ask: AcpPermissionAsk,
+): AcpPermissionReply {
+  const reject =
+    ask.options.find((option) => option.kind === "reject_once") ??
+    ask.options.find((option) => option.kind.startsWith("reject"));
+  return { optionId: reject === undefined ? null : reject.optionId };
 }
 
 /**
@@ -365,7 +344,12 @@ export function startAcpRun(
   options: AcpRunOptions,
 ): AcpRunHandle {
   const entries: AcpProgressEntry[] = [];
-  const declaration = acpDeclaration(spec);
+  // 18.3b: the sidecar is handed a RESOLVED map, so the declaration it reports
+  // names those variable names; a run in the window's own process names rows.
+  const declaration =
+    options.resolvedEnv === undefined
+      ? acpDeclaration(spec)
+      : acpResolvedDeclaration(Object.keys(options.resolvedEnv));
   const budgetMs =
     options.timeoutMs ?? Math.max(1, Math.round(spec.timeoutMinutes * 60_000));
 
@@ -521,23 +505,30 @@ export function startAcpRun(
 
   void (async () => {
     const environment = options.environment ?? runtimeEnvironment();
+    // TWO ROADS, NEVER BOTH (18.3b): a resolved map came over a wire and is
+    // used as given — no store is read, no row is named. Otherwise the row's
+    // env entries are read from the store, and a missing key refuses before
+    // any spawn.
+    const resolved = options.resolvedEnv;
     const keys = new Map<string, string>();
-    for (const entry of spec.env) {
-      let value = "";
-      try {
-        value = await options.readKey(entry.key);
-      } catch {
-        value = "";
+    if (resolved === undefined) {
+      for (const entry of spec.env) {
+        let value = "";
+        try {
+          value = await options.readKey(entry.key);
+        } catch {
+          value = "";
+        }
+        if (value === "") {
+          await finish("failed", acpMissingKeySentence(entry.key));
+          return;
+        }
+        keys.set(entry.key, value);
       }
-      if (value === "") {
-        await finish("failed", acpMissingKeySentence(entry.key));
-        return;
-      }
-      keys.set(entry.key, value);
     }
     if (settled) return;
 
-    const env = acpRunEnvironment(spec, keys, environment);
+    const env = acpRunEnvironment(spec, keys, environment, resolved);
     let made: string;
     try {
       made = createSessionDirectory(options.sessionRoot);
@@ -557,7 +548,10 @@ export function startAcpRun(
       cwd: made,
       declaration,
       inherited: Object.keys(acpInheritedEnvironment(environment)),
-      envNames: spec.env.map((entry) => entry.name),
+      envNames:
+        resolved === undefined
+          ? spec.env.map((entry) => entry.name)
+          : Object.keys(resolved),
     });
 
     const started = startAcp({

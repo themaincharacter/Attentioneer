@@ -13,6 +13,8 @@ import { fileURLToPath } from "node:url";
 import {
   ACP_SENTENCES,
   ACP_SPECS,
+  acpDeclaration,
+  acpMissingKeySentence,
   isAbsoluteCommand,
   shippedAcpSpec,
   validateAcpSpec,
@@ -20,10 +22,9 @@ import {
 } from "../src/turn/acpSpecs";
 import {
   ACP_RUN_SENTENCES,
-  acpDeclaration,
   acpInheritedEnvironment,
-  acpMissingKeySentence,
   acpRunEnvironment,
+  sessionPermissionReply,
   startAcpRun,
   type AcpProgressEntry,
   type AcpRunOptions,

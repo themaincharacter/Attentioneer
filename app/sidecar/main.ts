@@ -36,6 +36,17 @@
  *     than finishing a stream nobody is reading. Whatever parts already left
  *     stay left; the window keeps them and marks the turn stopped.
  *
+ * STORY 18.3b MOVES THE SESSION RUN INTO THIS PROCESS. 18.3 built the card and
+ * proved its run under Bun, then the shipped window could not run it: the run's
+ * module needs `node:fs` and a spawner, and a WebView has neither, so pressing
+ * RUN was refused with one sentence. The run lane now lives here
+ * (`sidecar/runs.ts`): a `run` request starts one, `run-part` streams one
+ * progress entry at a time, `run-end` states the ending, and `run-cancel`
+ * stops one. The key crosses in the request's `env` PAYLOAD (a resolved map,
+ * exactly as a turn's key rides in its provider object) and never in an argv;
+ * the child receives that map plus PATH/HOME and nothing else. Every live run is
+ * killed on this process's own exit paths, including a closed stdout.
+ *
  * The wire's types and its strict readers/builders live in
  * `app/src/turn/protocol.ts` — the SAME file the window imports, so the two
  * ends cannot drift. The line format, the part vocabulary and the sentence
@@ -81,6 +92,10 @@ import {
   pageUrlProblem,
 } from "../src/turn/pageExtract.ts";
 import {
+  createRunLane,
+  type RunLane,
+} from "./runs.ts";
+import {
   OEMBED_BASE_ENV,
   VIDEO_MAX_BYTES,
   VIDEO_SENTENCES,
@@ -98,11 +113,20 @@ import {
  */
 let outbox: Promise<unknown> = Promise.resolve();
 
+/**
+ * The run lane, built after `say` because it writes through it. A run that is
+ * live when the host disappears is CLOSED, not left running: a closed pipe is
+ * one of the exit paths a child must not survive.
+ */
+let runLane: RunLane | null = null;
+
 function say(line: string): void {
   outbox = outbox
     .then(() => Bun.write(Bun.stdout, line + "\n"))
     .catch(() => {
       // A closed pipe means the host is gone; there is nobody left to tell.
+      // Its children still have to die, so the lane is closed here.
+      void runLane?.shutdown();
     });
 }
 
@@ -911,8 +935,22 @@ function handleLine(raw: string): void {
     void runThumb(request);
     return;
   }
+  // STORY 18.3b: the session card's run. Not awaited — the read loop must keep
+  // reading so a cancel can arrive while the run works.
+  if (request.kind === "run") {
+    runLane?.start(request);
+    return;
+  }
+  if (request.kind === "run-cancel") {
+    runLane?.cancel(request.run, request.id);
+    return;
+  }
   void runTurn(request);
 }
+
+// The lane that owns the app's session runs. Its children get this process's
+// PATH/HOME and the payload's map, and nothing else.
+runLane = createRunLane({ say });
 
 // The first thing the host hears: this process is alive and speaks wire v1.
 // The host's 5-second health budget watches for THIS line (sidecar.rs).
@@ -938,5 +976,8 @@ try {
   // this process, and nothing here outlives it.
   for (const controller of inFlight.values()) controller.abort();
   inFlight.clear();
+  // STORY 18.3b: and close every live RUN — close() kills its child, and this
+  // await means the sidecar cannot exit before its ACP children are gone.
+  await runLane?.shutdown();
   await outbox;
 }

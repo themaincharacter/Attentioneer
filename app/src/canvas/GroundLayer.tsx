@@ -54,8 +54,7 @@ import {
   type SessionCard as SessionCardRecord,
   type SessionEntry,
 } from "../map/sessions";
-import { ACP_SPECS } from "../turn/acpSpecs";
-import { acpDeclaration } from "../turn/acpRun";
+import { ACP_SPECS, acpDeclaration } from "../turn/acpSpecs";
 import { GroundConceptPanel, GroundNote } from "./GroundNote";
 import {
   applyMention,

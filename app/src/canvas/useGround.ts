@@ -79,17 +79,15 @@ import {
   withGroundRemoved,
   type GroundReference,
 } from "../map/ground";
-import {
-  startAcpRun,
-  type AcpPermissionAsk,
-  type AcpPermissionReply,
-  type AcpProgressEntry,
-  type AcpRunHandle,
-  type AcpRunResult,
-} from "../turn/acpRun";
-// 18.2 keeps its spawner seam in the transport module; the run's options name
-// it, so the hook's option type takes it from there.
-import type { AcpSpawner } from "../turn/acp";
+// STORY 18.3b — THE RUN LANE LEFT THE WINDOW. This file used to import the
+// run's own module here, which is what made pressing RUN impossible in the
+// shipped app: that module needs node:fs and a spawner, and a WebView has
+// neither. The run happens in the sidecar now; the window asks through this
+// small seam (`turn/acpSession.ts`) and reads the run's vocabulary from the
+// window-safe `turn/acpEntries.ts`, never from the run's module.
+import { startSessionRun, type SessionRunHandle } from "../turn/acpSession";
+import type { AcpEnding, AcpProgressEntry } from "../turn/acpEntries";
+import type { SidecarStart } from "../turn/sidecar";
 import { shippedAcpSpec, type AcpSpec } from "../turn/acpSpecs";
 import {
   GROUND_LINK_IO,
@@ -1973,21 +1971,23 @@ export async function writeAskTurn(
  *     minted in the SHARED space (ground + asks + sessions). No reading, no
  *     note, no media, no link, no mirror and no history (18.5 owns the mirror
  *     and the log) — the record is the whole move.
- *   - RUN: the row is resolved from the rows this build ships, the run starts
- *     through `startAcpRun` (the 18.2 lifecycle: spawn, initialize, session/new,
- *     one prompt, stream, cancel, close), and EVERY progress entry the run
- *     reports is written to the transcript as it arrives, in arrival order,
- *     WHOLE LINES ONLY. The transcript is never buffered until the end and
- *     never rewritten: a crash loses the last entry, never an earlier one.
+ *   - RUN: the row is resolved from the rows this build ships, and the run is
+ *     asked of the SIDECAR (18.3b: 18.2's lifecycle lives in the process that
+ *     can spawn, because the window cannot). EVERY progress entry the lane
+ *     streams back is written to the transcript as it arrives, in arrival
+ *     order, WHOLE LINES ONLY. The transcript is never buffered until the end
+ *     and never rewritten: a crash loses the last entry, never an earlier one.
  *   - STOP: the run's own cancel — the 18.2 rule, unchanged: the child is
  *     killed on every exit path, and the ending is written by the run itself.
  *   - ENDING: only "completed" is a result. Stopped keeps what arrived and says
  *     so; failed carries the run's ONE sentence; timed-out says its budget ran
  *     out. No percentage, no step count and no spinner that outlives the run.
  *   - NO KEY: a tool row grants one only through an explicit `env` entry, and
- *     the key is read from the store at run time and handed to that one spawn.
- *     It never enters a record, a transcript line or a sentence. The card's
- *     declaration (`acpDeclaration`, 18.2) names the ROW, never the value.
+ *     the key is read from the store HERE, at run time, and sent in the run
+ *     request's payload — the same road a turn's key takes. It never enters a
+ *     record, a transcript line or a sentence. The card's declaration
+ *     (`acpDeclaration`, 18.2, now in `acpSpecs` where the window can read it)
+ *     names the ROW, never the value.
  *
  * ONE RUN PER CARD AT A TIME. The live handles are held here (view state, never
  * a record): a second press answers ONE sentence, and the handle is dropped
@@ -2006,27 +2006,6 @@ export async function writeAskTurn(
  */
 export const SESSION_PROMPT =
   "list the files in this directory and say in one sentence what this folder is for. change nothing.";
-
-/**
- * STORY 18.3 — CAN THIS RUNTIME START A PROCESS AT ALL? 18.2's run spawns a
- * child and makes a directory under the temp root, which only the Bun runtime
- * can do; the app's WINDOW (a WebView) cannot, so a press there must say so in
- * one sentence instead of failing halfway through a run. The probe is a pure
- * function of the thing it is asked about, so a test can ask it both ways; the
- * run's real home is a process that can spawn (the tests' runtime today, the
- * sidecar when a later story moves the lane there).
- */
-export function sessionRuntimeReady(
-  runtime: { Bun?: { spawn?: unknown } } = globalThis as {
-    Bun?: { spawn?: unknown };
-  },
-): boolean {
-  return typeof runtime.Bun?.spawn === "function";
-}
-
-/** The one sentence a window that cannot start a process answers (PROVISIONAL). */
-export const SESSION_NO_RUNTIME_SENTENCE =
-  "this window cannot start a process, so the run was not started.";
 
 /** One object, or no (a wire payload is never trusted to have a shape). */
 function asRecord(value: unknown): Record<string, unknown> {
@@ -2135,49 +2114,32 @@ export function sessionEntryOf(
   }
 }
 
-/**
- * THE RUN'S PERMISSION POLICY (PROVISIONAL, and deliberately the smallest one):
- * every request is REFUSED — the first option whose kind is a reject, or no
- * option at all when the server offered none, which reads as cancelled. WHO
- * decides (and the Allow/Reject surface) is story 18.4's; this story only
- * carries the answer to the wire and says what it was.
- */
-export function sessionPermissionReply(
-  ask: AcpPermissionAsk,
-): AcpPermissionReply {
-  const reject =
-    ask.options.find((option) => option.kind === "reject_once") ??
-    ask.options.find((option) => option.kind.startsWith("reject"));
-  return { optionId: reject === undefined ? null : reject.optionId };
-}
-
-/** What a run wrote and how it ended, once its child is dead. */
+/** What a run wrote and how it ended, once the sidecar stated the ending. */
 export interface SessionRunDone {
-  result: AcpRunResult;
+  /** The ending the run itself stated; only "completed" is a result. */
+  ending: AcpEnding;
+  /** One quiet sentence for failed and timed-out runs; null otherwise. */
+  sentence: string | null;
   /** Every transcript entry this run wrote, in order (the ending is last). */
   entries: readonly SessionEntry[];
   /** One sentence when the transcript could not be written; null when it could. */
   notice: string | null;
 }
 
-/** A live run: its handle (for the stop) and its one settle promise. */
+/** A live run: the seam's handle (for the stop) and its one settle promise. */
 export interface SessionRunStart {
-  handle: AcpRunHandle;
+  handle: SessionRunHandle;
   done: Promise<SessionRunDone>;
 }
 
 /** What a run needs from the app, all injectable for a test. */
 export interface SessionRunOptions {
-  /** The key for ONE provider row, read at run time and never logged. */
+  /** The key for ONE provider row, read at request time and never logged. */
   readKey?: (providerId: string) => Promise<string>;
-  /** The child's spawner (a test's fake, or Bun's). */
-  spawn?: AcpSpawner;
-  /** The environment it may inherit FROM; only PATH/HOME are read. */
-  environment?: Record<string, string | undefined>;
-  /** The temp root a session directory is made under. */
-  sessionRoot?: string;
-  /** A caller's own deadline, shorter than the row's budget. */
-  timeoutMs?: number;
+  /** The sidecar pipe a test drives; the app's own by default. */
+  transport?: import("../turn/turn").TurnTransport;
+  /** Make sure the child is up; the app's `startSidecar` by default. */
+  start?: () => Promise<SidecarStart>;
   /** The writer's clock, so a test can pin the record's timestamps. */
   now?: () => string;
   /** Each entry as it is written, for the view that watches the run. */
@@ -2187,15 +2149,18 @@ export interface SessionRunOptions {
 }
 
 /**
- * START ONE RUN and write its transcript AS IT ARRIVES. The progress sequence
- * is mapped to whole entries (`sessionEntryOf`), and each entry is appended
- * through ONE serialized chain, so file order is arrival order even when two
- * reports land in the same tick. The chain is awaited by `done`, so a caller
- * that awaits it sees every entry the run wrote — the run's result always has
- * its ending line on disk.
+ * START ONE RUN and write its transcript AS IT ARRIVES. STORY 18.3b MOVED THE
+ * RUN ITSELF to the Bun sidecar (`turn/acpSession.ts` asks, `sidecar/runs.ts`
+ * spawns); this function is the card's half: it maps each streamed progress
+ * entry to a whole transcript entry (`sessionEntryOf`) and appends it through
+ * ONE serialized chain, so file order is arrival order even when two entries
+ * land in the same tick.
  *
- * The child is killed by the run itself on every ending (18.2's rule survives
- * here untouched); this function owns no process and no timer.
+ * THE ENDING IS THE RUN'S OWN. The sidecar states it (`run-end`); the `ended`
+ * line is appended here, exactly once, before `done` settles — so a caller that
+ * awaits `done` always has the ending on disk. A partial is never a result
+ * (18.2's rule survives the move untouched). This function owns no process and
+ * no timer: the lane owns both, and kills the child on every exit path.
  */
 export function beginSessionRun(
   workspacePath: string,
@@ -2208,8 +2173,7 @@ export function beginSessionRun(
   let chain: Promise<void> = Promise.resolve();
   let notice: string | null = null;
 
-  const record = (entry: AcpProgressEntry): void => {
-    const line = sessionEntryOf(entry, now());
+  const record = (line: SessionEntry | null): void => {
     if (line === null) return;
     written.push(line);
     // ONE append at a time: the previous write must settle before the next
@@ -2229,27 +2193,32 @@ export function beginSessionRun(
     options.onEntry?.(line);
   };
 
-  const handle = startAcpRun(row, SESSION_PROMPT, {
-    // The key is read NOW, from the one row the tool declares, and handed
-    // straight to the spawn — never rendered, never kept in state.
-    readKey: options.readKey ?? ((providerId: string) => readSecret(providerId)),
-    replyToPermission: sessionPermissionReply,
-    ...(options.spawn === undefined ? {} : { spawn: options.spawn }),
-    ...(options.environment === undefined
+  const handle = startSessionRun(row, SESSION_PROMPT, {
+    // The key is read HERE, from the rows the tool declares, and handed to the
+    // sidecar inside the request's payload — never an argv, never state.
+    ...(options.readKey === undefined
       ? {}
-      : { environment: options.environment }),
-    ...(options.sessionRoot === undefined
+      : { readKey: options.readKey }),
+    ...(options.transport === undefined
       ? {}
-      : { sessionRoot: options.sessionRoot }),
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-    onProgress: record,
+      : { transport: options.transport }),
+    ...(options.start === undefined ? {} : { start: options.start }),
+    onEntry: (entry: AcpProgressEntry) => record(sessionEntryOf(entry, now())),
   });
 
-  const done: Promise<SessionRunDone> = handle.result.then(async (result) => {
-    // The run has settled; the last append must land before the caller reads.
-    await chain;
-    return { result, entries: [...written], notice };
-  });
+  const done: Promise<SessionRunDone> = handle.ended.then(
+    async ({ ending, sentence }) => {
+      // THE ENDING, once: whole, append-only, and the run's own words when it
+      // has one. A failed start (no key, no sidecar) reaches exactly here too,
+      // so the card can state it after a reopen.
+      const ended: SessionEntry = { kind: "ended", ending, t: now() };
+      if (sentence !== null) ended.sentence = sentence;
+      record(ended);
+      // The last append must land before the caller reads.
+      await chain;
+      return { ending, sentence, entries: [...written], notice };
+    },
+  );
 
   return { handle, done };
 }
@@ -2775,7 +2744,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   const sessionEntriesRef = useRef<Record<string, readonly SessionEntry[]>>({});
   const malformedSessionsRef = useRef<string[]>([]);
   const sessionRunningRef = useRef<string[]>([]);
-  const sessionRunsRef = useRef<Record<string, AcpRunHandle>>({});
+  const sessionRunsRef = useRef<Record<string, SessionRunHandle>>({});
   const readingsRef = useRef<Reading[]>([]);
   // Story 16.14: the media lines and their READ thumbnail sources. Both are
   // view mirrors of the map folder — the thumb's bytes live in map/media/.
@@ -3946,15 +3915,6 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       const row = shippedAcpSpec(session.tool);
       if (row === null) {
         return Promise.resolve({ ok: false, message: SESSION_NO_TOOL_REFUSAL });
-      }
-      // A runtime that cannot spawn says so BEFORE anything is written: no
-      // half-run, no "started" line, and no spinner left waiting on a process
-      // this window could never make.
-      if (!sessionRuntimeReady()) {
-        return Promise.resolve({
-          ok: false,
-          message: SESSION_NO_RUNTIME_SENTENCE,
-        });
       }
       const started = beginSessionRun(workspacePath, row, slug, {
         // The view follows each entry as the run reports it. The file is the

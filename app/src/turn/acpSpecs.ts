@@ -239,6 +239,50 @@ export const ACP_SPECS: readonly AcpSpec[] = [
   },
 ];
 
+/**
+ * THE ENV RULE MADE AUDIBLE (18.2, moved here by 18.3b): one sentence naming
+ * which provider rows' keys a run will receive — never a value. It is computed
+ * from the ROW alone, so no key read can appear in it, and it lives in this
+ * window-safe module because the CARD says it while the SIDECAR does the spawn.
+ */
+export function acpDeclaration(spec: AcpSpec): string {
+  return acpResolvedDeclaration(spec.env.map((entry) => entry.key));
+}
+
+/**
+ * The same sentence, built from variable NAMES: what the sidecar says when the
+ * grant arrived as a resolved map on the wire (18.3b) and there is no row on
+ * that side to name. Names only, never values.
+ */
+export function acpResolvedDeclaration(names: readonly string[]): string {
+  if (names.length === 0) {
+    return "this run will receive no key: no environment entry names a provider row";
+  }
+  if (names.length === 1) {
+    return "this run will receive the key named " + names[0];
+  }
+  const last = names[names.length - 1];
+  return (
+    "this run will receive the keys named " +
+    names.slice(0, -1).join(", ") +
+    " and " +
+    last
+  );
+}
+
+/**
+ * The sentence for a declared key that is not in the store (18.2). The WINDOW
+ * says it (it is the side that reads the key store); the sidecar only ever
+ * receives values, so it never has to say this.
+ */
+export function acpMissingKeySentence(providerId: string): string {
+  return (
+    "the key named " +
+    providerId +
+    " is not kept, so the run was not started"
+  );
+}
+
 /** One shipped ACP spec by id, or null (the panel offers only what ships). */
 export function shippedAcpSpec(id: string): AcpSpec | null {
   return ACP_SPECS.find((spec) => spec.id === id) ?? null;

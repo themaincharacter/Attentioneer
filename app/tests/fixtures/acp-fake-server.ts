@@ -22,6 +22,9 @@
  *                 real server's credentials error (-32603, "no API key …") —
  *                 the spike's 18.1 observation, reproduced as a fixture so a
  *                 run with no key can be proven to FAIL rather than hang.
+ *   drip          handshake and session, then one update every 100 ms until
+ *                 cancelled — the shape a run has when the sidecar's stdout
+ *                 closes underneath it (18.3b's closed-pipe kill probe).
  *
  * --report <path> writes {pid, argv, env} once at startup, before the protocol
  * starts. It is how the run tests prove what environment reached the child and
@@ -166,6 +169,19 @@ async function runPrompt(id: number): Promise<void> {
     });
     update("two");
     settlePrompt("end_turn");
+    return;
+  }
+
+  if (mode === "drip") {
+    // One update on a clock, so a client that loses its own reader still has
+    // something to fail to write.
+    update("tick ");
+    for (let at = 0; at < 300; at += 1) {
+      await Bun.sleep(100);
+      if (active === null || active.cancelled) break;
+      update("tick ");
+    }
+    settlePrompt("cancelled");
     return;
   }
 

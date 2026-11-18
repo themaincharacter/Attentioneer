@@ -12,6 +12,14 @@
  * oEmbed) and reuses the same `thumb` line for its copied picture. The key
  * still rides inside a request line and nowhere else.
  *
+ * STORY 18.3b ADDS THE RUN LANE'S FOUR KINDS, and they are the reason the
+ * window can finally press RUN: a `run` request asks the SIDECAR to spawn the
+ * tool, `run-part` carries ONE progress entry at a time in arrival order,
+ * `run-end` carries the ending (and its one sentence when it has one), and
+ * `run-cancel` names a live run and is answered by that run's own `run-end`.
+ * The key rides INSIDE the `run` request's `env` payload — a resolved map,
+ * exactly as a turn carries its key — never an argv and never a log line.
+ *
  * Newline-delimited JSON travels in BOTH directions over stdio, so every
  * builder here answers exactly one line (JSON.stringify never emits a raw
  * newline) and every reader REFUSES rather than guesses: a malformed line is
@@ -28,6 +36,12 @@
  * text part) and the message roles are this story's, to be revised by story 7
  * when streaming arrives. The transport itself is ADR-0034's.
  */
+
+import type {
+  AcpEnding,
+  AcpPermissionOption,
+  AcpProgressEntry,
+} from "./acpEntries";
 
 /** The envelope's version. A `hello` says which one the sidecar speaks. */
 export const WIRE_VERSION = 1;
@@ -174,6 +188,67 @@ export interface ThumbLine {
   http: number;
 }
 
+/**
+ * THE TOOL A RUN STARTS (story 18.3b): argv only, never a shell string, and no
+ * key anywhere near it. The sidecar makes the fresh session directory, so no
+ * cwd crosses this wire.
+ */
+export interface RunTool {
+  /** The server executable, an absolute path the row already validated. */
+  command: string;
+  /** The argv that makes it an ACP server, one entry each. */
+  args: string[];
+  /**
+   * The budget, in MINUTES. It is a positive number rather than an integer so a
+   * test can state a short one; a row still refuses anything under a minute.
+   */
+  timeoutMinutes: number;
+}
+
+/**
+ * Ask the sidecar to start ONE run. The `env` map is the RESOLVED grant —
+ * variable NAME to VALUE — and it is the only road a key takes: it rides inside
+ * this payload exactly as a turn's key does, never an argv, never a log line.
+ * The child receives that map plus PATH/HOME and nothing else (18.2's rule).
+ */
+export interface RunRequest {
+  id: number;
+  kind: "run";
+  /** The run's number in the sidecar's table; `run-part`/`run-end` echo it. */
+  run: number;
+  tool: RunTool;
+  env: Record<string, string>;
+  prompt: string;
+}
+
+/** Ask the sidecar to cancel a live run. That run's OWN `run-end` answers. */
+export interface RunCancelRequest {
+  id: number;
+  kind: "run-cancel";
+  run: number;
+}
+
+/** ONE progress entry, in arrival order. The transcript's order is this one. */
+export interface RunPartLine {
+  id: number;
+  kind: "run-part";
+  run: number;
+  entry: AcpProgressEntry;
+}
+
+/**
+ * The run's ending. Only "completed" is a result, and a partial is never one
+ * (18.2's rule, unchanged); `sentence` is the one quiet line for failed and
+ * timed-out runs.
+ */
+export interface RunEndLine {
+  id: number;
+  kind: "run-end";
+  run: number;
+  ending: AcpEnding;
+  sentence: string | null;
+}
+
 /** What the window may read from the sidecar's stdout. */
 export type SidecarLine =
   | HelloLine
@@ -184,7 +259,9 @@ export type SidecarLine =
   | ModelsLine
   | PageLine
   | VideoLine
-  | ThumbLine;
+  | ThumbLine
+  | RunPartLine
+  | RunEndLine;
 
 /** One turn's request. The messages are ALL that leaves the app. */
 export interface TurnRequest {
@@ -218,6 +295,8 @@ export type SidecarRequest =
   | PageRequest
   | VideoRequest
   | ThumbRequest
+  | RunRequest
+  | RunCancelRequest
   | StopRequest;
 
 /* ------------------------------------------------------------------ *
@@ -303,6 +382,52 @@ export function thumbLine(
   return JSON.stringify({ id, kind: "thumb", mime, data, http });
 }
 
+/** The run's request line: one tool, one resolved env map, one prompt. */
+export function runRequestLine(
+  id: number,
+  run: number,
+  tool: RunTool,
+  env: Readonly<Record<string, string>>,
+  prompt: string,
+): string {
+  return JSON.stringify({
+    id,
+    kind: "run",
+    run,
+    tool: {
+      command: tool.command,
+      args: [...tool.args],
+      timeoutMinutes: tool.timeoutMinutes,
+    },
+    env: { ...env },
+    prompt,
+  });
+}
+
+/** The cancel's request line: a run number, and the cancel's own request id. */
+export function runCancelLine(id: number, run: number): string {
+  return JSON.stringify({ id, kind: "run-cancel", run });
+}
+
+/** ONE progress entry, one line, in the order the run reported it. */
+export function runPartLine(
+  id: number,
+  run: number,
+  entry: AcpProgressEntry,
+): string {
+  return JSON.stringify({ id, kind: "run-part", run, entry });
+}
+
+/** The run's ending, one line: the ending and its one sentence when it has one. */
+export function runEndLine(
+  id: number,
+  run: number,
+  ending: AcpEnding,
+  sentence: string | null,
+): string {
+  return JSON.stringify({ id, kind: "run-end", run, ending, sentence });
+}
+
 /** The fetch's request line: one endpoint, one key, no model. */
 export function modelsRequestLine(
   id: number,
@@ -369,6 +494,149 @@ function isProvider(value: unknown): value is TurnProvider {
 function isModelListProvider(value: unknown): value is ModelListProvider {
   if (!isRecord(value)) return false;
   return isNonEmptyString(value.baseUrl) && typeof value.apiKey === "string";
+}
+
+/** A name a process may carry, so a run's env map can only fill real names. */
+function isEnvName(value: unknown): value is string {
+  return (
+    typeof value === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
+  );
+}
+
+/** How a run ended; anything else is not this wire's ending. */
+function isEnding(value: unknown): value is AcpEnding {
+  return (
+    value === "completed" ||
+    value === "stopped" ||
+    value === "failed" ||
+    value === "timed-out"
+  );
+}
+
+/** The tool a run starts: argv only, an absolute-ish command and a budget. */
+function isRunTool(value: unknown): value is RunTool {
+  if (!isRecord(value)) return false;
+  if (!isNonEmptyString(value.command)) return false;
+  if (!Array.isArray(value.args)) return false;
+  if (!value.args.every((arg) => typeof arg === "string")) return false;
+  const minutes = value.timeoutMinutes;
+  return (
+    typeof minutes === "number" &&
+    Number.isFinite(minutes) &&
+    minutes > 0
+  );
+}
+
+/** One permission option, as the server offered it. */
+function readPermissionOptions(value: unknown): AcpPermissionOption[] | null {
+  if (!Array.isArray(value)) return null;
+  const options: AcpPermissionOption[] = [];
+  for (const candidate of value) {
+    if (!isRecord(candidate)) return null;
+    if (
+      typeof candidate.optionId !== "string" ||
+      typeof candidate.name !== "string" ||
+      typeof candidate.kind !== "string"
+    ) {
+      return null;
+    }
+    options.push({
+      optionId: candidate.optionId,
+      name: candidate.name,
+      kind: candidate.kind,
+    });
+  }
+  return options;
+}
+
+/**
+ * Read ONE progress entry (story 18.3b). `null` for anything that is not
+ * exactly one entry of this vocabulary — the run's own record is never asked to
+ * survive a guess, and the window ignores a line it cannot read.
+ */
+function readProgressEntry(value: unknown): AcpProgressEntry | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === "started") {
+    if (typeof value.command !== "string") return null;
+    if (!Array.isArray(value.args)) return null;
+    if (!value.args.every((arg) => typeof arg === "string")) return null;
+    if (typeof value.cwd !== "string") return null;
+    if (typeof value.declaration !== "string") return null;
+    if (!Array.isArray(value.inherited)) return null;
+    if (!value.inherited.every((name) => typeof name === "string")) return null;
+    if (!Array.isArray(value.envNames)) return null;
+    if (!value.envNames.every((name) => typeof name === "string")) return null;
+    return {
+      kind: "started",
+      command: value.command,
+      args: [...(value.args as string[])],
+      cwd: value.cwd,
+      declaration: value.declaration,
+      inherited: [...(value.inherited as string[])],
+      envNames: [...(value.envNames as string[])],
+    };
+  }
+  if (value.kind === "session") {
+    if (!isNonEmptyString(value.sessionId)) return null;
+    return { kind: "session", sessionId: value.sessionId };
+  }
+  if (value.kind === "update") {
+    if (typeof value.updateKind !== "string") return null;
+    if (typeof value.text !== "string") return null;
+    return {
+      kind: "update",
+      updateKind: value.updateKind,
+      text: value.text,
+      update: value.update,
+    };
+  }
+  if (value.kind === "permission") {
+    if (typeof value.method !== "string") return null;
+    const options = readPermissionOptions(value.options);
+    if (options === null) return null;
+    const reply = value.reply;
+    if (!isRecord(reply)) return null;
+    if (reply.outcome === "selected") {
+      if (!isNonEmptyString(reply.optionId)) return null;
+      return {
+        kind: "permission",
+        method: value.method,
+        toolCall: value.toolCall,
+        options,
+        reply: { outcome: "selected", optionId: reply.optionId },
+      };
+    }
+    if (reply.outcome !== "cancelled") return null;
+    return {
+      kind: "permission",
+      method: value.method,
+      toolCall: value.toolCall,
+      options,
+      reply: { outcome: "cancelled" },
+    };
+  }
+  if (value.kind === "problem") {
+    if (typeof value.sentence !== "string") return null;
+    return { kind: "problem", sentence: value.sentence };
+  }
+  if (value.kind === "ended") {
+    if (!isEnding(value.ending)) return null;
+    if (value.stopReason !== null && typeof value.stopReason !== "string") {
+      return null;
+    }
+    if (value.sentence !== null && typeof value.sentence !== "string") {
+      return null;
+    }
+    if (typeof value.partial !== "boolean") return null;
+    return {
+      kind: "ended",
+      ending: value.ending,
+      stopReason: value.stopReason,
+      sentence: value.sentence,
+      partial: value.partial,
+    };
+  }
+  return null;
 }
 
 /** Read one `models` line; null for anything that is not exactly that line. */
@@ -486,6 +754,26 @@ export function parseSidecarLine(raw: string): SidecarLine | null {
       http: value.http,
     };
   }
+  if (value.kind === "run-part") {
+    if (!isId(value.run)) return null;
+    const entry = readProgressEntry(value.entry);
+    if (entry === null) return null;
+    return { id: value.id, kind: "run-part", run: value.run, entry };
+  }
+  if (value.kind === "run-end") {
+    if (!isId(value.run)) return null;
+    if (!isEnding(value.ending)) return null;
+    if (value.sentence !== null && typeof value.sentence !== "string") {
+      return null;
+    }
+    return {
+      id: value.id,
+      kind: "run-end",
+      run: value.run,
+      ending: value.ending,
+      sentence: value.sentence,
+    };
+  }
   return null;
 }
 
@@ -528,6 +816,37 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
   if (value.kind === "thumb") {
     if (!isNonEmptyString(value.url)) return null;
     return { id: value.id, kind: "thumb", url: value.url };
+  }
+  if (value.kind === "run-cancel") {
+    if (!isId(value.run)) return null;
+    return { id: value.id, kind: "run-cancel", run: value.run };
+  }
+  if (value.kind === "run") {
+    if (!isId(value.run)) return null;
+    if (!isRunTool(value.tool)) return null;
+    if (!isRecord(value.env)) return null;
+    // The payload's map is the WHOLE grant: every name is a name a process can
+    // carry, every value is a string, and a name with no value is refused here
+    // rather than silently dropped.
+    const env: Record<string, string> = {};
+    for (const [name, secret] of Object.entries(value.env)) {
+      if (!isEnvName(name)) return null;
+      if (typeof secret !== "string" || secret === "") return null;
+      env[name] = secret;
+    }
+    if (!isNonEmptyString(value.prompt)) return null;
+    return {
+      id: value.id,
+      kind: "run",
+      run: value.run,
+      tool: {
+        command: value.tool.command,
+        args: [...value.tool.args],
+        timeoutMinutes: value.tool.timeoutMinutes,
+      },
+      env,
+      prompt: value.prompt,
+    };
   }
   if (value.kind !== "turn") return null;
   if (!isProvider(value.provider)) return null;
