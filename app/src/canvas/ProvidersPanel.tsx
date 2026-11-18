@@ -114,6 +114,14 @@ import { probeSpec } from "../turn/cliBridge";
  * paste-and-validate flow is the feel. Every entry is marked unverified until
  * a person's account answers.
  *
+ * STORY 15 CHANGES THE SOURCE, NOT THE PICK: the catalogue is now a projection
+ * of the vendored models.dev export (providerCatalog.ts), refreshed by an
+ * explicit script and never fetched here. A pick still fills the form and
+ * focuses the key field; it only also pre-ticks tools/vision from the example
+ * model's own capabilities. The user's point — "this should be a library at
+ * this point" — is why the facts moved into a committed export we import
+ * instead of rows we assert.
+ *
  * PROVISIONAL (ADR-0003's rendering seam): the layout, the field order and the
  * wording of the refusals.
  */
@@ -367,12 +375,19 @@ export function ProvidersPanel({
     if (entry !== null) keyFieldRef.current?.focus();
   }
 
-  /** Put a fill into the form's fields. Editable afterwards, like any input. */
+  /**
+   * Put a fill into the form's fields. Editable afterwards, like any input.
+   * Since story 15 the fill also carries the example model's two capabilities,
+   * so the tools/vision boxes start where models.dev says the model is — a
+   * starting point the person can still change, never a verdict.
+   */
   function applyCatalogFill(fill: ProviderCatalogFill): void {
     setName(fill.name);
     setBaseUrl(fill.baseUrl);
     setModelId(fill.modelId);
     setModelName(fill.modelName);
+    setTools(fill.tools);
+    setVision(fill.vision);
   }
 
   /** The row the add form describes, or the one sentence it is refused with. */

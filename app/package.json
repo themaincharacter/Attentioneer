@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "bun test",
     "spike:acp": "bun scripts/acp-spike.ts",
+    "catalog:refresh": "bun scripts/models-dev-catalog.ts",
     "tauri": "tauri"
   },
   "dependencies": {

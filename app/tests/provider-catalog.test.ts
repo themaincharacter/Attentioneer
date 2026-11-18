@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  CATALOG_SOURCE,
   CUSTOM_CATALOG_ID,
   CUSTOM_FILL,
   PROVIDER_CATALOG,
@@ -10,26 +11,38 @@ import {
   catalogFill,
   catalogLabel,
 } from "../src/turn/providerCatalog";
+import {
+  ALLOWLIST,
+  API_FALLBACK,
+  CatalogRefused,
+  MODELS_DEV_URL,
+  parseExport,
+  projectCatalog,
+  refreshCatalog,
+  summaryOf,
+  type CatalogExport,
+} from "../scripts/models-dev-catalog";
 
 /**
- * STORY 15.13 — A PROVIDER IS PICKED, NOT TYPED.
+ * STORY 15.15 — THE CATALOGUE COMES FROM models.dev.
  *
- * Four things are pinned:
+ * Five things are pinned:
  *
- *   1. The catalogue is DATA: a name, an https base URL, a note, a source and
- *      the unverified flag on every entry; the base URLs are exactly the
- *      spec's table (the only place they may be written).
- *   2. The label marks what the data says is unverified — never a product.
- *   3. A pick FILLS the form and focuses the key field; "a custom endpoint"
- *      clears the fill back to today's empty form; a pick makes no request,
- *      validates nothing and adds nothing.
- *   4. A GREP over every window and sidecar module finds no catalogue base URL
- *      outside this module, so the turn path cannot grow a hard-coded endpoint.
+ *   1. The shipped list is a PROJECTION of the committed export — same ids,
+ *      names, base URLs, key variables, docs and example models — and the
+ *      export is a small, curated file, not a 300-provider dump.
+ *   2. The example model follows the stated rule (first with tool-use, else
+ *      the first) and its capabilities ride into the form's fill.
+ *   3. The label still marks every entry unverified; a pick still fills and
+ *      focuses, and still makes no request.
+ *   4. NO runtime module fetches models.dev (or even names its endpoint); the
+ *      refresh script is the only network in the project.
+ *   5. The script REFUSES an empty or malformed payload and writes nothing;
+ *      its summary says what changed.
  *
- * The panel is not mounted (no window, no Tauri): what is behavioural is
- * pinned through the exported pure fill, and what is wiring is pinned by
- * reading the panel's source. Naming a base URL is allowed HERE, in the
- * catalogue's own test — the constraint is about the modules that do the work.
+ * The panel is not mounted (no window, no Tauri): behaviour is pinned through
+ * exported pure functions, wiring by reading the panel's source. Puppeteer is
+ * not needed and no test touches the network.
  */
 
 const APP = fileURLToPath(new URL("..", import.meta.url)).replace(/[\\/]$/, "");
@@ -53,22 +66,72 @@ function cssBlock(css: string, selector: string): string {
   return css.slice(open + 1, close);
 }
 
+/** The committed export, read as the app's data. */
+const EXPORT_TEXT = readFileSync(
+  join(APP, "src", "turn", "modelsDevCatalog.json"),
+  "utf8",
+);
+const EXPORT = JSON.parse(EXPORT_TEXT) as CatalogExport;
+const SCRIPT = readFileSync(join(APP, "scripts", "models-dev-catalog.ts"), "utf8");
+
+/** The export inverted back into models.dev's payload shape, for the script. */
+function rawFromExport(): Record<string, unknown> {
+  const raw: Record<string, unknown> = {};
+  for (const allow of ALLOWLIST) {
+    const provider = EXPORT.providers.find((one) => one.id === allow.id);
+    if (provider === undefined) throw new Error("not in the export: " + allow.id);
+    raw[allow.modelsDevId] = {
+      id: allow.modelsDevId,
+      name: provider.name,
+      api: provider.api,
+      env: [provider.env],
+      doc: provider.doc,
+      models: Object.fromEntries(
+        provider.models.map((model) => [
+          model.id,
+          {
+            id: model.id,
+            name: model.name,
+            tool_call: model.tool_call,
+            attachment: model.attachment,
+            reasoning: model.reasoning,
+            modalities: { output: ["text"] },
+          },
+        ]),
+      ),
+    };
+  }
+  return raw;
+}
+
 const panel = source("canvas/ProvidersPanel.tsx");
 const panelCode = codeOf(panel);
 const css = source("canvas/canvas.css");
 
 /* ------------------------------------------------------------------ *
- * 1. The catalogue is data, and the table is the spec's.
+ * 1. The catalogue is the vendored export, projected.
  * ------------------------------------------------------------------ */
 
-describe("the catalogue is honest data", () => {
-  test("every entry is the spec's row: a name, an https base URL, a note, a source", () => {
+describe("the catalogue is a projection of the vendored export", () => {
+  test("the export names its source and stays a small curated window", () => {
+    expect(EXPORT.source).toBe("models.dev");
+    expect(EXPORT.fetchedFrom).toBe(MODELS_DEV_URL);
+    expect(Buffer.byteLength(EXPORT_TEXT, "utf8")).toBeLessThan(200_000);
+    expect(EXPORT.providers.length).toBe(ALLOWLIST.length);
+    expect(EXPORT.providers.length).toBeLessThanOrEqual(20);
+    const models = EXPORT.providers.reduce(
+      (total, provider) => total + provider.models.length,
+      0,
+    );
+    expect(models).toBeGreaterThan(0);
+  });
+
+  test("every entry is the export's row: name, https base URL, key variable, docs", () => {
     expect(PROVIDER_CATALOG.map((entry) => entry.id)).toEqual([
       "deepseek",
       "openai",
       "opencode-go",
       "opencode-payg",
-      "opencode-zen",
       "groq",
       "openrouter",
       "mistral",
@@ -76,61 +139,108 @@ describe("the catalogue is honest data", () => {
       "cerebras",
       "moonshot",
       "xai",
+      "zai",
+      "fireworks",
+      "hyper",
+      "synthetic",
     ]);
+    expect(PROVIDER_CATALOG.map((entry) => entry.id)).toEqual(
+      EXPORT.providers.map((provider) => provider.id),
+    );
     for (const entry of PROVIDER_CATALOG) {
+      const provider = EXPORT.providers.find((one) => one.id === entry.id);
+      expect(provider).toBeDefined();
+      expect(entry.name).toBe(provider?.name.trim());
+      expect(entry.baseUrl).toBe(provider?.api.trim());
+      expect(entry.envName).toBe(provider?.env.trim());
+      expect(entry.doc).toBe(provider?.doc.trim());
       expect(entry.name.trim()).not.toBe("");
+      expect(entry.envName.trim()).not.toBe("");
       expect(entry.baseUrl.trim()).toBe(entry.baseUrl);
       expect(new URL(entry.baseUrl).protocol).toBe("https:");
       expect(entry.note.trim().length).toBeGreaterThan(20);
-      expect(entry.source.trim().length).toBeGreaterThan(10);
-      expect(entry.id).toBe(entry.id.trim());
+      expect(entry.note).toContain(entry.envName);
     }
   });
 
-  test("the base URLs are exactly the story's table, one per entry", () => {
-    const table: Record<string, string> = {
-      deepseek: "https://api.deepseek.com/v1",
-      openai: "https://api.openai.com/v1",
-      "opencode-go": "https://opencode.ai/inference/go/openai/v1",
-      "opencode-payg": "https://opencode.ai/inference/openai/v1",
-      "opencode-zen": "https://opencode.ai/zen/v1",
-      groq: "https://api.groq.com/openai/v1",
-      openrouter: "https://openrouter.ai/api/v1",
-      mistral: "https://api.mistral.ai/v1",
-      together: "https://api.together.xyz/v1",
-      cerebras: "https://api.cerebras.ai/v1",
-      moonshot: "https://api.moonshot.ai/v1",
-      xai: "https://api.x.ai/v1",
-    };
-    expect(PROVIDER_CATALOG.map((entry) => [entry.id, entry.baseUrl])).toEqual(
-      Object.entries(table),
-    );
-    // The OpenCode split the docs insist on: Go and pay-as-you-go are not the
-    // same endpoint.
+  test("every entry is unverified, names its source, and carries no key", () => {
+    for (const entry of PROVIDER_CATALOG) {
+      expect(entry.verified).toBe(false);
+      expect(entry.source).toBe(CATALOG_SOURCE);
+      expect(entry.source).toBe("models.dev");
+      expect(entry).not.toHaveProperty("apiKey");
+    }
+    expect(EXPORT_TEXT).not.toContain("sk-");
+    expect(EXPORT_TEXT).not.toContain("apiKey");
+  });
+
+  test("a fallback base URL is stated, and only for a provider the export lacks", () => {
+    for (const id of Object.keys(API_FALLBACK)) {
+      expect(EXPORT.apiFallbacks).toContain(id);
+      expect(catalogEntry(id)?.baseUrl).toBe(API_FALLBACK[id]);
+    }
+    for (const id of EXPORT.apiFallbacks) {
+      expect(API_FALLBACK[id]).toBeDefined();
+    }
+    // The OpenCode split the docs insist on survives the change of source.
     expect(catalogEntry("opencode-go")?.baseUrl).not.toBe(
       catalogEntry("opencode-payg")?.baseUrl,
     );
   });
 
-  test("every entry is unverified until a person's account answers", () => {
-    expect(PROVIDER_CATALOG.every((entry) => entry.verified === false)).toBe(true);
+  test("the allowlist is stated in the script, one source id per entry", () => {
+    for (const allow of ALLOWLIST) {
+      expect(SCRIPT).toContain('modelsDevId: "' + allow.modelsDevId + '"');
+      expect(SCRIPT).toContain('id: "' + allow.id + '"');
+    }
+    // models.dev has no OpenCode Zen; the app does not invent one.
+    expect(ALLOWLIST.map((allow) => allow.id)).not.toContain("opencode-zen");
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 2. The example model is the stated rule, capabilities included.
+ * ------------------------------------------------------------------ */
+
+describe("the example model is the first with tool-use, else the first", () => {
+  test("every entry's example follows the rule and names both fields", () => {
     for (const entry of PROVIDER_CATALOG) {
-      expect(entry).not.toHaveProperty("apiKey");
-      expect(JSON.stringify(entry)).not.toContain("sk-");
+      const provider = EXPORT.providers.find((one) => one.id === entry.id);
+      const models = provider?.models ?? [];
+      const expected = models.find((model) => model.tool_call) ?? models[0];
+      expect(entry.modelExample?.id).toBe(expected?.id);
+      expect(entry.modelExample?.name).toBe(expected?.name);
+      expect(entry.modelExample?.toolCall).toBe(expected?.tool_call === true);
+      expect(entry.modelExample?.attachment).toBe(
+        expected?.attachment === true,
+      );
     }
   });
 
-  test("a model example, when present, names both fields and never a key", () => {
-    for (const entry of PROVIDER_CATALOG) {
-      if (entry.modelExample === undefined) continue;
-      expect(entry.modelExample.id.trim()).not.toBe("");
-      expect(entry.modelExample.name.trim()).not.toBe("");
+  test("every exported model is trimmed to five facts, with unique ids", () => {
+    for (const provider of EXPORT.providers) {
+      const ids = provider.models.map((model) => model.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      for (const model of provider.models) {
+        expect(Object.keys(model).sort()).toEqual([
+          "attachment",
+          "id",
+          "name",
+          "reasoning",
+          "tool_call",
+        ]);
+        expect(model.id.trim()).not.toBe("");
+        expect(model.name.trim()).not.toBe("");
+        expect(typeof model.tool_call).toBe("boolean");
+        expect(typeof model.attachment).toBe("boolean");
+        expect(typeof model.reasoning).toBe("boolean");
+      }
     }
   });
 });
 
 /* ------------------------------------------------------------------ *
- * 2. The unverified mark comes from the data.
+ * 3. The unverified mark comes from the data.
  * ------------------------------------------------------------------ */
 
 describe("the label marks what the data says is unverified", () => {
@@ -152,17 +262,19 @@ describe("the label marks what the data says is unverified", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * 3. A pick fills; the custom choice clears; nothing is requested or added.
+ * 4. A pick fills; the custom choice clears; nothing is requested or added.
  * ------------------------------------------------------------------ */
 
 describe("a pick fills the form and focuses the key field", () => {
-  test("each entry's fill is its name, base URL and example model", () => {
+  test("each entry's fill is its name, base URL, example model and caps", () => {
     for (const entry of PROVIDER_CATALOG) {
       expect(catalogFill(entry)).toEqual({
         name: entry.name,
         baseUrl: entry.baseUrl,
         modelId: entry.modelExample?.id ?? "",
         modelName: entry.modelExample?.name ?? "",
+        tools: entry.modelExample?.toolCall === true,
+        vision: entry.modelExample?.attachment === true,
       });
     }
   });
@@ -175,6 +287,8 @@ describe("a pick fills the form and focuses the key field", () => {
       baseUrl: "",
       modelId: "",
       modelName: "",
+      tools: false,
+      vision: false,
     });
   });
 
@@ -187,7 +301,7 @@ describe("a pick fills the form and focuses the key field", () => {
     expect(pick).toContain("catalogFill(entry)");
     expect(pick).toContain("CUSTOM_FILL");
     expect(pick).toContain("applyCatalogFill(");
-    expect(pick).toContain("setAddKey(\"\")");
+    expect(pick).toContain('setAddKey("")');
     expect(pick).toContain("keyFieldRef.current?.focus()");
     const apply = panelCode.slice(
       panelCode.indexOf("function applyCatalogFill"),
@@ -197,6 +311,9 @@ describe("a pick fills the form and focuses the key field", () => {
     expect(apply).toContain("setBaseUrl(fill.baseUrl)");
     expect(apply).toContain("setModelId(fill.modelId)");
     expect(apply).toContain("setModelName(fill.modelName)");
+    // The export's capabilities are a starting tick, still changeable below.
+    expect(apply).toContain("setTools(fill.tools)");
+    expect(apply).toContain("setVision(fill.vision)");
   });
 
   test("NO request, NO validation, NO automatic add on a pick", () => {
@@ -230,6 +347,8 @@ describe("a pick fills the form and focuses the key field", () => {
       "setBaseUrl(e.target.value)",
       "setModelId(e.target.value)",
       "setModelName(e.target.value)",
+      "setTools(e.target.checked)",
+      "setVision(e.target.checked)",
     ]) {
       expect(panelCode).toContain(setter);
     }
@@ -244,7 +363,7 @@ describe("a pick fills the form and focuses the key field", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * 4. The row's key state is a dot, and the add path stays the only write.
+ * 5. The row's key state is a dot, and the add path stays the only write.
  * ------------------------------------------------------------------ */
 
 describe("a row says its key state with a dot, and edits inline", () => {
@@ -272,11 +391,14 @@ describe("a row says its key state with a dot, and edits inline", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * 5. The one grep: no base URL outside the catalogue data.
+ * 6. The two greps: endpoints live in the data; nothing fetches at runtime.
  * ------------------------------------------------------------------ */
 
-describe("no catalogue base URL appears outside providerCatalog.ts", () => {
-  const DATA = join(APP, "src", "turn", "providerCatalog.ts");
+describe("no catalogue base URL appears outside the vendored data", () => {
+  // TWO files may name an endpoint: the committed export (the data) and the
+  // refresh script (the only thing that writes it, and the fallback list).
+  const DATA = join(APP, "src", "turn", "modelsDevCatalog.json");
+  const REFRESH = join(APP, "scripts", "models-dev-catalog.ts");
   // The catalogue's own test may name the URLs; no other file may.
   const SELF = fileURLToPath(import.meta.url);
   const SKIP = new Set(["node_modules", "dist", ".git"]);
@@ -289,13 +411,13 @@ describe("no catalogue base URL appears outside providerCatalog.ts", () => {
         sources(full, out);
         continue;
       }
-      if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+      if (!/\.(ts|tsx|json)$/.test(entry.name)) continue;
       out.push(full);
     }
     return out;
   }
 
-  test("the scan covers the panel, the turn path and the sidecar", () => {
+  test("the scan covers the panel, the turn path, the sidecar and the JSON", () => {
     const files = sources(APP);
     for (const rel of [
       "src/turn/providerCatalog.ts",
@@ -304,18 +426,19 @@ describe("no catalogue base URL appears outside providerCatalog.ts", () => {
       "src/turn/modelFetch.ts",
       "src/turn/egress.ts",
       "sidecar/runs.ts",
+      "src/turn/modelsDevCatalog.json",
     ]) {
       expect(files.map((file) => file.slice(APP.length + 1))).toContain(rel);
     }
     expect(files).toContain(DATA);
   });
 
-  test("no module but the data file writes a catalogue endpoint", () => {
+  test("no module but the data and its script writes a catalogue endpoint", () => {
     const files = sources(APP);
     const urls = PROVIDER_CATALOG.map((entry) => entry.baseUrl);
     const hits: string[] = [];
     for (const file of files) {
-      if (file === DATA || file === SELF) continue;
+      if (file === DATA || file === REFRESH || file === SELF) continue;
       const text = readFileSync(file, "utf8");
       for (const url of urls) {
         if (text.includes(url)) {
@@ -327,5 +450,164 @@ describe("no catalogue base URL appears outside providerCatalog.ts", () => {
     // POSITIVE CONTROL: the data file is where they belong, and it has them.
     const data = readFileSync(DATA, "utf8");
     for (const url of urls) expect(data).toContain(url);
+    // The script's fallbacks are the only URLs it states of its own.
+    for (const url of Object.values(API_FALLBACK)) {
+      expect(SCRIPT).toContain(url);
+    }
+  });
+
+  test("no runtime module fetches models.dev; the script is the only network", () => {
+    const runtime = [...sources(join(APP, "src")), ...sources(join(APP, "sidecar"))];
+    const hits: string[] = [];
+    for (const file of runtime) {
+      if (!/\.(ts|tsx)$/.test(file)) continue;
+      const text = codeOf(readFileSync(file, "utf8"));
+      const rel = file.slice(APP.length + 1);
+      if (/models\.dev\/api\.json/.test(text)) hits.push(rel + " -> the URL");
+      if (
+        /(fetch|XMLHttpRequest|WebSocket|EventSource)\s*\(/.test(text) &&
+        /models\.dev/.test(text)
+      ) {
+        hits.push(rel + " -> a request beside the name");
+      }
+    }
+    expect(hits).toEqual([]);
+    // The catalogue module is data: it cannot fetch even if someone tries.
+    const projection = codeOf(source("turn/providerCatalog.ts"));
+    expect(projection).not.toMatch(/\bfetch\s*\(/);
+    expect(projection).not.toMatch(/XMLHttpRequest|WebSocket|EventSource/);
+    // POSITIVE CONTROL: the URL is stated exactly once, in the refresh script.
+    expect(SCRIPT).toContain(MODELS_DEV_URL);
+    expect(SCRIPT).toContain("import.meta.main");
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 7. The refresh script refuses a broken payload and writes nothing.
+ * ------------------------------------------------------------------ */
+
+describe("the refresh refuses to write an empty or malformed payload", () => {
+  test("a payload that is not an object of providers is refused", () => {
+    for (const raw of [null, "", [], 3, true]) {
+      expect(() => projectCatalog(raw)).toThrow(CatalogRefused);
+    }
+  });
+
+  test("nothing parseable is refused before it can reach a provider", async () => {
+    expect(() => parseExport("not json")).toThrow(CatalogRefused);
+    let writes = 0;
+    const write = async () => {
+      writes += 1;
+    };
+    for (const text of ["", "<html>", "null", "[]", "{}"]) {
+      await expect(
+        refreshCatalog({ fetchText: async () => text, previous: null, write }),
+      ).rejects.toThrow(CatalogRefused);
+    }
+    expect(writes).toBe(0);
+  });
+
+  test("a provider that lost its key variable or its chat models is refused", async () => {
+    const raw = rawFromExport();
+    const deepseek = raw.deepseek as Record<string, unknown>;
+    expect(() =>
+      projectCatalog({ ...raw, deepseek: { ...deepseek, env: [] } }),
+    ).toThrow(CatalogRefused);
+    expect(() =>
+      projectCatalog({
+        ...raw,
+        deepseek: {
+          ...deepseek,
+          models: { "an-image-model": { id: "an-image", modalities: { output: ["image"] } } },
+        },
+      }),
+    ).toThrow(CatalogRefused);
+    let writes = 0;
+    await expect(
+      refreshCatalog({
+        fetchText: async () =>
+          JSON.stringify({ deepseek: { ...deepseek, env: [] } }),
+        previous: null,
+        write: async () => {
+          writes += 1;
+        },
+      }),
+    ).rejects.toThrow(CatalogRefused);
+    expect(writes).toBe(0);
+  });
+
+  test("a payload that would grow past the window is refused, not committed", async () => {
+    const raw = rawFromExport();
+    const deepseek = raw.deepseek as Record<string, unknown>;
+    const models = deepseek.models as Record<string, Record<string, unknown>>;
+    const first = Object.keys(models)[0];
+    let writes = 0;
+    await expect(
+      refreshCatalog({
+        fetchText: async () =>
+          JSON.stringify({
+            ...raw,
+            deepseek: {
+              ...deepseek,
+              models: {
+                [first]: { ...models[first], name: "x".repeat(210_000) },
+              },
+            },
+          }),
+        previous: null,
+        write: async () => {
+          writes += 1;
+        },
+      }),
+    ).rejects.toThrow(CatalogRefused);
+    expect(writes).toBe(0);
+  });
+
+  test("a good payload is projected, written once and summarised", async () => {
+    let written = "";
+    const result = await refreshCatalog({
+      fetchText: async () => JSON.stringify(rawFromExport()),
+      previous: null,
+      write: async (text) => {
+        written = text;
+      },
+    });
+    const back = JSON.parse(written) as CatalogExport;
+    expect(back.providers.map((provider) => provider.id)).toEqual(
+      ALLOWLIST.map((allow) => allow.id),
+    );
+    expect(result.next.providers.length).toBe(ALLOWLIST.length);
+    expect(result.summary).toContain("providers: " + ALLOWLIST.length);
+    expect(result.summary).toContain("models: ");
+    expect(result.summary).toContain("added:");
+  });
+
+  test("the summary names what was added, removed and changed", () => {
+    const withAChange: CatalogExport = {
+      ...EXPORT,
+      providers: EXPORT.providers.map((provider) =>
+        provider.id === "deepseek" ? { ...provider, name: "DeepSeek (moved)" } : provider,
+      ),
+    };
+    const summary = summaryOf(EXPORT, withAChange);
+    expect(summary).toContain("providers: " + EXPORT.providers.length);
+    expect(summary).toContain("changed 1");
+    expect(summary).toContain("changed: deepseek");
+    const fewer: CatalogExport = {
+      ...EXPORT,
+      providers: EXPORT.providers.filter((provider) => provider.id !== "groq"),
+    };
+    expect(summaryOf(EXPORT, fewer)).toContain("removed: groq");
+    expect(summaryOf(null, EXPORT)).toContain(
+      "added: " + EXPORT.providers.map((provider) => provider.id).join(", "),
+    );
+  });
+
+  test("the committed export is what the script would write today", () => {
+    // The file pinned in git is reproducible from the allowlist and the export
+    // shape: a refresh with unchanged data changes nothing.
+    const projected = projectCatalog(rawFromExport());
+    expect(projected.providers.length).toBe(EXPORT.providers.length);
+    expect(summaryOf(EXPORT, projected)).toContain("added 0, removed 0");
   });
 });
