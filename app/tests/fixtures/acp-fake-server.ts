@@ -12,10 +12,21 @@
  *                 ordered updates, a second prompt that answers a cancel.
  *   malformed     writes one non-JSON line before the initialize answer.
  *   die-mid-turn  writes one update for the first prompt, then exits 3.
+ *   hang-mid-turn writes one update, then waits for session/cancel before
+ *                 settling the prompt as cancelled (a stop probe).
  *   silent        reads everything and answers nothing (a timeout probe).
+ *
+ * --report <path> writes {pid, argv, env} once at startup, before the protocol
+ * starts. It is how the run tests prove what environment reached the child and
+ * that the child died. When `session/cancel` arrives it also writes
+ * `<report>.cancel`, so a test can prove the client asked before the child was
+ * killed. The report path is the fixture's own, never the run's session
+ * directory.
  *
  * Run it as \`bun tests/fixtures/acp-fake-server.ts [mode] [--framing <kind>]\`.
  */
+
+import { writeFileSync } from "node:fs";
 
 const argv = process.argv.slice(2);
 const mode = argv[0] ?? "normal";
@@ -23,6 +34,17 @@ const framingIndex = argv.indexOf("--framing");
 const framing = framingIndex >= 0 ? argv[framingIndex + 1] : "ndjson";
 if (framing !== "ndjson" && framing !== "content-length") {
   throw new Error("unknown framing: " + framing);
+}
+
+const reportIndex = argv.indexOf("--report");
+const reportPath = reportIndex >= 0 ? argv[reportIndex + 1] : null;
+if (reportPath !== null) {
+  // The child's own view of what it was given. The run tests read it; nothing
+  // in the run writes it.
+  writeFileSync(
+    reportPath,
+    JSON.stringify({ pid: process.pid, argv: process.argv, env: { ...process.env } }),
+  );
 }
 
 const encoder = new TextEncoder();
@@ -115,6 +137,19 @@ async function runPrompt(id: number): Promise<void> {
     process.exit(3);
   }
 
+  if (mode === "hang-mid-turn") {
+    update("working ");
+    await new Promise<void>((resolve) => {
+      if (active === null || active.cancelled) {
+        resolve();
+        return;
+      }
+      active.cancelWaiters.push(resolve);
+    });
+    settlePrompt("cancelled");
+    return;
+  }
+
   if (promptCount === 1) {
     update("one ");
     const optionId = await new Promise<string | null>((resolve) => {
@@ -145,6 +180,9 @@ async function runPrompt(id: number): Promise<void> {
 }
 
 function cancel(): void {
+  if (reportPath !== null) {
+    writeFileSync(reportPath + ".cancel", JSON.stringify({ sessionId }));
+  }
   if (active === null) return;
   active.cancelled = true;
   permissionWaiter?.(null);
