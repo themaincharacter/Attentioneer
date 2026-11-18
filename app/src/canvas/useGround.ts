@@ -226,6 +226,7 @@ import {
 } from "../turn/packet";
 import { loadTurnSettings } from "../turn/provider";
 import { askSteps } from "../turn/steps";
+import type { AskWorkPhase } from "./contactRules";
 import {
   PROVIDER_SENTENCES,
   resolveManager,
@@ -673,6 +674,14 @@ export interface GroundView {
     slug: string,
     question: string,
     onPart?: (text: string) => void,
+    /**
+     * STORY 16.28 — THE CURATOR'S OWN WAIT, named to the card. The task call's
+     * start is the card's own press; this is how the ONE quiet line learns
+     * that the second call has begun (`curator`) and that it has ended
+     * (`idle`, by success or failure, before the card's sentence takes over).
+     * VIEW STATE only: it never reaches a record.
+     */
+    onPhase?: (phase: AskWorkPhase) => void,
   ) => Promise<GroundAddResult>;
   /**
    * STORY 17.2 — STOP the running ask turn: the existing turn port's stop, so
@@ -4357,6 +4366,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       context: AskContext,
       question: string,
       onPart?: (text: string) => void,
+      onPhase?: (phase: AskWorkPhase) => void,
     ): Promise<AskTurnSend> => {
       if (turn === undefined) {
         return {
@@ -4469,12 +4479,19 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       // question, the reply and the schema. The same turn port and the same
       // request line — nothing new crosses the wire.
       const messages = buildCuratorMessages({ question, reply });
+      // STORY 16.28 — THE SECOND WAIT IS NAMED to the card: the task's text is
+      // already on screen, so this is the one thing left to say while the
+      // manager distils. The line goes the moment this call ends, whichever
+      // way it ends; the sentence a failure or decline leaves behind is the
+      // card's, not this line's.
+      onPhase?.("curator");
       let curated: TurnResult;
       try {
         curated = await turn.sendMessages(managerRoute, messages);
       } catch {
         curated = { kind: "error", sentence: ASK_CURATOR_FAILED_SENTENCE };
       }
+      onPhase?.("idle");
       if (curated.kind !== "answer" || curated.text === "") {
         return {
           ...sent,
@@ -5547,6 +5564,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       slug: string,
       question: string,
       onPart?: (text: string) => void,
+      onPhase?: (phase: AskWorkPhase) => void,
     ): Promise<GroundAddResult> => {
       const refusal = askQuestionRefusal(question);
       if (refusal !== null) {
@@ -5647,7 +5665,13 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         message: "nothing was written.",
       };
       try {
-        const sent = await sendAskQuestion(packet, context, question, onPart);
+        const sent = await sendAskQuestion(
+          packet,
+          context,
+          question,
+          onPart,
+          onPhase,
+        );
         await queueRef.current.push(async () => {
           // ONE PRISM PER SENDING TURN (story 17.4), then the words: the
           // Move lands first because the answer line names its id. A turn

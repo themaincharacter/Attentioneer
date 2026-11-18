@@ -38,7 +38,7 @@ import {
 } from "../map/readings";
 import type { Media } from "../map/media";
 import { askCardOf } from "../turn/context";
-import type { AskCallsFacts } from "./contactRules";
+import type { AskCallsFacts, AskWorkPhase } from "./contactRules";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
 import { attachGroundCardDrag } from "./groundDrag";
@@ -530,6 +530,10 @@ interface GroundLayerProps {
     slug: string,
     question: string,
     onPart?: (text: string) => void,
+    /** STORY 16.28 — the curator's own start and end, forwarded untouched:
+     *  the card's one quiet line says the manager is distilling only while
+     *  that second call is actually running. */
+    onPhase?: (phase: AskWorkPhase) => void,
   ) => Promise<GroundAddResult>;
   /** Stop the running ask turn (the existing turn port's stop — story 17.2). */
   onStopAskTurn?: () => Promise<void>;
@@ -1132,8 +1136,8 @@ export function GroundLayer({
             onAskTurn={
               onAskTurn === undefined
                 ? undefined
-                : async (slug, question, onPart) => {
-                    const result = await onAskTurn(slug, question, onPart);
+                : async (slug, question, onPart, onPhase) => {
+                    const result = await onAskTurn(slug, question, onPart, onPhase);
                     if (result.ok && result.created !== undefined) {
                       setOpenOn(result.created);
                       setOpenAskOn(null);

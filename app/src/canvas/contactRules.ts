@@ -380,6 +380,40 @@ export const ASK_READ_MISSED =
   "it asked for a target this view did not carry; the answer stands.";
 
 /**
+ * STORY 16.28 — THE QUIET WORKING LINE. The user, live: "There is no loading
+ * indicator to let the user know that the LLM is thinking or whatever." There
+ * are TWO waits in one ask — the task call before the first streamed word, and
+ * the curator call after the last one — and in both the card used to look like
+ * it did nothing. So the thread carries ONE quiet line while work is happening:
+ * this line while the task call runs, the next while the curator distils, and
+ * nothing at all when idle. Three states, one line each; the wording is
+ * PROVISIONAL, the states are not.
+ *
+ * IT NEVER LIES ABOUT PROGRESS. The line says THAT work is happening, nothing
+ * about how much: no percentage, no elapsed seconds, no token count, no step
+ * number, no digit of any kind (a test pins that). The streamed text is the
+ * real indicator, and it supersedes this line the instant a part arrives.
+ */
+export const ASK_WORKING_TASK = "the model is working";
+export const ASK_WORKING_CURATOR = "distilling the answer";
+
+/** The two kinds of work the line can name; idle is the absence of both. */
+export type AskWorking = "task" | "curator";
+
+/**
+ * WHERE THE TURN HAS GOT TO, as the card is told it: the task call, the
+ * curator call, or nothing running. The card sets `task` itself at the send
+ * (the press is its own fact) and the layer reports the curator's start and
+ * end, because only the layer makes that call.
+ */
+export type AskWorkPhase = AskWorking | "idle";
+
+/** The line for a kind of work (PURE, PROVISIONAL wording, never a number). */
+export function askWorkingWords(working: AskWorking): string {
+  return working === "curator" ? ASK_WORKING_CURATOR : ASK_WORKING_TASK;
+}
+
+/**
  * The response's declared facts, said exactly: the byte size and the decode
  * status the intake declared. Never rounded, never a count of anything else.
  */

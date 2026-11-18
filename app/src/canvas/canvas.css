@@ -7659,6 +7659,13 @@ body {
     animation: none !important;
     transition: none !important;
   }
+
+  /* STORY 16.28 — the working line's marker is drawn still. The line's words
+     were never animated, so this setting costs the line nothing but the
+     breathe: every word stays, nothing hides, nothing is gated on motion. */
+  .ask-working-marker {
+    animation: none !important;
+  }
 }
 
 
@@ -7821,6 +7828,43 @@ body {
   font-style: italic;
   line-height: 1.5;
   color: var(--ink-soft);
+}
+
+/* ------------------------------------------------------------------------- *
+ * STORY 16.28 — THE QUIET WORKING LINE.
+ *
+ * One line in the thread while a wait is happening: the task call before the
+ * first word, the curator call after the last. It is the card speaking in its
+ * own voice — no toast, no modal, no spinner theatre and no number of any kind
+ * (the wordings carry no digits). The WORDS never move; only the small marker
+ * breathes, because an animated thing is easier to notice than an animated
+ * sentence. Under reduce motion the marker is drawn still and the line keeps
+ * every word — see the reduce-motion block above.
+ * ------------------------------------------------------------------------- */
+.ask-working {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 11.5px;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.ask-working-marker {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink-marker);
+  animation: ask-working-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes ask-working-breathe {
+  50% {
+    opacity: 0.3;
+  }
 }
 
 /* The fork's naming row, in the reference card's naming idiom: a pre-filled

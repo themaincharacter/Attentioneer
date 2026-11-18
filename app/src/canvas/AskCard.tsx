@@ -27,7 +27,9 @@ import {
   ASK_OVERFLOW_VERB,
   ASK_READ_MISSED,
   askReadMoreWords,
+  askWorkingWords,
   type AskCallsFacts,
+  type AskWorkPhase,
 } from "./contactRules";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
@@ -173,6 +175,20 @@ const ASK_PILL_RULES: PillNameRules = {
  * place. Nothing was removed from what a person CAN open — only from what is
  * shown by default.
  *
+ * STORY 16.28 — IT SAYS IT IS WORKING. The user, live: "There is no loading
+ * indicator to let the user know that the LLM is thinking or whatever." The
+ * thread now carries ONE quiet line during each wait: "the model is working"
+ * before the first streamed word, "distilling the answer" while the curator
+ * runs after the last, and nothing when idle. The first part removes the task
+ * line — the streamed text IS the indicator — and the line never lies about
+ * progress: it says that work is happening, never how much (no percentage, no
+ * elapsed seconds, no token count, no step number, no digit at all). Stop is
+ * the same stop in both waits, because the turn port targets whichever call is
+ * live. A stopped or failed turn clears the line and the existing sentences
+ * take over; a failed curator leaves its failure sentence, never the distil
+ * line. The layer names the curator's own start and end (only it makes that
+ * call); the card's press is the task's own start.
+ *
  * PROVISIONAL (ADR-0003's rendering seam): the card's size, the crop, the
  * scrollbox height and slack, the role marks, the stopped/incomplete wording,
  * story 17.5's divider and missing-parent lines and the fork chooser's look,
@@ -182,7 +198,9 @@ const ASK_PILL_RULES: PillNameRules = {
  * pre-send state's wording (the sentence is reused, not new), and — STORY
  * 17.9 — the context line's wording and the dangling-wire sentence, and —
  * STORY 16.27 — the disclosure verb's wording, the overflow verb and its three
- * items, the read-more verb, and where the full provenance list sits.
+ * items, the read-more verb, and where the full provenance list sits, and —
+ * STORY 16.28 — the two workings' wordings, the marker and its breathe, and
+ * where the working line sits in the thread.
  */
 
 /** The quiet line an ask card with no turns shows (PROVISIONAL wording). */
@@ -320,6 +338,51 @@ export function askEndingMark(ending: AskEnding): string | null {
   if (ending === "stopped") return ASK_STOPPED_MARK;
   if (ending === "incomplete") return ASK_INCOMPLETE_MARK;
   return null;
+}
+
+/**
+ * STORY 16.28 — WHICH QUIET LINE THE TURN OWES, OR NONE (PURE).
+ *
+ * Three states, one line each: while the task call runs and nothing has
+ * arrived, the model is working; while the curator distils a finished answer,
+ * the answer is being distilled; otherwise nothing. THE FIRST PART ENDS THE
+ * FIRST LINE — the streamed text IS the indicator, so the line goes the instant
+ * there is a word of real text and never competes with it. A settled or idle
+ * turn owes no line at all: the stopped, broken or no-card sentences take over
+ * from there.
+ *
+ * The curator line needs an answer to distil, so a curator phase with no text
+ * says nothing (that state cannot happen on the real path, and inventing a
+ * line for it would claim work over an empty reply).
+ */
+export function askWorkingLine(
+  pending: AskPending | null,
+  phase: AskWorkPhase,
+): string | null {
+  if (phase === "idle" || pending === null || pending.ending !== "running") {
+    return null;
+  }
+  const arrived = pending.answer !== "";
+  if (!arrived) {
+    return phase === "curator" ? null : askWorkingWords("task");
+  }
+  return phase === "curator" ? askWorkingWords("curator") : null;
+}
+
+/**
+ * THE WORKING LINE ITSELF: one quiet line in the thread, in the card's voice —
+ * never a toast, never a modal. The marker is the ONE animated thing (a soft
+ * breathe); the words never move, and under reduce motion the marker is drawn
+ * static (canvas.css drops the animation outright). No number rides here: the
+ * line says that work is happening, never how much of it there is.
+ */
+export function AskWorkingLine({ line }: { line: string }) {
+  return (
+    <div className="ask-working" role="status">
+      <span className="ask-working-marker" aria-hidden="true" />
+      <span className="ask-working-text">{line}</span>
+    </div>
+  );
 }
 
 /**
@@ -541,6 +604,9 @@ export function AskCard({
     slug: string,
     question: string,
     onPart?: (text: string) => void,
+    /** STORY 16.28 — the layer names the curator's start and end; the card
+     *  sets the task phase itself at the press. */
+    onPhase?: (phase: AskWorkPhase) => void,
   ) => Promise<GroundAddResult>;
   /** Stop the running turn (the existing turn port's stop). */
   onStopTurn?: () => Promise<void>;
@@ -599,6 +665,13 @@ export function AskCard({
   const [pending, setPending] = useState<AskPending | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  /**
+   * STORY 16.28 — WHICH WAIT THE CARD IS IN (the task call, the curator call,
+   * or none). VIEW STATE only: it never reaches a record. The card sets the
+   * task phase at its own press; the layer reports the curator's start and end
+   * through `onAskTurn`, because only the layer makes that second call.
+   */
+  const [phase, setPhase] = useState<AskWorkPhase>("idle");
   // STORY 17.5 — the fork's PROPOSED name before anything is written. View
   // state: cancel or Esc forgets it, and only the confirm reaches a writer.
   const [forking, setForking] = useState<{ carry: number; name: string } | null>(
@@ -866,7 +939,7 @@ export function AskCard({
     const el = bodyRef.current;
     if (el === null || !pinnedRef.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [open, turns.length, pending?.question, pending?.answer]);
+  }, [open, turns.length, pending?.question, pending?.answer, phase]);
 
   function trackScroll(): void {
     const el = bodyRef.current;
@@ -896,14 +969,23 @@ export function AskCard({
     // The person's line is shown at once as the pending question; the writer
     // appends the verbatim words only when the turn settles.
     setPending(askSendPending(asked));
+    // The press is the first wait's own fact: the task call starts now.
+    setPhase("task");
     setQuestion("");
     // The bytes about to leave stay openable while they leave. The turn's own
     // readback replaces them when it settles — including a follow-up's message,
     // so the verb never claims less than what left.
     if (packet !== null) setSent({ messages: packet.messages, read: null });
     const result = await onAskTurn(ask.on, asked, (text) => {
+      // The first part is real text: `askWorkingLine` drops the line by
+      // itself, so no phase is forced on the stream.
       setPending((current) => askPartPending(current, text));
-    });
+    },
+      // The layer speaks only for the curator; a phase it never names stays
+      // whatever the send set.
+      (next) => setPhase(next));
+    // The turn is over: no wait is running, so no line is owed.
+    setPhase("idle");
     setStopping(false);
     setPending((current) => askSettlePending(current, result.ok, stoppedRef.current));
     // STORY 17.7b: the turn's hit facts are the card's quiet lines; a clean
@@ -1052,6 +1134,9 @@ export function AskCard({
   }
 
   const recorded = askPendingInRecord(turns, pending);
+  // STORY 16.28 — the one line the running turn owes, or null when the text has
+  // already taken over (or nothing is running).
+  const workingLine = askWorkingLine(pending, phase);
   const pendingQuestion =
     pending !== null && pending.question !== "" && !recorded.question
       ? { role: "person" as const, text: pending.question, t: "" }
@@ -1262,6 +1347,13 @@ export function AskCard({
                 />
               </div>
             )}
+            {/* STORY 16.28 — THE QUIET WORKING LINE. It sits where the answer
+                will be (or under the finished answer while the curator
+                distils) and is replaced the instant real text arrives: the
+                text IS the indicator. The line itself never animates; the
+                marker is the only thing that breathes, and reduce motion
+                draws it static (canvas.css). */}
+            {workingLine !== null && <AskWorkingLine line={workingLine} />}
 
           </div>
         ) : smallTurn === null ? (
