@@ -337,10 +337,12 @@ describe("authored moves only: the look leaves no line", () => {
     expect(existsSync(historyPath(workspace))).toBe(false);
   });
 
-  test("the hook appends from the twenty-three authored write paths, no more", () => {
+  test("the hook appends from the twenty-two authored write paths, no more", () => {
     // The only call form the verbs use; the definition is not a call site.
-    // Story 16.12 added the selection card as the ninth authored write path;
-    // story 16.13 adds the restore as the tenth; story 16.14 the page card and
+    // STORY 18 removes story 16.12's selection card from the authored write
+    // paths with its verb (the user corrected the intent), so the count drops
+    // by one from the twenty-three that 18.5 left. Story 16.13's restore is one
+    // of them; story 16.14 the page card and
     // story 16.15 the video card. STORY 17.8 adds the ask moves; STORY 17.10
     // retires the re-anchor verb and adds the empty-ask writer in its place
     // (the rename changes a name, which this log does not event). STORY 18.4
@@ -348,13 +350,12 @@ describe("authored moves only: the look leaves no line", () => {
     // adds three session moves (create, remove, run) and the session restore
     // inside the one toast handler.
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(22);
+    expect(calls.length).toBe(21);
   });
 
   test("the mirror and the history own the same verbs", () => {
     const verbs = [
       "create",
-      "createSelection",
       "createPage",
       "createVideo",
       "move",
@@ -598,7 +599,6 @@ describe("the whole log", () => {
   test("the history is written AFTER the record it describes", () => {
     const verbs = [
       "create",
-      "createSelection",
       "createPage",
       "move",
       "refresh",
@@ -621,7 +621,8 @@ describe("the whole log", () => {
       const writeAt = Math.max(
         body.lastIndexOf("await save"),
         body.lastIndexOf("await remove"),
-        // Story 16.12: the selection's write delegates to its helper.
+        // STORY 18.4: the run's result card delegates to the selection form's
+        // helper (its creator is no longer on this list; the helper stays).
         body.lastIndexOf("await writeSelectionCard"),
         // Story 16.14: so does the page card's.
         body.lastIndexOf("await writePageCard"),

@@ -143,7 +143,6 @@ import {
   resolveReadingState,
   saveReadings,
   selectionReading,
-  selectionRefusal,
   storeReadingText,
   storeSelectionText,
   takeReading,
@@ -346,11 +345,14 @@ import {
  *     unlink and written back verbatim, and a transcript whose card is gone is
  *     an ORPHAN named in the notices group and the mirror, never adopted and
  *     never deleted.
- *   - A SELECTION CARD (16.12): the person selects text inside an expanded
- *     card's reading, names the new card, and `createSelection` writes the
- *     excerpt's text file, its reading line (provenance `card://<source>`) and
- *     the ground line, in that order. NO source is read or stat'ed, the source
- *     card's files are never touched, and the excerpt can never be stale.
+ *   - A SELECTION CARD (16.12's FORM, still legal): a card whose reading is a
+ *     copy of text from another card — no source file, provenance
+ *     `card://<source>`, current by construction, never stat'ed. STORY 18
+ *     REMOVED THE VERB THAT MADE ONE FROM A CONCEPT-MAP SELECTION (the user
+ *     corrected the intent: that selection should open the ASK widget, a later
+ *     story). The form stays parsed and rendered, because existing cards, the
+ *     artifact card and story 18.4's run-result card are selections too; the
+ *     result card is now the only creator, through `writeSelectionCard`.
  *   - The whole read-modify-write runs through the app's one per-file
  *     discipline (`createWriteQueue`, ADR-0004/ADR-0018): one line at a time,
  *     never a whole-folder rewrite. THE PULL, THE MIRROR AND THE HISTORY ARE
@@ -717,19 +719,6 @@ export interface GroundView {
     from: string,
   ) => Promise<GroundAddResult>;
   /**
-   * Make a NEW card whose reading is exactly the selected bytes (story 16.12):
-   * provenance is the source card's slug (`card://`), no file is read and
-   * nothing behind it can go stale. The name is the person's — the layer
-   * proposes it, and this refuses a blank one before touching a file.
-   */
-  createSelection: (
-    sourceSlug: string,
-    name: string,
-    x: number,
-    y: number,
-    text: string,
-  ) => Promise<GroundAddResult>;
-  /**
    * Add one reference from a pasted web address (story 16.14): the sidecar
    * fetches it ONCE, the text becomes the reading and a local thumbnail is
    * kept. A refused fetch writes NOTHING — there is no half-formed card.
@@ -819,7 +808,6 @@ type GroundLoaded = Omit<
   | "answerSessionPermission"
   | "makeCardFromRun"
   | "create"
-  | "createSelection"
   | "createPage"
   | "createVideo"
   | "move"
@@ -1629,7 +1617,10 @@ export interface SelectionRecords {
 }
 
 /**
- * STORY 16.12 — MAKE A CARD OUT OF A SELECTION, in the house order:
+ * MAKE A CARD OUT OF A SELECTION, in the house order. STORY 16.12 wrote this
+ * for the selection→card verb; STORY 18 removes that verb (the user corrected
+ * the intent) but KEEPS the writer, because the reading form stays legal and
+ * story 18.4's run-result card is one. What is written is:
  *
  *   1. the excerpt's text file FIRST (`map/readings/<new-slug>.md`, verbatim);
  *   2. the readings line NEXT (so a crash leaves an orphan text, never a line
@@ -3580,85 +3571,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     [workspacePath],
   );
 
-  /**
-   * CREATE A SELECTION CARD (story 16.12): the person selected text inside an
-   * expanded card's reading and confirmed a name. The bytes are written
-   * VERBATIM and the reading's line records the SOURCE CARD, not a file. No
-   * head is read, nothing is stat'ed, and the source card's files are never
-   * touched — this only appends the new card's three pieces.
-   */
-  const createSelection = useCallback(
-    (
-      sourceSlug: string,
-      name: string,
-      x: number,
-      y: number,
-      text: string,
-    ): Promise<GroundAddResult> => {
-      // The two refusals the affordance also answers with, run BEFORE the
-      // queue so a blank name writes nothing at all.
-      const refusal = selectionRefusal(name, text);
-      if (refusal !== null) {
-        return Promise.resolve({ ok: false, message: refusal });
-      }
-      let outcome: GroundAddResult = {
-        ok: false,
-        message: "nothing was written.",
-      };
-      return queueRef.current
-        .push(async () => {
-          const written = await writeSelectionCard(
-            workspacePath,
-            referencesRef.current,
-            readingsRef.current,
-            malformedGroundRef.current,
-            malformedReadingsRef.current,
-            sourceSlug,
-            name,
-            x,
-            y,
-            text,
-            new Date().toISOString(),
-            undefined,
-            // STORY 18.3 — ALL THREE FAMILIES now: ground, asks and sessions.
-            { taken: sharedSlugs(referencesRef.current, asksRef.current, sessionsRef.current) },
-          );
-          referencesRef.current = written.references;
-          readingsRef.current = written.readings;
-          textsRef.current = {
-            ...textsRef.current,
-            [written.reading.on]: text,
-          };
-          // The excerpt is the map's own copy: current, and never stat'ed.
-          statesRef.current = {
-            ...statesRef.current,
-            [written.reading.on]: "current" as ReadingState,
-          };
-          setState(snapshot());
-          outcome = { ok: true };
-          // Story 16.10: a card appeared at a point. The history carries the
-          // MOVE only — the excerpt's words are never logged.
-          const placed = written.references.find(
-            (reference) => reference.on === written.reading.on,
-          );
-          queueHistory(() => [
-            cardAddEvent(
-              Date.now(),
-              written.reading.on,
-              placed?.x ?? Math.round(x),
-              placed?.y ?? Math.round(y),
-            ),
-          ]);
-          queueMirror();
-        })
-        .then(() => outcome)
-        .catch(() => ({
-          ok: false,
-          message: "cannot write the map folder.",
-        }));
-    },
-    [workspacePath],
-  );
+  // STORY 18 — 16.12's `createSelection` is gone with its verb: selecting text
+  // in a reading no longer mints a ground card (the user corrected the intent;
+  // that gesture belongs to the selection→ASK widget, a later story). The
+  // WRITER below still exists, because a stored selection card is legal: the
+  // run-result card (18.4) is one, and so are every card made before this story.
 
   /**
    * CREATE A PAGE CARD (story 16.14): the person pasted a web address. The
@@ -5704,7 +5621,6 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     answerSessionPermission,
     makeCardFromRun,
     create,
-    createSelection,
     createPage,
     createVideo,
     move,

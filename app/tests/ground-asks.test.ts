@@ -727,7 +727,7 @@ describe("the ask path reuses the existing card-ask turn (story 17.3 adds the th
   test("the proposed name is the anchored card's words plus the noun", () => {
     expect(proposeAskName(SOURCE_NAME)).toBe("Rain gauge question");
     expect(proposeAskName("  ")).toBe("a question");
-    // The selection card's placement idiom, beside the source.
+    // The card-beside-its-source idiom (16.12's offset, now the ask's alone).
     expect(askPlacement(100, 200)).toEqual({ x: 420, y: 200 });
     // The source-card refusals exist for a layer that knows no cards yet.
     expect(ASK_SOURCE_REFUSAL).toBe("that card is not on the map.");

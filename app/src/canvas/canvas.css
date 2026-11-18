@@ -6159,16 +6159,13 @@ body {
   animation: fade-in var(--motion-fast) var(--ease-out);
 }
 
-/* STORY 16.12 — A SELECTION BECOMES A CARD. The one affordance lives in the
-   card's verbs row (no floating toolbar over every selection), the name field
-   is the bubble's quiet input voice, and the provenance line is the footer's
+/* THE CARD-NAMING BLOCK (story 16.12's name field, kept by 17.1 and now used
+   only by the ASK card's verb; STORY 18 removed the selection→card affordance
+   and its `.ground-select-ask` style with it). The provenance line below stays:
+   a stored selection card still says where its text came from, in the footer's
    usual small type — a source NAME, never a path. Nothing counts, scores or
    nudges. PROVISIONAL (ADR-0003's rendering seam): the name block's look and
    the confirm verb's wording. */
-.ground-select-ask {
-  font-style: italic;
-}
-
 .ground-selection {
   display: flex;
   flex-direction: column;

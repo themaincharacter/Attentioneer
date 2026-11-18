@@ -515,7 +515,6 @@ describe("a mirror failure never fails the move", () => {
 describe("the hook queues the mirror after every ground write", () => {
   const verbs = [
     "create",
-    "createSelection",
     "createPage",
     // STORY 16.15: a video card is authored like a page card — fetched once,
     // then written — and re-derives the map.
@@ -553,8 +552,9 @@ describe("the hook queues the mirror after every ground write", () => {
       const writeAt = Math.max(
         body.lastIndexOf("await save"),
         body.lastIndexOf("await remove"),
-        // Story 16.12: a selection's write path delegates its saves to
-        // `writeSelectionCard` (text first, lines last) and then mirrors.
+        // STORY 18.4: the run's result card delegates to `writeSelectionCard`
+        // (text first, lines last) and then mirrors. STORY 18 removed the
+        // concept-map selection verb, not this writer.
         body.lastIndexOf("await writeSelectionCard"),
         // Story 16.13: a restore delegates its five writes to
         // `restoreGroundCard` (pieces first, reference last) and then mirrors.
@@ -578,8 +578,9 @@ describe("the hook queues the mirror after every ground write", () => {
   }
 
   test("exactly twenty-two call sites (one per write path, not on load)", () => {
-    // Story 16.12 added the selection card as the ninth authored write path;
-    // story 16.13 adds restore as the tenth; story 16.14 the page card and
+    // STORY 18 removes story 16.12's selection card from the write paths with
+    // its verb, so this is one fewer than the twenty-three 18.5 left.
+    // Story 16.13 adds restore as the tenth; story 16.14 the page card and
     // story 16.15 the video card. STORY 17.8 adds four ask moves; STORY 17.10
     // (the addendum) retires the re-anchor verb and adds the rename and the
     // empty-ask writer in its place, so the count is unchanged.
@@ -588,7 +589,7 @@ describe("the hook queues the mirror after every ground write", () => {
     // restore inside the one toast handler.
     // STORY 17.10 adds one mirror for the FIRST question's short-form rename
     // (an empty card names itself), which is a name change like any other.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(23);
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(22);
   });
 
   test("opening never writes the mirror", () => {

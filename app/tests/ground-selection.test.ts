@@ -3,9 +3,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,17 +17,17 @@ import {
   GroundLayer,
   readingProvenance,
   SELECTION_MISSING_SOURCE,
-  selectionPlacement,
 } from "../src/canvas/GroundLayer";
 import { CONTENT_CLASSES } from "../src/canvas/gates";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
-import { metasOf, writeSelectionCard, type SelectionIo } from "../src/canvas/useGround";
 import {
-  addGroundReference,
-  groundPath,
+  metasOf,
+  removeGroundRecords,
+  restoreGroundCard,
+} from "../src/canvas/useGround";
+import {
   loadGround,
   saveGround,
-  type GroundIo,
   type GroundReference,
 } from "../src/map/ground";
 import {
@@ -37,21 +37,15 @@ import {
   parseReadingLine,
   parseReadings,
   previewText,
-  proposeSelectionName,
   readingFor,
   readingStateWord,
   readingTextPath,
-  readingsPath,
   resolveReadingState,
   saveReadings,
-  SELECTION_EMPTY_REFUSAL,
-  SELECTION_NAME_REFUSAL,
   selectionProvenance,
   selectionReading,
-  selectionRefusal,
   selectionSourceSlug,
   serializeReadingLine,
-  storeSelectionText,
   type Reading,
   type ReadingIo,
 } from "../src/map/readings";
@@ -62,28 +56,25 @@ import { clipHead } from "../src/lib/headBounds";
 import type { FileMetaAnswer, TextHead } from "../src/lib/fs";
 
 /**
- * Story 16.12 — a selection becomes a card.
+ * STORY 18 — the selection→card VERB is deleted; the selection FORM is not.
  *
- * The story's check is human ("select a paragraph of an expanded card's
- * reading, press ask about this, name the new card, confirm: a card appears
- * beside the original holding exactly that paragraph and saying it came from
- * the first card; reopen: both are there and the original is unchanged byte
- * for byte"). This file pins the rules underneath it:
+ * Story 16.12 let a person select text in an expanded reading and make a new
+ * ground card from it. The user corrected the intent: what they meant was a
+ * selection highlight opening the ASK widget (a later story), not a card. This
+ * file now pins BOTH halves of that correction:
  *
- *   - `form: selection` is a READING KIND with no source file: `from` is
- *     provenance (`card://<source>`), a path is REFUSED, the state is `current`
- *     by construction and no `file_meta` is ever asked for one;
- *   - the bytes are the selection EXACTLY (compared with `toBe`, not a
- *     containment) and the source card's files are byte-identical after;
- *   - the name is proposed (first few words, cropped) and the person confirms;
- *     a blank name refuses and writes nothing; collisions dedupe the house way;
- *   - the new card goes BESIDE its source and its footer names the source CARD
- *     (never a path), with a missing source said quietly;
- *   - the packet carries the excerpt and the ONE retrieval returns the same
- *     bytes; the pull reads the map's own stored excerpt and nothing else.
+ *   - THE FORM STAYS LEGAL: `form: selection` round-trips, a path in `from` is
+ *     refused (kept and reported), the state is `current` by construction and
+ *     no `file_meta` is asked for a selection card.
+ *   - A CARD MADE THE OLD WAY STILL WORKS END TO END: seeded records load, the
+ *     card renders its provenance and "what this is", the packet rides it, the
+ *     ONE retrieval returns the exact bytes, the pull reads only the map's own
+ *     excerpt, and remove → restore puts back the same bytes and lines.
+ *   - THE VERB IS GONE, SWEPT: no handler, no name field, no affordance, no
+ *     class, no string, no test-only gate anywhere in `src`.
  *
- * PROVISIONAL: the `card://` provenance spelling, the proposed-name crop, the
- * placement offset and the quiet provenance sentence.
+ * PROVISIONAL: the `card://` provenance spelling and the quiet provenance
+ * sentence (story 16.12's record shape, unchanged).
  */
 
 const APP_DIR = fileURLToPath(new URL("..", import.meta.url));
@@ -91,6 +82,10 @@ function source(rel: string): string {
   return readFileSync(join(APP_DIR, "src", rel), "utf8");
 }
 const HOOK = source("canvas/useGround.ts");
+const LAYER = source("canvas/GroundLayer.tsx");
+const APP = source("App.tsx");
+const GATES = source("canvas/gates.ts");
+const CSS = source("canvas/canvas.css");
 const PULL = source("map/pull.ts");
 
 const ROOT = mkdtempSync(join(tmpdir(), "attentioneer-selection-"));
@@ -108,18 +103,13 @@ function freshWorkspace(): string {
   return path;
 }
 
-const groundIo: GroundIo = {
-  readTextFile: async (path) => {
-    try {
-      return readFileSync(path, "utf8");
-    } catch {
-      return null;
-    }
-  },
-  writeTextFile: async (path, content) => {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, content, "utf8");
-  },
+const EXCERPT_HEAD: TextHead = {
+  head: "",
+  truncated: false,
+  exists: false,
+  size: null,
+  mtime: null,
+  decode: "clean",
 };
 
 function fileMeta(path: string): FileMetaAnswer {
@@ -137,17 +127,29 @@ function fileMeta(path: string): FileMetaAnswer {
   }
 }
 
-const EXCERPT_HEAD: TextHead = {
-  head: "",
-  truncated: false,
-  exists: false,
-  size: null,
-  mtime: null,
-  decode: "clean",
+function readOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** The file bridges a test needs; the app's real ones go through Tauri. */
+const groundIo = {
+  readTextFile: async (path: string) => readOrNull(path),
+  writeTextFile: async (path: string, text: string) => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, text, "utf8");
+  },
 };
 
 const readingIo: ReadingIo = {
-  ...groundIo,
+  readTextFile: async (path) => readOrNull(path),
+  writeTextFile: async (path, text) => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, text, "utf8");
+  },
   createDirAll: async (path) => {
     mkdirSync(path, { recursive: true });
   },
@@ -175,57 +177,33 @@ const readingIo: ReadingIo = {
   },
 };
 
-/** The selection's real write path, with the ORDER logged. */
-function selectionIo(log: string[]): SelectionIo {
-  return {
-    storeSelectionText: async (workspace, on, text) => {
-      log.push("text");
-      await storeSelectionText(workspace, on, text, readingIo);
-    },
-    saveReadings: async (workspace, readings, malformed) => {
-      log.push("readings");
-      await saveReadings(workspace, readings, malformed ?? [], readingIo);
-    },
-    saveGround: async (workspace, references, malformed) => {
-      log.push("ground");
-      await saveGround(workspace, references, malformed ?? [], groundIo);
-    },
-  };
-}
-
-/** Seed the source card the way the app's own add wrote it. */
-async function seedSource(workspace: string): Promise<{
-  reference: GroundReference;
-  reading: Reading;
+/**
+ * Seed a card EXACTLY as one made before story 18 sits on disk: the source's
+ * own files, then the selection's reading line and verbatim text. No writer
+ * from the removed verb is called — this is the record shape only.
+ */
+async function seedKeptSelection(workspace: string): Promise<{
+  references: GroundReference[];
+  readings: Reading[];
 }> {
   const sourceText = "the source card's own reading\nsecond line\n";
   mkdirSync(dirname(readingTextPath(workspace, SOURCE_SLUG)), { recursive: true });
   writeFileSync(readingTextPath(workspace, SOURCE_SLUG), sourceText, "utf8");
-  const reference: GroundReference = { on: SOURCE_SLUG, name: SOURCE_NAME, x: 40, y: 60 };
-  const reading: Reading = {
-    on: SOURCE_SLUG,
-    form: "path",
-    from: "notes/river.md",
-    taken: TAKEN,
-    bytes: Buffer.byteLength(sourceText),
-    extract: "text",
-  };
-  await saveGround(workspace, [reference], [], groundIo);
-  await saveReadings(workspace, [reading], [], readingIo);
-  return { reference, reading };
+  writeFileSync(readingTextPath(workspace, "nights"), EXCERPT, "utf8");
+  const references: GroundReference[] = [
+    { on: SOURCE_SLUG, name: SOURCE_NAME, x: 40, y: 60 },
+    { on: "nights", name: "Nights", x: 360, y: 60 },
+  ];
+  const readings: Reading[] = [
+    { on: SOURCE_SLUG, form: "path", from: "notes/river.md", taken: TAKEN, extract: "text" },
+    selectionReading("nights", SOURCE_SLUG, TAKEN),
+  ];
+  await saveGround(workspace, references, [], groundIo);
+  await saveReadings(workspace, readings, [], readingIo);
+  return { references, readings };
 }
 
-/** Every file under a folder, by relative name, as exact bytes (base64). */
-function snapshotFolder(root: string): Record<string, string> {
-  const files: Record<string, string> = {};
-  for (const name of readdirSync(root, { recursive: true }).map(String).sort()) {
-    const full = join(root, name);
-    if (statSync(full).isFile()) files[name] = readFileSync(full).toString("base64");
-  }
-  return files;
-}
-
-describe("the form: a reading with no source file", () => {
+describe("the form stays legal: a reading with no source file", () => {
   test("a selection line round-trips, and carries no bytes or extractor", () => {
     const reading = selectionReading("nights", SOURCE_SLUG, TAKEN);
     expect(reading).toEqual({
@@ -239,8 +217,6 @@ describe("the form: a reading with no source file", () => {
       "on: nights | form: selection | from: card://rain-gauge | taken: " + TAKEN,
     );
     expect(parseReadingLine(line)).toEqual(reading);
-    // No bytes tail, no extractor tail: nothing beside a selection can be
-    // compared, so nothing is invented.
     expect(line).not.toContain("bytes:");
     expect(line).not.toContain("extract:");
   });
@@ -310,68 +286,15 @@ describe("the form: a reading with no source file", () => {
     });
     expect(asked).toEqual(["/w/garden/notes/a.md"]);
     expect(metas.has("nights")).toBe(false);
-    // The hook's load path really calls this helper (not its own stat loop).
     expect(HOOK).toContain("metasOf(workspacePath, readings.readings)");
-    // STORY 16.14: a page has no path either — the same one rule skips both.
     expect(HOOK).toContain("if (!isFileReading(reading)) return;");
   });
 });
 
-describe("making the card: the bytes exactly, in the house order", () => {
-  test("the excerpt is written VERBATIM, then the readings line, then the card", async () => {
+describe("a card made the old way still works end to end", () => {
+  test("it loads: the paragraph verbatim, the source unchanged", async () => {
     const workspace = freshWorkspace();
-    await seedSource(workspace);
-    const log: string[] = [];
-    const written = await writeSelectionCard(
-      workspace,
-      [{ on: SOURCE_SLUG, name: SOURCE_NAME, x: 40, y: 60 }],
-      [],
-      [],
-      [],
-      SOURCE_SLUG,
-      "Nights",
-      360,
-      60,
-      EXCERPT,
-      TAKEN,
-      selectionIo(log),
-    );
-    // THE ORDER (the house order): text file, readings line, ground line.
-    expect(log).toEqual(["text", "readings", "ground"]);
-    expect(written.reading.on).toBe("nights");
-    // Not a containment: the stored bytes ARE the selection.
-    expect(readFileSync(readingTextPath(workspace, "nights"), "utf8")).toBe(EXCERPT);
-    expect(readFileSync(readingTextPath(workspace, "nights"), "utf8")).not.toBe(
-      EXCERPT.trim(),
-    );
-    expect(readFileSync(groundPath(workspace), "utf8")).toContain(
-      "on: nights | name: Nights | x: 360 | y: 60",
-    );
-    expect(readFileSync(readingsPath(workspace), "utf8")).toContain(
-      "on: nights | form: selection | from: card://rain-gauge | taken: " + TAKEN,
-    );
-    expect(written.reading.form).toBe("selection");
-    expect(written.reading.from).toBe("card://rain-gauge");
-    expect(written.reading.bytes).toBeUndefined();
-  });
-
-  test("a reopen rebuilds both cards; the new one still holds the paragraph", async () => {
-    const workspace = freshWorkspace();
-    const seeded = await seedSource(workspace);
-    await writeSelectionCard(
-      workspace,
-      [seeded.reference],
-      [seeded.reading],
-      [],
-      [],
-      SOURCE_SLUG,
-      "Nights",
-      360,
-      60,
-      EXCERPT,
-      TAKEN,
-      selectionIo([]),
-    );
+    await seedKeptSelection(workspace);
     const ground = await loadGround(workspace, groundIo);
     const readings = await loadReadings(workspace, readingIo);
     const texts = await loadReadingTexts(
@@ -386,128 +309,14 @@ describe("making the card: the bytes exactly, in the house order", () => {
       "nights",
     ]);
     const selection = readingFor(readings.readings, "nights");
-    expect(selection).not.toBeNull();
     expect(selection?.form).toBe("selection");
     expect(selection?.from).toBe("card://rain-gauge");
     expect(texts.nights).toBe(EXCERPT);
-    // The SOURCE card is exactly as it was: its reading and text unchanged.
-    const source = readingFor(readings.readings, "rain-gauge");
-    expect(source).toEqual(seeded.reading);
-    expect(texts["rain-gauge"]).toBe(
-      "the source card's own reading\nsecond line\n",
-    );
+    expect(texts["rain-gauge"]).toBe("the source card's own reading\nsecond line\n");
   });
 
-  test("the source card is never modified: a folder snapshot proves it per file", async () => {
-    const workspace = freshWorkspace();
-    const seeded = await seedSource(workspace);
-    const before = snapshotFolder(workspace);
-    const sourceTextBytes = readFileSync(
-      readingTextPath(workspace, SOURCE_SLUG),
-      "utf8",
-    );
-    await writeSelectionCard(
-      workspace,
-      [seeded.reference],
-      [seeded.reading],
-      [],
-      [],
-      SOURCE_SLUG,
-      "Nights",
-      360,
-      60,
-      EXCERPT,
-      TAKEN,
-      selectionIo([]),
-    );
-    const after = snapshotFolder(workspace);
-    // The excerpt's own text file is the ONLY new file.
-    expect(Object.keys(after).sort()).toEqual(
-      [...Object.keys(before), "map/readings/nights.md"].sort(),
-    );
-    // The two record files gained a line AFTER the source's; they are not
-    // rewritten under it (the earlier bytes are an exact byte PREFIX).
-    const isPrefix = (before64: string, after64: string): boolean => {
-      const from = Buffer.from(before64, "base64");
-      return from.equals(
-        Buffer.from(after64, "base64").subarray(0, from.length),
-      );
-    };
-    expect(isPrefix(before["map/ground.txt"]!, after["map/ground.txt"]!)).toBe(true);
-    expect(isPrefix(before["map/readings.txt"]!, after["map/readings.txt"]!)).toBe(true);
-    // Only the two record files changed; nothing else in the folder did.
-    expect(
-      Object.keys(before)
-        .filter((name) => after[name] !== before[name])
-        .sort(),
-    ).toEqual(["map/ground.txt", "map/readings.txt"]);
-    // The source's own text file is byte-identical.
-    expect(after["map/readings/rain-gauge.md"]).toBe(before["map/readings/rain-gauge.md"]);
-    expect(readFileSync(readingTextPath(workspace, SOURCE_SLUG), "utf8")).toBe(
-      sourceTextBytes,
-    );
-  });
-
-  test("a name collision dedupes like every other slug", async () => {
-    const workspace = freshWorkspace();
-    const seeded = await seedSource(workspace);
-    const first = await writeSelectionCard(
-      workspace, [seeded.reference], [seeded.reading], [], [],
-      SOURCE_SLUG, "Nights", 360, 60, "first", TAKEN, selectionIo([]),
-    );
-    const second = await writeSelectionCard(
-      workspace, first.references, first.readings, [], [],
-      SOURCE_SLUG, "Nights", 680, 60, "second", TAKEN, selectionIo([]),
-    );
-    expect(first.reading.on).toBe("nights");
-    expect(second.reading.on).toBe("nights-2");
-    expect(second.reading.from).toBe("card://rain-gauge");
-    // The first card and its bytes are untouched by the second.
-    expect(readFileSync(readingTextPath(workspace, "nights"), "utf8")).toBe("first");
-    const ground = await loadGround(workspace, groundIo);
-    expect(ground.references.map((reference) => reference.on)).toEqual([
-      "rain-gauge",
-      "nights",
-      "nights-2",
-    ]);
-    // The slug rule is the map's own: nextSlug against the taken slugs.
-    const admitted = addGroundReference(first.references, "Nights", 0, 0);
-    expect(admitted.reference.on).toBe("nights-2");
-  });
-
-  test("a blank name refuses with one sentence and writes nothing", () => {
-    expect(selectionRefusal("   ", EXCERPT)).toBe(SELECTION_NAME_REFUSAL);
-    expect(SELECTION_NAME_REFUSAL).toBe("name it first.");
-    expect(selectionRefusal("Nights", "")).toBe(SELECTION_EMPTY_REFUSAL);
-    expect(selectionRefusal("Nights", EXCERPT)).toBeNull();
-    // The hook refuses BEFORE the queue: a blank name cannot reach a writer.
-    const block = HOOK.slice(
-      HOOK.indexOf("const createSelection = useCallback("),
-      HOOK.indexOf("MOVE: one ground-line write on drop"),
-    );
-    const guard = block.indexOf("selectionRefusal(");
-    const queue = block.indexOf("queueRef.current");
-    expect(guard).toBeGreaterThan(0);
-    expect(queue).toBeGreaterThan(guard);
-    expect(block).toContain("Promise.resolve({ ok: false, message: refusal })");
-  });
-
-  test("the proposed name is the selection's first few words, cropped", () => {
-    expect(proposeSelectionName("  the river falls slowly after the rain  ")).toBe(
-      "the river falls slowly after the…",
-    );
-    expect(proposeSelectionName("two words")).toBe("two words");
-    expect(proposeSelectionName("   ")).toBe("");
-    // The proposal's whitespace collapse never touches the BYTES (above).
-    expect(proposeSelectionName("a\n\nb\t c")).toBe("a b c");
-  });
-});
-
-describe("the card says where it came from — a NAME, never a path", () => {
-  const selection: Reading = selectionReading("nights", SOURCE_SLUG, TAKEN);
-  const names = new Map([[SOURCE_SLUG, SOURCE_NAME]]);
-
-  test("a selection's footer names the source card", () => {
+  test("it renders its provenance and its kind — and offers no making verb", () => {
+    const selection: Reading = selectionReading("nights", SOURCE_SLUG, TAKEN);
     const html = renderToStaticMarkup(
       createElement(GroundLayer, {
         references: [
@@ -527,12 +336,17 @@ describe("the card says where it came from — a NAME, never a path", () => {
       }),
     );
     expect(html).toContain("from Rain gauge");
+    expect(html).toContain("a copy of text selected from Rain gauge");
     expect(html).not.toContain("card://");
     expect(html).not.toContain("notes/river.md");
-    expect(readingProvenance(selection, names)).toBe("from Rain gauge");
+    expect(html).not.toContain("make the card");
+    expect(readingProvenance(selection, new Map([[SOURCE_SLUG, SOURCE_NAME]]))).toBe(
+      "from Rain gauge",
+    );
   });
 
   test("a missing source is said quietly, not treated as an error", () => {
+    const selection: Reading = selectionReading("nights", SOURCE_SLUG, TAKEN);
     expect(readingProvenance(selection, new Map())).toBe(SELECTION_MISSING_SOURCE);
     const html = renderToStaticMarkup(
       createElement(GroundLayer, {
@@ -550,30 +364,10 @@ describe("the card says where it came from — a NAME, never a path", () => {
     expect(html).not.toContain("card://");
   });
 
-  test("the new card is placed BESIDE its source, never overlapping", () => {
-    expect(selectionPlacement(40, 60)).toEqual({ x: 360, y: 60 });
-    const at = selectionPlacement(40, 60);
-    expect(at.x).toBeGreaterThan(40 + 300);
-    expect(at.y).toBe(60);
-    expect(LAYER_SOURCE()).toContain("selectionPlacement(reference.x, reference.y)");
-  });
-});
-
-/** The layer's source, for the placement's one call site. */
-function LAYER_SOURCE(): string {
-  return source("canvas/GroundLayer.tsx");
-}
-
-describe("the packet carries the excerpt; the ONE retrieval returns it", () => {
-  const selection: Reading = selectionReading("nights", SOURCE_SLUG, TAKEN);
-
-  test("the packet rides the selection and its retrieval is the same bytes", async () => {
+  test("the packet carries the excerpt; the ONE retrieval returns the same bytes", async () => {
     const workspace = freshWorkspace();
-    const seeded = await seedSource(workspace);
-    await writeSelectionCard(
-      workspace, [seeded.reference], [seeded.reading], [], [],
-      SOURCE_SLUG, "Nights", 360, 60, EXCERPT, TAKEN, selectionIo([]),
-    );
+    await seedKeptSelection(workspace);
+    const selection = selectionReading("nights", SOURCE_SLUG, TAKEN);
     const stored = readFileSync(readingTextPath(workspace, "nights"), "utf8");
     expect(stored).toBe(EXCERPT);
 
@@ -584,8 +378,6 @@ describe("the packet carries the excerpt; the ONE retrieval returns it", () => {
       readingText: stored,
       note: null,
     });
-    // The packet rides the card's CROP (the six-line preview the packet
-    // already uses); the ONE retrieval below returns the exact bytes.
     expect(context.card.reading).toBe(previewText(EXCERPT));
     expect(context.retrievable).toEqual(["Nights"]);
     const packet = assembleCardPacket({
@@ -621,10 +413,9 @@ describe("the packet carries the excerpt; the ONE retrieval returns it", () => {
     expect(pulled).toBe(EXCERPT);
   });
 
-  test("a selection's pull reads ONLY the map's stored excerpt (no head, no stat)", async () => {
+  test("its pull reads ONLY the map's stored excerpt (no head, no stat)", async () => {
     const workspace = freshWorkspace();
-    await seedSource(workspace);
-    await storeSelectionText(workspace, "nights", EXCERPT, readingIo);
+    await seedKeptSelection(workspace);
     const calls: string[] = [];
     const io: PullIo = {
       readTextHead: async () => {
@@ -644,17 +435,15 @@ describe("the packet carries the excerpt; the ONE retrieval returns it", () => {
         return readFileSync(path, "utf8");
       },
     };
+    const selection = selectionReading("nights", SOURCE_SLUG, TAKEN);
     const result = await pullReading(workspace, selection, 96 * 1024, io);
     expect(result).toEqual({ kind: "text", text: EXCERPT, truncated: false });
-    // No source is located, read or extracted: the map's own bytes are all.
     expect(calls).toEqual(["stored"]);
-    // The pure reader keeps the bytes exactly under a wide budget.
     expect(pullStoredText(EXCERPT)).toEqual({
       kind: "text",
       text: EXCERPT,
       truncated: false,
     });
-    // The pull module holds no writer and no stat.
     const code = PULL.replace(/\/\*[\s\S]*?\*\//g, "").replace(
       /^\s*\/\/.*$/gm,
       "",
@@ -666,31 +455,123 @@ describe("the packet carries the excerpt; the ONE retrieval returns it", () => {
       });
     }
   });
-});
 
-describe("the selection surface: one affordance, and nothing else changes", () => {
-  test("the affordance is ONE quiet verb that only proposes a name", () => {
-    const layer = LAYER_SOURCE();
-    const code = layer.replace(/\/\*[\s\S]*?\*\//g, "").replace(
-      /^\s*\/\/.*$/gm,
-      "",
+  test("remove then restore: the SAME bytes, the same two lines", async () => {
+    const workspace = freshWorkspace();
+    await seedKeptSelection(workspace);
+    const ground = await loadGround(workspace, groundIo);
+    const readings = await loadReadings(workspace, readingIo);
+    const removed = await removeGroundRecords(
+      workspace,
+      "nights",
+      ground.references,
+      readings.readings,
+      [],
+      [],
+      {
+        saveGround: (workspacePath, references, malformed) =>
+          saveGround(workspacePath, references, malformed, groundIo),
+        saveReadings: (workspacePath, readings, malformed) =>
+          saveReadings(workspacePath, readings, malformed, readingIo),
+        removeFile: async (path) => {
+          unlinkSync(path);
+        },
+        readTextFile: async (path) => readOrNull(path),
+      },
     );
-    expect(layer).toContain("ask about this");
-    expect(layer).toContain("ground-select-ask");
-    expect(layer).toContain("selectionchange");
-    expect(layer).toContain("selectionRefusal(");
-    expect(layer).toContain("proposeSelectionName(");
-    expect(layer).toContain("make the card");
-    // No floating toolbar, no model, no counters, no nudges.
-    expect(code).not.toMatch(/floating|toolbar|badge|streak|score/i);
-    expect(code).not.toMatch(/invoke\(|fetch\(|readTextHead|fileMeta/);
-    // A closed card has no selection surface at all.
-    expect(layer).toContain("if (!open) return;");
+    expect(removed.refusal).toBeNull();
+    expect(removed.removed).not.toBeNull();
+    expect(() => statSync(readingTextPath(workspace, "nights"))).toThrow();
+    expect(readFileSync(join(workspace, "map", "ground.txt"), "utf8")).not.toContain(
+      "on: nights",
+    );
+    const afterRemoval = await loadReadings(workspace, readingIo);
+    expect(readingFor(afterRemoval.readings, "nights")).toBeNull();
+
+    const card = removed.removed!;
+    const restored = await restoreGroundCard(
+      workspace,
+      card,
+      removed.references,
+      removed.readings,
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      {
+        saveGround: (workspacePath, references, malformed) =>
+          saveGround(workspacePath, references, malformed, groundIo),
+        saveReadings: (workspacePath, readings, malformed) =>
+          saveReadings(workspacePath, readings, malformed, readingIo),
+        saveGroundLinks: async () => undefined,
+        saveMedia: async () => undefined,
+        restoreReadingText: async (workspacePath, on, text) => {
+          writeFileSync(readingTextPath(workspacePath, on), text, "utf8");
+        },
+        restoreNote: async () => undefined,
+        restoreThumb: async () => undefined,
+      },
+    );
+    expect(restored.didNot).toEqual([]);
+    expect(readFileSync(readingTextPath(workspace, "nights"), "utf8")).toBe(EXCERPT);
+    const groundAfter = await loadGround(workspace, groundIo);
+    const readingsAfter = await loadReadings(workspace, readingIo);
+    expect(groundAfter.malformed).toEqual([]);
+    expect(readingsAfter.malformed).toEqual([]);
+    const back = readingFor(readingsAfter.readings, "nights");
+    expect(back).toEqual(selectionReading("nights", SOURCE_SLUG, TAKEN));
+    expect(groundAfter.references.map((reference) => reference.on)).toEqual([
+      "rain-gauge",
+      "nights",
+    ]);
   });
 
-  test("the new parts are content to the plane's gate", () => {
+  test("a source still on the map names it; nothing references a removed feature", () => {
+    // The layer's own kept lines: the form is read, not the verb.
+    expect(LAYER).toContain('reading.form === "selection"');
+    expect(LAYER).toContain("selectionSourceSlug(");
+    expect(LAYER).toContain("ground-from");
+    expect(LAYER).toContain("this is a copy; there is no file to refresh or point at.");
+    // The verb's whole surface is gone from source. Comments may name it (the
+    // house voice records what was removed and why), so the sweep reads CODE.
+    const code = (text: string): string =>
+      text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    for (const [name, text] of [
+      ["GroundLayer", LAYER],
+      ["App", APP],
+      ["useGround", HOOK],
+      ["gates", GATES],
+      ["canvas.css", CSS],
+    ] as const) {
+      for (const gone of [
+        "ground-select-ask",
+        "onCreateSelection",
+        "createSelection",
+        "selectionRefusal",
+        "proposeSelectionName",
+        "SELECTION_NAME_REFUSAL",
+        "SELECTION_EMPTY_REFUSAL",
+        "selectionPlacement",
+      ]) {
+        expect({ name, gone, found: code(text).includes(gone) }).toEqual({
+          name,
+          gone,
+          found: false,
+        });
+      }
+    }
+    expect(LAYER).not.toContain("selectionchange");
+    expect(LAYER).toContain("ground-selection ground-ask-naming");
+    // The kept form is still declared where every parser reads it.
+    expect(source("map/readings.ts")).toContain('"selection",');
+  });
+});
+
+describe("content classes: the form's own stay, the verb's alone went", () => {
+  test("a kept selection card's classes are content to the plane's gate", () => {
     for (const name of [
-      "ground-select-ask",
       "ground-selection",
       "ground-selection-name",
       "ground-selection-actions",
@@ -700,11 +581,18 @@ describe("the selection surface: one affordance, and nothing else changes", () =
     ]) {
       expect(CONTENT_CLASSES).toContain(name as never);
     }
+    // The removed verb's class is not a gate, a style, or a string anywhere.
+    expect(CONTENT_CLASSES).not.toContain("ground-select-ask" as never);
+    // Comments may name the removed rule; the sheet's CODE must not style it.
+    const cssCode = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(cssCode).not.toContain(".ground-select-ask");
+    expect(CSS).toContain(".ground-handle.ground-from");
+    expect(CSS).toContain(".ground-selection {");
   });
 
   test("the ground map still renders no concept content, and no counters", () => {
     expect(renderedMapContent("ground")).toEqual([]);
-    const layer = LAYER_SOURCE().replace(/\/\*[\s\S]*?\*\//g, "").replace(
+    const layer = LAYER.replace(/\/\*[\s\S]*?\*\//g, "").replace(
       /^\s*\/\/.*$/gm,
       "",
     );

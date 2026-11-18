@@ -465,12 +465,11 @@ export const CONTENT_CLASSES = [
   "ground-pulled-text",
   "ground-pulled-note",
   "ground-pulled-dismiss",
-  // Story 16.12: the SELECTION's one affordance, its name field and confirm
-  // verbs, and the provenance line a selection's card carries. They live
-  // inside the card, which is already content; listed anyway for the same
-  // belt-and-braces reason — a press on any of them must never fall through
-  // to the plane's pan, creation or a card drag.
-  "ground-select-ask",
+  // Story 16.12's selection→card verb is GONE (story 18: the user corrected the
+  // intent), so its one affordance's class goes too. The name block it shared
+  // with the ask card (story 17.1) and the provenance line a stored selection
+  // card carries STAY: those live inside the card, which is already content,
+  // and their presses must never fall through to the plane's pan or a drag.
   "ground-selection",
   "ground-selection-name",
   "ground-selection-actions",

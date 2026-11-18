@@ -84,12 +84,20 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * and which is current once that line exists. Neither carries text and neither
  * claims one: the card says what it needs instead.
  *
- * STORY 16.12 ADDS A READING WITH NO SOURCE FILE (a SELECTION): the person
- * selects text inside another card's expanded reading, names the new card, and
- * those exact bytes become the card's reading. The line stores provenance
- * (`from: card://<source-slug>`), never a path; its state is `current` by
- * construction; nothing is stat'ed, re-read or refreshed behind it; and the
- * bytes are the selection, verbatim — never trimmed, re-wrapped or normalized.
+ * STORY 16.12 ADDS A READING WITH NO SOURCE FILE (a SELECTION): exact bytes
+ * copied from another card become this card's reading. The line stores
+ * provenance (`from: card://<source-slug>`), never a path; its state is
+ * `current` by construction; nothing is stat'ed, re-read or refreshed behind
+ * it; and the bytes are the selection, verbatim — never trimmed, re-wrapped or
+ * normalized.
+ *
+ * STORY 18 KEEPS THE FORM AND REMOVES THE VERB. The user corrected 16.12's
+ * intent: selecting text in a reading should open the ASK widget (a later
+ * story), not mint a ground card — so the affordance, its proposed name and its
+ * refusal sentences are gone. The FORM stays first-class: cards made before
+ * this story, the artifact card (ADR-0037) and the run-result card are all
+ * selections, and every parser, renderer, packet and pull must keep reading
+ * one. THE FORM IS NOT THE FEATURE.
  *
  * REFRESH IS THE ONLY RE-READ (story 16.2 decision 4): one affordance, pressed
  * by the person, re-takes the head under the same cap and stamps a new
@@ -115,12 +123,13 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * as the person gave it; it is never guessed from another form, and a line
  * whose value is not an http(s) URL stays malformed.
  *
- * STORY 16.12 adds `selection`: the text the person selected OUT of another
- * card's expanded reading. It is a reading kind, never a note, and it has NO
- * SOURCE FILE — its `from` is the provenance `card://<source-slug>`, never a
- * path. A `selection` line carrying a path is refused (kept and reported, never
- * guessed into a form), because a selection can never be stale and nothing
- * behind it is ever stat'ed.
+ * STORY 16.12 adds `selection`: text copied OUT of another card's reading. It
+ * is a reading kind, never a note, and it has NO SOURCE FILE — its `from` is
+ * the provenance `card://<source-slug>`, never a path. A `selection` line
+ * carrying a path is refused (kept and reported, never guessed into a form),
+ * because a selection can never be stale and nothing behind it is ever
+ * stat'ed. STORY 18 keeps this form while removing the concept-map verb that
+ * created one; the form is a record shape, not the affordance.
  */
 export type ReadingForm = PointerForm | "selection" | "url";
 
@@ -464,43 +473,10 @@ export function selectionReading(
   };
 }
 
-/** The one sentence a blank selection name answers (PROVISIONAL wording). */
-export const SELECTION_NAME_REFUSAL = "name it first.";
-
-/** The one sentence an empty selection answers (PROVISIONAL wording). */
-export const SELECTION_EMPTY_REFUSAL = "select some text first.";
-
-/**
- * The creation's ONE refusal rule, PURE: a blank name (the person's word is the
- * name, and nothing is created before they confirm it) and an empty selection
- * write nothing. The caller runs this BEFORE the queue, so a refusal never
- * reaches a file.
- */
-export function selectionRefusal(name: string, text: string): string | null {
-  if (name.trim() === "") return SELECTION_NAME_REFUSAL;
-  if (text === "") return SELECTION_EMPTY_REFUSAL;
-  return null;
-}
-
-/** How many of the selection's first words propose its name (PROVISIONAL). */
-export const SELECTION_NAME_WORDS = 6;
-
-/**
- * The name the affordance PROPOSES for a selection: its first few words,
- * whitespace collapsed (the NAME only — the bytes written are never touched),
- * cropped with one ellipsis when more words follow. The person edits or
- * replaces it; only their confirm writes anything. PURE.
- */
-export function proposeSelectionName(
-  text: string,
-  maxWords: number = SELECTION_NAME_WORDS,
-): string {
-  if (maxWords <= 0) return "";
-  const words = text.split(/\s+/).filter((word) => word !== "");
-  if (words.length === 0) return "";
-  const crop = words.slice(0, maxWords).join(" ");
-  return words.length > maxWords ? crop + "…" : crop;
-}
+// STORY 18 removed the selection→card affordance, and with it this file's two
+// refusal sentences and the proposed-name crop: nothing here names a card any
+// more, because nothing here creates one. The form, its reading builder and its
+// provenance parser stay; a selection card is still read and rendered.
 
 /**
  * Store one selection's bytes VERBATIM (story 16.12): the text file first, no

@@ -1475,7 +1475,7 @@ describe("a finished run's text becomes a card", () => {
     ).toBe("the answer in two chunks");
 
     // The card is the session's name plus a short suffix, placed beside it in
-    // the EXISTING selection placement idiom (the same 320-unit offset).
+    // the EXISTING beside-the-source placement idiom (the same 320-unit offset).
     const placed = records.references.find(
       (reference) => reference.on === records.reading.on,
     )!;

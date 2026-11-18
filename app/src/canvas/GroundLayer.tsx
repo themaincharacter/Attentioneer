@@ -20,7 +20,6 @@ import {
 import {
   isFileReading,
   pageHost,
-  proposeSelectionName,
   previewOverflows,
   previewText,
   READING_PREVIEW_LINES,
@@ -29,7 +28,6 @@ import {
   readingFileName,
   readingNeedsLine,
   readingStateWord,
-  selectionRefusal,
   selectionSourceSlug,
   type Reading,
   type ReadingState,
@@ -48,11 +46,7 @@ import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
 import type { GroundLink } from "../map/groundLinks";
 import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
-import {
-  BESIDE_OFFSET_X,
-  besidePlacement,
-  type Point,
-} from "./geometry";
+import { besidePlacement, type Point } from "./geometry";
 import { AskCard } from "./AskCard";
 import { SessionCard as SessionCardView } from "./SessionCard";
 import {
@@ -197,6 +191,15 @@ import {
  * never a hard edge and never a number. A card whose text fits its threshold
  * draws no cut at all; the fade is the fold's sign, not decoration.
  *
+ * STORY 18 REMOVES 16.12's SELECTION→CARD VERB, NOT ITS FORM. Selecting text in
+ * the expanded reading used to offer `ask about this` and make a new ground
+ * card. The user corrected the intent — what they meant was a selection
+ * highlight opening a floating ASK widget (a later story) — so the verb, its
+ * watcher, its proposed name and its confirm are gone. A card whose record says
+ * `form: selection` stays legal and keeps every line it had: the provenance
+ * footer, "a copy of text selected from <card>", links, asks, the pull and
+ * remove/restore. THE FORM IS NOT THE FEATURE; the form parses forever.
+ *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
  */
@@ -223,24 +226,15 @@ export function pullToDismiss(
 }
 
 /**
- * STORY 16.12 — WHERE THE NEW CARD GOES: beside its source, at the same scale,
- * offset by a little more than a card's own width so the two never overlap.
- * PURE, so the placement is not the confirm handler's only truth.
- */
-export const SELECTION_OFFSET_X = BESIDE_OFFSET_X;
-
-export function selectionPlacement(x: number, y: number): Point {
-  return besidePlacement(x, y);
-}
-
-/**
  * STORY 17.1 — WHERE THE ASK CARD GOES: beside its source, at the same scale,
- * on the selection card's one offset. PURE, so the placement is not the confirm
- * handler's only truth. PROVISIONAL: the side and the offset (the story's spec
- * leaves the placement open).
+ * offset by a little more than a card's own width so the two never overlap.
+ * PURE, so the placement is not the confirm handler's only truth. STORY 18:
+ * this was story 16.12's selection-card offset; the selection verb is gone and
+ * the ask card keeps the same beside-the-source placement. PROVISIONAL: the
+ * side and the offset (the story's spec leaves the placement open).
  */
 export function askPlacement(x: number, y: number): Point {
-  return selectionPlacement(x, y);
+  return besidePlacement(x, y);
 }
 
 /** The one quiet line for a source the map no longer carries (PROVISIONAL). */
@@ -482,18 +476,6 @@ interface GroundLayerProps {
   /** Remove this reference, its reading and its kept text (story 16.3). */
   onRemove: (on: string) => Promise<GroundAddResult>;
   /**
-   * Make a new card out of a selection inside this card's expanded reading
-   * (story 16.12): the exact bytes, the source's slug as provenance, and a
-   * name the person confirmed. Optional so a render test needs no write path.
-   */
-  onCreateSelection?: (
-    sourceSlug: string,
-    name: string,
-    x: number,
-    y: number,
-    text: string,
-  ) => Promise<GroundAddResult>;
-  /**
    * Save this card's note (story 16.6). Optional so a render test needs no
    * write path; the app always passes `useGround.setNote`.
    */
@@ -584,7 +566,6 @@ export function GroundLayer({
   onRefresh,
   onRepoint,
   onRemove,
-  onCreateSelection,
   onSetNote,
   onPull,
   onDismissPull,
@@ -818,7 +799,6 @@ export function GroundLayer({
           onRefresh={onRefresh}
           onRepoint={onRepoint}
           onRemove={remove}
-          onCreateSelection={onCreateSelection}
           onCreateAsk={onCreateAsk}
           onAskMade={(slug) => {
             setOpenOn(null);
@@ -1074,7 +1054,6 @@ function GroundCard({
   onRefresh,
   onRepoint,
   onRemove,
-  onCreateSelection,
   onCreateAsk,
   onAskMade,
   onSetNote,
@@ -1123,14 +1102,6 @@ function GroundCard({
   onRefresh: GroundLayerProps["onRefresh"];
   onRepoint: GroundLayerProps["onRepoint"];
   onRemove: (reference: GroundReference) => Promise<GroundAddResult>;
-  /** Story 16.12: make a new card out of this card's selected reading bytes. */
-  onCreateSelection?: (
-    sourceSlug: string,
-    name: string,
-    x: number,
-    y: number,
-    text: string,
-  ) => Promise<GroundAddResult>;
   /** STORY 17.1: make an ask card beside this reference (one record line). */
   onCreateAsk?: (
     sourceSlug: string,
@@ -1161,8 +1132,6 @@ function GroundCard({
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  // STORY 16.12: the expanded card's READING is the selection surface.
-  const readingRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const dragRef = useRef<GroundDragState | null>(null);
   const [dragPos, setDragPos] = useState<Point | null>(null);
@@ -1184,17 +1153,9 @@ function GroundCard({
   // locally (view state, never a record), exactly like a chip whose target was
   // gone before the workspace opened.
   const [gone, setGone] = useState<readonly string[]>([]);
-  // STORY 16.12 — THE SELECTION is view state of the OPEN card: the exact text
-  // the person selected in its reading, and the PROPOSED name once they press
-  // `ask about this`. Nothing is created until they confirm; a collapse, a
-  // close or a cancel forgets both.
-  const [selected, setSelected] = useState<string | null>(null);
-  const [naming, setNaming] = useState<{ text: string; name: string } | null>(
-    null,
-  );
-  // STORY 17.1 — THE ASK CARD'S proposed name, before anything is written. A
-  // separate field from the selection's, because they name two different cards;
-  // opening one closes the other so the card asks once.
+  // STORY 17.1 — THE ASK CARD'S proposed name, before anything is written.
+  // (Story 16.12's selection name field lived here; story 18 removed that verb
+  // and its field, so the ask card is the card this face names.)
   const [askNaming, setAskNaming] = useState<{ name: string } | null>(null);
   // STORY 16.6 — the note's edit is VIEW state, like open/closed: nothing is
   // written until a save, and Esc leaves the stored note exactly as it was.
@@ -1216,46 +1177,9 @@ function GroundCard({
     if (open) return;
     setPicker(null);
     setPanel(null);
-    // Story 16.12: a closed card cannot offer a selection it no longer shows.
-    setSelected(null);
-    setNaming(null);
     // STORY 17.1: a closed card forgets the ask's proposed name too; nothing
     // was written by proposing one.
     setAskNaming(null);
-  }, [open]);
-
-  // STORY 16.12 — THE SELECTION WATCHER. While the card is open, the DOM's
-  // selection is read whenever it changes; the affordance exists only when the
-  // selection is INSIDE this card's reading (a selection on the small card, in
-  // the note or on the plane is not one) and it goes away the moment the
-  // selection collapses. The text is taken EXACTLY as the selection reports it
-  // — no trim, no re-wrap — because those bytes become the new card's reading.
-  useEffect(() => {
-    if (!open) return;
-    function syncSelection() {
-      const selection = window.getSelection();
-      const reading = readingRef.current;
-      if (reading === null || selection === null || selection.isCollapsed) {
-        setSelected(null);
-        return;
-      }
-      if (selection.rangeCount === 0) {
-        setSelected(null);
-        return;
-      }
-      const range = selection.getRangeAt(0);
-      if (
-        !reading.contains(range.startContainer) ||
-        !reading.contains(range.endContainer)
-      ) {
-        setSelected(null);
-        return;
-      }
-      const text = selection.toString();
-      setSelected(text === "" ? null : text);
-    }
-    document.addEventListener("selectionchange", syncSelection);
-    return () => document.removeEventListener("selectionchange", syncSelection);
   }, [open]);
 
   // Raw listener: d3-zoom stops mousedown at the plane (stopImmediatePropagation),
@@ -1511,58 +1435,21 @@ function GroundCard({
     }
   }
 
-  // STORY 16.12 — THE SELECTION'S THREE MOVES. `ask about this` only PROPOSES
-  // a name (the selection's first few words, whitespace collapsed for the name
-  // alone); the confirm is the one write, and a blank name is refused with one
-  // sentence before anything is queued. Cancel forgets the proposal; the text
-  // file and the new card appear only after the person's own confirm.
-  function askAboutSelection() {
-    if (selected === null || selected === "") return;
-    setNaming({ text: selected, name: proposeSelectionName(selected) });
-    setAskNaming(null);
-    setProblem(null);
-  }
-
-  function cancelSelection() {
-    setNaming(null);
-  }
-
-  async function makeSelection() {
-    if (naming === null || onCreateSelection === undefined || busy) return;
-    const refusal = selectionRefusal(naming.name, naming.text);
-    if (refusal !== null) {
-      setProblem(refusal);
-      return;
-    }
-    const at = selectionPlacement(reference.x, reference.y);
-    setBusy(true);
-    setProblem(null);
-    const result = await onCreateSelection(
-      reference.on,
-      naming.name.trim(),
-      at.x,
-      at.y,
-      naming.text,
-    );
-    setBusy(false);
-    if (!result.ok) {
-      setProblem(result.message);
-      return;
-    }
-    setNaming(null);
-    setSelected(null);
-  }
+  // STORY 18 — 16.12's selection→card verb is gone: there is no
+  // `askAboutSelection`, no proposed selection name and no confirm, because the
+  // person's correction was that selecting text in a reading should open the
+  // ASK widget (a later story), not mint a ground card. The reading's bytes are
+  // still shown and a stored selection card still renders; only the making went.
 
   // STORY 17.1 — THE ASK CARD'S TWO MOVES. `ask about this` only PROPOSES a
-  // name (the SOURCE card's name plus "question", the selection card's idiom);
-  // the confirm is the ONE write — an EMPTY ask card plus a wire from this
-  // reference (STORY 17.10), and a blank name is refused with the same one
+  // name (the SOURCE card's name plus "question", the card-beside-its-source
+  // idiom); the confirm is the ONE write — an EMPTY ask card plus a wire from
+  // this reference (STORY 17.10), and a blank name is refused with the same one
   // sentence before anything is queued. Cancel forgets the proposal; the
   // reference card itself is never touched by either.
   function askAboutCard() {
     if (onCreateAsk === undefined || busy) return;
     setAskNaming({ name: proposeAskName(reference.name) });
-    setNaming(null);
     setProblem(null);
   }
 
@@ -1806,10 +1693,10 @@ function GroundCard({
           />
         ) : null}
         {bodyText !== null ? (
-          // Story 16.12: on the EXPANDED card this is the selection surface;
-          // the ref is what tells a selection inside the reading from one
-          // anywhere else on the map.
-          <div className="ground-reading" ref={readingRef}>
+          // STORY 18: the reading is just the stored bytes. It was 16.12's
+          // selection surface; the person's correction removed that verb, and
+          // the reading itself keeps rendering unchanged.
+          <div className="ground-reading">
             {bodyText}
           </div>
         ) : showNeeds && needsLine !== null ? (
@@ -1929,59 +1816,6 @@ function GroundCard({
           </div>
         </div>
       )}
-      {/* STORY 16.12 — THE NAME, before anything is written. The field is
-          PRE-FILLED with the proposed name and is the person's to edit; the
-          confirm writes the excerpt verbatim, and a blank name refuses with
-          the same one sentence the bubble uses. Esc or cancel forgets it. */}
-      {naming !== null && (
-        <div
-          className="ground-selection"
-          role="group"
-          aria-label="name the new card"
-        >
-          <input
-            className="ground-selection-name"
-            value={naming.name}
-            autoFocus
-            aria-label="name the new card"
-            disabled={busy}
-            onChange={(e) => {
-              setNaming({ text: naming.text, name: e.target.value });
-              if (problem !== null) setProblem(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") {
-                if (e.key !== "Escape") return;
-                // Esc cancels THIS field only (the card stays open).
-                e.preventDefault();
-                e.stopPropagation();
-                cancelSelection();
-                return;
-              }
-              e.preventDefault();
-              void makeSelection();
-            }}
-          />
-          <div className="ground-selection-actions">
-            <button
-              type="button"
-              className="ground-selection-make"
-              disabled={busy}
-              onClick={() => void makeSelection()}
-            >
-              make the card
-            </button>
-            <button
-              type="button"
-              className="ground-selection-cancel"
-              disabled={busy}
-              onClick={cancelSelection}
-            >
-              cancel
-            </button>
-          </div>
-        </div>
-      )}
       <div className="ground-actions">
           {/* STORY 17.1 — THE ASK VERB: a card about this reference. It only
               PROPOSES a name (the person edits or accepts it); the confirm is
@@ -1994,21 +1828,6 @@ function GroundCard({
               className="ground-ask-card"
               disabled={busy}
               onClick={askAboutCard}
-            >
-              ask about this
-            </button>
-          )}
-          {/* STORY 16.12 — the ONE selection affordance: it exists while a
-              selection sits inside the expanded reading and vanishes when it
-              collapses. It only PROPOSES the name field (onMouseDown keeps the
-              selection alive by not taking focus); nothing is written by it. */}
-          {open && onCreateSelection !== undefined && selected !== null && naming === null && (
-            <button
-              type="button"
-              className="ground-select-ask"
-              disabled={busy}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={askAboutSelection}
             >
               ask about this
             </button>
