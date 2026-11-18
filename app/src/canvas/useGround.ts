@@ -30,11 +30,15 @@ import {
   appendExchange,
   askQuestionRefusal,
   askRefusal,
+  forkAsk,
+  forkThread,
   loadAskTurns,
   loadAsks,
+  reanchorAsk,
   saveAsks,
   sharedSlugs,
   type AskCard,
+  type AskForkThread,
   type AskTurn,
 } from "../map/asks";
 import {
@@ -278,6 +282,11 @@ export type GroundAddResult =
        * that sends nothing.
        */
       readback?: AskPacketReadback;
+      /**
+       * STORY 17.5 — the slug of the card a FORK just made, so the layer can
+       * open it (a fork opens its new card). Absent on every other move.
+       */
+      created?: string;
     }
   | {
       ok: false;
@@ -434,6 +443,30 @@ export interface GroundView {
    * record still writes the person's line and no answer line.
    */
   askStop: () => Promise<void>;
+  /**
+   * STORY 17.5 — FORK one ask card at a turn: ONE `map/asks.txt` line with the
+   * parent's anchor inherited and `from`/`carry` naming the branch point. The
+   * parent's conversation file is READ (never written, never copied); a parent
+   * that is not on the map refuses with one sentence and writes nothing. The
+   * new slug rides back on the result so the layer can open it.
+   */
+  forkAskAt: (
+    parentSlug: string,
+    carry: number,
+    name: string,
+    x: number,
+    y: number,
+  ) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.5 — RE-ANCHOR one ask card: ONE field changes (`anchor`) and
+   * nothing else does. A target the map does not carry refuses with one
+   * sentence before any write; the conversation, the point and a fork's
+   * `from`/`carry` stay exactly as they were.
+   */
+  reanchorAskTo: (
+    slug: string,
+    anchor: string,
+  ) => Promise<GroundAddResult>;
   /** Add one reference from a picked text file (the one create write). */
   create: (
     name: string,
@@ -532,6 +565,8 @@ type GroundLoaded = Omit<
   | "createAsk"
   | "askTurn"
   | "askStop"
+  | "forkAskAt"
+  | "reanchorAskTo"
   | "create"
   | "createSelection"
   | "createPage"
@@ -1248,6 +1283,78 @@ export async function writeAskCard(
 /** The bridges an ask turn's record write needs; a test passes its own fakes. */
 export interface AskTurnIo {
   appendExchange: typeof appendExchange;
+}
+
+/**
+ * STORY 17.5 — WRITE ONE FORK, in the house order: the ask line only, with the
+ * parent's anchor inherited and the branch point recorded as `from`/`carry`.
+ * The parent's conversation is never read here, never copied and never touched;
+ * a parent the map does not carry answers `null` (the caller's one sentence,
+ * written nowhere). PURE apart from the bridge it is handed.
+ */
+export async function writeForkAsk(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  asks: readonly AskCard[],
+  malformedAsks: readonly string[],
+  parentSlug: string,
+  carry: number,
+  name: string,
+  x: number,
+  y: number,
+  io: AskCardIo = ASK_CARD_IO,
+): Promise<AskCardRecords | null> {
+  const parent = asks.find((ask) => ask.on === parentSlug);
+  if (parent === undefined) return null;
+  const addition = forkAsk(
+    asks,
+    sharedSlugs(references, asks),
+    parent,
+    carry,
+    name.trim(),
+    x,
+    y,
+  );
+  await io.saveAsks(workspacePath, addition.asks, malformedAsks);
+  return { asks: addition.asks, ask: addition.ask };
+}
+
+/**
+ * STORY 17.5 — WHAT ONE ASK CARD READS, PURE: a fork's carried prefix read
+ * from the PARENT'S OWN conversation, then the card's own turns. The parent is
+ * looked up in the asks file, and a missing parent hands `null` to the fork
+ * view so the card can state the hole without repairing it. The parent's
+ * carried prefix is NOT resolved: one level, as map/asks.ts states.
+ */
+export function askThreadOf(
+  ask: AskCard,
+  asks: readonly AskCard[],
+  askTurns: Readonly<Record<string, readonly AskTurn[]>>,
+): AskForkThread {
+  const parentTurns =
+    ask.from === undefined
+      ? null
+      : asks.some((entry) => entry.on === ask.from)
+        ? (askTurns[ask.from] ?? [])
+        : null;
+  return forkThread(ask, askTurns[ask.on] ?? [], parentTurns);
+}
+
+/**
+ * STORY 17.5 — THE RE-ANCHOR'S ONE REFUSAL RULE, PURE: a slug this file does
+ * not carry and a reference the map no longer carries both answer ONE sentence
+ * before anything is queued (a card that is already gone is not an anchor).
+ * Null means the write may go ahead; the caller writes one field.
+ */
+export function reanchorRefusal(
+  asks: readonly AskCard[],
+  referenceSlugs: readonly string[],
+  slug: string,
+  anchor: string,
+): string | null {
+  if (!asks.some((ask) => ask.on === slug)) return ASK_MISSING_REFUSAL;
+  if (!referenceSlugs.includes(anchor)) return ASK_SOURCE_REFUSAL;
+  return null;
 }
 
 /**
@@ -2618,6 +2725,105 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
+   * STORY 17.5 — FORK an ask card at a turn. ONE queued write of
+   * `map/asks.txt`: the new line inherits the parent's anchor and records
+   * `from`/`carry`, the slug is minted in the shared ground space, and the new
+   * card is placed beside its parent by the caller's point. The parent's
+   * conversation file is not written, not copied and not re-stamped; the fork
+   * reads the prefix from it later. A blank name or a parent this file does not
+   * carry refuses with one sentence before anything is queued.
+   */
+  const forkAskAt = useCallback(
+    (
+      parentSlug: string,
+      carry: number,
+      name: string,
+      x: number,
+      y: number,
+    ): Promise<GroundAddResult> => {
+      const refusal = askRefusal(name);
+      if (refusal !== null) return Promise.resolve({ ok: false, message: refusal });
+      if (!asksRef.current.some((ask) => ask.on === parentSlug)) {
+        return Promise.resolve({ ok: false, message: ASK_MISSING_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const written = await writeForkAsk(
+            workspacePath,
+            referencesRef.current,
+            asksRef.current,
+            malformedAsksRef.current,
+            parentSlug,
+            carry,
+            name,
+            x,
+            y,
+          );
+          if (written === null) {
+            outcome = { ok: false, message: ASK_MISSING_REFUSAL };
+            return;
+          }
+          asksRef.current = written.asks;
+          setState(snapshot());
+          outcome = { ok: true, created: written.ask.on };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 17.5 — RE-ANCHOR one ask card: ONE field's change, ONE queued write.
+   * A target reference the map no longer carries refuses with one sentence and
+   * writes nothing (a card that is already gone is not an anchor); the card's
+   * words, its point and a fork's branch point are untouched. An unknown ask
+   * slug refuses the same way, never appended.
+   */
+  const reanchorAskTo = useCallback(
+    (slug: string, anchor: string): Promise<GroundAddResult> => {
+      const refusal = reanchorRefusal(
+        asksRef.current,
+        referencesRef.current.map((reference) => reference.on),
+        slug,
+        anchor,
+      );
+      if (refusal !== null) {
+        return Promise.resolve({ ok: false, message: refusal });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const next = reanchorAsk(asksRef.current, slug, anchor);
+          if (next === null) {
+            outcome = { ok: false, message: ASK_MISSING_REFUSAL };
+            return;
+          }
+          await saveAsks(workspacePath, next, malformedAsksRef.current);
+          asksRef.current = next;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
    * STORY 17.1 — ASK ONE QUESTION inside an ask card. STORY 17.3 makes the
    * question a packet: the anchored reference's blocks as before PLUS this
    * card's conversation under the stated bound (the newest WHOLE turns that fit
@@ -2674,9 +2880,16 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       // bound (the newest WHOLE turns that fit a turn count and a byte budget).
       // The thread is read from the SAME record the card renders, and the READ
       // set stays the anchor's own block, so retrieval can never reach a turn.
+      //
+      // STORY 17.5 — A FORK SENDS ITS WHOLE COMPOSED THREAD: the carried prefix
+      // (read from the parent's file HERE, at send time, never copied) then the
+      // fork's own turns. The ONE bound is applied to that composed thread by
+      // `assembleAskCardPacket`, so it can never bite twice or per part, and a
+      // missing parent simply composes the fork's own turns — the card still
+      // sends.
       const packet = assembleAskCardPacket(
         context.card,
-        askTurnsRef.current[slug] ?? [],
+        askThreadOf(ask, asksRef.current, askTurnsRef.current).turns,
         question,
         ASK_THREAD_BOUND,
         context.retrievable,
@@ -3436,6 +3649,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     createAsk,
     askTurn,
     askStop,
+    forkAskAt,
+    reanchorAskTo,
     create,
     createSelection,
     createPage,

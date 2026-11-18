@@ -60,7 +60,7 @@ import {
   pickerCommand,
   type MentionChoice,
 } from "./MentionPicker";
-import type { GroundAddResult } from "./useGround";
+import { askThreadOf, type GroundAddResult } from "./useGround";
 import type { TurnPort } from "../turn/turn";
 
 /**
@@ -374,6 +374,23 @@ interface GroundLayerProps {
     x: number,
     y: number,
   ) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.5 — fork an ask card at a turn (one record line; the parent's
+   * conversation is read, never copied). Optional so a render test needs no
+   * write path.
+   */
+  onForkAsk?: (
+    parentSlug: string,
+    carry: number,
+    name: string,
+    x: number,
+    y: number,
+  ) => Promise<GroundAddResult>;
+  /** STORY 17.5 — re-anchor one ask card: one field's change. */
+  onReanchorAsk?: (
+    slug: string,
+    anchor: string,
+  ) => Promise<GroundAddResult>;
   /** Ask one question inside an ask card (the existing card-ask turn path). */
   onAskTurn?: (
     slug: string,
@@ -483,6 +500,8 @@ export function GroundLayer({
   asks = [],
   askTurns = {},
   onCreateAsk,
+  onForkAsk,
+  onReanchorAsk,
   onAskTurn,
   onStopAskTurn,
   onMove,
@@ -674,26 +693,65 @@ export function GroundLayer({
       {/* STORY 17.1 — THE ASK CARDS, beside the reference cards on the same
           plane: their own record family, their own conversations, and the same
           grammar (name → what this is → the crop). Story 17.2 owns the thread's
-          face, 17.5 fork and 17.6 the dangling anchor's sentence; story 1 only
-          shows one exchange and lets the person ask it. */}
-      {asks.map((ask) => (
-        <AskCard
-          key={ask.on}
-          ask={ask}
-          anchorName={cardNames.get(ask.anchor) ?? null}
-          anchor={anchorCardOf(ask)}
-          turns={askTurns[ask.on] ?? []}
-          open={openAskOn === ask.on}
-          previewLines={previewLines}
-          onOpen={() => {
-            setOpenOn(null);
-            setOpenAskOn(ask.on);
-          }}
-          onClose={() => setOpenAskOn(null)}
-          onAskTurn={onAskTurn}
-          onStopTurn={onStopAskTurn}
-        />
-      ))}
+          face and 17.5 the fork and the re-anchor; 17.6 still owns the dangling
+          ANCHOR's sentence (a fork's missing parent is stated here already). */}
+      {asks.map((ask) => {
+        // STORY 17.5 — THE COMPOSED THREAD: a fork reads its carried prefix
+        // from the parent's record HERE, on every render, and appends its own
+        // turns; a missing parent is a stated hole with the fork's own turns
+        // still readable. Nothing is copied and nothing is repaired.
+        const thread = askThreadOf(ask, asks, askTurns);
+        return (
+          <AskCard
+            key={ask.on}
+            ask={ask}
+            anchorName={cardNames.get(ask.anchor) ?? null}
+            anchor={anchorCardOf(ask)}
+            turns={thread.turns}
+            carried={thread.carried.length}
+            forkMissing={thread.missing}
+            anchorChoices={references.map((reference) => ({
+              slug: reference.on,
+              name: reference.name,
+            }))}
+            open={openAskOn === ask.on}
+            previewLines={previewLines}
+            onOpen={() => {
+              setOpenOn(null);
+              setOpenAskOn(ask.on);
+            }}
+            onClose={() => setOpenAskOn(null)}
+            onAskTurn={onAskTurn}
+            onStopTurn={onStopAskTurn}
+            onForkTurn={
+              onForkAsk === undefined
+                ? undefined
+                : async (carry, name) => {
+                    const at = askPlacement(ask.x, ask.y);
+                    const result = await onForkAsk(
+                      ask.on,
+                      carry,
+                      name,
+                      at.x,
+                      at.y,
+                    );
+                    // A fork OPENS its new card: the person is looking at the
+                    // branch they just made, not at the parent's face.
+                    if (result.ok && result.created !== undefined) {
+                      setOpenOn(null);
+                      setOpenAskOn(result.created);
+                    }
+                    return result;
+                  }
+            }
+            onReanchor={
+              onReanchorAsk === undefined
+                ? undefined
+                : (anchor) => onReanchorAsk(ask.on, anchor)
+            }
+          />
+        );
+      })}
       {refusal !== null && (
         <div
           className="ground-problem ground-removal-problem"

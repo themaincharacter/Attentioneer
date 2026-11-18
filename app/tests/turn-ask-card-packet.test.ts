@@ -486,7 +486,10 @@ describe("the card shows the declaration and the bytes verb BEFORE the send", ()
     // The thread is the record the card already shows, in file order; the
     // anchor's block is the same already-cropped description of the card.
     expect(card).toContain("assembleAskCardPacket(anchor, turns, question, ASK_THREAD_BOUND)");
-    expect(hook).toContain("askTurnsRef.current[slug] ?? []");
+    // STORY 17.5: the hook hands the assembler the COMPOSED thread (a fork's
+    // carried prefix read from the parent, then its own turns) through the one
+    // pure helper, so the bound is applied to the whole thread in one place.
+    expect(hook).toContain("askThreadOf(ask, asksRef.current, askTurnsRef.current).turns");
     // The shared surface is reused, not copied: one declaration, one verb.
     expect(card).toContain('from "./PacketSurface"');
     expect(card).toContain("<PacketSurface");

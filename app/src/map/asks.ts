@@ -35,14 +35,29 @@ import { ASK_RECORD_FILE, ASK_TURNS_DIR, mapDir } from "./records";
  * not parse is PRESERVED verbatim and reported (ADR-0009's honesty surfaces),
  * never dropped by a write: the earlier bytes are a prefix that never changes.
  *
+ * A FORK IS A BRANCH (story 17.5): an ask card may carry `from: <ask-slug>`
+ * and `carry: <n>` — the parent it was forked from and how many of that
+ * parent's turns (the first n, WHOLE turns) it READS. Its own conversation
+ * file holds only its own turns and never a copy of the prefix: the carried
+ * part is read from the parent's record every time the card renders or sends.
+ * Cheap, honest and reversible — a parent that is gone is a stated hole, not a
+ * silent truncation, and the fork's own turns still read and still send.
+ *
+ * ONE LEVEL OF CARRY (the story's explicit answer): `carry` counts the
+ * PARENT'S OWN TURNS, never its carried prefix. So a fork may itself be forked,
+ * but a fork of a fork reads only the second card's own turns — the first
+ * card's words are one branch back and are NOT carried transitively. The verb
+ * is offered only on a card's own turns; a carried turn belongs to the parent,
+ * and the way to fork it is to fork the parent.
+ *
  * PROVISIONAL (the story's record shapes, before an ADR settles them): the
  * `asks.txt` name, the line shape and its key order, the turn line's shape,
- * the coordinates as ints, the `asks/` folder name and — story 17.4's addition
- * — a turn's optional `move` field (the answer line's join to its PRISM; the
- * words themselves stay the conversation's and the record carries none of
- * them). Story 17.5 owns fork (`from`/`carry`), 17.6 owns dangling anchors,
- * 17.7 retires the embedded panel and 17.8 puts asks in the mirror and the
- * history — none of that is written here.
+ * the coordinates as ints, the `asks/` folder name, a turn's optional `move`
+ * field (story 17.4's join to its PRISM) and — story 17.5's addition — the
+ * optional `from`/`carry` tail, the divider and missing-parent wording, and
+ * the choice that a fork carries one level only. Story 17.6 owns dangling
+ * anchors, 17.7 retires the embedded panel and 17.8 puts asks in the mirror and
+ * the history — none of that is written here.
  */
 
 /** One ask card: the person's name at their point, about one reference. */
@@ -59,6 +74,20 @@ export interface AskCard {
    * longer carries is kept exactly as written (story 17.6 states it).
    */
   anchor: string;
+  /**
+   * STORY 17.5 — the ask card this one was FORKED FROM (a slug in the asks
+   * file), or absent on a card made from a reference. `from` and `carry`
+   * always travel together: the record names the parent and how much of it the
+   * fork reads.
+   */
+  from?: string;
+  /**
+   * STORY 17.5 — how many of the parent's turns the fork carries: the first
+   * `n`, WHOLE turns only, read from the parent's file at render and send
+   * time. Never a copy. PROVISIONAL: the field's name and position, and the
+   * one-level rule stated in this module's header.
+   */
+  carry?: number;
 }
 
 /** A read of `map/asks.txt`: what parsed, and what is kept but unreadable. */
@@ -125,28 +154,51 @@ export function askTurnPath(workspacePath: string, slug: string): string {
 /**
  * The line shape, in the order the writer emits it. `name` is greedy so the
  * person's words may contain the ` | ` separator (only the exact
- * ` | x: N | y: N | anchor: <slug>` tail is structural).
+ * ` | x: N | y: N | anchor: <slug>` tail is structural). STORY 17.5 appends ONE
+ * optional tail — ` | from: <ask-slug> | carry: <n>` — and nothing else: a card
+ * that was not forked writes exactly the line it always did, byte for byte.
+ * The two fields travel as a PAIR, so half a fork (a `from` with no `carry`,
+ * or a `carry` with no `from`) is out of shape and stays a preserved line.
  */
 const ASK_LINE =
-  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+) \| anchor: (\S+)$/;
+  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+) \| anchor: (\S+)(?: \| from: (\S+) \| carry: (\d+))?$/;
 
 /**
  * Parse one line. Anything out of shape — a missing key, a decimal coordinate,
- * an empty name or anchor — becomes `null`: it is kept and reported, never
- * guessed into an ask card. The ANCHOR is NOT checked against the ground map:
- * a dangling anchor is a legal record (story 17.6).
+ * an empty name or anchor, or half a fork — becomes `null`: it is kept and
+ * reported, never guessed into an ask card. The ANCHOR is NOT checked against
+ * the ground map (a dangling anchor is a legal record, story 17.6), and neither
+ * is the fork's `from`: a parent that is gone is stated by the card, never
+ * repaired here.
  */
 export function parseAskLine(line: string): AskCard | null {
   const match = ASK_LINE.exec(line);
   if (!match) return null;
-  const [, on, name, x, y, anchor] = match;
+  const [, on, name, x, y, anchor, from, carry] = match;
   if (on === "" || name.trim() === "" || anchor === "") return null;
-  return { on, name, x: Number(x), y: Number(y), anchor };
+  const ask: AskCard = { on, name, x: Number(x), y: Number(y), anchor };
+  if (from !== undefined) {
+    const count = Number(carry);
+    if (!Number.isSafeInteger(count) || count < 0) return null;
+    ask.from = from;
+    ask.carry = count;
+  }
+  return ask;
 }
 
 /** One ask card as its canonical line (no trailing newline). */
 export function serializeAskLine(ask: AskCard): string {
-  return `on: ${ask.on} | name: ${ask.name} | x: ${ask.x} | y: ${ask.y} | anchor: ${ask.anchor}`;
+  const base = `on: ${ask.on} | name: ${ask.name} | x: ${ask.x} | y: ${ask.y} | anchor: ${ask.anchor}`;
+  // STORY 17.5: the fork's tail rides only when the record is a fork, and only
+  // as the pair — a card made from a reference is byte-identical to story 17.1.
+  return ask.from === undefined || ask.carry === undefined
+    ? base
+    : `${base} | from: ${ask.from} | carry: ${ask.carry}`;
+}
+
+/** Whether a card is a fork: it names a parent and carries a count of its turns. */
+export function isFork(ask: AskCard): boolean {
+  return ask.from !== undefined && ask.carry !== undefined;
 }
 
 /** Read the file's bytes: LF/BOM/CRLF tolerated, unreadable lines kept. */
@@ -236,6 +288,57 @@ export function addAsk(
     anchor,
   };
   return { asks: [...asks, ask], ask };
+}
+
+/**
+ * FORK an ask card at a turn (story 17.5), PURE apart from naming: the new card
+ * INHERITS the parent's anchor (a re-anchor is one later field's change), names
+ * the parent with `from` and how many of its turns it reads with `carry`, and
+ * is placed beside it. Nothing of the parent's conversation is written here or
+ * anywhere — the parent's own file is never read by this function and never
+ * touched by the caller's write; only `asks.txt` gains one line. The slug is
+ * minted in the SHARED ground slug space like every other card.
+ *
+ * PROVISIONAL: the `carry` number is the WHOLE turns up to and including the
+ * turn the person pressed fork on, and the placement is the selection's usual
+ * offset (the caller computes the point, as it does for every card).
+ */
+export function forkAsk(
+  asks: readonly AskCard[],
+  taken: ReadonlySet<string>,
+  parent: AskCard,
+  carry: number,
+  name: string,
+  x: number,
+  y: number,
+): AskAddition {
+  const ask: AskCard = {
+    on: nextSlug(slugName(name), taken),
+    name,
+    x: Math.round(x),
+    y: Math.round(y),
+    anchor: parent.anchor,
+    from: parent.on,
+    carry: Math.max(0, Math.floor(carry)),
+  };
+  return { asks: [...asks, ask], ask };
+}
+
+/**
+ * RE-ANCHOR one ask card (story 17.5): ONE field's change and nothing else —
+ * the name, the point, the conversation and (on a fork) `from`/`carry` all stay
+ * exactly as they were. PURE: the caller checks that the target reference is
+ * still on the map (a re-anchor to a card that is gone refuses with one
+ * sentence, before any write) and writes the whole file once. A slug this file
+ * does not carry answers `null`, never an appended card.
+ */
+export function reanchorAsk(
+  asks: readonly AskCard[],
+  slug: string,
+  anchor: string,
+): AskCard[] | null {
+  if (!asks.some((ask) => ask.on === slug)) return null;
+  return asks.map((ask) => (ask.on === slug ? { ...ask, anchor } : ask));
 }
 
 /* ------------------------------------------------------------------------- *
@@ -437,6 +540,17 @@ export function proposeAskName(anchorName: string): string {
 }
 
 /**
+ * The name the fork verb PROPOSES (story 17.5), PURE and PROVISIONAL: the
+ * parent's own words plus the noun for the new card, so the person edits or
+ * accepts rather than typing a name from nothing (the creation idiom). A blank
+ * parent name still proposes a noun rather than an empty field.
+ */
+export function proposeForkName(parentName: string): string {
+  const name = parentName.trim();
+  return name === "" ? "a fork" : name + " fork";
+}
+
+/**
  * THE ROLE MARK (story 17.2), PURE: one quiet word that says who spoke, so a
  * person's line and an answer line are told apart without a bubble, an avatar
  * or a timestamp. The words themselves are never prefixed inside the record;
@@ -551,5 +665,69 @@ export function lastTurns(
   return {
     turns: selected.reverse(),
     omitted: selected.length < turns.length,
+  };
+}
+
+/* ------------------------------------------------------------------------- *
+ * THE FORK'S THREAD (story 17.5) — carried by reference, never copied.
+ *
+ * A fork reads the parent's first `carry` turns from the PARENT'S OWN FILE on
+ * every render and every send; the fork's file holds only what was said in the
+ * fork. These functions are PURE: they are handed the parent's turns (or null,
+ * when the parent is not on the map) and arrange a view. Nothing is written,
+ * repaired or invented, and the missing case is exactly the state the card
+ * states in one quiet line.
+ *
+ * ONE LEVEL, DELIBERATELY: the parent's turns are its OWN turns. A fork of a
+ * fork therefore carries the second card's words only — the first card's
+ * prefix is one branch back and is never resolved transitively. That keeps
+ * every fork one record away from the words it shows.
+ * ------------------------------------------------------------------------- */
+
+/** What a fork's card reads: the carried prefix, then its own turns. */
+export interface AskForkThread {
+  /** The turns carried from the parent (the first `carry`, whole turns). */
+  carried: readonly AskTurn[];
+  /** The thread as the card renders and the packet sends: carried, then own. */
+  turns: readonly AskTurn[];
+  /** The parent the record names is not on the map (stated, never repaired). */
+  missing: boolean;
+}
+
+/**
+ * THE CARRIED PREFIX, PURE: the parent's first `carry` turns, WHOLE turns only
+ * (a prefix by count can never cut one), in the order they were said. A parent
+ * with fewer turns than the record asks for yields what it has — the record is
+ * the person's, and reading is not repairing. A missing parent yields none.
+ */
+export function carriedTurns(
+  carry: number,
+  parentTurns: readonly AskTurn[] | null,
+): AskTurn[] {
+  if (parentTurns === null) return [];
+  const count = Number.isFinite(carry) ? Math.max(0, Math.floor(carry)) : 0;
+  return parentTurns.slice(0, count);
+}
+
+/**
+ * THE FORK'S WHOLE THREAD, PURE: the carried prefix then the card's own turns,
+ * or just its own turns when it is not a fork. `parentTurns` is null exactly
+ * when the map does not carry the parent card — the card then says so and
+ * still reads and sends everything that is its own. The prefix is read, never
+ * copied: this function only arranges the caller's arrays.
+ */
+export function forkThread(
+  ask: AskCard,
+  ownTurns: readonly AskTurn[],
+  parentTurns: readonly AskTurn[] | null,
+): AskForkThread {
+  if (!isFork(ask)) {
+    return { carried: [], turns: ownTurns, missing: false };
+  }
+  const carried = carriedTurns(ask.carry ?? 0, parentTurns);
+  return {
+    carried,
+    turns: carried.length === 0 ? ownTurns : [...carried, ...ownTurns],
+    missing: parentTurns === null,
   };
 }

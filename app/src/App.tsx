@@ -4399,6 +4399,8 @@ function App() {
             asks={ground.asks}
             askTurns={ground.askTurns}
             onCreateAsk={ground.createAsk}
+            onForkAsk={ground.forkAskAt}
+            onReanchorAsk={ground.reanchorAskTo}
             onAskTurn={ground.askTurn}
             onStopAskTurn={ground.askStop}
             onMove={ground.move}

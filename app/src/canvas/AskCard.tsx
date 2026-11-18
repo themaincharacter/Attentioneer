@@ -3,7 +3,9 @@ import {
   ASK_QUESTION_REFUSAL,
   ASK_THREAD_BOUND,
   askLastTurn,
+  askRefusal,
   askRoleMark,
+  proposeForkName,
   type AskCard as AskCardRecord,
   type AskTurn,
 } from "../map/asks";
@@ -52,8 +54,20 @@ import type { GroundAddResult } from "./useGround";
  * numbers live in map/asks.ts; this file only passes them and draws what the
  * packet declares.
  *
+ * A FORK IS A BRANCH, NOT A DUPLICATE (story 17.5). The `fork` verb sits WITH
+ * a turn: it branches the conversation there and writes a new card that
+ * REFERENCES the parent's first n turns and inherits its anchor. This component
+ * never copies them — the layer hands it the COMPOSED thread (carried prefix
+ * read from the parent, then the card's own turns), `carried` says where the
+ * branch point sits, and one quiet divider marks it. A parent that is gone
+ * replaces the carried part with one stated line and the own turns still read
+ * and still send. The re-anchor verb changes ONE field: the next turn is about
+ * the reference the person chose.
+ *
  * PROVISIONAL (ADR-0003's rendering seam): the card's size, the crop, the
- * scrollbox height and slack, the role marks and the stopped/incomplete wording.
+ * scrollbox height and slack, the role marks, the stopped/incomplete wording,
+ * and story 17.5's divider and missing-parent lines and the fork/re-anchor
+ * chooser's look.
  */
 
 /** The quiet line an ask card with no turns shows (PROVISIONAL wording). */
@@ -72,6 +86,22 @@ export const ASK_SCROLL_SLACK = 24;
 export function askKindLine(anchorName: string | null): string {
   return "a question about " + (anchorName === null ? "a card that is not here" : anchorName);
 }
+
+/**
+ * THE ONE QUIET DIVIDER (story 17.5): the line between the turns a fork CARRIES
+ * and the turns it said itself. One line, never a count — the card says where
+ * the branch point is, not how many turns are on either side of it.
+ * PROVISIONAL wording.
+ */
+export const ASK_FORK_DIVIDER = "carried from the card this one was forked from";
+
+/**
+ * WHAT A FORK SAYS WHEN ITS PARENT IS GONE (story 17.5, PROVISIONAL wording):
+ * one quiet line, stated and never repaired and never an error. The fork's own
+ * turns still read under it, and it can still send — the anchor is its own.
+ */
+export const ASK_FORK_MISSING =
+  "the card this one was forked from is gone, so the earlier turns it carried are not here.";
 
 /** How a pending line ended: still arriving, stopped, or broken off. */
 export type AskEnding = "running" | "stopped" | "incomplete";
@@ -173,12 +203,19 @@ function AskTurnLine({
   turn,
   crop,
   ending,
+  onFork,
 }: {
   turn: AskTurn;
   /** The small face's stated count; the expanded face omits it. */
   crop?: number;
   /** A pending line's ending, for the stopped/broken mark. */
   ending?: AskEnding;
+  /**
+   * STORY 17.5 — the fork verb SITS WITH THE TURN (not on the card header): it
+   * branches at this point of the conversation. Absent on a pending line, on a
+   * carried turn (that turn is the parent's), and where no writer is wired.
+   */
+  onFork?: () => void;
 }) {
   const text = crop === undefined ? turn.text : previewText(turn.text, crop);
   const mark = ending === undefined ? null : askEndingMark(ending);
@@ -189,6 +226,16 @@ function AskTurnLine({
         {text}
         {mark !== null && <span className="ask-turn-mark">{mark}</span>}
       </span>
+      {onFork !== undefined && (
+        <button
+          type="button"
+          className="ask-turn-fork"
+          title="fork this card here"
+          onClick={onFork}
+        >
+          fork
+        </button>
+      )}
     </div>
   );
 }
@@ -198,12 +245,17 @@ export function AskCard({
   anchorName,
   anchor,
   turns,
+  carried = 0,
+  forkMissing = false,
+  anchorChoices,
   open,
   previewLines,
   onOpen,
   onClose,
   onAskTurn,
   onStopTurn,
+  onForkTurn,
+  onReanchor,
 }: {
   ask: AskCardRecord;
   /** The anchored reference's coined name, or null when the anchor is gone. */
@@ -216,8 +268,25 @@ export function AskCard({
    * in the name and no preview rides).
    */
   anchor?: AskPacketCard;
-  /** The card's conversation, in FILE ORDER (an absent file is empty). */
+  /**
+   * STORY 17.5 — THE COMPOSED THREAD, in order: a fork's carried prefix (read
+   * from the parent, never copied) and then the card's own turns. A card that
+   * is not a fork is handed just its own turns, exactly as before.
+   */
   turns: readonly AskTurn[];
+  /**
+   * How many of the leading turns are the fork's CARRIED prefix. The divider
+   * sits after the last of them, and the fork verb is offered only on the
+   * turns the card said itself (a carried turn belongs to the parent).
+   */
+  carried?: number;
+  /**
+   * The parent the fork names is not on the map: one quiet line replaces the
+   * carried part, and the card's own turns still read and it can still send.
+   */
+  forkMissing?: boolean;
+  /** The references a re-anchor may choose (slug and the person's name). */
+  anchorChoices?: readonly { slug: string; name: string }[];
   /** View state: a small card opens; an expanded card sends. */
   open: boolean;
   /** How many lines the small face crops at (the stated preference). */
@@ -235,11 +304,31 @@ export function AskCard({
   ) => Promise<GroundAddResult>;
   /** Stop the running turn (the existing turn port's stop). */
   onStopTurn?: () => Promise<void>;
+  /**
+   * STORY 17.5 — FORK this card at a turn: the writer makes the new record
+   * (anchor inherited, `from`/`carry` naming the branch point) and opens it.
+   * Optional so a render test needs no write path.
+   */
+  onForkTurn?: (carry: number, name: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.5 — RE-ANCHOR this card: one field's change, written once. The
+   * chooser offers the map's references; a target that is gone is refused by
+   * the writer's one sentence.
+   */
+  onReanchor?: (anchor: string) => Promise<GroundAddResult>;
 }) {
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState<AskPending | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  // STORY 17.5 — the fork's PROPOSED name before anything is written, and the
+  // re-anchor chooser's pick. Both are view state: cancel or Esc forgets them,
+  // and only the confirm reaches a writer.
+  const [forking, setForking] = useState<{ carry: number; name: string } | null>(
+    null,
+  );
+  const [reanchorTo, setReanchorTo] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // Whether the body still follows the newest line. A person scrolling up
@@ -265,17 +354,28 @@ export function AskCard({
   // ESC CLOSES THE CARD'S EDITOR — never the map. Capture phase, so the key is
   // consumed before the plane's or app's own bubble handlers can act on it. A
   // draft writes nothing: this handler only collapses the card.
+  //
+  // STORY 17.5: while a fork's name or a re-anchor's pick is open, Esc forgets
+  // THAT first (one press, one thing) and a second press collapses the card.
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       e.preventDefault();
       e.stopPropagation();
+      if (forking !== null) {
+        setForking(null);
+        return;
+      }
+      if (reanchorTo !== null) {
+        setReanchorTo(null);
+        return;
+      }
       onClose();
     }
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [open, onClose]);
+  }, [open, onClose, forking, reanchorTo]);
 
   // THE CARD'S WHEEL NEVER ZOOMS THE PLANE. The scrollbox (and the card) stop
   // the event where it starts; passive, because this only stops the plane and
@@ -342,6 +442,72 @@ export function AskCard({
     if (!result.ok) setProblem(result.message);
   }
 
+  /**
+   * START A FORK at the turn the person pressed (story 17.5): propose the
+   * name, write nothing. `carry` is the WHOLE turns up to and including this
+   * one, counted on the card's OWN turns — a carried turn is the parent's and
+   * has no fork verb, so a fork of a fork carries only the second card's words
+   * (one level, stated in map/asks.ts).
+   */
+  function startFork(carry: number): void {
+    if (busy || running || onForkTurn === undefined) return;
+    setForking({ carry, name: proposeForkName(ask.name) });
+    setReanchorTo(null);
+    setProblem(null);
+  }
+
+  function cancelFork(): void {
+    setForking(null);
+  }
+
+  /** CONFIRM the fork: the ONE write, then the layer opens the new card. */
+  async function makeFork(): Promise<void> {
+    if (forking === null || onForkTurn === undefined || busy) return;
+    const refusal = askRefusal(forking.name);
+    if (refusal !== null) {
+      setProblem(refusal);
+      return;
+    }
+    setBusy(true);
+    setProblem(null);
+    const result = await onForkTurn(forking.carry, forking.name.trim());
+    setBusy(false);
+    if (!result.ok) {
+      setProblem(result.message);
+      return;
+    }
+    setForking(null);
+  }
+
+  /**
+   * START A RE-ANCHOR (story 17.5): offer the map's references, the current
+   * anchor preselected when it is still there. Nothing is written until the
+   * confirm, and the pick is view state only.
+   */
+  function startReanchor(): void {
+    if (busy || running || onReanchor === undefined) return;
+    const choices = anchorChoices ?? [];
+    if (choices.length === 0) return;
+    const current = choices.find((choice) => choice.slug === ask.anchor);
+    setForking(null);
+    setReanchorTo(current?.slug ?? choices[0]!.slug);
+    setProblem(null);
+  }
+
+  /** CONFIRM the re-anchor: ONE field's change. A gone target answers one sentence. */
+  async function makeReanchor(): Promise<void> {
+    if (reanchorTo === null || onReanchor === undefined || busy) return;
+    setBusy(true);
+    setProblem(null);
+    const result = await onReanchor(reanchorTo);
+    setBusy(false);
+    if (!result.ok) {
+      setProblem(result.message);
+      return;
+    }
+    setReanchorTo(null);
+  }
+
   async function stop(): Promise<void> {
     if (!running || stopping || onStopTurn === undefined) return;
     stoppedRef.current = true;
@@ -365,6 +531,12 @@ export function AskCard({
     pending !== null && pending.answer !== "" && !recorded.answer
       ? { role: "answer" as const, text: pending.answer, t: "", ending: pending.ending }
       : null;
+
+  // STORY 17.5 — HOW MUCH OF THE COMPOSED THREAD IS THE CARRIED PREFIX. A
+  // non-fork is handed 0, so the divider and the fork's own-turn rule cost it
+  // nothing. Clamped to the array in hand: a record's count is read, not
+  // trusted to be larger than the parent's file.
+  const carriedCount = Math.max(0, Math.min(carried, turns.length));
 
   // The small face's ONE turn: the newest thing said — a pending answer, else a
   // pending question, else the record's last line. Never the first line, and
@@ -404,9 +576,76 @@ export function AskCard({
       <div className="ask-card-body" ref={bodyRef} onScroll={trackScroll}>
         {open ? (
           <div className="ask-card-thread">
-            {turns.map((turn, index) => (
-              <AskTurnLine key={index} turn={turn} />
-            ))}
+            {/* STORY 17.5 — THE FORK'S THREAD: the carried prefix first, one
+                quiet divider, then the card's own turns. A missing parent
+                replaces the carried part with ONE stated line (never repaired,
+                never an error) and the own turns read under it. */}
+            {forkMissing && (
+              <div className="ask-fork-missing">{ASK_FORK_MISSING}</div>
+            )}
+            {turns.map((turn, index) => {
+              // The turn's position among the card's OWN turns: a carried turn
+              // belongs to the parent, so it has no fork verb and never counts
+              // toward a fork's `carry`.
+              const ownIndex = index - carriedCount;
+              return (
+                <div key={index} className="ask-turn-cell">
+                  <AskTurnLine
+                    turn={turn}
+                    onFork={
+                      onForkTurn !== undefined && ownIndex >= 0 && !running
+                        ? () => startFork(ownIndex + 1)
+                        : undefined
+                    }
+                  />
+                  {carriedCount > 0 && index === carriedCount - 1 && (
+                    <div className="ask-fork-divider">{ASK_FORK_DIVIDER}</div>
+                  )}
+                  {forking !== null && forking.carry === ownIndex + 1 && (
+                    <div
+                      className="ask-card-fork"
+                      role="group"
+                      aria-label="name the fork"
+                    >
+                      <input
+                        className="ask-card-fork-name"
+                        value={forking.name}
+                        autoFocus
+                        aria-label="name the fork"
+                        disabled={busy}
+                        onChange={(e) => {
+                          setForking({ carry: forking.carry, name: e.target.value });
+                          if (problem !== null) setProblem(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          e.preventDefault();
+                          void makeFork();
+                        }}
+                      />
+                      <div className="ask-card-fork-actions">
+                        <button
+                          type="button"
+                          className="ask-card-fork-make"
+                          disabled={busy}
+                          onClick={() => void makeFork()}
+                        >
+                          make the card
+                        </button>
+                        <button
+                          type="button"
+                          className="ask-card-fork-cancel"
+                          disabled={busy}
+                          onClick={cancelFork}
+                        >
+                          cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {pendingQuestion !== null && (
               <AskTurnLine turn={pendingQuestion} />
             )}
@@ -487,6 +726,58 @@ export function AskCard({
             )
           ) : (
             <PacketSurface messages={sent.messages} read={sent.read} />
+          )}
+          {/* STORY 17.5 — RE-ANCHOR is a verb on the expanded card: it changes
+              ONE field, so the next turn is about the newly chosen reference.
+              The chooser is the map's own card list; a choice that is already
+              gone is refused by the writer's one sentence, never repaired. */}
+          {onReanchor !== undefined && (
+            <div className="ask-card-reanchor-row">
+              {reanchorTo === null ? (
+                <button
+                  type="button"
+                  className="ask-card-reanchor"
+                  disabled={
+                    busy || running || (anchorChoices?.length ?? 0) === 0
+                  }
+                  onClick={startReanchor}
+                >
+                  re-anchor
+                </button>
+              ) : (
+                <>
+                  <select
+                    className="ask-card-reanchor-pick"
+                    aria-label="anchor this card to"
+                    value={reanchorTo}
+                    disabled={busy}
+                    onChange={(e) => setReanchorTo(e.target.value)}
+                  >
+                    {(anchorChoices ?? []).map((choice) => (
+                      <option key={choice.slug} value={choice.slug}>
+                        {choice.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="ask-card-reanchor-make"
+                    disabled={busy}
+                    onClick={() => void makeReanchor()}
+                  >
+                    make it about this
+                  </button>
+                  <button
+                    type="button"
+                    className="ask-card-reanchor-cancel"
+                    disabled={busy}
+                    onClick={() => setReanchorTo(null)}
+                  >
+                    cancel
+                  </button>
+                </>
+              )}
+            </div>
           )}
           <div className="ask-card-actions">
             <button
