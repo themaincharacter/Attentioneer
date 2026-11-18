@@ -35,7 +35,7 @@ import {
   ASK_SOURCE_REFUSAL,
   appendExchange,
   appendTurn,
-  askExchangeText,
+  askLastTurnText,
   askQuestionRefusal,
   askRefusal,
   askTurnPath,
@@ -399,14 +399,14 @@ describe("one exchange survives a reopen", () => {
     );
   });
 
-  test("the exchange crop is the conversation, role-labelled and verbatim", () => {
+  test("the crop is the LAST turn, role-marked and verbatim", () => {
     const turns = [
       { role: "person" as const, text: QUESTION, t: TAKEN },
       { role: "answer" as const, text: ANSWER, t: TAKEN },
     ];
-    expect(askExchangeText(turns)).toBe(
-      "you: " + QUESTION + "\n\nanswer: " + ANSWER,
-    );
+    // Story 17.2: the small card shows the newest turn, not the first.
+    expect(askLastTurnText(turns)).toBe("answer: " + ANSWER);
+    expect(askLastTurnText([])).toBe("");
   });
 });
 
@@ -589,12 +589,15 @@ describe("the card's face: a conversation, cropped, and nothing counted", () => 
     { role: "answer", text: ANSWER, t: TAKEN },
   ];
 
-  test("the small card names itself, says what it is about, and crops", () => {
+  test("the small card names itself, says what it is about, and crops the LAST turn", () => {
     const html = renderToStaticMarkup(
       createElement(AskCard, {
         ask: askRecords()[0]!,
         anchorName: SOURCE_NAME,
-        turns,
+        turns: [
+          turns[0]!,
+          { role: "answer", text: ANSWER + "\nand one more line", t: TAKEN },
+        ],
         open: false,
         previewLines: 1,
         onOpen: () => {},
@@ -603,9 +606,14 @@ describe("the card's face: a conversation, cropped, and nothing counted", () => 
     );
     expect(html).toContain("Rain gauge question");
     expect(html).toContain("a question about Rain gauge");
-    expect(html).toContain("you:");
-    // A one-line threshold folds the rest away behind the card.
+    // Story 17.2: the newest turn, not the first — the first question is not
+    // on the small face at all.
+    // The role is its own quiet mark beside the words, never a bubble.
+    expect(html).toContain(">answer<");
+    expect(html).not.toContain("what does the gauge measure");
+    // A one-line threshold folds the rest away behind the card's "more".
     expect(html).toContain("…");
+    expect(html).toContain("more");
     // Nothing here is a count of turns or a meter.
     expect(html).not.toMatch(/\b(count|counts|turns|total)\b/i);
   });

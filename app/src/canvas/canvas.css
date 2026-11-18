@@ -7430,13 +7430,15 @@ body {
  * STORY 17.1 — THE ASK CARD: a conversation about a reference, on the plane
  * beside it. Same grammar and same fixed card shape as a reference (name →
  * what this is → the crop), so the map stays one surface; the body holds the
- * exchange instead of a reading. The small face crops the conversation at the
- * person's stated count; the expanded face shows it whole and offers the one
- * question field and its send.
+ * conversation instead of a reading. STORY 17.2 makes it a THREAD: the small
+ * face crops the LAST turn at the person's stated count; the expanded face
+ * shows every turn in order (newest at the bottom, scrolled) with the question
+ * field pinned under it. Role is the ink ladder plus one quiet mark — no
+ * bubbles, avatars, timestamps or counts.
  *
- * PROVISIONAL (ADR-0003's rendering seam): the size, the crop and the verbs'
- * look. Story 17.2 owns the thread's face, 17.5 fork and 17.6 the dangling
- * anchor's sentence — nothing here anticipates them, and nothing counts.
+ * PROVISIONAL (ADR-0003's rendering seam): the size, the crop, the scrollbox's
+ * slack, the role marks and the stopped/incomplete wording. Story 17.5 fork and
+ * 17.6 the dangling anchor's sentence are not anticipated here.
  * ------------------------------------------------------------------------- */
 .ask-card {
   position: absolute;
@@ -7483,6 +7485,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* STORY 17.2: the fold's fade is anchored to this box, and the expanded body
+     is the thread's one scrollbox. */
+  position: relative;
 }
 
 .ask-card.expanded .ask-card-body {
@@ -7490,26 +7495,68 @@ body {
   overscroll-behavior: contain;
 }
 
-.ask-card-exchange {
-  font-size: 12px;
-  line-height: 1.625;
-  color: var(--ink-body);
-  white-space: pre-wrap;
+/* STORY 17.2 — THE THREAD. Turns are one conversation, newest at the bottom:
+   no bubbles, no avatars, no timestamps and no counts. The ROLE is the quiet
+   mark's job (one small word on the ink ladder) and the words keep the prose
+   scale. A person's line is the stronger ink; an answer is the body's. */
+.ask-card-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.ask-card-empty,
-.ask-card-stream {
+.ask-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ask-turn-role {
+  font-size: var(--compact-size);
+  line-height: var(--compact-leading);
+  color: var(--ink-soft);
+}
+
+.ask-turn-text {
+  font-size: var(--prose-size);
+  line-height: var(--prose-leading);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ask-turn.person .ask-turn-text {
+  color: var(--ink-strong);
+}
+
+.ask-turn.answer .ask-turn-text {
+  color: var(--ink);
+}
+
+/* The words that arrived before a stop or a break are kept, MARKED for what
+   they are — never dressed as a finished answer. */
+.ask-turn-mark {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+/* The small face shows the LAST turn only; the pure crop has already cut it,
+   and the clamp guards a line that wraps past the stated count. */
+.ask-card:not(.expanded) .ask-turn-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--preview-lines, 6);
+  overflow: hidden;
+}
+
+.ask-card-empty {
   font-size: 12px;
   line-height: 1.625;
   color: var(--ink-faint);
 }
 
-.ask-card-stream {
-  white-space: pre-wrap;
-  color: var(--ink-body);
-}
-
 .ask-card-ask {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -7556,6 +7603,13 @@ body {
 
 .ask-card-actions button:disabled {
   color: var(--ink-faint);
+  cursor: default;
+}
+
+/* While a turn runs the field is disabled but still reads as the draft's
+   place: the same ink, one strength down. */
+.ask-card-question:disabled {
+  color: var(--ink-soft);
   cursor: default;
 }
 

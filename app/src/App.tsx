@@ -4400,6 +4400,7 @@ function App() {
             askTurns={ground.askTurns}
             onCreateAsk={ground.createAsk}
             onAskTurn={ground.askTurn}
+            onStopAskTurn={ground.askStop}
             onMove={ground.move}
             onRefresh={ground.refresh}
             onRepoint={ground.repoint}

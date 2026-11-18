@@ -403,13 +403,38 @@ export function proposeAskName(anchorName: string): string {
 }
 
 /**
- * What the small card CROPS (story 1; story 17.2 owns the real thread): the one
- * exchange as plain lines, role-labelled, which the card's existing `previewText`
- * helper then cuts at the person's stated count. PURE, so the crop is not the
- * JSX's only truth. The words are verbatim; only the label is the writer's.
+ * THE ROLE MARK (story 17.2), PURE: one quiet word that says who spoke, so a
+ * person's line and an answer line are told apart without a bubble, an avatar
+ * or a timestamp. The words themselves are never prefixed inside the record;
+ * only the reading surface adds the mark.
  */
-export function askExchangeText(turns: readonly AskTurn[]): string {
-  return turns
-    .map((turn) => (turn.role === "person" ? "you: " : "answer: ") + turn.text)
-    .join("\n\n");
+export function askRoleMark(role: AskRole): string {
+  return role === "person" ? "you" : "answer";
+}
+
+/** One turn as the small face reads it: role mark, then the words VERBATIM. */
+export function askTurnLine(turn: AskTurn): string {
+  return askRoleMark(turn.role) + ": " + turn.text;
+}
+
+/**
+ * THE LAST TURN (story 17.2), PURE: the small face shows the newest turn, not
+ * the first line of the thread and not a count. File order IS conversation
+ * order — the append-only record is never sorted — so the last element is the
+ * last thing said. An empty conversation has no last turn (never an invented
+ * one).
+ */
+export function askLastTurn(turns: readonly AskTurn[]): AskTurn | null {
+  return turns.length === 0 ? null : turns[turns.length - 1]!;
+}
+
+/**
+ * What the small card CROPS (story 17.2): the LAST turn as a role-marked line,
+ * which the card's existing `previewText` helper then cuts at the person's
+ * stated count. PURE, so the crop is not the JSX's only truth. The words are
+ * verbatim; only the mark is the reader's.
+ */
+export function askLastTurnText(turns: readonly AskTurn[]): string {
+  const last = askLastTurn(turns);
+  return last === null ? "" : askTurnLine(last);
 }

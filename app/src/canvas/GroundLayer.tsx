@@ -378,6 +378,8 @@ interface GroundLayerProps {
     question: string,
     onPart?: (text: string) => void,
   ) => Promise<GroundAddResult>;
+  /** Stop the running ask turn (the existing turn port's stop — story 17.2). */
+  onStopAskTurn?: () => Promise<void>;
   /** Move one reference to its dropped point (one line, on release). */
   onMove: (on: string, x: number, y: number) => Promise<GroundAddResult>;
   /** Re-read this reference's file (the person's press only). */
@@ -480,6 +482,7 @@ export function GroundLayer({
   askTurns = {},
   onCreateAsk,
   onAskTurn,
+  onStopAskTurn,
   onMove,
   onRefresh,
   onRepoint,
@@ -666,6 +669,7 @@ export function GroundLayer({
           }}
           onClose={() => setOpenAskOn(null)}
           onAskTurn={onAskTurn}
+          onStopTurn={onStopAskTurn}
         />
       ))}
       {refusal !== null && (

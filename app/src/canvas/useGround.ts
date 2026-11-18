@@ -408,6 +408,13 @@ export interface GroundView {
     question: string,
     onPart?: (text: string) => void,
   ) => Promise<GroundAddResult>;
+  /**
+   * STORY 17.2 — STOP the running ask turn: the existing turn port's stop, so
+   * the card's one stop verb is the same stop the embedded panel uses. VIEW
+   * STATE only; what arrived is kept by the card, marked a partial, and the
+   * record still writes the person's line and no answer line.
+   */
+  askStop: () => Promise<void>;
   /** Add one reference from a picked text file (the one create write). */
   create: (
     name: string,
@@ -505,6 +512,7 @@ type GroundLoaded = Omit<
   GroundView,
   | "createAsk"
   | "askTurn"
+  | "askStop"
   | "create"
   | "createSelection"
   | "createPage"
@@ -2505,6 +2513,20 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     [workspacePath, sendAskQuestion],
   );
 
+  /**
+   * STORY 17.2 — THE CARD'S STOP. The same port the embedded panel stops; the
+   * AskCard marks what arrived as a partial, and the record still holds the
+   * person's line alone (an answer line is only ever a finished answer).
+   */
+  const askStop = useCallback(async (): Promise<void> => {
+    if (turn === undefined) return;
+    try {
+      await turn.stop();
+    } catch {
+      // A stop that cannot reach the provider leaves the turn to its timeout.
+    }
+  }, [turn]);
+
   /** MOVE: one ground-line write on drop; no reading is touched. */
   const move = useCallback(
     (on: string, x: number, y: number): Promise<GroundAddResult> => {
@@ -3195,6 +3217,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     loaded: state.loaded,
     createAsk,
     askTurn,
+    askStop,
     create,
     createSelection,
     createPage,
