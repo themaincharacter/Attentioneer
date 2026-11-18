@@ -21,6 +21,7 @@ import {
   sessionRunEvent,
   cardMoveEvent,
   cardRemovalEvents,
+  moveChangedThePoint,
   cardRestoreEvent,
   historyWriteTask,
   linkAddEvent,
@@ -706,15 +707,19 @@ export interface GroundView {
    * `map/asks.txt`, one line's `x|y`, through the SAME queue the reference
    * cards' drop uses. The name, the anchor, a fork's fields and the chosen words
    * are untouched, and the conversation is never read. A card that is gone
-   * writes NOTHING. No history line and no mirror rewrite (see the writer's
-   * note): a move event for these families is one decision across all three.
+   * writes NOTHING. STORY 16.24 — the drop appends the SAME `card.move` a
+   * reference's drop has appended since 16.10, after the record write, and a
+   * drop that rounds back onto the card's own point appends none. No mirror
+   * rewrite: MAP.md never printed a point.
    */
   moveAsk: (slug: string, x: number, y: number) => Promise<GroundAddResult>;
   /**
    * STORY 16.23 — MOVE one session card to its dropped point: the same one
    * queued write of `map/sessions.txt`, one line's `x|y`. The name, the tool
-   * row and the transcript are untouched, a card that is gone writes nothing,
-   * and no history line or mirror rewrite follows (the ask card's rule).
+   * row and the transcript are untouched, and a card that is gone writes
+   * nothing. STORY 16.24 — the move logs the shared `card.move` exactly as the
+   * ask and reference paths do, and a no-op drop logs none. No mirror rewrite:
+   * a transcript's name is not its point.
    */
   moveSession: (slug: string, x: number, y: number) => Promise<GroundAddResult>;
   /**
@@ -1077,10 +1082,10 @@ export async function renameGroundRecords(
  * a drag that ended after its card left writes nothing, not the file back
  * unchanged. Malformed lines ride back untouched (ADR-0009).
  *
- * NO HISTORY LINE and no mirror rewrite: a drop is not one of the log's
- * move events for these two families yet (one decision across all three, as
- * `withAskMoved` states), and MAP.md never printed a point, so there is
- * nothing derived to bring up to date.
+ * NO LOG LINE HERE and no mirror rewrite: this is one record's write, not
+ * the log's. STORY 16.24 — the hook's move verb queues the shared `card.move`
+ * after this returns, and MAP.md never printed a point, so there is nothing
+ * derived to bring up to date.
  */
 export interface GroundAskMoveIo {
   saveAsks: typeof saveAsks;
@@ -4776,16 +4781,19 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * STORY 16.23 — MOVE one ask card: the card's ONE line gains its dropped
    * point and nothing else changes. The write is the reference path's shape
    * through the SAME queue — one read-modify-write, the record file only — so
-   * the two movers can never drift.
+   * the movers can never drift.
    *
-   * WHY NO HISTORY LINE. A reference card's drop has appended `card.move` since
-   * story 16.10, but the log has no move event for an ask or a session card, and
-   * this story does not coin one: a move line for these two families (or one
-   * shared event with a kind) is ONE decision across all three, and taking it
-   * here would make even more of the map's history uneven than it already is.
-   * The absence is stated at the writer (`withAskMoved`) and again here, so a
-   * later reader knows it is a decision, not an oversight. There is no mirror
-   * rewrite either: MAP.md never printed a point, so nothing derived moved.
+   * STORY 16.24 — A MOVE IS A MOVE. A reference's drop has appended
+   * `card.move` since 16.10, and this path appends the SAME event, after the
+   * record write and through the same queue: the shared slug space makes one
+   * slug and one point name exactly one card, so no `kind` is needed. A drop
+   * that rounds back onto the card's own point appends nothing. (16.23's spec
+   * said moves were not logged and this story's comments repeated it; that was
+   * wrong — the log covered the reference family alone — so the log is
+   * corrected here, not the claim preserved.)
+   *
+   * There is no mirror rewrite: MAP.md never printed a point, so nothing
+   * derived moved.
    */
   const moveAsk = useCallback(
     (slug: string, x: number, y: number): Promise<GroundAddResult> => {
@@ -4795,6 +4803,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       };
       return queueRef.current
         .push(async () => {
+          // The point the record held before this drop, read in the queue.
+          const was = asksRef.current.find((ask) => ask.on === slug);
           const result = await moveAskRecords(
             workspacePath,
             slug,
@@ -4805,13 +4815,21 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           );
           // The card left before the drop landed: nothing is written, and no
           // sentence is invented for a card that is no longer there.
-          if (result.moved === null) {
+          const moved = result.moved;
+          if (moved === null) {
             outcome = { ok: false, message: ASK_MISSING_REFUSAL };
             return;
           }
           asksRef.current = result.asks;
           setState(snapshot());
           outcome = { ok: true };
+          // STORY 16.24 — the SAME line the reference path writes, after the
+          // record's own write; a drop on the card's own point is no move.
+          if (moveChangedThePoint(was, moved)) {
+            queueHistory(() => [
+              cardMoveEvent(Date.now(), slug, moved.x, moved.y),
+            ]);
+          }
         })
         .then(() => outcome)
         .catch(() => ({
@@ -4823,9 +4841,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
-   * STORY 16.23 — MOVE one session card: the same one-line write, the same one
-   * queue, the same NO history line (the ask card's reason, one family over)
-   * and no mirror rewrite. The transcript is never read: a point is not a run.
+   * STORY 16.23 — MOVE one session card: the same one-line write and the same
+   * one queue, and no mirror rewrite. The transcript is never read: a point is
+   * not a run. STORY 16.24 — the drop logs the shared `card.move` after the
+   * record write, exactly as the reference and ask paths do; a drop that lands
+   * on the card's own point logs none.
    */
   const moveSession = useCallback(
     (slug: string, x: number, y: number): Promise<GroundAddResult> => {
@@ -4835,6 +4855,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       };
       return queueRef.current
         .push(async () => {
+          // The point the record held before this drop, read in the queue.
+          const was = sessionsRef.current.find(
+            (session) => session.on === slug,
+          );
           const result = await moveSessionRecords(
             workspacePath,
             slug,
@@ -4843,13 +4867,21 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             sessionsRef.current,
             malformedSessionsRef.current,
           );
-          if (result.moved === null) {
+          const moved = result.moved;
+          if (moved === null) {
             outcome = { ok: false, message: SESSION_MISSING_REFUSAL };
             return;
           }
           sessionsRef.current = result.sessions;
           setState(snapshot());
           outcome = { ok: true };
+          // STORY 16.24 — one shared line, after the record's own write; a
+          // no-op drop says nothing.
+          if (moveChangedThePoint(was, moved)) {
+            queueHistory(() => [
+              cardMoveEvent(Date.now(), slug, moved.x, moved.y),
+            ]);
+          }
         })
         .then(() => outcome)
         .catch(() => ({
@@ -5734,7 +5766,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     }
   }, [turn]);
 
-  /** MOVE: one ground-line write on drop; no reading is touched. */
+  /**
+   * MOVE: one ground-line write on drop; no reading is touched. STORY 16.24 —
+   * one `card.move`, the same line the ask and session paths now write, and a
+   * drop that lands on the card's own point writes none (the shared rule).
+   */
   const move = useCallback(
     (on: string, x: number, y: number): Promise<GroundAddResult> => {
       let outcome: GroundAddResult = {
@@ -5743,21 +5779,28 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       };
       return queueRef.current
         .push(async () => {
+          // The point the record held before this drop, read in the queue.
+          const was = referencesRef.current.find(
+            (reference) => reference.on === on,
+          );
           const next = moveGroundReference(referencesRef.current, on, x, y);
           await saveGround(workspacePath, next, malformedGroundRef.current);
           referencesRef.current = next;
           setState(snapshot());
           outcome = { ok: true };
-          // Story 16.10: one drop, one line — the point it landed on.
+          // Story 16.10: one drop, one line — the point it landed on. Story
+          // 16.24: all three families write it, and a no-op drop writes none.
           const placed = next.find((reference) => reference.on === on);
-          queueHistory(() => [
-            cardMoveEvent(
-              Date.now(),
-              on,
-              placed?.x ?? Math.round(x),
-              placed?.y ?? Math.round(y),
-            ),
-          ]);
+          if (moveChangedThePoint(was, placed)) {
+            queueHistory(() => [
+              cardMoveEvent(
+                Date.now(),
+                on,
+                placed?.x ?? Math.round(x),
+                placed?.y ?? Math.round(y),
+              ),
+            ]);
+          }
           queueMirror();
         })
         .then(() => outcome)

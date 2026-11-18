@@ -1099,11 +1099,12 @@ export function renameSession(
  * not moved into being, and the caller writes nothing. The transcript is never
  * read or written — a point is not a run.
  *
- * NO HISTORY LINE, DELIBERATELY (the ask card's rule, one family over): the
- * map's log has no move event for a session card and this story does not coin
- * one. A move line for one of the new families — or one shared event with a
- * kind — is ONE decision across all three families, and the hook's move verb
- * says so beside the write.
+ * STORY 16.24 — IT IS LOGGED, AND THIS PURE WRITER STILL WRITES NO LINE. The
+ * log has ONE `card.move` for a drop, and all three families write it; the
+ * hook's move verb queues that line after this rewrite returns. (16.23's note
+ * here said a session move was not logged; the reference path had logged every
+ * drop since 16.10, so the claim was wrong and the log is what got corrected.)
+ * The transcript is never read or written — a point is not a run.
  */
 export function withSessionMoved(
   sessions: readonly SessionCard[],

@@ -521,13 +521,13 @@ export function renameAsk(
  * over). No reading or conversation is touched — an ask card owns neither, and
  * its transcript is its own file.
  *
- * NO HISTORY LINE, DELIBERATELY. The map's log records a reference's drop
- * (`card.move`) but has no move event for an ask card or a session card; this
- * story does not coin one. Giving the two new families a line of their own —
- * or one shared `card.move` with a kind — is ONE decision across all three
- * families, not a side effect of making them draggable; the hook's move verb
- * says so beside the write. Until that decision, the log's moves stay the
- * reference cards' alone.
+ * STORY 16.24 — IT IS LOGGED, AND THIS PURE WRITER STILL WRITES NO LINE. The
+ * log has ONE `card.move` for a drop, and all three families write it: the
+ * shared slug space makes the slug and the point name exactly one card, so no
+ * kind is needed. The hook's move verb queues that line after this rewrite
+ * returns. (16.23's note here said these moves were not logged; the reference
+ * path had logged every drop since 16.10, so the claim was wrong and the log is
+ * what got corrected.)
  */
 export function withAskMoved(
   asks: readonly AskCard[],

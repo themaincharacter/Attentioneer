@@ -337,7 +337,7 @@ describe("authored moves only: the look leaves no line", () => {
     expect(existsSync(historyPath(workspace))).toBe(false);
   });
 
-  test("the hook appends from the twenty-six authored write paths, no more", () => {
+  test("the hook appends from the twenty-eight authored write paths, no more", () => {
     // The only call form the verbs use; the definition is not a call site.
     // STORY 18 removes story 16.12's selection card from the authored write
     // paths with its verb (the user corrected the intent), so the count drops
@@ -353,8 +353,10 @@ describe("authored moves only: the look leaves no line", () => {
     // STORY 17.11 adds one: a completed ask turn's card logs its own add.
     // STORY 16.22 adds three: a committed rename of a reference, an ask or a
     // session card is an authored move, and this log now events it.
+    // STORY 16.24 adds two: an ask card's and a session card's drop append the
+    // SAME card.move a reference's drop has appended since 16.10.
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(26);
+    expect(calls.length).toBe(28);
   });
 
   test("the mirror and the history own the same verbs", () => {

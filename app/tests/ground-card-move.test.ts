@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
+import { moveChangedThePoint } from "../src/map/history";
 import { moveAskRecords, moveSessionRecords } from "../src/canvas/useGround";
 import {
   asksPath,
@@ -39,8 +40,9 @@ import {
  *     are untouched, and coordinates round exactly as creation does;
  *   - a card that is gone writes NOTHING (no save call at all);
  *   - the position survives a load, which is what a reopen does;
- *   - a move writes no history line and no mirror (a move event for these two
- *     families is one decision across all three, not this story's);
+ *   - the pure writer writes no history and no mirror — the hook's move verb
+ *     queues the shared `card.move` (story 16.24), so all three families log
+ *     the same line and a no-op drop logs none;
  *   - there is ONE drag rule: the shared helper in groundDrag.ts, its own
  *     threshold, and one call per card kind.
  */
@@ -193,7 +195,7 @@ describe("the ask card's one move writer", () => {
     });
   });
 
-  test("a move writes no history line and no mirror", async () => {
+  test("the pure writer writes no history and no mirror of its own", async () => {
     const path = freshWorkspace();
     const parsed = parseAsks(text);
     await saveAsks(path, parsed.asks, parsed.malformed, IO);
@@ -206,7 +208,8 @@ describe("the ask card's one move writer", () => {
       parsed.malformed,
       ASK_MOVE_IO,
     );
-    // A move is the record and nothing else: no derived index, no log line.
+    // This writer is the record and nothing else: the hook queues the log
+    // line and no derived index exists to rewrite.
     expect(existsSync(join(path, "MAP.md"))).toBe(false);
     expect(existsSync(join(path, "map", "ground-history.jsonl"))).toBe(false);
   });
@@ -347,22 +350,58 @@ describe("one drag rule, three kinds", () => {
     expect(SESSION_CARD).toContain("onMove?: (x: number, y: number)");
   });
 
-  test("the movement is not logged and the hook says why", () => {
-    // The move verbs live beside the rename path and queue only the RECORD.
-    const start = HOOK.indexOf("const moveAsk = useCallback(");
-    const end = HOOK.indexOf("const moveSession = useCallback(");
-    const block = HOOK.slice(start, end);
-    for (const forbidden of ["queueHistory", "cardMoveEvent", "queueMirror"]) {
-      expect({ forbidden, present: block.includes(forbidden) }).toEqual({
-        forbidden,
-        present: false,
-      });
+  test("one card.move for every family, queued after the record write", () => {
+    // STORY 16.24: the same event, in the same place, through the same queue.
+    for (const verb of ["move", "moveAsk", "moveSession"]) {
+      const start = HOOK.indexOf("const " + verb + " = useCallback(");
+      expect(start).toBeGreaterThan(-1);
+      const next = HOOK.indexOf("\n  const ", start + 1);
+      const block = HOOK.slice(start, next === -1 ? HOOK.length : next);
+      expect(block).toContain("queueHistory(() => [");
+      expect(block).toContain("cardMoveEvent(");
+      // No kind field: the shared slug space names the card on its own.
+      expect(block).not.toContain('kind: "');
+      // After the record write, exactly as the reference path always did.
+      expect(block.indexOf("queueHistory(")).toBeGreaterThan(
+        block.indexOf("setState("),
+      );
+      // A drop that lands on the card's own point is no move.
+      expect(block).toContain("moveChangedThePoint(");
     }
-    // The reason is stated where a later reader will look for it.
-    expect(HOOK).toContain("NO HISTORY LINE");
-    expect(source("map/asks.ts")).toContain("NO HISTORY LINE, DELIBERATELY");
-    expect(source("map/sessions.ts")).toContain("NO HISTORY LINE, DELIBERATELY");
+    // The false 16.23 claim is gone from the hook and both writers.
+    expect(HOOK).not.toContain("NO HISTORY LINE");
+    expect(source("map/asks.ts")).not.toContain("NO HISTORY LINE, DELIBERATELY");
+    expect(source("map/sessions.ts")).not.toContain(
+      "NO HISTORY LINE, DELIBERATELY",
+    );
+    // A point changes no name MAP.md prints, so the two new families still
+    // queue no mirror (only the reference path ever did).
+    for (const verb of ["moveAsk", "moveSession"]) {
+      const start = HOOK.indexOf("const " + verb + " = useCallback(");
+      const next = HOOK.indexOf("\n  const ", start + 1);
+      expect(HOOK.slice(start, next === -1 ? HOOK.length : next)).not.toContain(
+        "queueMirror",
+      );
+    }
+    // The true rule is stated where a later reader looks for it.
+    expect(source("map/history.ts")).toContain(
+      "A DROP THAT LANDS WHERE THE CARD ALREADY WAS IS NOT A MOVE",
+    );
     // And the ground map still renders no map content family.
     expect(renderedMapContent("ground")).toEqual([]);
+  });
+
+  test("the shared no-op rule rounds like the record does", () => {
+    expect(moveChangedThePoint({ x: 10, y: 20 }, { x: 10, y: 20 })).toBe(false);
+    // A four-pixel drag can round back onto the same whole point.
+    expect(moveChangedThePoint({ x: 10, y: 20 }, { x: 10.4, y: 19.6 })).toBe(
+      false,
+    );
+    expect(moveChangedThePoint({ x: 10, y: 20 }, { x: 11, y: 20 })).toBe(true);
+    expect(moveChangedThePoint({ x: 10, y: 20 }, { x: 10, y: 21 })).toBe(true);
+    // A card the write never found is not a move.
+    expect(moveChangedThePoint(undefined, { x: 1, y: 2 })).toBe(false);
+    expect(moveChangedThePoint(null, { x: 1, y: 2 })).toBe(false);
+    expect(moveChangedThePoint({ x: 1, y: 2 }, null)).toBe(false);
   });
 });

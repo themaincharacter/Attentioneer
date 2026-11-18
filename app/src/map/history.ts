@@ -329,7 +329,12 @@ export function cardAddEvent(
   return { v: HISTORY_VERSION, t, type: "card.add", slug, x, y };
 }
 
-/** A card was dropped at a new point (one authored move on release). */
+/**
+ * A card was dropped at a new point (one authored move on release). STORY 16.24
+ * — ANY OF THE THREE FAMILIES: a reference, an ask and a session card share one
+ * slug space, so the slug alone names the card the point belongs to. One event,
+ * no kind.
+ */
 export function cardMoveEvent(
   t: number,
   slug: string,
@@ -337,6 +342,26 @@ export function cardMoveEvent(
   y: number,
 ): HistoryEvent {
   return { v: HISTORY_VERSION, t, type: "card.move", slug, x, y };
+}
+
+/**
+ * STORY 16.24 — A DROP THAT LANDS WHERE THE CARD ALREADY WAS IS NOT A MOVE.
+ * The drag's threshold is a few screen pixels and the record holds whole units,
+ * so a short drag can round back onto the card's own point: the record rewrites
+ * the same line, and the log must not claim a move nobody made. All three move
+ * verbs ask this one question, so no family can log a no-op. A card this write
+ * never found (null, undefined) is not a move either — it is a card that left.
+ */
+export function moveChangedThePoint(
+  was: { readonly x: number; readonly y: number } | null | undefined,
+  at: { readonly x: number; readonly y: number } | null | undefined,
+): boolean {
+  if (was === null || was === undefined) return false;
+  if (at === null || at === undefined) return false;
+  return (
+    Math.round(was.x) !== Math.round(at.x) ||
+    Math.round(was.y) !== Math.round(at.y)
+  );
 }
 
 /**
