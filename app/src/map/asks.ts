@@ -27,7 +27,9 @@ import { ASK_RECORD_FILE, ASK_TURNS_DIR, mapDir } from "./records";
  * THE ANCHOR IS A FIELD, NEVER A LINK. `anchor: <reference-slug>` says what the
  * ask is about, in one place. Wiring a link would spend a meaning the epic
  * defers, and an anchor that names a card the map no longer carries is LEGAL:
- * story 17.6 states a dangling anchor; story 1 neither repairs nor refuses it.
+ * story 17.6 STATES it (by the remembered `anchorName`, or generically when an
+ * older card has none) and never repairs it — the record keeps the slug it was
+ * given and the thread bytes are never touched.
  *
  * THE CONVERSATION IS APPEND-ONLY, one line per turn, the words VERBATIM. JSONL
  * because a message may hold anything (a newline and a quote included), and the
@@ -53,11 +55,12 @@ import { ASK_RECORD_FILE, ASK_TURNS_DIR, mapDir } from "./records";
  * PROVISIONAL (the story's record shapes, before an ADR settles them): the
  * `asks.txt` name, the line shape and its key order, the turn line's shape,
  * the coordinates as ints, the `asks/` folder name, a turn's optional `move`
- * field (story 17.4's join to its PRISM) and — story 17.5's addition — the
- * optional `from`/`carry` tail, the divider and missing-parent wording, and
- * the choice that a fork carries one level only. Story 17.6 owns dangling
- * anchors, 17.7 retires the embedded panel and 17.8 puts asks in the mirror and
- * the history — none of that is written here.
+ * field (story 17.4's join to its PRISM), story 17.5's optional `from`/`carry`
+ * tail, the divider and missing-parent wording, the choice that a fork carries
+ * one level only, and — STORY 17.6's addition — the optional `anchorName` tail:
+ * the name the anchor had, so a dangling anchor can be SAID by name and never
+ * repaired. Story 17.7 retires the embedded panel and 17.8 puts asks in the
+ * mirror and the history — neither is written here.
  */
 
 /** One ask card: the person's name at their point, about one reference. */
@@ -74,6 +77,19 @@ export interface AskCard {
    * longer carries is kept exactly as written (story 17.6 states it).
    */
   anchor: string;
+  /**
+   * STORY 17.6 — THE NAME THE ANCHOR HAD, remembered on the ask card itself
+   * (PROVISIONAL record addition, flagged for an ADR). While the anchor is on
+   * the map the card reads the reference's own name; once it is gone the card
+   * can still say "this was about <the name it had>; that card is gone" instead
+   * of a generic "a card that is not here". A card that cannot be named is a
+   * worse hole than one that can, so the name is written at the moment the
+   * person anchors (creation, fork inheritance, re-anchor) and never rewritten
+   * by a reference going away: remembering is not repairing. Optional because
+   * cards recorded before this story simply have no remembered name; their card
+   * falls back to the generic line rather than inventing one.
+   */
+  anchorName?: string;
   /**
    * STORY 17.5 — the ask card this one was FORKED FROM (a slug in the asks
    * file), or absent on a card made from a reference. `from` and `carry`
@@ -155,13 +171,14 @@ export function askTurnPath(workspacePath: string, slug: string): string {
  * The line shape, in the order the writer emits it. `name` is greedy so the
  * person's words may contain the ` | ` separator (only the exact
  * ` | x: N | y: N | anchor: <slug>` tail is structural). STORY 17.5 appends ONE
- * optional tail — ` | from: <ask-slug> | carry: <n>` — and nothing else: a card
- * that was not forked writes exactly the line it always did, byte for byte.
- * The two fields travel as a PAIR, so half a fork (a `from` with no `carry`,
- * or a `carry` with no `from`) is out of shape and stays a preserved line.
+ * optional tail — ` | from: <ask-slug> | carry: <n>` — and STORY 17.6 appends
+ * the LAST optional tail — ` | anchorName: <the name the anchor had>` — after
+ * it. Both are optional, so a card recorded before either story writes exactly
+ * the line it always did, byte for byte, and a fork's pair still travels
+ * together. PROVISIONAL: the field's name and its last position.
  */
 const ASK_LINE =
-  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+) \| anchor: (\S+)(?: \| from: (\S+) \| carry: (\d+))?$/;
+  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+) \| anchor: (\S+)(?: \| from: (\S+) \| carry: (\d+))?(?: \| anchorName: (.+))?$/;
 
 /**
  * Parse one line. Anything out of shape — a missing key, a decimal coordinate,
@@ -174,7 +191,7 @@ const ASK_LINE =
 export function parseAskLine(line: string): AskCard | null {
   const match = ASK_LINE.exec(line);
   if (!match) return null;
-  const [, on, name, x, y, anchor, from, carry] = match;
+  const [, on, name, x, y, anchor, from, carry, anchorName] = match;
   if (on === "" || name.trim() === "" || anchor === "") return null;
   const ask: AskCard = { on, name, x: Number(x), y: Number(y), anchor };
   if (from !== undefined) {
@@ -183,6 +200,13 @@ export function parseAskLine(line: string): AskCard | null {
     ask.from = from;
     ask.carry = count;
   }
+  // STORY 17.6: an EMPTY remembered name is out of shape — a name that is
+  // nothing is not a name — and the line stays preserved rather than becoming a
+  // card with a hole where the anchor's name should be. Stored VERBATIM.
+  if (anchorName !== undefined) {
+    if (anchorName.trim() === "") return null;
+    ask.anchorName = anchorName;
+  }
   return ask;
 }
 
@@ -190,10 +214,17 @@ export function parseAskLine(line: string): AskCard | null {
 export function serializeAskLine(ask: AskCard): string {
   const base = `on: ${ask.on} | name: ${ask.name} | x: ${ask.x} | y: ${ask.y} | anchor: ${ask.anchor}`;
   // STORY 17.5: the fork's tail rides only when the record is a fork, and only
-  // as the pair — a card made from a reference is byte-identical to story 17.1.
-  return ask.from === undefined || ask.carry === undefined
-    ? base
-    : `${base} | from: ${ask.from} | carry: ${ask.carry}`;
+  // as the pair — a card made from a reference is byte-identical to story 17.1
+  // UNTIL 17.6 remembers a name, which adds its own last optional tail.
+  const forked =
+    ask.from === undefined || ask.carry === undefined
+      ? base
+      : `${base} | from: ${ask.from} | carry: ${ask.carry}`;
+  // STORY 17.6: the remembered name rides LAST and only when the record has
+  // one — a card that never knew its anchor's name writes no empty tail.
+  return ask.anchorName === undefined
+    ? forked
+    : `${forked} | anchorName: ${ask.anchorName}`;
 }
 
 /** Whether a card is a fork: it names a parent and carries a count of its turns. */
@@ -279,6 +310,7 @@ export function addAsk(
   x: number,
   y: number,
   anchor: string,
+  anchorName?: string,
 ): AskAddition {
   const ask: AskCard = {
     on: nextSlug(slugName(name), taken),
@@ -287,6 +319,12 @@ export function addAsk(
     y: Math.round(y),
     anchor,
   };
+  // STORY 17.6: the name the anchor has RIGHT NOW is written into the record,
+  // before it can go away. A source the map does not carry is left unnamed (the
+  // generic line is honest); a blank name is no name and is never written.
+  if (anchorName !== undefined && anchorName.trim() !== "") {
+    ask.anchorName = anchorName;
+  }
   return { asks: [...asks, ask], ask };
 }
 
@@ -311,6 +349,7 @@ export function forkAsk(
   name: string,
   x: number,
   y: number,
+  anchorName?: string,
 ): AskAddition {
   const ask: AskCard = {
     on: nextSlug(slugName(name), taken),
@@ -321,14 +360,27 @@ export function forkAsk(
     from: parent.on,
     carry: Math.max(0, Math.floor(carry)),
   };
+  // STORY 17.6: a fork INHERITS the remembered name with the anchor it
+  // inherits. An older parent with no remembered name may be named from the
+  // reference the caller still holds (the optional argument); with neither, the
+  // fork simply has no remembered name and its card says the generic line.
+  const remembered =
+    parent.anchorName !== undefined ? parent.anchorName : anchorName;
+  if (remembered !== undefined && remembered.trim() !== "") {
+    ask.anchorName = remembered;
+  }
   return { asks: [...asks, ask], ask };
 }
 
 /**
- * RE-ANCHOR one ask card (story 17.5): ONE field's change and nothing else —
- * the name, the point, the conversation and (on a fork) `from`/`carry` all stay
- * exactly as they were. PURE: the caller checks that the target reference is
- * still on the map (a re-anchor to a card that is gone refuses with one
+ * RE-ANCHOR one ask card (story 17.5; story 17.6 keeps the remembered name in
+ * step): ONE field's change — the name, the point, the conversation and (on a
+ * fork) `from`/`carry` all stay exactly as they were. The new anchor's name is
+ * written into `anchorName` when the caller has it, so the sentence a later
+ * delete would need names the card the ask is NOW about, never the old one; the
+ * sentence itself clears the moment the anchor resolves, which is a consequence
+ * of the field, not a repair. PURE: the caller checks that the target reference
+ * is still on the map (a re-anchor to a card that is gone refuses with one
  * sentence, before any write) and writes the whole file once. A slug this file
  * does not carry answers `null`, never an appended card.
  */
@@ -336,9 +388,21 @@ export function reanchorAsk(
   asks: readonly AskCard[],
   slug: string,
   anchor: string,
+  anchorName?: string,
 ): AskCard[] | null {
   if (!asks.some((ask) => ask.on === slug)) return null;
-  return asks.map((ask) => (ask.on === slug ? { ...ask, anchor } : ask));
+  const remembered =
+    anchorName !== undefined && anchorName.trim() !== "" ? anchorName : undefined;
+  return asks.map((ask) => {
+    if (ask.on !== slug) return ask;
+    const next: AskCard = { ...ask, anchor };
+    // A remembered name belongs to the OLD anchor; the caller must hand the new
+    // one (the app always does). Without it, no stale name is left claiming the
+    // new anchor was understood — the generic line is the honest state.
+    if (remembered !== undefined) next.anchorName = remembered;
+    else delete next.anchorName;
+    return next;
+  });
 }
 
 /* ------------------------------------------------------------------------- *

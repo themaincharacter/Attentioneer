@@ -54,6 +54,15 @@ import type { GroundAddResult } from "./useGround";
  * numbers live in map/asks.ts; this file only passes them and draws what the
  * packet declares.
  *
+ * A DANGLING ANCHOR IS SAID, NOT REPAIRED (story 17.6). When the anchored
+ * reference is gone the card's second line states what it was about — by the
+ * name the RECORD remembered when the person bound it — and that the card is
+ * gone. The thread still reads top to bottom and still sends (the packet
+ * records the null inclusion); re-anchoring, or restoring the deleted card,
+ * clears the sentence because the anchor resolves again. THE THREAD IS NEVER
+ * TOUCHED: no turn is rewritten, truncated or deleted, and no ask is merged or
+ * moved to a "close" card.
+ *
  * A FORK IS A BRANCH, NOT A DUPLICATE (story 17.5). The `fork` verb sits WITH
  * a turn: it branches the conversation there and writes a new card that
  * REFERENCES the parent's first n turns and inherits its anchor. This component
@@ -66,8 +75,9 @@ import type { GroundAddResult } from "./useGround";
  *
  * PROVISIONAL (ADR-0003's rendering seam): the card's size, the crop, the
  * scrollbox height and slack, the role marks, the stopped/incomplete wording,
- * and story 17.5's divider and missing-parent lines and the fork/re-anchor
- * chooser's look.
+ * story 17.5's divider and missing-parent lines and the fork/re-anchor
+ * chooser's look, and story 17.6's dangling sentence, its wording and its place
+ * on the "what this is" line.
  */
 
 /** The quiet line an ask card with no turns shows (PROVISIONAL wording). */
@@ -85,6 +95,23 @@ export const ASK_SCROLL_SLACK = 24;
 /** What this ask is about, as the card's second line (PURE, PROVISIONAL). */
 export function askKindLine(anchorName: string | null): string {
   return "a question about " + (anchorName === null ? "a card that is not here" : anchorName);
+}
+
+/**
+ * STORY 17.6 — THE ONE QUIET LINE A DANGLING ANCHOR GETS (PURE, PROVISIONAL
+ * wording and position): what the card was about, said by the name the record
+ * REMEMBERS, and the fact that the card is gone. It sits where the card's
+ * "what this is" line sits — above the thread, on the small and the expanded
+ * face alike — so the sentence is never hidden behind an open card. No error
+ * state, no red, no modal, no verb: re-anchoring is the person's act and lives
+ * with the card's other verbs. A card recorded before the name was remembered
+ * says the generic sentence rather than inventing one.
+ */
+export function askDanglingLine(remembered: string | null): string {
+  const name = remembered === null ? "" : remembered.trim();
+  return name === ""
+    ? "this was about a card that is not here; it is gone."
+    : "this was about " + name + "; that card is gone.";
 }
 
 /**
@@ -258,7 +285,12 @@ export function AskCard({
   onReanchor,
 }: {
   ask: AskCardRecord;
-  /** The anchored reference's coined name, or null when the anchor is gone. */
+  /**
+   * The anchored reference's live name, or null when the anchor is gone. STORY
+   * 17.6: when this is null the card speaks from the RECORD's `anchorName` (the
+   * name remembered at binding time) and falls back to the generic sentence only
+   * when even that is absent.
+   */
   anchorName: string | null;
   /**
    * STORY 17.3 — the anchored card's block facts, ALREADY CROPPED (name, state,
@@ -572,7 +604,15 @@ export function AskCard({
       onClick={open ? undefined : onOpen}
     >
       <div className="ask-card-name">{ask.name}</div>
-      <div className="ask-card-kind">{askKindLine(anchorName)}</div>
+      {/* STORY 17.6 — WHEN THE ANCHOR IS GONE the second line STATES it: the
+          name the record remembered, and that the card is gone. It clears by
+          itself when the anchor resolves again (a re-anchor, or the deleted
+          card's own Restore) — a consequence of the field, never a repair. */}
+      <div className="ask-card-kind">
+        {anchorName === null
+          ? askDanglingLine(ask.anchorName ?? null)
+          : askKindLine(anchorName)}
+      </div>
       <div className="ask-card-body" ref={bodyRef} onScroll={trackScroll}>
         {open ? (
           <div className="ask-card-thread">

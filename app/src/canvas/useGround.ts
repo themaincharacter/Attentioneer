@@ -1256,6 +1256,10 @@ export interface AskCardRecords {
  * already on the map). A blank name is the caller's refusal (it never reaches
  * here), and the source card is only NAMED by the anchor field — nothing about
  * it is read, rewritten or repaired. PURE apart from the bridge it is handed.
+ * STORY 17.6 adds ONE fact to the line: the anchor's name AS IT IS NOW, so the
+ * card can still say what it was about after the reference goes. A source the
+ * map does not carry stays unnamed (the generic sentence, never an invented
+ * name), and the reference itself is still untouched.
  */
 export async function writeAskCard(
   workspacePath: string,
@@ -1268,6 +1272,9 @@ export async function writeAskCard(
   y: number,
   io: AskCardIo = ASK_CARD_IO,
 ): Promise<AskCardRecords> {
+  // STORY 17.6: the name the anchor has at this moment rides the record. The
+  // reference is READ for its name only — never written, never repaired.
+  const source = references.find((reference) => reference.on === sourceSlug);
   const addition = addAsk(
     asks,
     sharedSlugs(references, asks),
@@ -1275,6 +1282,7 @@ export async function writeAskCard(
     x,
     y,
     sourceSlug,
+    source?.name,
   );
   await io.saveAsks(workspacePath, addition.asks, malformedAsks);
   return { asks: addition.asks, ask: addition.ask };
@@ -1306,6 +1314,12 @@ export async function writeForkAsk(
 ): Promise<AskCardRecords | null> {
   const parent = asks.find((ask) => ask.on === parentSlug);
   if (parent === undefined) return null;
+  // STORY 17.6: the fork inherits the remembered name; an older parent without
+  // one is named from the reference the map still carries, and with neither the
+  // fork writes no tail at all (the generic sentence is the honest state).
+  const anchorReference = references.find(
+    (reference) => reference.on === parent.anchor,
+  );
   const addition = forkAsk(
     asks,
     sharedSlugs(references, asks),
@@ -1314,6 +1328,7 @@ export async function writeForkAsk(
     name.trim(),
     x,
     y,
+    anchorReference?.name,
   );
   await io.saveAsks(workspacePath, addition.asks, malformedAsks);
   return { asks: addition.asks, ask: addition.ask };
@@ -1355,6 +1370,36 @@ export function reanchorRefusal(
   if (!asks.some((ask) => ask.on === slug)) return ASK_MISSING_REFUSAL;
   if (!referenceSlugs.includes(anchor)) return ASK_SOURCE_REFUSAL;
   return null;
+}
+
+/**
+ * STORY 17.6 — WHAT AN ASK CARD'S ANCHOR RESOLVES TO, PURE: the reference's
+ * name while the map carries it, or "gone" with the name the record REMEMBERS.
+ * The view never looks for a replacement card, never rewrites the anchor and
+ * never merges asks: a gone anchor is a fact to state, not a hole to fill. A
+ * card recorded before the name was remembered has `remembered: null` and the
+ * card falls back to its generic line — nothing is invented.
+ */
+export interface AskAnchorView {
+  /** The reference's live name, or null when the anchor is not on the map. */
+  name: string | null;
+  /** True exactly when the anchor does not resolve (the card says so). */
+  gone: boolean;
+  /** The name the record kept from when the anchor was last bound, or null. */
+  remembered: string | null;
+}
+
+export function askAnchorOf(
+  ask: AskCard,
+  references: readonly GroundReference[],
+): AskAnchorView {
+  const reference =
+    references.find((entry) => entry.on === ask.anchor) ?? null;
+  return {
+    name: reference === null ? null : reference.name,
+    gone: reference === null,
+    remembered: ask.anchorName ?? null,
+  };
 }
 
 /**
@@ -2804,7 +2849,18 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       };
       return queueRef.current
         .push(async () => {
-          const next = reanchorAsk(asksRef.current, slug, anchor);
+          // STORY 17.6: the new anchor's name is remembered in the same write,
+          // so a later delete of the NEW card can be said by name. The write is
+          // still ONE field's change: `anchor` plus the name that belongs to it.
+          const target = referencesRef.current.find(
+            (reference) => reference.on === anchor,
+          );
+          const next = reanchorAsk(
+            asksRef.current,
+            slug,
+            anchor,
+            target?.name,
+          );
           if (next === null) {
             outcome = { ok: false, message: ASK_MISSING_REFUSAL };
             return;

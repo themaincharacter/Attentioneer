@@ -40,6 +40,12 @@ import {
  * if it earns one (the epic's separate-maps rule); nothing here reads or
  * names a concept record.
  *
+ * ASK CARDS ARE NOT IN THE MIRROR YET (story 17.6's boundary, checked there):
+ * this renderer speaks for `ground.txt` and the reading families only, so a
+ * dangling ask anchor has no line to draw here. The asks section — name,
+ * anchor, last turn's time — and the gone-anchor sentence in MAP.md belong to
+ * story 17.8. Nothing is invented for them here in the meantime.
+ *
  * NO FULL PATHS: a mirror may be shared with another agent or pasted into a
  * message, so a card names its reading's FILE NAME only (readingFileName).
  * STORY 16.15: an image card says `image: <file name>` and a video says

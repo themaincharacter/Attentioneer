@@ -60,7 +60,7 @@ import {
   pickerCommand,
   type MentionChoice,
 } from "./MentionPicker";
-import { askThreadOf, type GroundAddResult } from "./useGround";
+import { askAnchorOf, askThreadOf, type GroundAddResult } from "./useGround";
 import type { TurnPort } from "../turn/turn";
 
 /**
@@ -693,19 +693,26 @@ export function GroundLayer({
       {/* STORY 17.1 — THE ASK CARDS, beside the reference cards on the same
           plane: their own record family, their own conversations, and the same
           grammar (name → what this is → the crop). Story 17.2 owns the thread's
-          face and 17.5 the fork and the re-anchor; 17.6 still owns the dangling
-          ANCHOR's sentence (a fork's missing parent is stated here already). */}
+          face, 17.5 the fork and the re-anchor, and 17.6 the dangling ANCHOR's
+          one quiet line (a fork's missing parent is a different, stated hole).
+          THE MIRROR DOES NOT KNOW ASK CARDS YET (map/mirror.ts renders ground
+          references and their readings only): no asks section is invented here
+          — story 17.8 owns putting asks in MAP.md and the history. */}
       {asks.map((ask) => {
         // STORY 17.5 — THE COMPOSED THREAD: a fork reads its carried prefix
         // from the parent's record HERE, on every render, and appends its own
         // turns; a missing parent is a stated hole with the fork's own turns
         // still readable. Nothing is copied and nothing is repaired.
         const thread = askThreadOf(ask, asks, askTurns);
+        // STORY 17.6 — THE ANCHOR, RESOLVED ONCE: the live name while the map
+        // carries it, or "gone" with the name the record remembers. Nothing
+        // here looks for a replacement, rewrites the anchor or merges asks.
+        const anchorView = askAnchorOf(ask, references);
         return (
           <AskCard
             key={ask.on}
             ask={ask}
-            anchorName={cardNames.get(ask.anchor) ?? null}
+            anchorName={anchorView.name}
             anchor={anchorCardOf(ask)}
             turns={thread.turns}
             carried={thread.carried.length}
