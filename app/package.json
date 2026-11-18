@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "bun test",
+    "spike:acp": "bun scripts/acp-spike.ts",
     "tauri": "tauri"
   },
   "dependencies": {
