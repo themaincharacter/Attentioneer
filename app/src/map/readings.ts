@@ -130,14 +130,23 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * because a selection can never be stale and nothing behind it is ever
  * stat'ed. STORY 18 keeps this form while removing the concept-map verb that
  * created one; the form is a record shape, not the affordance.
+ *
+ * STORY 17.11 (ADR-0037's first artifact) adds `distilled`: a COMPLETED ask
+ * turn's reply, COPIED verbatim into a card of its own. It is the same
+ * no-source-file provenance shape as a selection — `from: card://<ask-slug>`
+ * — but it says what made the copy: a RULE, standing in until the curator
+ * exists (17.12). The reply stays where it was; this line never claims a model
+ * read it. PROVISIONAL: the form's name and the `from` shape, until 17.12
+ * settles the curator's provenance.
  */
-export type ReadingForm = PointerForm | "selection" | "url";
+export type ReadingForm = PointerForm | "selection" | "url" | "distilled";
 
 export const READING_FORMS: readonly ReadingForm[] = [
   "path",
   "at",
   "selection",
   "url",
+  "distilled",
 ];
 
 /** Story 1's cap: the first 64 lines... (PROVISIONAL, not a rule). */
@@ -282,6 +291,10 @@ export function parseReadingLine(line: string): Reading | null {
   // so no caller can ever stat, read or re-take behind it (story 16.12).
   if (!READING_FORMS.includes(form as ReadingForm)) return null;
   if (form === "selection" && !isSelectionProvenance(from)) return null;
+  // STORY 17.11: a distilled reading names the ASK CARD it copied, never a
+  // path, so a line carrying one is refused (kept and reported) exactly as a
+  // selection's is. Nothing behind it is ever stat'ed or re-taken.
+  if (form === "distilled" && !isSelectionProvenance(from)) return null;
   // STORY 16.14: a url reading must carry a URL, never a path. It is kept
   // verbatim; the fetch's own guard refuses an address it cannot take, and
   // nothing here repairs or normalizes what the person pasted.
@@ -455,6 +468,28 @@ export function selectionSourceSlug(reading: Reading): string | null {
 }
 
 /**
+ * STORY 17.11 — the source ASK card a distilled reading copied, or null. The
+ * same `card://` provenance as a selection, kept in its own accessor so a
+ * caller that must distinguish the two never guesses from a shared function.
+ */
+export function distilledSourceSlug(reading: Reading): string | null {
+  if (reading.form !== "distilled") return null;
+  return isSelectionProvenance(reading.from)
+    ? reading.from.slice(SELECTION_PREFIX.length)
+    : null;
+}
+
+/**
+ * The source card a COPY reading names, whether a selection or a distilled
+ * one, or null for a reading that came from a file or a page. The footer, the
+ * "what this is" line and the mirror all ask this ONE question; the FORM is
+ * what tells a rule's copy from a person's selection.
+ */
+export function cardProvenanceSourceSlug(reading: Reading): string | null {
+  return selectionSourceSlug(reading) ?? distilledSourceSlug(reading);
+}
+
+/**
  * ONE selection reading, built from the source card's slug (story 16.12). No
  * `bytes` and no `extract`: nothing behind it can change, so there is no size
  * to compare and no extractor to record. PURE — the caller writes the text and
@@ -473,6 +508,27 @@ export function selectionReading(
   };
 }
 
+/**
+ * STORY 17.11 — ONE distilled reading, built from the ask card's slug: the
+ * reply was COPIED out of that card by a RULE (ADR-0037's first artifact).
+ * No `bytes` and no `extract`: nothing behind it can change, so there is no
+ * size to compare and no extractor to record. PURE — the caller writes the
+ * text and the line, in the house order. PROVISIONAL until 17.12's curator
+ * takes over this form.
+ */
+export function distilledReading(
+  on: string,
+  askSlug: string,
+  taken: string,
+): Reading {
+  return {
+    on,
+    form: "distilled",
+    from: selectionProvenance(askSlug),
+    taken,
+  };
+}
+
 // STORY 18 removed the selection→card affordance, and with it this file's two
 // refusal sentences and the proposed-name crop: nothing here names a card any
 // more, because nothing here creates one. The form, its reading builder and its
@@ -484,6 +540,22 @@ export function selectionReading(
  * excerpt and nothing else. The caller writes the line last (the house order).
  */
 export async function storeSelectionText(
+  workspacePath: string,
+  on: string,
+  text: string,
+  io: ReadingIo = READING_IO,
+): Promise<void> {
+  await io.createDirAll(readingsDir(workspacePath));
+  await io.writeTextFile(readingTextPath(workspacePath, on), text);
+}
+
+/**
+ * STORY 17.11 — STORE ONE DISTILLED CARD'S TEXT, the reply BYTES and nothing
+ * else: no cap, no trim, no re-wrap and no normalization. The rule COPIED the
+ * reply; this line writes that copy. The caller writes the reading line last
+ * (the house order).
+ */
+export async function storeDistilledText(
   workspacePath: string,
   on: string,
   text: string,
@@ -739,7 +811,13 @@ export function resolveReadingState(
   // state is `current` by construction — the map's own excerpt is the source —
   // and the SHORT-CIRCUIT comes before any metadata answer: no caller ever
   // stats a selection (an empty answer is simply ignored here).
-  if (reading.form === "selection") return "current";
+  //
+  // STORY 17.11: a distilled card is the same shape one form over — the map's
+  // own copy of a completed ask's reply. Nothing is stat'ed behind it and no
+  // metadata answer is ever asked for.
+  if (reading.form === "selection" || reading.form === "distilled") {
+    return "current";
+  }
   // STORY 16.14: a PAGE has NO PATH — its text was copied beside the map by
   // the sidecar, so there is nothing on this machine to stat and no way for it
   // to go stale. It is current once taken, before any metadata answer (which

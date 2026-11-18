@@ -718,10 +718,14 @@ describe("the ask path reuses the existing card-ask turn (story 17.3 adds the th
     expect(historyCall).not.toContain("question");
     expect(historyCall).not.toContain("recorded.turns");
     // STORY 17.10: the FIRST question's short form renames an Untitled ask, so
-    // the turn block CAN queue a mirror — before the send. After the send, the
-    // turn itself still adds nothing to MAP.md (no name, anchor or parent).
+    // the turn block CAN queue a mirror — before the send. STORY 17.11: after
+    // the send a COMPLETED turn makes an ordinary reference card, and only that
+    // card's add reaches the mirror; the turn itself still adds nothing.
     const afterSend = sendBlock.slice(sendBlock.indexOf("sendAskQuestion("));
-    expect(afterSend).not.toContain("queueMirror(");
+    expect(afterSend).toContain("cardAddEvent(");
+    const cardAddAt = afterSend.indexOf("cardAddEvent(");
+    expect(afterSend.slice(0, cardAddAt)).toContain("await writeDistilledCard(");
+    expect(afterSend).toContain("queueMirror(");
   });
 
   test("the proposed name is the anchored card's words plus the noun", () => {

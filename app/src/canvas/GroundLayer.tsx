@@ -29,6 +29,8 @@ import {
   readingFileName,
   readingNeedsLine,
   readingStateWord,
+  cardProvenanceSourceSlug,
+  distilledSourceSlug,
   selectionSourceSlug,
   type Reading,
   type ReadingState,
@@ -269,7 +271,7 @@ export function readingProvenance(
   // STORY 16.14: a page's footer shows its HOST only. The full URL stays in
   // the record; the map's plane is not a list of links.
   if (reading.form === "url") return pageHost(reading.from);
-  const source = selectionSourceSlug(reading);
+  const source = cardProvenanceSourceSlug(reading);
   if (source === null) return readingFileName(reading.from);
   const name = cardNames.get(source);
   return name === undefined ? SELECTION_MISSING_SOURCE : "from " + name;
@@ -300,6 +302,18 @@ export function readingKind(
     if (pageTitle !== null && pageTitle.trim() !== "") return pageTitle;
     const noun = readingExtract(reading) === "video" ? "video" : "page";
     return "the " + noun + " kept from " + pageHost(reading.from);
+  }
+  // STORY 17.11 — A DISTILLED CARD SAYS WHAT MADE IT: a RULE, never a model.
+  // Until 17.12's curator exists, claiming a model distilled this would be a
+  // lie; the sentence is the form's own, so a rule-made card can never drift
+  // into the selection's "selected from" wording. ADR-0037: the artifact
+  // first, the curator next.
+  const distilled = distilledSourceSlug(reading);
+  if (distilled !== null) {
+    const name = cardNames.get(distilled);
+    return name === undefined
+      ? "a rule's copy of a card that is gone"
+      : "a rule's copy of " + name;
   }
   const source = selectionSourceSlug(reading);
   if (source !== null) {
@@ -738,6 +752,10 @@ export function GroundLayer({
   const sourceNames = new Map<string, string>([
     ...cardNames,
     ...sessions.map((session) => [session.on, session.name] as const),
+    // STORY 17.11 — a distilled card names the ASK CARD it was copied from, so
+    // that source must resolve here too (it is provenance only; this map never
+    // feeds the mention picker, which stays references-only).
+    ...asks.map((ask) => [ask.on, ask.name] as const),
   ]);
   /**
    * STORY 18.3 — THE ROWS THIS BUILD SHIPS, as the session card's picker offers
@@ -2101,6 +2119,13 @@ function GroundCard({
           {reading !== null && reading.form === "selection" && (
             <div className="ground-quiet">
               this is a copy; there is no file to refresh or point at.
+            </div>
+          )}
+          {/* STORY 17.11 — the same quiet line, saying the copy's maker: a
+              RULE made this card, so there is no file behind it to re-read. */}
+          {reading !== null && distilledSourceSlug(reading) !== null && (
+            <div className="ground-quiet">
+              a rule's copy; there is no file to refresh or point at.
             </div>
           )}
           {/* STORY 16.15: an image is drawn from its own file, so it has no

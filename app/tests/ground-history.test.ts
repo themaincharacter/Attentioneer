@@ -350,8 +350,9 @@ describe("authored moves only: the look leaves no line", () => {
     // adds three session moves (create, remove, run) and the session restore
     // inside the one toast handler.
     // STORY 16.19 adds one: the ask a selection makes logs its add and its wire.
+    // STORY 17.11 adds one: a completed ask turn's card logs its own add.
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(22);
+    expect(calls.length).toBe(23);
   });
 
   test("the mirror and the history own the same verbs", () => {

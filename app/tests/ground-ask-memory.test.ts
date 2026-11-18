@@ -562,14 +562,17 @@ describe("the turn's order is a stated contract", () => {
     const next = HOOK.indexOf("\n  const askStop = useCallback", start);
     const body = HOOK.slice(start, next === -1 ? HOOK.length : next);
     const writeAt = body.indexOf("await writeAskTurn(");
-    const historyAt = body.indexOf("queueHistory(() =>");
+    const historyAt = body.indexOf("askTurnHistoryEvent(");
     expect(writeAt).toBeGreaterThan(-1);
     expect(historyAt).toBeGreaterThan(writeAt);
     expect(body).not.toContain("await queueHistory");
     // STORY 17.10: the FIRST question may rename an Untitled ask (a mirror
-    // BEFORE the send), but the TURN itself adds nothing to MAP.md: after the
-    // record write there is no mirror.
-    expect(body.slice(writeAt)).not.toContain("queueMirror(");
+    // BEFORE the send). STORY 17.11: a COMPLETED turn now makes a reference
+    // card, so a mirror follows that card's add — never a line describing the
+    // turn. The ask record still adds nothing MAP.md speaks about.
+    const mirrorAt = body.indexOf("queueMirror(", writeAt);
+    expect(mirrorAt).toBeGreaterThan(writeAt);
+    expect(body.slice(writeAt, mirrorAt)).toContain("await writeDistilledCard(");
   });
 });
 

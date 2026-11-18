@@ -225,7 +225,9 @@ export async function pullReading(
 ): Promise<PullResult> {
   // STORY 16.12: a selection pulls the map's own excerpt, verbatim — there is
   // no source file to locate, so no path is resolved and nothing is stat'ed.
-  if (reading.form === "selection") {
+  // STORY 17.11: a distilled card is the same shape one form over (a completed
+  // ask turn's reply, copied), so the pull reads the map's own bytes.
+  if (reading.form === "selection" || reading.form === "distilled") {
     const readStored = io.readStoredText ?? readTextFile;
     const stored = await readStored(readingTextPath(workspacePath, reading.on));
     if (stored === null) {

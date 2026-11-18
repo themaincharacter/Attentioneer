@@ -583,7 +583,7 @@ describe("the hook queues the mirror after every ground write", () => {
     });
   }
 
-  test("exactly twenty-three call sites (one per write path, not on load)", () => {
+  test("exactly twenty-four call sites (one per write path, not on load)", () => {
     // STORY 18 removes story 16.12's selection card from the write paths with
     // its verb, so this is one fewer than the twenty-three 18.5 left.
     // Story 16.13 adds restore as the tenth; story 16.14 the page card and
@@ -596,7 +596,9 @@ describe("the hook queues the mirror after every ground write", () => {
     // STORY 17.10 adds one mirror for the FIRST question's short-form rename
     // (an empty card names itself), which is a name change like any other.
     // STORY 16.19 adds one: the ask a selection makes writes a card and a wire.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(23);
+    // STORY 17.11 adds one: a completed ask turn's card is an ordinary
+    // reference, so its appearance reaches the mirror like any other add.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(24);
   });
 
   test("opening never writes the mirror", () => {

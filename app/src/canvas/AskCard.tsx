@@ -147,6 +147,15 @@ export const ASK_STOPPED_MARK = " — stopped mid-answer";
 /** What a broken-off turn's partial says (PROVISIONAL wording). */
 export const ASK_INCOMPLETE_MARK = " — the answer broke off";
 
+/**
+ * STORY 17.11 — THE ONE QUIET LINE A TURN GETS WHEN NO CARD WAS MADE. It is a
+ * plain statement, not an error: the reply, when there was one, still stands
+ * in the thread above it (ADR-0037 decision 8).
+ */
+export function AskNoCardLine({ line }: { line: string }) {
+  return <div className="ask-fork-missing">{line}</div>;
+}
+
 /** How close to the bottom still counts as "at the bottom" (px, PROVISIONAL). */
 export const ASK_SCROLL_SLACK = 24;
 
@@ -525,6 +534,13 @@ export function AskCard({
    * reload starts clean and the line describes the turn the person just saw.
    */
   const [hit, setHit] = useState<GroundAddResult | null>(null);
+  /**
+   * STORY 17.11 — WHETHER THE TURN LEFT NO CARD, and the one line that says
+   * so. VIEW STATE beside `hit`: the conversation file holds words, never a
+   * card's fate, so a reload starts clean. A rule-made card never needs this
+   * line; a stopped, broken, timed-out or empty turn does.
+   */
+  const [noCard, setNoCard] = useState<string | null>(null);
   const running = pending !== null && pending.ending === "running";
   // STORY 16.19 — the selection's question is asked ONCE per token. The ref is
   // the guard: the effect below can run on every render that changes the prop,
@@ -649,8 +665,9 @@ export function AskCard({
       return;
     }
     setProblem(null);
-    // A new turn has its own facts; the last turn's line goes with it.
+    // A new turn has its own facts; the last turn's lines go with it.
     setHit(null);
+    setNoCard(null);
     setStopping(false);
     stoppedRef.current = false;
     // The person's line is shown at once as the pending question; the writer
@@ -669,6 +686,9 @@ export function AskCard({
     // STORY 17.7b: the turn's hit facts are the card's quiet lines; a clean
     // turn hands over nulls and the component draws nothing.
     setHit(result);
+    // STORY 17.11 — A TURN THAT MADE NO CARD SAYS SO in one line (ADR-0037
+    // decision 8: the reply, when there was one, still stands above).
+    setNoCard(result.noCard ?? null);
     if (result.readback !== undefined) setSent(result.readback);
     if (!result.ok) setProblem(result.message);
   }
@@ -993,6 +1013,10 @@ export function AskCard({
             {/* STORY 17.7b — WHAT THE TURN HIT, beside the turn it belongs to:
                 one quiet line each, the existing sentences, no count. */}
             {hit !== null && <AskTurnFactsLine result={hit} />}
+            {/* STORY 17.11 — NO ARTIFACT, SAID IN ONE LINE. A rule-made card
+                needs no notice; a stopped, broken, timed-out or empty turn
+                does, and the words that did arrive stay above it. */}
+            {noCard !== null && <AskNoCardLine line={noCard} />}
           </div>
         ) : smallTurn === null ? (
           <div className="ask-card-empty">{ASK_EMPTY_SENTENCE}</div>

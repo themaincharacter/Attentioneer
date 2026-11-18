@@ -142,11 +142,13 @@ import {
   readingFileName,
   readingFor,
   readingTextPath,
+  distilledReading,
   refreshReading,
   restoreReadingText,
   resolveReadingState,
   saveReadings,
   selectionReading,
+  storeDistilledText,
   storeReadingText,
   storeSelectionText,
   takeReading,
@@ -354,9 +356,15 @@ import {
  *     `card://<source>`, current by construction, never stat'ed. STORY 18
  *     REMOVED THE VERB THAT MADE ONE FROM A CONCEPT-MAP SELECTION (the user
  *     corrected the intent: that selection should open the ASK widget, a later
- *     story). The form stays parsed and rendered, because existing cards, the
- *     artifact card and story 18.4's run-result card are selections too; the
- *     result card is now the only creator, through `writeSelectionCard`.
+ *     story). The form stays parsed and rendered, because existing cards and
+ *     story 18.4's run-result card are selections too; the result card is the
+ *     creator, through `writeSelectionCard`.
+ *   - A DISTILLED CARD (STORY 17.11, ADR-0037's first artifact): the sibling
+ *     form one `card://` step over. A COMPLETED ask turn's reply is COPIED
+ *     verbatim into a card of its own by a RULE — no model, no distillation —
+ *     and the new card is wired back to the ask card that produced it. The ask
+ *     card keeps the reply; this card is the artifact, and its line says a
+ *     rule made it until 17.12's curator takes over.
  *   - The whole read-modify-write runs through the app's one per-file
  *     discipline (`createWriteQueue`, ADR-0004/ADR-0018): one line at a time,
  *     never a whole-folder rewrite. THE PULL, THE MIRROR AND THE HISTORY ARE
@@ -391,10 +399,18 @@ export type GroundAddResult =
        * open it (a fork opens its new card). Absent on every other move.
        */
       created?: string;
+      /**
+       * STORY 17.11 — the one line an ask card shows when a turn completed
+       * with no text, or did not complete at all: no card was made. VIEW
+       * state, never a record field.
+       */
+      noCard?: string;
     }
   | {
       ok: false;
       message: string;
+      /** STORY 17.11: the turn did not complete, so no card was made. */
+      noCard?: string;
       /** The same bytes for a turn that left and did not finish. */
       readback?: AskPacketReadback;
       /**
@@ -1683,6 +1699,129 @@ export async function writeSelectionCard(
     references: addition.references,
     readings: nextReadings,
     reading,
+  };
+}
+
+/* ------------------------------------------------------------------------- *
+ * STORY 17.11 — A COMPLETED ASK TURN'S REPLY BECOMES A CARD (ADR-0037's
+ * first artifact, the rule-based one).
+ *
+ * The curator does not exist yet, so the first implementation of the artifact
+ * is a RULE: copy the reply VERBATIM into a card of its own, wire it back to
+ * the ask card that produced it, and say plainly that a rule made it. Nothing
+ * is read, distilled, summarised or judged — the point of this story is that
+ * the NODE AND THE WIRE exist before a second model can be wrong (ADR-0037's
+ * "Alternatives considered").
+ *
+ * ONE CARD PER COMPLETED TURN, never per send: a stopped, failed, timed-out or
+ * empty turn writes NOTHING and the ask card says so in one line. A rerun is a
+ * completed turn like any other, so it makes another card; the existing
+ * remove/restore path makes an unwanted one one press away.
+ *
+ * THE REPLY IS NEVER MOVED OR MODIFIED. The ask card keeps it; this card is a
+ * COPY whose reading text is the reply's exact bytes.
+ * ------------------------------------------------------------------------- */
+
+/** The one line an ask card gets when no card was made (PROVISIONAL wording). */
+export const ASK_NO_CARD_SENTENCE = "no card was made";
+
+/** The one line a completed reply gets when its card could not be written. */
+export const ASK_CARD_WRITE_REFUSAL =
+  "the reply came back, but its card could not be written.";
+
+/**
+ * WOULD THIS TURN MAKE A CARD? PURE, so the rule is not the hook's only truth:
+ * only a turn that ANSWERED and carried text makes one. Everything else — a
+ * stop, a break, the budget, an empty reply — makes NO card and answers the
+ * one line. ADR-0037 decision 8: the reply still stands in the ask card.
+ */
+export function askTurnCardNote(sent: AskTurnSend): string | null {
+  if (sent.ending !== "answered") return ASK_NO_CARD_SENTENCE;
+  if (sent.result.kind !== "answer") return ASK_NO_CARD_SENTENCE;
+  if (sent.result.text === "") return ASK_NO_CARD_SENTENCE;
+  return null;
+}
+
+/** The bridges a distilled card needs; a test passes its own fakes. */
+export interface DistilledIo extends SelectionIo {
+  storeDistilledText: typeof storeDistilledText;
+  saveGroundLinks: typeof saveGroundLinks;
+}
+
+/** The real bridges, bound once so the hook's path is the tested one. */
+const DISTILLED_IO: DistilledIo = {
+  ...SELECTION_IO,
+  storeDistilledText,
+  saveGroundLinks,
+};
+
+/** What copying a reply into a card produced, or why it wrote nothing. */
+export type AskDistilledCard =
+  | {
+      kind: "written";
+      records: SelectionRecords;
+      /** The new card's own ground line (its slug, name and point). */
+      reference: GroundReference;
+      /** Every link the file now holds, the new wire included. */
+      links: GroundLink[];
+      /** The reply bytes, exactly as stored. */
+      text: string;
+    }
+  | { kind: "refused"; message: string };
+
+/**
+ * WRITE ONE DISTILLED CARD, in the house order:
+ *
+ *   1. the reply's text file FIRST (`map/readings/<new-slug>.md`, VERBATIM);
+ *   2. the readings line NEXT (`form: distilled | from: card://<ask-slug>`);
+ *   3. the ground line LAST;
+ *   4. the WIRE after the card exists, ask card → new card, so the map shows
+ *      where the artifact came from and a wire can never name a card that is
+ *      not there.
+ *
+ * Nothing is read, stat'ed, capped or normalized: the bytes are the reply as
+ * the answer line holds them. The caller has already decided this turn
+ * completed; an empty text still refuses here so no caller can invent a blank
+ * card. PURE apart from the bridges it is handed. ADR-0037: the artifact
+ * first; 17.12 replaces this rule with the curator, not this shape.
+ */
+export async function writeDistilledCard(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+  links: readonly GroundLink[],
+  malformedGround: readonly string[],
+  malformedReadings: readonly string[],
+  malformedLinks: readonly string[],
+  askSlug: string,
+  name: string,
+  x: number,
+  y: number,
+  text: string,
+  taken: string,
+  io: DistilledIo = DISTILLED_IO,
+  /** The shared slug set (ground + asks + sessions), as every new card mints. */
+  options: { taken?: ReadonlySet<string> } = {},
+): Promise<AskDistilledCard> {
+  if (text === "") return { kind: "refused", message: ASK_NO_CARD_SENTENCE };
+  const addition = addGroundReference(references, name.trim(), x, y, options.taken);
+  const reading = distilledReading(addition.reference.on, askSlug, taken);
+  await io.storeDistilledText(workspacePath, reading.on, text);
+  const nextReadings = withReading(readings, reading);
+  await io.saveReadings(workspacePath, nextReadings, malformedReadings);
+  await io.saveGround(workspacePath, addition.references, malformedGround);
+  const nextLinks = addGroundLink(links, askSlug, reading.on);
+  await io.saveGroundLinks(workspacePath, nextLinks, malformedLinks);
+  return {
+    kind: "written",
+    records: {
+      references: addition.references,
+      readings: nextReadings,
+      reading,
+    },
+    reference: addition.reference,
+    links: nextLinks,
+    text,
   };
 }
 
@@ -4798,6 +4937,14 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * PRISM lands BEFORE the conversation so the answer line can name its id
    * (PROVISIONAL ordering, the story's own note); a turn that never left (no
    * provider) appends nothing, and neither does a draft.
+   *
+   * STORY 17.11 — A COMPLETED TURN LEAVES AN ARTIFACT: after the words are
+   * recorded, one reference card is made beside this one, its reading the
+   * reply's exact bytes (`form: distilled`, ADR-0037's first shape), wired
+   * back to this ask card. Only a turn that ANSWERED with text makes one; a
+   * stop, break, budget or empty reply writes no card and hands the card one
+   * quiet line. NO MODEL is called here — the rule copies; 17.12's curator
+   * replaces the rule, not this order (text, readings line, ground line, wire).
    */
   const askTurn = useCallback(
     (
@@ -4907,15 +5054,80 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
               ...askTurnsRef.current,
               [slug]: recorded.turns,
             };
+            // STORY 17.11 — THE ARTIFACT, and only for a COMPLETED turn
+            // (ADR-0037's first story: the node and the wire before the
+            // curator). The rule asks ONE question — did this turn answer with
+            // text? — and otherwise writes nothing but the one line. The
+            // reply's bytes are the answer line's, copied, never moved. Placed
+            // beside the ask card it came from and wired back to it, in the
+            // house order (text, readings line, ground line, then the wire).
+            const noCard = askTurnCardNote(sent);
+            let cardRefusal: string | null = null;
+            if (noCard === null) {
+              const askNow =
+                asksRef.current.find((entry) => entry.on === slug) ?? ask;
+              const cardName = askNameFromQuestion(question) || askNow.name;
+              const at = besidePlacement(askNow.x, askNow.y);
+              const written = await writeDistilledCard(
+                workspacePath,
+                referencesRef.current,
+                readingsRef.current,
+                linksRef.current,
+                malformedGroundRef.current,
+                malformedReadingsRef.current,
+                malformedLinksRef.current,
+                slug,
+                cardName,
+                at.x,
+                at.y,
+                sent.result.kind === "answer" ? sent.result.text : "",
+                new Date().toISOString(),
+                undefined,
+                {
+                  taken: sharedSlugs(
+                    referencesRef.current,
+                    asksRef.current,
+                    sessionsRef.current,
+                  ),
+                },
+              );
+              if (written.kind === "refused") {
+                cardRefusal = written.message;
+              } else {
+                referencesRef.current = written.records.references;
+                readingsRef.current = written.records.readings;
+                linksRef.current = written.links;
+                textsRef.current = {
+                  ...textsRef.current,
+                  [written.records.reading.on]: written.text,
+                };
+                statesRef.current = {
+                  ...statesRef.current,
+                  [written.records.reading.on]: "current" as ReadingState,
+                };
+                // The copy is an ordinary card: its appearance is an authored
+                // move, so the derived index follows like any other add. The
+                // wire itself is structure, not a history event.
+                const made = written.records.reading.on;
+                queueHistory(() => [
+                  cardAddEvent(
+                    Date.now(),
+                    made,
+                    written.reference.x,
+                    written.reference.y,
+                  ),
+                ]);
+                queueMirror();
+              }
+            }
             // STORY 17.8 — THE TURN'S LINE, in the stated order: the PRISM and
             // the conversation line are already written by `writeAskTurn` (the
             // Move first, so the answer line can name its id), and the history
             // line follows them in this same queue. Its ending is the PRISM's
             // own outcome through ONE mapping (askTurnHistoryEvent), so the two
             // records can never disagree; a turn that never left the app made
-            // no Move and gets no line. The mirror is NOT queued: a turn adds
-            // no name, anchor or parent to MAP.md, so nothing it describes
-            // changed.
+            // no Move and gets no line. The mirror is queued only when a card
+            // was made above (a turn alone adds nothing MAP.md describes).
             queueHistory(() => {
               const event = askTurnHistoryEvent(
                 Date.now(),
@@ -4928,21 +5140,33 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             setState(snapshot());
             // STORY 17.7b: the turn's hit facts ride out with the words, on
             // either ending — the card says what happened beside the turn.
+            const noCardLine = noCard === null ? {} : { noCard };
             outcome =
-              recorded.sentence === null
+              cardRefusal !== null
                 ? {
-                    ok: true,
-                    readback: sent.result.readback,
-                    reached: sent.reached,
-                    missed: sent.missed,
-                  }
-                : {
                     ok: false,
-                    message: recorded.sentence,
+                    message: cardRefusal,
                     readback: sent.result.readback,
                     reached: sent.reached,
                     missed: sent.missed,
-                  };
+                    ...noCardLine,
+                  }
+                : recorded.sentence === null
+                  ? {
+                      ok: true,
+                      readback: sent.result.readback,
+                      reached: sent.reached,
+                      missed: sent.missed,
+                      ...noCardLine,
+                    }
+                  : {
+                      ok: false,
+                      message: recorded.sentence,
+                      readback: sent.result.readback,
+                      reached: sent.reached,
+                      missed: sent.missed,
+                      ...noCardLine,
+                    };
           }),
         )
         .then(() => outcome)

@@ -6,10 +6,11 @@ import type { GroundReference } from "./ground";
 import { serializeGroundLinkLine, type GroundLink } from "./groundLinks";
 import { serializeMediaLine, type Media } from "./media";
 import {
+  cardProvenanceSourceSlug,
+  distilledSourceSlug,
   pageHost,
   readingExtract,
   readingFileName,
-  selectionSourceSlug,
   type Reading,
   type ReadingState,
 } from "./readings";
@@ -305,8 +306,10 @@ export function renderMirror(view: MirrorView): string {
     // person's machine and folder. The reading's record keeps the path. STORY
     // 16.12: a selection has no file — it says which CARD it came from, by the
     // source's NAME, and a source the map no longer carries is said quietly.
+    // STORY 17.11: a distilled card says the same fact one form over, and says
+    // WHAT MADE IT — a rule, never a model (ADR-0037's first artifact).
     if (reading !== null) {
-      const sourceSlug = selectionSourceSlug(reading);
+      const sourceSlug = cardProvenanceSourceSlug(reading);
       if (reading.form === "url") {
         // STORY 16.14: the mirror names the page's HOST only; the full address
         // stays in the reading's record, never in a shareable derived file.
@@ -321,6 +324,11 @@ export function renderMirror(view: MirrorView): string {
         lines.push("image: " + readingFileName(reading.from));
       } else if (sourceSlug === null) {
         lines.push("file: " + readingFileName(reading.from));
+      } else if (distilledSourceSlug(reading) !== null) {
+        lines.push(
+          "rule: a rule's copy of " +
+            (nameOf.get(sourceSlug) ?? "a card that is gone"),
+        );
       } else {
         lines.push(
           "from: " + (nameOf.get(sourceSlug) ?? "a card that is gone"),
