@@ -369,6 +369,8 @@ export function AskCard({
   onRename,
   onRemove,
   onLink,
+  autoAsk,
+  onAutoAsked,
   interactionMode = "idle",
   onNarrate,
 }: {
@@ -469,6 +471,17 @@ export function AskCard({
    * layer.
    */
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 16.19 — THE QUESTION A SELECTION ASKED, handed to this card by the
+   * layer that just made it. The user's correction made the selection open a
+   * question widget; the widget's press creates this card and hands it the
+   * question, and the card's OWN send path asks it — so the reply streams where
+   * every reply streams and there is no second send site. The token makes it
+   * ONCE: a re-render, a reopen or a rename can never ask it again.
+   */
+  autoAsk?: { question: string; token: number };
+  /** The token was taken: the layer forgets it, so nothing can replay it. */
+  onAutoAsked?: () => void;
   /** The gesture gate, so a wiring drag never starts under an armed tool. */
   interactionMode?: GestureMode;
   /** The one sentence a wiring drag speaks; absent in a render test. */
@@ -513,6 +526,24 @@ export function AskCard({
    */
   const [hit, setHit] = useState<GroundAddResult | null>(null);
   const running = pending !== null && pending.ending === "running";
+  // STORY 16.19 — the selection's question is asked ONCE per token. The ref is
+  // the guard: the effect below can run on every render that changes the prop,
+  // and a card that is closed, reopened or renamed must never ask again.
+  const autoAskedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (autoAsk === undefined || !open) return;
+    if (autoAskedRef.current === autoAsk.token) return;
+    autoAskedRef.current = autoAsk.token;
+    // The token is spent whatever happens next: a replay would be a second
+    // question the person never asked.
+    onAutoAsked?.();
+    // The words stay in the composer if the card cannot send (nothing
+    // configured), so the person's question is not silently swallowed.
+    setQuestion(autoAsk.question);
+    if (hasProvider === false || onAskTurn === undefined) return;
+    void send(autoAsk.question);
+    // Mount/open only: the send is the card's own ordinary path from here.
+  }, [autoAsk, open, hasProvider, onAskTurn]);
   // STORY 17.9 — the SAME assembler the hook sends: the wired cards, the
   // thread, the question. The context bound is the assembler's; the card only
   // supplies what is wired.
@@ -608,13 +639,15 @@ export function AskCard({
     );
   }
 
-  async function send(): Promise<void> {
+  async function send(askedOverride?: string): Promise<void> {
     if (running || onAskTurn === undefined) return;
-    if (question.trim() === "") {
+    // STORY 16.19: a selection's ask hands its words in directly (the composer
+    // may not have painted them yet); every other send reads the field.
+    const asked = askedOverride ?? question;
+    if (asked.trim() === "") {
       setProblem(ASK_QUESTION_REFUSAL);
       return;
     }
-    const asked = question;
     setProblem(null);
     // A new turn has its own facts; the last turn's line goes with it.
     setHit(null);

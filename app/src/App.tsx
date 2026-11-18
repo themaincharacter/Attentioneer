@@ -4483,6 +4483,10 @@ function App() {
             asks={ground.asks}
             askTurns={ground.askTurns}
             onCreateAsk={ground.createAsk}
+            /* STORY 16.19 — a selection opens a question widget; its ask makes
+               an empty peer ask card beside the source, wired to it, with the
+               chosen words as one more context kind. */
+            onAskFromSelection={ground.askFromSelection}
             onForkAsk={ground.forkAskAt}
             onRenameAsk={ground.renameAskTo}
             revealAsk={revealAsk}

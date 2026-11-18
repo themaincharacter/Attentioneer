@@ -73,6 +73,16 @@ import type { SessionCard } from "./sessions";
  * repaired. Story 17.7 retired the embedded panel; 17.8 puts asks in the
  * mirror and the history (neither is written here) and adds the folder's one
  * listing, the restore's exact bytes and the two removal helpers below.
+ *
+ * STORY 16.19 — AN ASK MADE FROM A SELECTION REMEMBERS THE WORDS IT WAS ASKED
+ * ABOUT. The user corrected the intent: selecting text in a card's reading opens
+ * a question widget, and the question's card holds the selected words as CONTEXT
+ * — not a copy card, not a reading, and never a change to the source card. So
+ * the line gains ONE optional last pair, `chosenFrom` (the source card's slug)
+ * and `chosen` (the words, whitespace-collapsed and JSON-escaped so the line
+ * stays one line), and the 17.9 context path gains "the chosen words" as one
+ * more source kind. Nothing else about the card is new: same family, same
+ * conversation file, same wire that already makes the source its context.
  */
 
 /** One ask card: the person's name at their point, about one reference. */
@@ -125,6 +135,27 @@ export interface AskCard {
    * one-level rule stated in this module's header.
    */
   carry?: number;
+  /**
+   * STORY 16.19 — WHERE THE WORDS THE PERSON CHOSE CAME FROM: the slug of the
+   * card whose reading was selected when this ask was made from a selection.
+   * The user's correction is the whole reason it exists: the selected words are
+   * CONTEXT, never a copy of the source card's content, so they are not a
+   * reading of their own and not a card. This names the block's source (the
+   * card's live name, or the one line saying it is gone); nothing is read from
+   * it and no field of the source record is ever written.
+   */
+  chosenFrom?: string;
+  /**
+   * STORY 16.19 — THE WORDS THE PERSON CHOSE, stored VERBATIM apart from the
+   * one stated collapse (runs of whitespace, a selection's line breaks among
+   * them, become ONE space — see `selectionWords`). One line by construction,
+   * so the words ride as ONE context block of the ask card's packet, bounded by
+   * the SAME 17.9 context budget as a wired card and declared with their byte
+   * size. PROVISIONAL: the field's name and its JSON-string envelope (the words
+   * inside are untouched; only the envelope is the writer's, the ask turn
+   * line's own rule).
+   */
+  chosen?: string;
 }
 
 /** A read of `map/asks.txt`: what parsed, and what is kept but unreadable. */
@@ -211,7 +242,7 @@ export function askTurnPath(workspacePath: string, slug: string): string {
  * together. PROVISIONAL: the field's name and its last position.
  */
 const ASK_LINE =
-  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+)(?: \| anchor: (\S+))?(?: \| from: (\S+) \| carry: (\d+))?(?: \| anchorName: (.+))?$/;
+  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+)(?: \| anchor: (\S+))?(?: \| from: (\S+) \| carry: (\d+))?(?: \| anchorName: (.+?))?(?: \| chosenFrom: (\S+) \| chosen: ("(?:\\.|[^"\\])*"))?$/;
 
 /**
  * Parse one line. Anything out of shape — a missing key, a decimal coordinate,
@@ -224,7 +255,8 @@ const ASK_LINE =
 export function parseAskLine(line: string): AskCard | null {
   const match = ASK_LINE.exec(line);
   if (!match) return null;
-  const [, on, name, x, y, anchor, from, carry, anchorName] = match;
+  const [, on, name, x, y, anchor, from, carry, anchorName, chosenFrom, chosen] =
+    match;
   if (on === "" || name.trim() === "") return null;
   const ask: AskCard = { on, name, x: Number(x), y: Number(y) };
   // STORY 17.10 — AN ASK WITHOUT AN ANCHOR IS A LEGAL RECORD. The anchor is
@@ -248,6 +280,24 @@ export function parseAskLine(line: string): AskCard | null {
     if (anchorName.trim() === "") return null;
     ask.anchorName = anchorName;
   }
+  // STORY 16.19 — THE CHOSEN WORDS TRAVEL AS A PAIR, like a fork's from/carry:
+  // half the tail is out of shape, so a line this app did not write is kept and
+  // reported rather than read as a card whose words came from nowhere. The words
+  // are a JSON string so a quote, a backslash or a leading digit round-trips
+  // EXACTLY (the collapse already removed every newline); the envelope is the
+  // writer's, never a word.
+  if (chosenFrom !== undefined || chosen !== undefined) {
+    if (chosenFrom === undefined || chosen === undefined) return null;
+    let words: unknown;
+    try {
+      words = JSON.parse(chosen);
+    } catch {
+      return null;
+    }
+    if (typeof words !== "string" || words.trim() === "") return null;
+    ask.chosenFrom = chosenFrom;
+    ask.chosen = words;
+  }
   return ask;
 }
 
@@ -267,11 +317,18 @@ export function serializeAskLine(ask: AskCard): string {
     ask.from === undefined || ask.carry === undefined
       ? base
       : `${base} | from: ${ask.from} | carry: ${ask.carry}`;
-  // STORY 17.6: the remembered name rides LAST and only when the record has
-  // one — a card that never knew its anchor's name writes no empty tail.
-  return ask.anchorName === undefined
-    ? forked
-    : `${forked} | anchorName: ${ask.anchorName}`;
+  // STORY 17.6: the remembered name rides only when the record has one — a card
+  // that never knew its anchor's name writes no empty tail.
+  const remembered =
+    ask.anchorName === undefined
+      ? forked
+      : `${forked} | anchorName: ${ask.anchorName}`;
+  // STORY 16.19 — THE CHOSEN WORDS ARE THE NEW LAST TAIL, as a PAIR. A card made
+  // any other way writes exactly the line it always did, byte for byte; the
+  // words are JSON-escaped so the line stays one line and round-trips verbatim.
+  return ask.chosenFrom === undefined || ask.chosen === undefined
+    ? remembered
+    : `${remembered} | chosenFrom: ${ask.chosenFrom} | chosen: ${JSON.stringify(ask.chosen)}`;
 }
 
 /** Whether a card is a fork: it names a parent and carries a count of its turns. */
@@ -372,6 +429,14 @@ export function addAsk(
   name: string,
   x: number,
   y: number,
+  /**
+   * STORY 16.19 — THE CHOSEN WORDS, when this card was made from a selection.
+   * Absent for every other road to an ask card, which keeps their lines
+   * byte-identical to before. The words are stored ALREADY COLLAPSED (the
+   * caller's `selectionWords`), and they are CONTEXT: no reading, no note and
+   * nothing on the source card changes.
+   */
+  chosen?: { from: string; words: string },
 ): AskAddition {
   const ask: AskCard = {
     on: nextSlug(slugName(name), taken),
@@ -379,6 +444,10 @@ export function addAsk(
     x: Math.round(x),
     y: Math.round(y),
   };
+  if (chosen !== undefined) {
+    ask.chosenFrom = chosen.from;
+    ask.chosen = chosen.words;
+  }
   return { asks: [...asks, ask], ask };
 }
 
@@ -708,6 +777,63 @@ export function askRefusal(name: string): string | null {
 /** The turn's ONE refusal rule, PURE: a blank question writes nothing. */
 export function askQuestionRefusal(question: string): string | null {
   return question.trim() === "" ? ASK_QUESTION_REFUSAL : null;
+}
+
+/* ------------------------------------------------------------------------- *
+ * STORY 16.19 — THE WORDS A SELECTION CHOSE.
+ *
+ * The user's correction: selecting text in a card's reading should open a
+ * question widget, not mint a copy card (16.12's version was deleted in 16.18).
+ * The words the person selected are CONTEXT for the question they type — never
+ * a reading, never a second card and never a change to the source card.
+ *
+ * THE ONE COLLAPSE RULE (stated here because it is the only edit ever made to
+ * the person's bytes): a selection may span several lines of a reading, so every
+ * run of whitespace — the line breaks a block selection introduces included —
+ * becomes ONE space, and the ends are trimmed. APART FROM THAT the words are
+ * stored verbatim: punctuation, quotes and inner spacing are the person's. A
+ * selection that is nothing but whitespace is no selection at all (null), which
+ * is why the widget can never appear for one.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The one sentence a refused (empty) selection answers (PROVISIONAL wording).
+ * The name is NOT 16.12's: that verb's vocabulary was retired in 16.18 and the
+ * sweep still refuses it, so the words a selection chooses arrive under their
+ * own name (the copied card is gone; the selection is context now).
+ */
+export const CHOSEN_WORDS_REFUSAL = "select some words first.";
+
+/**
+ * THE WORDS, as this record stores them (PURE): whitespace collapsed to one
+ * space, ends trimmed, verbatim otherwise — or null when nothing is left. The
+ * rule is deliberately one line, because the words ride as ONE line in the
+ * record and as ONE context block in the packet.
+ */
+export function selectionWords(raw: string): string | null {
+  const words = raw.replace(/\s+/g, " ").trim();
+  return words === "" ? null : words;
+}
+
+/** The selection's ONE refusal rule, PURE: no words writes nothing. */
+export function selectionWordsRefusal(raw: string): string | null {
+  return selectionWords(raw) === null ? CHOSEN_WORDS_REFUSAL : null;
+}
+
+/** What a chosen-words context block is called when its source is gone. */
+export const CHOSEN_WORDS_MISSING = "chosen words from a card that is gone";
+
+/**
+ * STORY 16.19 — THE CONTEXT BLOCK'S NAME: "chosen words from <the card's live
+ * name>", the one new source kind the 17.9 context path gains. The card NAME is
+ * read where it stands (a rename follows it); a source the map no longer carries
+ * is SAID in the same breath, never repaired (17.6's rule, reused). PURE, so the
+ * ask card's context line and the packet's block name can never drift.
+ */
+export function chosenWordsName(cardName: string | null): string {
+  return cardName === null
+    ? CHOSEN_WORDS_MISSING
+    : "chosen words from " + cardName;
 }
 
 /**

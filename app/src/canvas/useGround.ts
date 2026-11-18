@@ -38,7 +38,11 @@ import {
   ASK_SOURCE_REFUSAL,
   ASK_THREAD_BOUND,
   ASK_UNTITLED_NAME,
+  CHOSEN_WORDS_REFUSAL,
   addAsk,
+  chosenWordsName,
+  selectionWords,
+  selectionWordsRefusal,
   appendExchange,
   askNameFromQuestion,
   askQuestionRefusal,
@@ -604,6 +608,19 @@ export interface GroundView {
     y: number,
   ) => Promise<GroundAddResult>;
   /**
+   * STORY 16.19 — THE ASK A SELECTION MAKES: an empty peer ask card beside the
+   * source, wired to it, with the chosen words carried on its line as one more
+   * context kind. The user corrected the intent (16.12's copied card was deleted
+   * in 16.18): the selection is CONTEXT, so the source card is never written and
+   * the words are never a card. `created` is the new slug, for the layer to open
+   * and hand the question to.
+   */
+  askFromSelection: (
+    sourceSlug: string,
+    words: string,
+    question: string,
+  ) => Promise<GroundAddResult>;
+  /**
    * STORY 17.10 — RENAME one ask card: the name changes, the slug (identity,
    * wire target, conversation file) does not. The anchor is legacy display and
    * is never written here.
@@ -798,6 +815,7 @@ type GroundLoaded = Omit<
   | "askStop"
   | "forkAskAt"
   | "createEmptyAsk"
+  | "askFromSelection"
   | "renameAskTo"
   | "removeAsk"
   | "removeSession"
@@ -1811,6 +1829,85 @@ export async function writeAskCard(
   return { asks: addition.asks, ask: addition.ask };
 }
 
+/**
+ * STORY 16.19 — THE BRIDGES AN ASK MADE FROM A SELECTION WRITES THROUGH. Two
+ * records, in the SAME order every ask creation uses: the ask line first, the
+ * wire second (so the wire can never point at a card that is not there).
+ */
+export interface SelectionAskIo {
+  saveAsks: typeof saveAsks;
+  saveGroundLinks: typeof saveGroundLinks;
+}
+
+/** The real bridges, bound once so the hook's path is the tested one. */
+const SELECTION_ASK_IO: SelectionAskIo = { saveAsks, saveGroundLinks };
+
+/** What making an ask from a selection produced: the lines and the new card. */
+export interface SelectionAskRecords {
+  asks: AskCard[];
+  ask: AskCard;
+  links: GroundLink[];
+}
+
+/**
+ * STORY 16.19 — MAKE THE ASK CARD A SELECTION ASKS FOR. The user's correction:
+ * selecting text in a reading opens a question widget, and what it makes is an
+ * ASK CARD — the one record family an ask always is — never a copy of the
+ * source's text (16.12's copied card was deleted in 16.18).
+ *
+ * The card is BORN EMPTY in 17.10's shape: no anchor, nothing from the press but
+ * its point (the caller's beside-the-source placement), the "Untitled ask"
+ * sentinel that the first question's short form replaces. TWO records are
+ * written, in the house order:
+ *
+ *   1. the ask line, carrying the chosen words and their source slug (the one
+ *      context kind a wire alone cannot say);
+ *   2. the wire FROM the source card INTO the new card — 17.9's mechanism, so
+ *      the card's context is the source's own reading as well.
+ *
+ * The SOURCE CARD IS NEVER WRITTEN: this function reads no field of it, writes
+ * no record it names and touches no reading, note or media. And nothing is read
+ * from disk here — the words are the person's selection, already collapsed by
+ * `selectionWords`, and they are stored verbatim apart from that collapse.
+ *
+ * A source the map does not carry answers null (the caller's one sentence); a
+ * selection with no words never reaches here (the refusal runs first, PURE).
+ * PURE apart from the bridges it is handed.
+ */
+export async function writeSelectionAsk(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  asks: readonly AskCard[],
+  malformedAsks: readonly string[],
+  links: readonly GroundLink[],
+  malformedLinks: readonly string[],
+  sourceSlug: string,
+  words: string,
+  name: string,
+  x: number,
+  y: number,
+  /** STORY 18.3's third family, so a selection ask cannot twin a session. */
+  sessions: readonly SessionCard[] = [],
+  io: SelectionAskIo = SELECTION_ASK_IO,
+): Promise<SelectionAskRecords | null> {
+  if (!references.some((reference) => reference.on === sourceSlug)) return null;
+  const collapsed = selectionWords(words);
+  if (collapsed === null) return null;
+  // The slug is minted against ALL THREE families, exactly as every ask card is.
+  const addition = addAsk(
+    asks,
+    sharedSlugs(references, asks, sessions),
+    name.trim(),
+    x,
+    y,
+    { from: sourceSlug, words: collapsed },
+  );
+  await io.saveAsks(workspacePath, addition.asks, malformedAsks);
+  const nextLinks = addGroundLink(links, sourceSlug, addition.ask.on);
+  await io.saveGroundLinks(workspacePath, nextLinks, malformedLinks);
+  return { asks: addition.asks, ask: addition.ask, links: nextLinks };
+}
+
 /** The bridges an ask turn's record write needs; a test passes its own fakes. */
 export interface AskTurnIo {
   appendExchange: typeof appendExchange;
@@ -1992,6 +2089,12 @@ export interface AskContextFacts {
  *   - a SESSION card: its most recent COMPLETED run's text, whole entries;
  *   - a card with none of those: the same block plus its one quiet line.
  *
+ * STORY 16.19 — AND, BEFORE THEM ALL, THE WORDS THE PERSON CHOSE: an ask made
+ * from a selection carries the selected words and their source slug on its own
+ * line, and they ride as one block under the same 17.9 bound (whole, because the
+ * record stores them on one line). The user's correction made the selection
+ * CONTEXT, so it is a source kind here and never a reading or a card.
+ *
  * A wire whose source is gone is DANGLING and is returned, not repaired.
  */
 export function askContextFactsOf(
@@ -2006,6 +2109,31 @@ export function askContextFactsOf(
   ];
   const wired = askContextSources(input.ask, input.links, known);
   const facts: AskCardFacts[] = [];
+  // STORY 16.19 — THE CHOSEN WORDS ARE ONE MORE SOURCE KIND, and they ride
+  // FIRST: the question this card was made from was asked about exactly these
+  // words. They are not a card, so they carry no slug (the PRISM's inclusion set
+  // never names them), no reading (one line, whole) and no note. The block's name
+  // reads where the source card's name is NOW; a source the map no longer
+  // carries is said in that name, never repaired (17.6's rule, one kind over).
+  const chooser = input.asks.find((entry) => entry.on === input.ask);
+  if (chooser !== undefined && chooser.chosen !== undefined) {
+    const from = chooser.chosenFrom ?? null;
+    const sourceName =
+      from === null
+        ? null
+        : (input.references.find((reference) => reference.on === from)?.name ??
+          input.asks.find((entry) => entry.on === from)?.name ??
+          sessions.find((entry) => entry.on === from)?.name ??
+          null);
+    facts.push({
+      name: chosenWordsName(sourceName),
+      state: null,
+      reading: null,
+      readingText: null,
+      note: null,
+      chosen: chooser.chosen,
+    });
+  }
   for (const source of wired.sources) {
     const reference = input.references.find((entry) => entry.on === source);
     if (reference !== undefined) {
@@ -3936,6 +4064,97 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
+   * STORY 16.19 — THE SELECTION'S ASK: an EMPTY peer ask card beside the source,
+   * wired to it, its line carrying the chosen words and their source. The user's
+   * correction is the shape: the selection is CONTEXT, so nothing is copied and
+   * the source card's record, reading and note are never written.
+   *
+   * THE REFUSALS RUN BEFORE THE QUEUE, PURE: no words answers one sentence (the
+   * widget never exists for an empty selection, and this is the rule behind
+   * that), no question answers the ask's existing sentence, and a source this
+   * map does not carry answers the ask's existing one. Nothing is written by a
+   * refusal.
+   *
+   * The new card's NAME is the 17.10 sentinel: the FIRST QUESTION names it (the
+   * card's own send path does that), so the person never has to name a card
+   * before asking in it. The slug rides back so the layer can open the card and
+   * hand it the question.
+   *
+   * PROVISIONAL: the beside-the-source placement (17.1's offset, reused), the
+   * "Untitled ask" sentinel and the chosen-words record fields.
+   */
+  const askFromSelection = useCallback(
+    (
+      sourceSlug: string,
+      words: string,
+      question: string,
+    ): Promise<GroundAddResult> => {
+      if (selectionWordsRefusal(words) !== null) {
+        return Promise.resolve({
+          ok: false,
+          message: CHOSEN_WORDS_REFUSAL,
+        });
+      }
+      const asked = askQuestionRefusal(question);
+      if (asked !== null) {
+        return Promise.resolve({ ok: false, message: asked });
+      }
+      const source = referencesRef.current.find(
+        (reference) => reference.on === sourceSlug,
+      );
+      if (source === undefined) {
+        return Promise.resolve({ ok: false, message: ASK_SOURCE_REFUSAL });
+      }
+      const at = besidePlacement(source.x, source.y);
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const written = await writeSelectionAsk(
+            workspacePath,
+            referencesRef.current,
+            asksRef.current,
+            malformedAsksRef.current,
+            linksRef.current,
+            malformedLinksRef.current,
+            sourceSlug,
+            words,
+            ASK_UNTITLED_NAME,
+            at.x,
+            at.y,
+            sessionsRef.current,
+          );
+          if (written === null) {
+            outcome = { ok: false, message: ASK_SOURCE_REFUSAL };
+            return;
+          }
+          asksRef.current = written.asks;
+          linksRef.current = written.links;
+          setState(snapshot());
+          outcome = { ok: true, created: written.ask.on };
+          // The authored lines the bubble's ask door also writes: the card's
+          // appearance, then the wire's ordered pair (structure only, no words).
+          queueHistory(() => {
+            const at2 = Date.now();
+            return [
+              askAddEvent(at2, written.ask.on),
+              linkAddEvent(at2, sourceSlug, written.ask.on),
+            ];
+          });
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
    * STORY 17.10 — RENAME one ask card. One queued write of `map/asks.txt`;
    * the name is the person's and the SLUG is identity (wire target and
    * conversation file), so nothing else moves. A blank name refuses before the
@@ -5608,6 +5827,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     loaded: state.loaded,
     createAsk,
     createEmptyAsk,
+    askFromSelection,
     renameAskTo,
     askTurn,
     askStop,

@@ -319,7 +319,10 @@ describe("one turn at a time, streaming, and stop", () => {
     expect(ASK_CARD).toContain("ask-card-stop");
     expect(ASK_CARD).toContain("await onStopTurn()");
     // The streaming path feeds the pending line, never a second answer.
-    const sendBlock = ASK_CARD.slice(ASK_CARD.indexOf("async function send()"));
+    // STORY 16.19: the send takes an optional question so a selection's widget
+    // can hand its words to the card's own one send path; every other caller
+    // still reads the composer.
+    const sendBlock = ASK_CARD.slice(ASK_CARD.indexOf("async function send("));
     expect(sendBlock).toContain("onAskTurn(ask.on, asked");
     expect(sendBlock).toContain("askPartPending(current, text)");
     expect(sendBlock.indexOf("askPartPending")).toBeGreaterThan(

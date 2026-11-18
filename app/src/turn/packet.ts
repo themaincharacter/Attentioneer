@@ -145,6 +145,13 @@ export function askCardInstruction(options: {
   contextRides: boolean;
   /** Whether cards were wired but none fit the stated bound. */
   contextOmitted: boolean;
+  /**
+   * STORY 16.19 — WHETHER THE CHOSEN WORDS RODE. They are context, not a card:
+   * one block says so plainly, so the model never mistakes a selection for the
+   * whole of the card it came from. Absent means no selection block rides,
+   * which keeps every earlier packet's bytes identical.
+   */
+  chosenRides?: boolean;
 }): string {
   const lines = [...INSTRUCTION_OPEN];
   // THE CORRECTION (story 17.9): the cards WIRED INTO this question are what it
@@ -164,6 +171,16 @@ export function askCardInstruction(options: {
     lines.push("");
     lines.push(
       "No card is wired into this question: answer from what this view gives you, and say plainly what you could not see.",
+    );
+  }
+  // STORY 16.19 — THE CHOSEN WORDS ride beside the cards: they are what the
+  // question was asked about, and they are CONTEXT. The sentence says which
+  // block it is (its heading names the card it came from) and claims nothing
+  // about the rest of that card.
+  if (options.chosenRides === true) {
+    lines.push("");
+    lines.push(
+      "One block is the words the person chose from a card: they are the context the question was asked about, not the whole card and not its reading.",
     );
   }
   if (options.threadRides) {
@@ -217,6 +234,14 @@ export interface AskPacketCard {
    * keeps the old generic sentence; an ask or session card says its own fact.
    */
   empty?: string;
+  /**
+   * STORY 16.19 — THE WORDS THE PERSON CHOSE, when this block is the selection's
+   * own context rather than a wired card: one line, verbatim, stored on the ask
+   * record. The user's correction made the selection CONTEXT, so it rides as its
+   * own block under the 17.9 bound, whole (it is one line by construction), and
+   * it is never a READ target — there is no fuller text behind it.
+   */
+  chosen?: string;
   /**
    * The card's slug, present when the app assembled it. It is NEVER rendered
    * and never sent: the hook uses it to name the context card's reading in the
@@ -355,6 +380,13 @@ function cardText(card: AskPacketCard): string {
   // STORY 17.9 — a wired ASK card lends its last completed answer, whole; a
   // wired SESSION card lends its last completed run's words, whole. The
   // labels say what the words are, never how many there are.
+  // STORY 16.19 — the selection's block: the words the person chose, VERBATIM,
+  // under a label that says whose words they are (the heading names the card).
+  if (card.chosen !== undefined) {
+    lines.push("the words the person chose from it, verbatim:");
+    lines.push(card.chosen);
+    lines.push("");
+  }
   if (card.answer !== undefined) {
     lines.push("the most recent completed answer:");
     lines.push(card.answer);
@@ -369,7 +401,8 @@ function cardText(card: AskPacketCard): string {
     card.reading === null &&
     card.note === null &&
     card.answer === undefined &&
-    card.result === undefined
+    card.result === undefined &&
+    card.chosen === undefined
   ) {
     lines.push(
       card.empty ??
@@ -625,16 +658,25 @@ export function assembleAskCardPacket(
       threadRides: thread.length > 0,
       contextRides: context.cards.length > 0,
       contextOmitted: context.omitted && context.cards.length === 0,
+      // STORY 16.19: the selection's block rides whole (one line), so it says
+      // what it is and is never a READ target (there is no fuller text).
+      chosenRides: context.cards.some((card) => card.chosen !== undefined),
     }),
   });
   blocks.push({ kind: "bound", name: "the bound", text: boundText() });
   // THE READ SET IS THE INCLUDED CARDS' NAMES (story 17.9): any one card that
   // actually rode may be asked for; a card that is not wired, or was dropped by
-  // the bound, is refused exactly as a non-included block always was.
+  // the bound, is refused exactly as a non-included block always was. STORY
+  // 16.19: the chosen-words block is not a card and has no fuller text, so it is
+  // not offered — the words the packet carries are all of them.
   return packetOf(
     blocks,
     asked,
-    new Set<string>(context.cards.map((card) => card.name)),
+    new Set<string>(
+      context.cards
+        .filter((card) => card.chosen === undefined)
+        .map((card) => card.name),
+    ),
   );
 }
 

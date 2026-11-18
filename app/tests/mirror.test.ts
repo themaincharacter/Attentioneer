@@ -539,6 +539,9 @@ describe("the hook queues the mirror after every ground write", () => {
     "renameAskTo",
     "forkAskAt",
     "removeAsk",
+    // STORY 16.19: an ask made from a selection writes the ask line and the
+    // wire from the source card, so MAP.md gains the card like any other add.
+    "askFromSelection",
   ];
 
   for (const verb of verbs) {
@@ -556,6 +559,9 @@ describe("the hook queues the mirror after every ground write", () => {
         // (text first, lines last) and then mirrors. STORY 18 removed the
         // concept-map selection verb, not this writer.
         body.lastIndexOf("await writeSelectionCard"),
+        // STORY 16.19: the selection's ask writes the ask line and the wire
+        // through its own writer, then mirrors.
+        body.lastIndexOf("await writeSelectionAsk"),
         // Story 16.13: a restore delegates its five writes to
         // `restoreGroundCard` (pieces first, reference last) and then mirrors.
         body.lastIndexOf("await restoreGroundCard"),
@@ -577,7 +583,7 @@ describe("the hook queues the mirror after every ground write", () => {
     });
   }
 
-  test("exactly twenty-two call sites (one per write path, not on load)", () => {
+  test("exactly twenty-three call sites (one per write path, not on load)", () => {
     // STORY 18 removes story 16.12's selection card from the write paths with
     // its verb, so this is one fewer than the twenty-three 18.5 left.
     // Story 16.13 adds restore as the tenth; story 16.14 the page card and
@@ -589,7 +595,8 @@ describe("the hook queues the mirror after every ground write", () => {
     // restore inside the one toast handler.
     // STORY 17.10 adds one mirror for the FIRST question's short-form rename
     // (an empty card names itself), which is a name change like any other.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(22);
+    // STORY 16.19 adds one: the ask a selection makes writes a card and a wire.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(23);
   });
 
   test("opening never writes the mirror", () => {

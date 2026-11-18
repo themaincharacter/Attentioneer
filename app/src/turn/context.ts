@@ -93,6 +93,13 @@ export interface AskCardFacts {
    * reference with no reading and no note keeps the packet's generic sentence.
    */
   empty?: string | null;
+  /**
+   * STORY 16.19 — THE WORDS A SELECTION CHOSE, when this fact is the selection's
+   * own context block rather than a wired card: one line, verbatim, already
+   * collapsed by the record. It has no slug, no reading and no note, so it can
+   * never name a card in the PRISM's inclusion set.
+   */
+  chosen?: string | null;
 }
 
 /** One reach the person included, as the pointer cites it. */
@@ -174,6 +181,11 @@ export function askCardOf(card: AskCardFacts): AskPacketCard {
   }
   if (card.empty !== undefined && card.empty !== null) {
     built.empty = card.empty;
+  }
+  // STORY 16.19 — the selection's words ride as their own block, whole: they are
+  // one line by construction, so there is nothing to crop.
+  if (card.chosen !== undefined && card.chosen !== null) {
+    built.chosen = card.chosen;
   }
   return built;
 }

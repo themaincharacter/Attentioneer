@@ -8,6 +8,7 @@ import type { GroundReference } from "../map/ground";
 import {
   askRefusal,
   proposeAskName,
+  selectionWords,
   type AskCard as AskCardRecord,
   type AskTurn,
 } from "../map/asks";
@@ -48,12 +49,14 @@ import type { GroundLink } from "../map/groundLinks";
 import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import { besidePlacement, type Point } from "./geometry";
 import { AskCard } from "./AskCard";
+import { SelectionAsk, clearTextSelection } from "./SelectionAsk";
 import { SessionCard as SessionCardView } from "./SessionCard";
 import {
   type SessionCard as SessionCardRecord,
   type SessionEntry,
 } from "../map/sessions";
 import { ACP_SPECS, acpDeclaration, acpRowLabel } from "../turn/acpSpecs";
+import { PROVIDER_SENTENCES } from "../turn/providers";
 import type {
   AcpPermissionAsk,
   AcpPermissionChoice,
@@ -199,6 +202,19 @@ import {
  * `form: selection` stays legal and keeps every line it had: the provenance
  * footer, "a copy of text selected from <card>", links, asks, the pull and
  * remove/restore. THE FORM IS NOT THE FEATURE; the form parses forever.
+ *
+ * STORY 16.19 GIVES 16.12'S FORM ITS REAL AFFORDANCE. The user corrected the
+ * intent twice: dragging over words in a card's reading should open a small
+ * question widget at the selection, and asking in it should make a LINKED CARD,
+ * not a copy of the selected text (16.12's copy card was deleted in 16.18).
+ * So the expanded reading is a SELECTION surface whose mouse-up reports the
+ * words and their plane point to the layer; the layer mounts ONE widget there
+ * (SelectionAsk: a question field, an ask verb, a dismiss); and asking creates
+ * an EMPTY peer ask card beside the source, WIRED to it, holding the chosen
+ * words as one more context kind. The source card is never written — the words
+ * are CONTEXT, not content — Esc, the card's close and asking all take the
+ * widget and its highlight away, and an empty selection opens nothing. No
+ * second model call happens anywhere in that path: the card's own send asks.
  *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
@@ -389,6 +405,17 @@ interface GroundLayerProps {
     y: number,
   ) => Promise<GroundAddResult>;
   /**
+   * STORY 16.19 — THE ASK A SELECTION MAKES: the widget at the words the person
+   * chose hands its question here; the hook makes the empty peer ask card beside
+   * the source, wires it, and carries the chosen words as one more context kind.
+   * Optional so a render test needs no write path.
+   */
+  onAskFromSelection?: (
+    sourceSlug: string,
+    words: string,
+    question: string,
+  ) => Promise<GroundAddResult>;
+  /**
    * STORY 17.5 — fork an ask card at a turn (one record line; the parent's
    * conversation is read, never copied). Optional so a render test needs no
    * write path.
@@ -548,6 +575,7 @@ export function GroundLayer({
   sessionRunning = [],
   sessionPermission = {},
   onCreateAsk,
+  onAskFromSelection,
   onForkAsk,
   onRenameAsk,
   revealAsk,
@@ -754,6 +782,104 @@ export function GroundLayer({
       dangling: resolved.dangling.length > 0,
     };
   };
+  /* ----------------------------------------------------------------------- *
+   * STORY 16.19 — SELECTING WORDS ASKS A QUESTION.
+   *
+   * The user's correction, twice: dragging over a sentence in a card's reading
+   * should open a question widget at the selection, and asking in it should make
+   * a LINKED CARD — not a copy of the selected text (16.12's copy card was
+   * deleted in 16.18). This layer owns the widget's VIEW STATE and nothing else:
+   * the selection is captured by the card (its reading element), the words are
+   * handed straight to the hook's one write path, and the only record that
+   * appears is the ask card the widget's question makes.
+   *
+   * THREE DISMISSALS, all of them clearing the browser's highlight: Esc, the
+   * card closing (the effect below), and asking. The widget is never mounted for
+   * an empty selection: `selectionWords` is the one collapse/refusal rule and a
+   * null answer means nothing opens. No second model call and no read happens
+   * anywhere in this block.
+   * ----------------------------------------------------------------------- */
+  const [selectionAsk, setSelectionAsk] = useState<{
+    source: string;
+    words: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  // STORY 16.19 — THE QUESTION THE WIDGET ASKED, waiting for its new card. The
+  // token is a fresh number per ask, so the card's one-shot send can never
+  // replay, and the layer forgets the seed the moment the card takes it.
+  const [askSeed, setAskSeed] = useState<{
+    slug: string;
+    question: string;
+    token: number;
+  } | null>(null);
+  const askSeedToken = useRef(0);
+
+  /** Dismiss the widget AND its highlight: no selection is left behind. */
+  function dismissSelection(): void {
+    setSelectionAsk(null);
+    clearTextSelection();
+  }
+
+  /** The card captured a selection: mount the widget at it (never for none). */
+  function choseWords(source: string, raw: string, x: number, y: number): void {
+    const words = selectionWords(raw);
+    if (words === null) {
+      dismissSelection();
+      return;
+    }
+    setSelectionAsk({ source, words, x, y });
+  }
+
+  /**
+   * ASK: the hook writes the empty peer ask card + its wire + the chosen words,
+   * then this layer OPENS that card and hands it the question, which the card's
+   * own send path asks (so the answer streams where every answer streams). A
+   * refusal is the widget's to show; nothing is opened and nothing is written.
+   */
+  async function askSelection(question: string): Promise<GroundAddResult> {
+    if (selectionAsk === null || onAskFromSelection === undefined) {
+      return { ok: false, message: "nothing was written." };
+    }
+    // THE ORDINARY PATH'S PRE-SEND RULE (17.7b), before anything is written: an
+    // unconfigured provider gets the SAME one sentence the ask card shows, the
+    // widget stays open with the question still in it, and no card is made that
+    // could not ask.
+    if (hasProvider === false) {
+      return { ok: false, message: PROVIDER_SENTENCES.nothing };
+    }
+    const result = await onAskFromSelection(
+      selectionAsk.source,
+      selectionAsk.words,
+      question,
+    );
+    if (result.ok && result.created !== undefined) {
+      askSeedToken.current += 1;
+      setAskSeed({
+        slug: result.created,
+        question,
+        token: askSeedToken.current,
+      });
+      setOpenOn(null);
+      setOpenSessionOn(null);
+      setOpenAskOn(result.created);
+    }
+    return result;
+  }
+
+  // A CARD CLOSE TAKES THE WIDGET WITH IT (the story's rule), and so does a
+  // source the map no longer carries. The rule is read from the SAME open state
+  // the cards honour, so no close path can miss it.
+  useEffect(() => {
+    if (selectionAsk === null) return;
+    const carried = references.some(
+      (reference) => reference.on === selectionAsk.source,
+    );
+    if (carried && openOn === selectionAsk.source) return;
+    setSelectionAsk(null);
+    clearTextSelection();
+  }, [openOn, references, selectionAsk]);
+
   const wordSlugs =
     concepts === null ? null : new Set(concepts.map((word) => word.slug));
   // The ONE read a word chip does: the concept's name and memory, or null when
@@ -800,6 +926,7 @@ export function GroundLayer({
           onRepoint={onRepoint}
           onRemove={remove}
           onCreateAsk={onCreateAsk}
+          onSelectWords={choseWords}
           onAskMade={(slug) => {
             setOpenOn(null);
             setOpenSessionOn(null);
@@ -864,6 +991,12 @@ export function GroundLayer({
             onStopTurn={onStopAskTurn}
             hasProvider={hasProvider}
             onOpenSettings={onOpenSettings}
+            autoAsk={
+              askSeed !== null && askSeed.slug === ask.on
+                ? { question: askSeed.question, token: askSeed.token }
+                : undefined
+            }
+            onAutoAsked={() => setAskSeed(null)}
             onForkTurn={
               onForkAsk === undefined
                 ? undefined
@@ -975,6 +1108,19 @@ export function GroundLayer({
           />
         );
       })}
+      {/* STORY 16.19 — THE SELECTION'S QUESTION WIDGET, at the words it was
+          opened from. One field, one ask verb, one dismiss; it is mounted only
+          while a selection exists, so an empty one can never open it. */}
+      {selectionAsk !== null && (
+        <SelectionAsk
+          x={selectionAsk.x}
+          y={selectionAsk.y}
+          zoom={zoom}
+          words={selectionAsk.words}
+          onAskQuestion={askSelection}
+          onDismiss={dismissSelection}
+        />
+      )}
       {refusal !== null && (
         <div
           className="ground-problem ground-removal-problem"
@@ -1055,6 +1201,7 @@ function GroundCard({
   onRepoint,
   onRemove,
   onCreateAsk,
+  onSelectWords,
   onAskMade,
   onSetNote,
   onPull,
@@ -1110,6 +1257,13 @@ function GroundCard({
     y: number,
   ) => Promise<GroundAddResult>;
   /**
+   * STORY 16.19 — THE READING'S SELECTION, on mouse-up: the raw words and the
+   * plane point they end at. The card only REPORTS it (the layer owns the
+   * widget); it writes nothing and reads nothing, and a collapsed or
+   * outside-the-reading selection is never reported.
+   */
+  onSelectWords?: (source: string, raw: string, x: number, y: number) => void;
+  /**
    * STORY 17.10 — the card it just made, so the LAYER (which owns which face is
    * open) can open it. A reference card does not hold the open-ask state.
    */
@@ -1132,6 +1286,9 @@ function GroundCard({
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // STORY 16.19 — the reading itself: the ONLY surface selection is taken from
+  // (a card's small face is a crop, so there is nothing to select there).
+  const readingRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const dragRef = useRef<GroundDragState | null>(null);
   const [dragPos, setDragPos] = useState<Point | null>(null);
@@ -1274,6 +1431,46 @@ function GroundCard({
     el.addEventListener("mousedown", handleMouseDown);
     return () => el.removeEventListener("mousedown", handleMouseDown);
   });
+
+  /* STORY 16.19 — CATCH THE SELECTION ON MOUSE-UP, and never an empty one.
+   *
+   * The reading's own press already begins TEXT SELECTION, not a card drag (the
+   * raw mousedown handler above returns early for .ground-reading), so this
+   * listener only reads what the browser selected: the words must be inside THIS
+   * reading (the range's common ancestor), the collapse must leave something, and
+   * then the selection's lower-left corner is converted to a PLANE point so the
+   * widget follows the map at any zoom. The card writes nothing here: the layer
+   * owns the widget, and the words are CONTEXT for a question, never content.
+   *
+   * PROVISIONAL: the point (the range's lower-left, converted through the card's
+   * own rect and the camera's zoom) and the widget hanging under it.
+   */
+  useEffect(() => {
+    if (!open || onSelectWords === undefined) return;
+    const report = onSelectWords;
+    function onMouseUp() {
+      const el = readingRef.current;
+      const selection = window.getSelection();
+      if (el === null || selection === null) return;
+      if (selection.isCollapsed || selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      if (!el.contains(range.commonAncestorContainer)) return;
+      const raw = selection.toString();
+      if (selectionWords(raw) === null) return;
+      const cardRect = cardRef.current?.getBoundingClientRect() ?? null;
+      const at = range.getBoundingClientRect();
+      const point =
+        cardRect === null || zoom === 0
+          ? { x: reference.x, y: reference.y }
+          : {
+              x: reference.x + (at.left - cardRect.left) / zoom,
+              y: reference.y + (at.bottom - cardRect.top) / zoom,
+            };
+      report(reference.on, raw, point.x, point.y);
+    }
+    window.addEventListener("mouseup", onMouseUp);
+    return () => window.removeEventListener("mouseup", onMouseUp);
+  }, [open, onSelectWords, reference.on, reference.x, reference.y, zoom]);
 
   // Click away / Esc closes. Capture so a plane press that d3 handles still
   // counts as a press away. The concept panel keeps the listener live on the
@@ -1695,8 +1892,10 @@ function GroundCard({
         {bodyText !== null ? (
           // STORY 18: the reading is just the stored bytes. It was 16.12's
           // selection surface; the person's correction removed that verb, and
-          // the reading itself keeps rendering unchanged.
-          <div className="ground-reading">
+          // the reading itself keeps rendering unchanged. STORY 16.19: this
+          // is the SELECTION surface the question widget is opened from — the
+          // ref is read on mouse-up and nothing about the element changed.
+          <div className="ground-reading" ref={readingRef}>
             {bodyText}
           </div>
         ) : showNeeds && needsLine !== null ? (

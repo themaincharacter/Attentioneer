@@ -162,6 +162,9 @@ export const CONTENT_CLASSES = [
   "distance-coinfield",
   "grow-field",
   "plane-menu",
+  // STORY 16.19: the question widget a selection opens. A press on its field or
+  // its verbs is the widget's, never the plane's pan or creation.
+  "selection-ask",
   "playing-set",
   "playing-set-word",
   // Story 2's signed links: the wire's own container, its head cluster and the

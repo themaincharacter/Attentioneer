@@ -1045,6 +1045,105 @@ body {
   }
 }
 
+/* STORY 16.19 — THE QUESTION WIDGET A SELECTION OPENS. One quiet paper strip
+   hanging under the chosen words: a field, the ask verb and a dismiss. It lives
+   inside .plane-inner (so it follows the map) and counter-scales against the
+   camera (inline, like the plane bubble), so the field stays readable at every
+   zoom. The wrapper layer is pointer-events: none, so the strip takes its own
+   presses and nothing else on the plane notices them. PROVISIONAL: the size,
+   the spacing and the paper, per the story's note. */
+.selection-ask {
+  position: absolute;
+  z-index: 8;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 10px;
+  box-shadow:
+    0 1px 2px rgba(40, 35, 25, 0.07),
+    0 6px 18px rgba(40, 35, 25, 0.13);
+  user-select: none;
+}
+
+.selection-ask-question {
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  color: #3c3a34;
+  box-sizing: border-box;
+  width: 220px;
+  padding: 4px 7px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(141, 136, 124, 0.28);
+  border-radius: 7px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.selection-ask-question:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+.selection-ask-ask,
+.selection-ask-dismiss {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: #4c4a44;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  background: rgba(255, 253, 248, 0.9);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 999px;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.selection-ask-ask:hover,
+.selection-ask-dismiss:hover {
+  color: #1e2126;
+  background: rgba(255, 253, 248, 1);
+  border-color: rgba(141, 136, 124, 0.4);
+}
+
+.selection-ask-ask:focus-visible,
+.selection-ask-dismiss:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 2px;
+}
+
+.selection-ask-ask:disabled,
+.selection-ask-dismiss:disabled,
+.selection-ask-question:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* A refusal (no words, no question, a source gone) is one quiet line under the
+   strip, never a colour, an icon or a modal. */
+.selection-ask-problem {
+  position: absolute;
+  left: 8px;
+  top: calc(100% + 4px);
+  padding: 3px 7px;
+  font-size: 12px;
+  line-height: 16px;
+  color: #8d887c;
+  white-space: nowrap;
+  background: rgba(255, 253, 248, 0.94);
+  border-radius: 6px;
+}
+
 /* The pop is duration-based and the global reduced-motion rule below already
    collapses it; this only drops the stagger so a choice is never left hidden
    for its delay. */
