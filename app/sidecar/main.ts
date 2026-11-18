@@ -12,7 +12,10 @@
  * same filter; story 16.14 adds `page` and `thumb` (a web reference's text and
  * its image), so the app's ONLY network calls still pass through here. The page
  * read writes nothing: it answers a title, reduced text and an image address,
- * and the window copies what it keeps beside the map.
+ * and the window copies what it keeps beside the map. STORY 16.15 adds
+ * `video`: one oEmbed read of a YouTube or Vimeo address, answered as a title
+ * and a thumbnail address — never a transcript, because that needs a model
+ * this app does not pretend to have.
  *
  * WHY THE KEY IS IN MEMORY: the key arrives inside a request line, is used for
  * exactly one `fetch`, and is not stored by this process. Nothing is written
@@ -51,11 +54,13 @@ import {
   requestIdOf,
   scrubSecret,
   thumbLine,
+  videoLine,
   type ModelsRequest,
   type PageRequest,
   type SidecarRequest,
   type ThumbRequest,
   type TurnRequest,
+  type VideoRequest,
 } from "../src/turn/protocol.ts";
 import {
   MODEL_LIST_LIMIT,
@@ -75,6 +80,15 @@ import {
   isPageContentType,
   pageUrlProblem,
 } from "../src/turn/pageExtract.ts";
+import {
+  OEMBED_BASE_ENV,
+  VIDEO_MAX_BYTES,
+  VIDEO_SENTENCES,
+  oembedEndpoint,
+  parseOembed,
+  videoProviderFor,
+  videoUrlProblem,
+} from "../src/turn/videoExtract.ts";
 
 /**
  * One serialized writer: lines must reach the pipe in the order they were
@@ -556,17 +570,17 @@ type PageFetch =
 async function fetchPage(
   url: string,
   signal: AbortSignal,
+  accept: string = "text/html, application/xhtml+xml, text/plain;q=0.8",
+  urlProblem: (value: string) => string | null = pageUrlProblem,
 ): Promise<PageFetch> {
   let current = url;
   for (let redirects = 0; ; redirects += 1) {
-    const problem = pageUrlProblem(current);
+    const problem = urlProblem(current);
     if (problem !== null) return { kind: "refused", message: problem };
     const response = await fetch(current, {
       method: "GET",
       redirect: "manual",
-      headers: {
-        accept: "text/html, application/xhtml+xml, text/plain;q=0.8",
-      },
+      headers: { accept },
       signal,
     });
     const location =
@@ -737,6 +751,117 @@ async function runThumb(request: ThumbRequest): Promise<void> {
   }
 }
 
+/** Is this content-type an oEmbed JSON answer? PURE. */
+function isJsonContentType(value: string | null): boolean {
+  if (value === null) return false;
+  const type = value.split(";")[0].trim().toLowerCase();
+  return type === "application/json" || type === "text/json";
+}
+
+/**
+ * Read ONE video's look (story 16.15) — the fourth outward read, and the only
+ * one that asks a site for its EMBED metadata. The guards are the page's:
+ * the host rule, the timeout, the redirect bound (every hop re-checked), a
+ * response cap and the content-type check. What comes back is the TITLE and
+ * the thumbnail ADDRESS; the picture follows through the same `thumb` wire a
+ * page's does, so the window still copies what it keeps.
+ *
+ * A HOST THIS APP DOES NOT KNOW is refused BEFORE any request, with the one
+ * sentence that suggests adding it as a web page instead.
+ *
+ * NOTHING IS GEARED TO WRITING: this process still opens no workspace file, so
+ * a failed read has nothing to clean up and the window creates nothing.
+ */
+async function runVideo(request: VideoRequest): Promise<void> {
+  const id = request.id;
+  const controller = new AbortController();
+  inFlight.set(id, controller);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, PAGE_TIMEOUT_MS);
+
+  const fail = (message: string): void => {
+    if (!stopped.has(id)) say(errorLine(id, message));
+  };
+
+  try {
+    // THE ADDRESS FIRST, then the provider: a host this app cannot ask is
+    // refused without a single request leaving the machine.
+    const problem = videoUrlProblem(request.url);
+    if (problem !== null) {
+      fail(problem);
+      return;
+    }
+    const provider = videoProviderFor(request.url);
+    if (provider === null) {
+      fail(VIDEO_SENTENCES.unsupported);
+      return;
+    }
+    // The story's proof seam: the app never sets this; a test points it at a
+    // local stub so the oEmbed path is proven with no external network.
+    const base = process.env[OEMBED_BASE_ENV] ?? null;
+    const endpoint = oembedEndpoint(provider, request.url, base);
+
+    let fetched: PageFetch;
+    try {
+      fetched = await fetchPage(
+        endpoint,
+        controller.signal,
+        "application/json",
+        videoUrlProblem,
+      );
+    } catch {
+      if (stopped.has(id)) return;
+      fail(timedOut ? VIDEO_SENTENCES.brokeOff : VIDEO_SENTENCES.unreachable);
+      return;
+    }
+    if (stopped.has(id)) return;
+    if (fetched.kind === "refused") {
+      fail(fetched.message);
+      return;
+    }
+    const response = fetched.response;
+    if (!response.ok) {
+      fail(
+        response.status === 404 || response.status === 410
+          ? VIDEO_SENTENCES.notFound
+          : `that video answered ${response.status}.`,
+      );
+      return;
+    }
+    if (!isJsonContentType(response.headers.get("content-type"))) {
+      fail(VIDEO_SENTENCES.notOembed);
+      return;
+    }
+    const body = await readCapped(response, VIDEO_MAX_BYTES);
+    if (stopped.has(id)) return;
+    if (body.kind === "too-large") {
+      fail(VIDEO_SENTENCES.tooLarge);
+      return;
+    }
+    if (body.kind === "broke") {
+      fail(VIDEO_SENTENCES.brokeOff);
+      return;
+    }
+    const look = parseOembed(body.text, fetched.finalUrl);
+    if (look === null) {
+      fail(VIDEO_SENTENCES.notOembed);
+      return;
+    }
+    const thumbUrl =
+      look.thumbUrl !== null && videoUrlProblem(look.thumbUrl) === null
+        ? look.thumbUrl
+        : null;
+    say(videoLine(id, look.title, thumbUrl, provider, response.status));
+  } finally {
+    clearTimeout(timer);
+    inFlight.delete(id);
+    stopped.delete(id);
+  }
+}
+
 /**
  * A stop for an in-flight turn or model fetch: answer `cancelled` NOW (the
  * request may be waiting on a slow provider), then abort the fetch so the
@@ -776,6 +901,10 @@ function handleLine(raw: string): void {
   }
   if (request.kind === "page") {
     void runPage(request);
+    return;
+  }
+  if (request.kind === "video") {
+    void runVideo(request);
     return;
   }
   if (request.kind === "thumb") {

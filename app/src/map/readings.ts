@@ -14,8 +14,9 @@ import { clipHead } from "../lib/headBounds";
 import { canonicalText } from "../lib/serialize";
 import {
   EXTRACT_NO_TEXT,
-  extractKindFor,
+  PICK_UNKNOWN,
   extractPdf,
+  pickKindFor,
   type PdfText,
 } from "./extract";
 import { pdfText } from "./pdf";
@@ -73,6 +74,14 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * reading is NEVER "missing": there is no path to stat, so it is current once
  * taken (the state short-circuit below). The record keeps the URL exactly as
  * the person gave it; the card shows the host only.
+ *
+ * STORY 16.15 ADDS THE IMAGE AND THE VIDEO — references whose artifact is NOT
+ * a reading. An image is a FILE reading (`extract: image`) drawn in place
+ * through Tauri's asset protocol, so the file can go missing exactly as a text
+ * file's can while no copy ever exists. A video is a `url` reading
+ * (`extract: video`) whose title and local thumbnail belong to the media line
+ * and which is current once that line exists. Neither carries text and neither
+ * claims one: the card says what it needs instead.
  *
  * STORY 16.12 ADDS A READING WITH NO SOURCE FILE (a SELECTION): the person
  * selects text inside another card's expanded reading, names the new card, and
@@ -136,9 +145,17 @@ export const READING_PREVIEW_LINES = 6;
 
 /**
  * Which extractor produced a reading (story 16.4, ADR-0035 decision 4).
- * PROVISIONAL: the two names; absence on a legacy line means `text`.
+ * PROVISIONAL: the names; absence on a legacy line means `text`.
+ *
+ * STORY 16.15 adds two kinds that carry an ARTIFACT but no reading text:
+ *   image — the person pointed at a local image file. The card draws the file
+ *           IN PLACE through the asset protocol; nothing is copied, nothing is
+ *           read, and the reading itself waits for a model that can see.
+ *   video — the person pasted a video address. The title and a LOCAL thumbnail
+ *           live in `map/media.jsonl`; the transcript waits for a model that
+ *           can read video. Neither kind ever pretends to have a reading.
  */
-export type ReadingExtract = "text" | "pdf" | "page";
+export type ReadingExtract = "text" | "pdf" | "page" | "image" | "video";
 
 /** One reading: the source the person pointed at and when it was taken. */
 export interface Reading {
@@ -238,7 +255,7 @@ export function readingTextPath(
  * rewrite. The writer emits them in this order, the reader needs that order.
  */
 const READING_LINE =
-  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf|page))?$/;
+  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf|page|image|video))?$/;
 
 /** Parse one line; anything out of shape is `null` (kept and reported). */
 export function parseReadingLine(line: string): Reading | null {
@@ -615,6 +632,97 @@ export async function storeReadingText(
   await io.writeTextFile(readingTextPath(workspacePath, on), text);
 }
 
+/* ------------------------------------------------------------------------- *
+ * STORY 16.15 — AN IMAGE OR A VIDEO IS A REFERENCE, AND STILL NOT A READING.
+ *
+ * Both kinds carry an ARTIFACT and no text:
+ *   - an image is a FILE reading (`form: path`/`at`, `extract: image`): the
+ *     person's own file, drawn in place through the asset protocol. Nothing is
+ *     copied, so nothing can go stale as a copy can — but the file can be
+ *     MOVED or DELETED, and the ordinary metadata state says so.
+ *   - a video is a `url` reading (`extract: video`): its title and its LOCAL
+ *     thumbnail are the media line's, exactly as a page's are.
+ *
+ * Neither ever gets a reading text, and neither is an error: the card says
+ * what it needs (a model that can see / read video) in the reading's slot.
+ * ------------------------------------------------------------------------- */
+
+/** The one line an image card says instead of a reading (PROVISIONAL). */
+export const IMAGE_NEEDS_SENTENCE = "this needs a model that can read images.";
+
+/** The one line a video card says instead of a transcript (PROVISIONAL). */
+export const VIDEO_NEEDS_SENTENCE =
+  "the transcript needs a model that can read video.";
+
+/**
+ * The "needs a model" line for a reading kind, or null for a kind that carries
+ * text. PURE, so the card's sentence is not the JSX's only truth.
+ */
+export function readingNeedsLine(reading: Reading | null): string | null {
+  if (reading === null) return null;
+  switch (readingExtract(reading)) {
+    case "image":
+      return IMAGE_NEEDS_SENTENCE;
+    case "video":
+      return VIDEO_NEEDS_SENTENCE;
+    default:
+      return null;
+  }
+}
+
+/** The one sentence an image refresh answers (PROVISIONAL wording). */
+export const IMAGE_REFRESH_REFUSAL =
+  "an image is shown from its own file; there is nothing to re-read.";
+
+/** The one sentence an image pull answers (PROVISIONAL wording). */
+export const IMAGE_PULL_REFUSAL = "an image has no text to read more of.";
+
+/**
+ * ONE video reading, built from the sidecar's oEmbed read (story 16.15). The
+ * address is stored VERBATIM, the reading records `extract: video`, and there
+ * is no text: the title and the local thumbnail are the media line's. PURE:
+ * the caller writes the media line, the reading line and the ground line.
+ */
+export function videoReading(on: string, url: string, taken: string): Reading {
+  return { on, form: "url", from: url, taken, extract: "video" };
+}
+
+/**
+ * Take ONE image reading (story 16.15): stat the pick, keep its form/value and
+ * its size, and write NO text at all. The image itself is never copied — the
+ * card renders the file where it is — so this function only records the
+ * pointing, and a pick that is absent or not a file is refused with one
+ * sentence before anything is written. PURE apart from the metadata bridge.
+ */
+export async function takeImageReading(
+  workspacePath: string,
+  on: string,
+  picked: string,
+  io: ReadingIo = READING_IO,
+  taken: string = new Date().toISOString(),
+): Promise<TakeReadingResult> {
+  const meta = await io.fileMeta(picked);
+  if (meta.kind === "refused") {
+    return { kind: "refused", message: READING_REFUSALS["cannot-reach"] };
+  }
+  if (!meta.exists) return { kind: "refused", message: READING_REFUSALS.absent };
+  if (!meta.is_file) return { kind: "refused", message: READING_REFUSALS.io };
+  const { form, from } = readingFormFor(workspacePath, picked);
+  return {
+    kind: "taken",
+    reading: {
+      on,
+      form,
+      from,
+      taken,
+      bytes: meta.len,
+      extract: "image",
+    },
+    // NO TEXT: an image's reading is its file, and the card draws it in place.
+    text: "",
+  };
+}
+
 /** The map's five reading states, computed at load and never stored. */
 export type ReadingState =
   | "current"
@@ -644,6 +752,7 @@ export function resolveReadingState(
   reading: Reading | null,
   meta: FileMetaAnswer | null,
   now: number,
+  mediaPresent: boolean | null = null,
 ): ReadingState {
   if (reading === null) return "unread";
   // STORY 16.12: a selection has NO source file, so it can never be stale. Its
@@ -655,7 +764,18 @@ export function resolveReadingState(
   // the sidecar, so there is nothing on this machine to stat and no way for it
   // to go stale. It is current once taken, before any metadata answer (which
   // is empty for it and simply ignored here).
-  if (reading.form === "url") return "current";
+  //
+  // STORY 16.15: a VIDEO is the same kind of record, with ONE difference — the
+  // artifact the card actually shows is its media line (the title and the
+  // local thumbnail), not a reading text. So "taken" means that line exists:
+  // a video reading line without one has nothing to show and is `unread`,
+  // never a claim. `mediaPresent === null` is "not told" (a caller that only
+  // knows about the reading), and keeps the page's rule.
+  if (reading.form === "url") {
+    if (readingExtract(reading) !== "video") return "current";
+    if (mediaPresent === null) return "current";
+    return mediaPresent ? "current" : "unread";
+  }
   if (meta === null || meta.kind === "refused") return "unreadable";
   if (!meta.exists) return "missing";
   if (!meta.is_file) return "unreadable";
@@ -679,7 +799,15 @@ export function resolveReadingState(
  * wording (ADR-0003's rendering seam); "has changed since this reading" is a
  * METADATA statement and must never become "the text differs".
  */
-export function readingStateWord(state: ReadingState): string | null {
+export function readingStateWord(
+  state: ReadingState,
+  reading: Reading | null = null,
+): string | null {
+  // STORY 16.15: an IMAGE keeps no copy, so its state words must never say
+  // "this is the copy kept" — the card draws the person's own file, and a file
+  // that is gone simply leaves nothing to draw.
+  const image = reading !== null && readingExtract(reading) === "image";
+  const video = reading !== null && readingExtract(reading) === "video";
   switch (state) {
     case "current":
       return null;
@@ -687,12 +815,16 @@ export function readingStateWord(state: ReadingState): string | null {
       // STORY 16.13 (shortlist item 10): the state now says WHAT THE WORDS ON
       // SCREEN ARE. The reading is the copy taken when the card was added, so
       // a file that moved or changed has not emptied the card.
+      if (image) return "the image's file has changed";
       return "the file has changed since this reading; this is the copy kept when it was added";
     case "missing":
+      if (image) return "the image's file is not there";
       return "the file is gone; this is the copy kept when it was added";
     case "unreadable":
+      if (image) return "the image cannot be read";
       return "the file cannot be read";
     case "unread":
+      if (video) return "no title or thumbnail was kept for this video";
       return "no reading taken yet";
   }
 }
@@ -847,7 +979,15 @@ export async function takeReading(
   io: ReadingIo = READING_IO,
   taken: string = new Date().toISOString(),
 ): Promise<TakeReadingResult> {
-  const extract = extractKindFor(picked);
+  // STORY 16.15: the pick's NAME first, and an unknown type refuses here —
+  // before a byte is read. An image takes the stat-only path (no text, no
+  // copy); a PDF and a text file keep the extractors they already had.
+  const kind = pickKindFor(picked);
+  if (kind === null) return { kind: "refused", message: PICK_UNKNOWN };
+  if (kind === "image") {
+    return await takeImageReading(workspacePath, on, picked, io, taken);
+  }
+  const extract: "text" | "pdf" = kind;
   const read =
     extract === "pdf"
       ? await readPdfOrRefuse(picked, io)
@@ -883,6 +1023,12 @@ export async function refreshReading(
   io: ReadingIo = READING_IO,
   taken: string = new Date().toISOString(),
 ): Promise<TakeReadingResult> {
+  // STORY 16.15: an image has no reading to re-take. The card draws the file
+  // where it is, so a press only has to say that plainly — one sentence and
+  // nothing written.
+  if (readingExtract(reading) === "image") {
+    return { kind: "refused", message: IMAGE_REFRESH_REFUSAL };
+  }
   const path = readingAbsolutePath(workspacePath, reading);
   const read =
     readingExtract(reading) === "pdf"

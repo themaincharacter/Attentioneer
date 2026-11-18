@@ -4,6 +4,7 @@ import type { GroundReference } from "./ground";
 import { serializeGroundLinkLine, type GroundLink } from "./groundLinks";
 import {
   pageHost,
+  readingExtract,
   readingFileName,
   selectionSourceSlug,
   type Reading,
@@ -40,6 +41,9 @@ import {
  *
  * NO FULL PATHS: a mirror may be shared with another agent or pasted into a
  * message, so a card names its reading's FILE NAME only (readingFileName).
+ * STORY 16.15: an image card says `image: <file name>` and a video says
+ * `video: <host>` — the same two quiet facts the card's face carries, no count
+ * and no reading claimed.
  *
  * PROVISIONAL (the story's artifact, before an ADR settles it): the MAP.md
  * name and location, the block layout, the section order, the preview length
@@ -163,7 +167,15 @@ export function renderMirror(view: MirrorView): string {
       if (reading.form === "url") {
         // STORY 16.14: the mirror names the page's HOST only; the full address
         // stays in the reading's record, never in a shareable derived file.
-        lines.push("page: " + pageHost(reading.from));
+        // STORY 16.15: a video says its own one word, same host-only rule.
+        lines.push(
+          (readingExtract(reading) === "video" ? "video: " : "page: ") +
+            pageHost(reading.from),
+        );
+      } else if (readingExtract(reading) === "image") {
+        // STORY 16.15: an image is a FILE reading with no text; the mirror says
+        // so in one line, with the file's NAME and never its path.
+        lines.push("image: " + readingFileName(reading.from));
       } else if (sourceSlug === null) {
         lines.push("file: " + readingFileName(reading.from));
       } else {

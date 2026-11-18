@@ -567,9 +567,10 @@ describe("the pull is VIEW STATE: the hook holds it, no writer sees it", () => {
     // Story 16.12: a selection has no source to read more of, so its card
     // draws no pull verb — the file readings keep theirs.
     // Story 16.14: a page has no source file to read more of either, so the
-    // one rule is "it has a file behind it".
+    // one rule is "it has a file behind it". Story 16.15: an IMAGE has a file
+    // but no text, so its card draws no pull verb either.
     expect(LAYER).toMatch(
-      /open && reading !== null && isFileReading\(reading\) && onPull !== undefined/,
+      /open\s*&&\s*reading !== null\s*&&\s*isFileReading\(reading\)\s*&&\s*readingExtract\(reading\) !== "image"\s*&&\s*onPull !== undefined/,
     );
   });
 

@@ -3816,6 +3816,21 @@ function App() {
     [ground, groundAt],
   );
 
+  /**
+   * The ground bubble's THIRD source (story 16.15): a pasted video address. The
+   * sidecar reads its oEmbed look once; the app keeps the title and a local
+   * thumbnail. A refused read creates nothing.
+   */
+  const addGroundVideoAt = useCallback(
+    async (name: string, url: string) => {
+      if (groundAt === null) {
+        return { ok: false, message: "nothing was written." };
+      }
+      return ground.createVideo(name, groundAt.x, groundAt.y, url);
+    },
+    [ground, groundAt],
+  );
+
   /** The menu's word choice: close it and open the in-place coin field. */
   const chooseWord = useCallback(() => {
     const spot = menuAt;
@@ -4626,6 +4641,7 @@ function App() {
             y={groundAt.y}
             onAdd={addGroundAt}
             onAddPage={addGroundPageAt}
+            onAddVideo={addGroundVideoAt}
             onClose={closeGroundBubble}
           />
         )}

@@ -7,32 +7,49 @@ import { counterScale } from "./veilRules";
 
 /**
  * The ground map's creation affordance (story 16.1): double-click empty paper,
- * type a name, pick a file — done. (Story 16.4: that file may be a PDF, read on
- * device; the pick's name decides which extractor runs.)
+ * type a name, choose a source — done. (Story 16.4: that source may be a PDF,
+ * read on device. Story 16.15: it may also be an IMAGE, drawn in place, or a
+ * VIDEO, whose title and thumbnail are copied beside the map.)
+ *
+ * THE THREE INTENTS (story 16.15): a FILE (text, PDF or image, by the pick's
+ * name), a PAGE (a pasted web address) or a VIDEO (a pasted address on a host
+ * this app knows). The INTENT chooses the extractor — the file's own bytes are
+ * never sniffed, and a file that is neither text, PDF nor a known image type
+ * refuses with one sentence. The choice is the person's, not the app's guess.
  *
  * This is NOT the concept map's word bubble and NOT a `CreationKind`
  * (`wordCreationOffered` stays concept-only): the noun is the ground map's
- * own, a REFERENCE, and its second half is a file the person picks in the OS
- * dialog, not a word coined on the concept map. Keeping it a separate
- * component is what lets the ground map grow its own face without reviving
- * the concept bubble's grammar.
+ * own, a REFERENCE, and its second half is a source. Keeping it a separate
+ * component is what lets the ground map grow its own face without reviving the
+ * concept bubble's grammar.
  *
- * The order is the story's order: a name is asked for FIRST, then the picker.
- * Once both are there, the pick IS the commit (the check's "type a name, pick
- * a file, its lines appear"); the add button stays for the other order. A
- * refused file — absent, binary, unreadable, too large, or a PDF with no text
- * layer (story 16.4) — shows ONE quiet sentence and writes nothing: the
- * reference is not created half-formed. Esc, cancel or a press outside drops
- * the draft; nothing was written.
+ * The order is the story's order: a name is asked for FIRST, then the source.
+ * Once both are there, the source IS the commit (the check's "type a name, pick
+ * a file"); the add button stays for the other order. A refused file or address
+ * shows ONE quiet sentence and writes nothing: the reference is not created
+ * half-formed. Esc, cancel or a press outside drops the draft; nothing was
+ * written.
  *
  * It hangs in WORLD space at the double-clicked point and counter-scales
  * against the camera (the naming popup's idiom), and its classes are on the
  * gate's content lists plus a raw mousedown stop, so its presses never pan the
  * plane, start a word gesture or count as another double-click.
  *
- * PROVISIONAL: the card's size, wording and the "name it first." sentence
- * (ADR-0003's rendering seam and the story's record shapes).
+ * PROVISIONAL: the card's size, the intent row's look, the wording of the
+ * sentences and the "name it first." rule (ADR-0003's rendering seam and the
+ * story's record shapes).
  */
+
+/** What the person means to point the reference at (story 16.15). */
+export type GroundIntent = "file" | "page" | "video";
+
+/** The intent row's words, in order. PROVISIONAL. */
+const INTENTS: readonly { intent: GroundIntent; label: string }[] = [
+  { intent: "file", label: "a file" },
+  { intent: "page", label: "a page" },
+  { intent: "video", label: "a video" },
+];
+
 interface GroundBubbleProps {
   /** The world point the person double-clicked. */
   x: number;
@@ -45,6 +62,12 @@ interface GroundBubbleProps {
    * is one sentence and nothing is created.
    */
   onAddPage?: (name: string, url: string) => Promise<GroundAddResult>;
+  /**
+   * Add a reference from a pasted video address (story 16.15): the sidecar
+   * reads its oEmbed look once and the card keeps the title and a local
+   * thumbnail. A refusal is one sentence and nothing is created.
+   */
+  onAddVideo?: (name: string, url: string) => Promise<GroundAddResult>;
   /** Drop the draft (Esc, cancel or a press outside). */
   onClose: () => void;
 }
@@ -54,15 +77,19 @@ export function GroundBubble({
   y,
   onAdd,
   onAddPage,
+  onAddVideo,
   onClose,
 }: GroundBubbleProps) {
   const { camera } = usePlane();
   const rootRef = useRef<HTMLDivElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
+  // STORY 16.15: the INTENT is the person's choice and it chooses the
+  // extractor. Nothing here looks at a file's bytes or guesses a host's kind.
+  const [intent, setIntent] = useState<GroundIntent>("file");
   const [from, setFrom] = useState<string | null>(null);
-  // STORY 16.14: a pasted address is the OTHER way to name a source. It is
-  // kept verbatim in the draft and read by the app exactly as given.
+  // A pasted address is kept VERBATIM: it is handed to the app exactly as
+  // given, and the sidecar's own guard decides whether it can be taken.
   const [url, setUrl] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -126,24 +153,29 @@ export function GroundBubble({
     nameRef.current?.focus();
   }
 
-  async function commitPage() {
-    if (doneRef.current || busy || onAddPage === undefined) return;
+  /** Commit a pasted address through the intent's own door. */
+  async function commitAddress() {
+    if (doneRef.current || busy) return;
+    const add = intent === "video" ? onAddVideo : onAddPage;
+    if (add === undefined) return;
     const trimmed = name.trim();
     if (trimmed === "") {
       setProblem("name it first.");
       nameRef.current?.focus();
       return;
     }
-    // STORED VERBATIM: the address is never trimmed, normalized or repaired.
-    // The emptiness check is the only place whitespace is looked at.
-    const address = url;
-    if (address.trim() === "") {
-      setProblem("paste a web page's address first.");
+    if (url.trim() === "") {
+      setProblem(
+        intent === "video"
+          ? "paste a video's address first."
+          : "paste a web page's address first.",
+      );
       return;
     }
     setBusy(true);
     setProblem(null);
-    const result = await onAddPage(trimmed, address);
+    // STORED VERBATIM: the address is never trimmed, normalized or repaired.
+    const result = await add(trimmed, url);
     if (result.ok) {
       doneRef.current = true;
       onClose();
@@ -154,7 +186,7 @@ export function GroundBubble({
   }
 
   async function chooseFile() {
-    if (doneRef.current || busy) return;
+    if (doneRef.current || busy || intent !== "file") return;
     if (name.trim() === "") {
       setProblem("name it first.");
       nameRef.current?.focus();
@@ -169,13 +201,23 @@ export function GroundBubble({
       pickingRef.current = false;
     }
     if (picked === null) return;
-    setUrl("");
     setFrom(picked);
     // The pick is the commit once the name is there (the story's order).
     await commit(picked);
   }
 
-  const canAdd = !busy && name.trim() !== "" && from !== null;
+  /** The intent row never loses a draft: it only changes which door is shown. */
+  function chooseIntent(next: GroundIntent) {
+    if (busy) return;
+    setIntent(next);
+    setProblem(null);
+    nameRef.current?.focus();
+  }
+
+  const hasSource =
+    intent === "file" ? from !== null : url.trim() !== "";
+  const canAdd = !busy && name.trim() !== "" && hasSource;
+  const addressIntent = intent === "page" || intent === "video";
 
   return (
     <div
@@ -198,6 +240,35 @@ export function GroundBubble({
       onDoubleClick={(e) => e.stopPropagation()}
     >
       <div className="ground-bubble-title">reference</div>
+      <div className="ground-bubble-intents" role="group" aria-label="what to add">
+        {INTENTS.map((option) => {
+          // A door this app was not handed is not offered: the bubble is also
+          // mounted by tests with fewer ways in.
+          const offered =
+            option.intent === "file"
+              ? true
+              : option.intent === "page"
+                ? onAddPage !== undefined
+                : onAddVideo !== undefined;
+          if (!offered) return null;
+          return (
+            <button
+              key={option.intent}
+              type="button"
+              className={
+                intent === option.intent
+                  ? "ground-bubble-intent active"
+                  : "ground-bubble-intent"
+              }
+              aria-pressed={intent === option.intent}
+              disabled={busy}
+              onClick={() => chooseIntent(option.intent)}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
       <input
         ref={nameRef}
         className="ground-bubble-name"
@@ -212,22 +283,29 @@ export function GroundBubble({
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           e.preventDefault();
-          if (url.trim() !== "" && onAddPage !== undefined) void commitPage();
+          if (addressIntent) void commitAddress();
           else if (from !== null) void commit(from);
           else void chooseFile();
         }}
       />
-      <div className="ground-bubble-file">
-        {from === null ? "no file yet" : readingFileName(from)}
-      </div>
-      {/* STORY 16.14: paste a web address instead of picking a file. The
-          address is handed VERBATIM to the app; it is never normalized here. */}
-      {onAddPage !== undefined && (
+      {intent === "file" ? (
+        <div className="ground-bubble-file">
+          {from === null ? "no file yet" : readingFileName(from)}
+        </div>
+      ) : (
         <input
           className="ground-bubble-url"
           value={url}
-          placeholder="or paste a web address…"
-          aria-label="paste a web page's address"
+          placeholder={
+            intent === "video"
+              ? "paste a video's address…"
+              : "paste a web address…"
+          }
+          aria-label={
+            intent === "video"
+              ? "paste a video's address"
+              : "paste a web page's address"
+          }
           disabled={busy}
           onChange={(e) => {
             setUrl(e.target.value);
@@ -236,7 +314,7 @@ export function GroundBubble({
           onKeyDown={(e) => {
             if (e.key !== "Enter") return;
             e.preventDefault();
-            void commitPage();
+            void commitAddress();
           }}
         />
       )}
@@ -246,21 +324,23 @@ export function GroundBubble({
         </div>
       )}
       <div className="ground-bubble-actions">
-        <button
-          type="button"
-          className="ground-bubble-pick"
-          disabled={busy}
-          onClick={() => void chooseFile()}
-        >
-          {from === null ? "choose a file…" : "choose another…"}
-        </button>
+        {intent === "file" && (
+          <button
+            type="button"
+            className="ground-bubble-pick"
+            disabled={busy}
+            onClick={() => void chooseFile()}
+          >
+            {from === null ? "choose a file…" : "choose another…"}
+          </button>
+        )}
         <button
           type="button"
           className="ground-bubble-add"
-          disabled={!canAdd && !(url.trim() !== "" && name.trim() !== "")}
+          disabled={!canAdd}
           onClick={() => {
-            if (url.trim() !== "" && onAddPage !== undefined) {
-              void commitPage();
+            if (addressIntent) {
+              void commitAddress();
               return;
             }
             if (from !== null) void commit(from);

@@ -7,8 +7,10 @@
  * line carries what it found. STORY 16.14 adds a `page` request/line for a
  * web reference (the title, its extracted text and a thumbnail address) and a
  * `thumb` request/line that carries the image's bytes back as base64 — the
- * same one pipe, the same one-sentence errors. The key still rides inside a
- * request line and nowhere else.
+ * same one pipe, the same one-sentence errors. STORY 16.15 adds a `video`
+ * request/line (a pasted video's TITLE and thumbnail address, read through
+ * oEmbed) and reuses the same `thumb` line for its copied picture. The key
+ * still rides inside a request line and nowhere else.
  *
  * Newline-delimited JSON travels in BOTH directions over stdio, so every
  * builder here answers exactly one line (JSON.stringify never emits a raw
@@ -139,6 +141,28 @@ export interface PageLine {
   http: number;
 }
 
+/** Ask the sidecar to read ONE video's oEmbed look (story 16.15). No key. */
+export interface VideoRequest {
+  id: number;
+  kind: "video";
+  /** The address EXACTLY as the person gave it; the sidecar's guard decides. */
+  url: string;
+}
+
+/**
+ * What one video read found: its title, its thumbnail's address, the provider
+ * that answered and the HTTP status. There is NO transcript — this line carries
+ * the look only, and the card says the text needs a model that can read video.
+ */
+export interface VideoLine {
+  id: number;
+  kind: "video";
+  title: string;
+  thumbUrl: string | null;
+  provider: string;
+  http: number;
+}
+
 /** One thumbnail's bytes, base64 — the image never becomes a remote URL. */
 export interface ThumbLine {
   id: number;
@@ -159,6 +183,7 @@ export type SidecarLine =
   | CancelledLine
   | ModelsLine
   | PageLine
+  | VideoLine
   | ThumbLine;
 
 /** One turn's request. The messages are ALL that leaves the app. */
@@ -191,6 +216,7 @@ export type SidecarRequest =
   | TurnRequest
   | ModelsRequest
   | PageRequest
+  | VideoRequest
   | ThumbRequest
   | StopRequest;
 
@@ -249,6 +275,22 @@ export function pageLine(
   http: number,
 ): string {
   return JSON.stringify({ id, kind: "page", title, text, thumbUrl, http });
+}
+
+/** The video's request line: one address, one oEmbed read. */
+export function videoRequestLine(id: number, url: string): string {
+  return JSON.stringify({ id, kind: "video", url });
+}
+
+/** One video, one line: title, thumbnail address, provider, status. */
+export function videoLine(
+  id: number,
+  title: string,
+  thumbUrl: string | null,
+  provider: string,
+  http: number,
+): string {
+  return JSON.stringify({ id, kind: "video", title, thumbUrl, provider, http });
 }
 
 /** One thumbnail, one line: MIME and base64 bytes. */
@@ -415,6 +457,22 @@ export function parseSidecarLine(raw: string): SidecarLine | null {
       http: value.http,
     };
   }
+  if (value.kind === "video") {
+    if (typeof value.title !== "string") return null;
+    if (value.thumbUrl !== null && typeof value.thumbUrl !== "string") {
+      return null;
+    }
+    if (!isNonEmptyString(value.provider)) return null;
+    if (!isId(value.http)) return null;
+    return {
+      id: value.id,
+      kind: "video",
+      title: value.title,
+      thumbUrl: value.thumbUrl,
+      provider: value.provider,
+      http: value.http,
+    };
+  }
   if (value.kind === "thumb") {
     if (typeof value.mime !== "string" || typeof value.data !== "string") {
       return null;
@@ -462,6 +520,10 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
   if (value.kind === "page") {
     if (!isNonEmptyString(value.url)) return null;
     return { id: value.id, kind: "page", url: value.url };
+  }
+  if (value.kind === "video") {
+    if (!isNonEmptyString(value.url)) return null;
+    return { id: value.id, kind: "video", url: value.url };
   }
   if (value.kind === "thumb") {
     if (!isNonEmptyString(value.url)) return null;

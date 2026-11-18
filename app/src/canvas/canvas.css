@@ -5431,6 +5431,61 @@ body {
   height: 132px;
 }
 
+/* STORY 16.15 — an IMAGE reference, rendered IN PLACE from the person's own
+   file through Tauri's asset protocol. Natural proportions, capped so a big
+   photograph cannot take the whole card: no copy, no crop to a fixed box (the
+   picture is the content here, not a thumbnail). PROVISIONAL: the caps. */
+.ground-image {
+  display: block;
+  max-width: 100%;
+  max-height: 150px;
+  margin: 6px 0 4px;
+  border-radius: 4px;
+  object-fit: contain;
+  background: rgba(141, 136, 124, 0.08);
+}
+
+.ground-reference.expanded .ground-image {
+  max-height: 260px;
+}
+
+/* STORY 16.15 — the one line an image or a video says INSTEAD of a reading:
+   what that reading would need. Quiet, like the refusal line it stands in for,
+   and never an error. */
+.ground-reading.ground-needs {
+  font-style: italic;
+  color: #a09a8c;
+}
+
+/* STORY 16.15 — the creation bubble's THREE INTENTS: a file, a page, a video.
+   A plain quiet row of words; the chosen one darkens. The intent decides which
+   extractor runs, and nothing else in the bubble guesses a source's kind. */
+.ground-bubble-intents {
+  display: flex;
+  gap: 6px;
+  margin: 2px 0 1px;
+}
+
+.ground-bubble-intent {
+  padding: 1px 6px;
+  border: 1px solid rgba(141, 136, 124, 0.28);
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  color: #8d8779;
+  cursor: pointer;
+}
+
+.ground-bubble-intent.active {
+  border-color: rgba(40, 35, 25, 0.42);
+  color: #1e2126;
+}
+
+.ground-bubble-intent:disabled {
+  cursor: default;
+}
+
 /* STORY 16.13 (shortlist item 3): the reading's slot when there is no text to
    show. The same quiet body ink so a refused/absent reading still reads as a
    card's third line, never as a broken empty box. */

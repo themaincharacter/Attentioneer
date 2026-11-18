@@ -32,8 +32,14 @@ import { mapDir } from "./records";
  * A card with no image simply has NO line here (or a line without `thumb`):
  * a missing picture is not an error, is never reported and is never repaired.
  *
+ * STORY 16.15 ADDS THE VIDEO: a pasted video address gets its TITLE and a
+ * thumbnail through oEmbed, kept here exactly as a page's are (the same local
+ * SVG wrapper, the same `thumb` wire). The kind says which flow produced it.
+ * A remote image at render time would put the network inside the map's
+ * rendering, which is the whole reason the bytes are copied.
+ *
  * PROVISIONAL (with the rest of the story's record shapes): the file name, the
- * line shape, `media/` and the .svg wrapper.
+ * line shape, `media/`, the .svg wrapper and the kind names.
  */
 
 /** The media record file: `<workspace>/map/media.jsonl`. */
@@ -42,15 +48,18 @@ export const MEDIA_FILE = "media.jsonl";
 /** The media folder beside it: `<workspace>/map/media`. */
 export const MEDIA_DIR = "media";
 
-/** What a media record may be for. One kind today; PROVISIONAL. */
-export type MediaKind = "page";
+/**
+ * What a media record may be for: a page's look (story 16.14) or a video's
+ * title and thumbnail (story 16.15). PROVISIONAL: the names.
+ */
+export type MediaKind = "page" | "video";
 
 /** One media-bearing card: the page's title and its local thumbnail path. */
 export interface Media {
   /** The ground reference's slug — the key every ground family joins on. */
   on: string;
   kind: MediaKind;
-  /** The page's own title, copied; the card's "what this is" line. */
+  /** The page's or video's own title, copied; the card's "what this is" line. */
   title: string;
   /**
    * The thumbnail, WORKSPACE-RELATIVE under `map/` (`media/<slug>.svg`).
@@ -132,12 +141,14 @@ export function parseMediaLine(line: string): Media | null {
   }
   const source = value as Record<string, unknown>;
   if (typeof source.on !== "string" || source.on.trim() === "") return null;
-  if (source.kind !== "page") return null;
+  // STORY 16.15: a video's title and thumbnail live in the SAME record and the
+  // same wrapper; only the kind says which flow wrote it.
+  if (source.kind !== "page" && source.kind !== "video") return null;
   if (typeof source.title !== "string") return null;
   if (typeof source.fetched !== "string" || source.fetched === "") return null;
   const media: Media = {
     on: source.on,
-    kind: "page",
+    kind: source.kind,
     title: source.title,
     fetched: source.fetched,
   };

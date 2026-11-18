@@ -491,6 +491,10 @@ describe("the hook queues the mirror after every ground write", () => {
   const verbs = [
     "create",
     "createSelection",
+    "createPage",
+    // STORY 16.15: a video card is authored like a page card — fetched once,
+    // then written — and re-derives the map.
+    "createVideo",
     "move",
     "refresh",
     "repoint",
@@ -519,16 +523,21 @@ describe("the hook queues the mirror after every ground write", () => {
         // Story 16.13: a restore delegates its five writes to
         // `restoreGroundCard` (pieces first, reference last) and then mirrors.
         body.lastIndexOf("await restoreGroundCard"),
+        // Story 16.14/16.15: a fetched card delegates its writes (copies first,
+        // ground line last) and then mirrors.
+        body.lastIndexOf("await createFetchedPage"),
+        body.lastIndexOf("await createFetchedVideo"),
       );
       expect(writeAt).toBeGreaterThan(-1);
       expect(writeAt).toBeLessThan(mirrorAt);
     });
   }
 
-  test("exactly eleven call sites (one per write path, not on load)", () => {
+  test("exactly twelve call sites (one per write path, not on load)", () => {
     // Story 16.12 added the selection card as the ninth authored write path;
-    // story 16.13 adds restore as the tenth; story 16.14 adds the page card.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(11);
+    // story 16.13 adds restore as the tenth; story 16.14 the page card and
+    // story 16.15 the video card.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(12);
   });
 
   test("opening never writes the mirror", () => {

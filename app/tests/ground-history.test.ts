@@ -337,19 +337,21 @@ describe("authored moves only: the look leaves no line", () => {
     expect(existsSync(historyPath(workspace))).toBe(false);
   });
 
-  test("the hook appends from the eleven authored write paths, no more", () => {
+  test("the hook appends from the twelve authored write paths, no more", () => {
     // The only call form the verbs use; the definition is not a call site.
     // Story 16.12 added the selection card as the ninth authored write path;
-    // story 16.13 adds the restore as the tenth; story 16.14 the page card.
+    // story 16.13 adds the restore as the tenth; story 16.14 the page card and
+    // story 16.15 the video card.
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(11);
+    expect(calls.length).toBe(12);
   });
 
-  test("the mirror and the history own the same eleven verbs", () => {
+  test("the mirror and the history own the same twelve verbs", () => {
     const verbs = [
       "create",
       "createSelection",
       "createPage",
+      "createVideo",
       "move",
       "refresh",
       "repoint",

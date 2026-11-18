@@ -389,7 +389,11 @@ describe("taking a reading: the head verbatim, or one sentence", () => {
     const result = await takeReading(
       workspace,
       "rain-gauge",
-      "/picked/file.bin",
+      // STORY 16.15: the pick's NAME decides the extractor, and a name this
+      // app cannot classify refuses earlier, with its own sentence (proved in
+      // ground-images-video.test.ts). This test's point is the BRIDGE's
+      // refusal, which a text-named file whose bytes are binary still gets.
+      "/picked/file.txt",
       refusing,
     );
     expect(result).toEqual({

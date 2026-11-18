@@ -43,6 +43,8 @@ import {
   type GroundLinkIo,
 } from "../map/groundLinks";
 import {
+  IMAGE_PULL_REFUSAL,
+  IMAGE_REFRESH_REFUSAL,
   READING_REFUSALS,
   REFRESH_UNCHANGED,
   loadReadings,
@@ -51,6 +53,7 @@ import {
   isFileReading,
   pageReading,
   readingAbsolutePath,
+  readingExtract,
   readingFileName,
   readingFor,
   readingTextPath,
@@ -63,6 +66,7 @@ import {
   storeReadingText,
   storeSelectionText,
   takeReading,
+  videoReading,
   withReading,
   withReadingRemoved,
   type Reading,
@@ -99,8 +103,10 @@ import {
 import { pullReading, type PulledText } from "../map/pull";
 import {
   createPageFetcher,
+  createVideoFetcher,
   type PageFetchAnswer,
   type PageImage,
+  type VideoFetchAnswer,
 } from "../turn/pageFetch";
 
 /**
@@ -187,6 +193,15 @@ import {
  *     form url, extract page), a LOCAL thumbnail (map/media/) and the media
  *     line, then the ground line last. A refused fetch writes NOTHING; the
  *     card renders offline because title, text and image are all copies.
+ *   - A VIDEO CARD (16.15): the person pastes a video address; the SIDECAR
+ *     reads its oEmbed look once and this hook writes the thumbnail, the media
+ *     line (kind video), the reading line (form url, extract video) and the
+ *     ground line last. The card says the transcript needs a model that can
+ *     read video; nothing pretends the text is here.
+ *   - AN IMAGE CARD (16.15) is an ordinary FILE reading (`extract: image`)
+ *     with NO text at all: the picture is drawn from wherever it already is
+ *     through the asset protocol, so nothing is copied and only the pointing
+ *     is recorded.
  *   - A SELECTION CARD (16.12): the person selects text inside an expanded
  *     card's reading, names the new card, and `createSelection` writes the
  *     excerpt's text file, its reading line (provenance `card://<source>`) and
@@ -337,6 +352,18 @@ export interface GroundView {
     y: number,
     url: string,
   ) => Promise<GroundAddResult>;
+  /**
+   * Add one reference from a pasted VIDEO address (story 16.15): the sidecar
+   * reads its oEmbed look ONCE, the title and a LOCAL thumbnail are kept, and
+   * the card says the transcript needs a model that can read video. A refused
+   * read writes NOTHING — there is no half-formed card.
+   */
+  createVideo: (
+    name: string,
+    x: number,
+    y: number,
+    url: string,
+  ) => Promise<GroundAddResult>;
   /** Move one reference to a dropped point (one line, on release). */
   move: (on: string, x: number, y: number) => Promise<GroundAddResult>;
   /** Re-read this reference's file, by the person's press only. */
@@ -392,6 +419,7 @@ type GroundLoaded = Omit<
   | "create"
   | "createSelection"
   | "createPage"
+  | "createVideo"
   | "move"
   | "refresh"
   | "repoint"
@@ -1123,6 +1151,182 @@ export async function createFetchedPage(
   return { kind: "written", records };
 }
 
+/* ------------------------------------------------------------------------- *
+ * STORY 16.15 — A VIDEO'S CARD HAS NO READING, ONLY A LOOK.
+ *
+ * The sidecar reads the address once through oEmbed and answers the TITLE and
+ * a thumbnail ADDRESS; the window copies the picture beside the map with the
+ * SAME `thumb` wire and SVG wrapper a page's uses, then writes the media line
+ * (kind `video`), the reading line (`form: url`, `extract: video`) and the
+ * ground line. No transcript, no player, no remote image at render time.
+ *
+ * THE WRITE ORDER is the artifact's: the thumbnail file, then its media line,
+ * then the reading line, then the ground line LAST — a crash can leave an
+ * orphan picture but never a card whose title and picture are absent while it
+ * claims they are there.
+ * ------------------------------------------------------------------------- */
+
+/** The bridges a video card's creation needs; a test passes its own fakes. */
+export interface VideoIo {
+  saveReadings: typeof saveReadings;
+  saveMedia: typeof saveMedia;
+  storeThumb: typeof storeThumb;
+  saveGround: typeof saveGround;
+}
+
+/** The real bridges, bound once so the hook's path is the tested one. */
+const VIDEO_IO: VideoIo = {
+  saveReadings,
+  saveMedia,
+  storeThumb,
+  saveGround,
+};
+
+/** What the sidecar read for a video: the title and its picture (or none). */
+export interface VideoPayload {
+  title: string;
+  thumb: PageImage | null;
+}
+
+/** What making a video card produced: the next records and the pieces. */
+export interface VideoRecords {
+  references: GroundReference[];
+  readings: Reading[];
+  media: Media[];
+  reading: Reading;
+  entry: Media;
+  /** The card's image source, or null when the video had no usable image. */
+  thumbSrc: string | null;
+}
+
+/** The two things a video add refuses before anything is fetched (PROVISIONAL). */
+export const VIDEO_NAME_REFUSAL = "name it first.";
+export const VIDEO_URL_REFUSAL = "paste a video's address first.";
+
+/**
+ * The video add's ONE refusal rule, PURE: the person's word is the name, and
+ * an empty address has nothing to ask. Both run BEFORE the queue, so a refusal
+ * never reaches the network or a file.
+ */
+export function videoRefusal(name: string, url: string): string | null {
+  if (name.trim() === "") return VIDEO_NAME_REFUSAL;
+  if (url.trim() === "") return VIDEO_URL_REFUSAL;
+  return null;
+}
+
+/**
+ * STORY 16.15 — WRITE A VIDEO'S RECORDS, in the artifact's order (see the
+ * section comment): the thumbnail file, its media line, the reading line, the
+ * ground line last. PURE apart from the bridges it is handed.
+ */
+export async function writeVideoCard(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+  media: readonly Media[],
+  malformedGround: readonly string[],
+  malformedReadings: readonly string[],
+  malformedMedia: readonly string[],
+  name: string,
+  x: number,
+  y: number,
+  url: string,
+  video: VideoPayload,
+  taken: string,
+  io: VideoIo = VIDEO_IO,
+): Promise<VideoRecords> {
+  const addition = addGroundReference(references, name.trim(), x, y);
+  const reading = videoReading(addition.reference.on, url, taken);
+  let entry: Media = {
+    on: reading.on,
+    kind: "video",
+    title: video.title,
+    fetched: taken,
+  };
+  let thumbSrc: string | null = null;
+  if (video.thumb !== null) {
+    try {
+      const thumb = await io.storeThumb(
+        workspacePath,
+        reading.on,
+        video.thumb.mime,
+        video.thumb.base64,
+      );
+      entry = { ...entry, thumb };
+      thumbSrc = thumbSrcOf(thumbSvg(video.thumb.mime, video.thumb.base64));
+    } catch {
+      // No picture is not an error: the card is still made and says nothing
+      // about the image it does not have.
+    }
+  }
+  const nextMedia = withMedia(media, entry);
+  await io.saveMedia(workspacePath, nextMedia, malformedMedia);
+  const nextReadings = withReading(readings, reading);
+  await io.saveReadings(workspacePath, nextReadings, malformedReadings);
+  await io.saveGround(workspacePath, addition.references, malformedGround);
+  return {
+    references: addition.references,
+    readings: nextReadings,
+    media: nextMedia,
+    reading,
+    entry,
+    thumbSrc,
+  };
+}
+
+/** What one fetched video add settled as: the written records, or a sentence. */
+export type VideoCreate =
+  | { kind: "written"; records: VideoRecords }
+  | { kind: "refused"; message: string };
+
+/**
+ * STORY 16.15 — THE ONE VIDEO ADD, as a value-returning step: the refusal rule
+ * runs first, a REFUSED read returns BEFORE any writer, and only a successful
+ * look reaches `writeVideoCard`. So "a failed read writes NOTHING" is this
+ * function's shape, not a caller's memory. PURE apart from the bridges.
+ */
+export async function createFetchedVideo(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+  media: readonly Media[],
+  malformedGround: readonly string[],
+  malformedReadings: readonly string[],
+  malformedMedia: readonly string[],
+  name: string,
+  x: number,
+  y: number,
+  url: string,
+  read: VideoFetchAnswer,
+  taken: string,
+  io: VideoIo = VIDEO_IO,
+): Promise<VideoCreate> {
+  const refusal = videoRefusal(name, url);
+  if (refusal !== null) return { kind: "refused", message: refusal };
+  if (read.kind === "refused") {
+    // NOTHING is written: no picture, no media line, no reading line, no
+    // ground line. The bubble shows the one sentence.
+    return { kind: "refused", message: read.sentence };
+  }
+  const records = await writeVideoCard(
+    workspacePath,
+    references,
+    readings,
+    media,
+    malformedGround,
+    malformedReadings,
+    malformedMedia,
+    name,
+    x,
+    y,
+    url,
+    { title: read.title, thumb: read.thumb },
+    taken,
+    io,
+  );
+  return { kind: "written", records };
+}
+
 /**
  * The states of every reference, from the readings and their metadata (story
  * 16.2). Pure apart from the answers it is handed: one reading per slug, its
@@ -1133,6 +1337,7 @@ function statesOf(
   readings: readonly Reading[],
   metas: ReadonlyMap<string, FileMetaAnswer>,
   now: number,
+  mediaOn: ReadonlySet<string> = new Set(),
 ): Record<string, ReadingState> {
   const states: Record<string, ReadingState> = {};
   for (const reference of references) {
@@ -1140,6 +1345,9 @@ function statesOf(
       readingFor(readings, reference.on),
       metas.get(reference.on) ?? null,
       now,
+      // STORY 16.15: a video's artifact IS its media line (title + thumbnail);
+      // without it there is nothing to show and the state says so.
+      mediaOn.has(reference.on),
     );
   }
   return states;
@@ -1244,6 +1452,9 @@ export function useGround(workspacePath: string): GroundView {
       readings.readings,
       metas,
       Date.now(),
+      // STORY 16.15: the video card's artifact is the media line's title and
+      // picture, so the load tells the state rule which slugs have one.
+      new Set(loadedMedia.media.map((entry) => entry.on)),
     );
     // Orphans are COMPUTED, never stored (story 16.5, in `snapshot`): a link
     // naming a slug the map does not carry is kept in the file and named in
@@ -1455,11 +1666,14 @@ export function useGround(workspacePath: string): GroundView {
           );
           referencesRef.current = addition.references;
           readingsRef.current = nextReadings;
-          const texts = {
-            ...textsRef.current,
-            [addition.reference.on]: taken.text,
-          };
-          textsRef.current = texts;
+          // STORY 16.15: an image keeps NO text — the card draws the person's
+          // own file in place — so nothing is entered for it here.
+          if (readingExtract(taken.reading) !== "image") {
+            textsRef.current = {
+              ...textsRef.current,
+              [addition.reference.on]: taken.text,
+            };
+          }
           // The head was just taken from the file: its metadata is current.
           const states = {
             ...statesRef.current,
@@ -1662,6 +1876,85 @@ export function useGround(workspacePath: string): GroundView {
     [workspacePath],
   );
 
+  /**
+   * CREATE A VIDEO CARD (story 16.15): the person pasted a video address. The
+   * SIDECAR reads its oEmbed look once, inside this queued pass, and only a
+   * successful read reaches the writers. The title and a LOCAL thumbnail are
+   * copies, so the card renders offline and the address is never asked again.
+   *
+   * A refused read answers one sentence and writes NOTHING: no picture, no
+   * media line, no reading line, no ground line. An image that cannot be kept
+   * is not a refusal — the card simply has no picture.
+   */
+  const createVideo = useCallback(
+    (name: string, x: number, y: number, url: string): Promise<GroundAddResult> => {
+      const refusal = videoRefusal(name, url);
+      if (refusal !== null) {
+        return Promise.resolve({ ok: false, message: refusal });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const read = await createVideoFetcher()(url);
+          const created = await createFetchedVideo(
+            workspacePath,
+            referencesRef.current,
+            readingsRef.current,
+            mediaRef.current,
+            malformedGroundRef.current,
+            malformedReadingsRef.current,
+            malformedMediaRef.current,
+            name,
+            x,
+            y,
+            url,
+            read,
+            new Date().toISOString(),
+          );
+          if (created.kind === "refused") {
+            outcome = { ok: false, message: created.message };
+            return;
+          }
+          const written = created.records;
+          referencesRef.current = written.references;
+          readingsRef.current = written.readings;
+          mediaRef.current = written.media;
+          if (written.thumbSrc !== null) {
+            thumbsRef.current = {
+              ...thumbsRef.current,
+              [written.reading.on]: written.thumbSrc,
+            };
+          }
+          // A video's artifact (its title and picture) was just kept: current.
+          statesRef.current = {
+            ...statesRef.current,
+            [written.reading.on]: "current" as ReadingState,
+          };
+          setState(snapshot());
+          outcome = { ok: true };
+          // Story 16.10: the card appeared and its look was read — the form and
+          // the move, never the address, the title or a word of any text.
+          queueHistory(() => {
+            const at = Date.now();
+            return [
+              cardAddEvent(at, written.reading.on, x, y),
+              readingTakeEvent(at, written.reading.on, "url", null),
+            ];
+          });
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
   /** MOVE: one ground-line write on drop; no reading is touched. */
   const move = useCallback(
     (on: string, x: number, y: number): Promise<GroundAddResult> => {
@@ -1737,6 +2030,12 @@ export function useGround(workspacePath: string): GroundView {
             };
             return;
           }
+          // STORY 16.15: an image is DRAWN from its own file, never re-read, so
+          // a refresh has nothing to take — one sentence, nothing written.
+          if (readingExtract(reading) === "image") {
+            outcome = { ok: false, message: IMAGE_REFRESH_REFUSAL };
+            return;
+          }
           const taken = await refreshReading(workspacePath, reading);
           if (taken.kind === "refused") {
             // STORY 16.13 (shortlist item 11): a refused refresh says what
@@ -1805,7 +2104,20 @@ export function useGround(workspacePath: string): GroundView {
             malformedReadingsRef.current,
           );
           readingsRef.current = nextReadings;
-          const texts = { ...textsRef.current, [on]: taken.text };
+          // STORY 16.15: a re-point to an IMAGE keeps no text at all, so the
+          // card's OLD text goes with the old reading — otherwise a reopen
+          // would draw the previous file's words under the new picture.
+          const turnedIntoImage = readingExtract(taken.reading) === "image";
+          if (turnedIntoImage) {
+            try {
+              await removeFile(readingTextPath(workspacePath, on));
+            } catch {
+              // A text file that is already gone is the state we want.
+            }
+          }
+          const texts = { ...textsRef.current };
+          if (turnedIntoImage) delete texts[on];
+          else texts[on] = taken.text;
           textsRef.current = texts;
           const states = { ...statesRef.current, [on]: "current" as ReadingState };
           statesRef.current = states;
@@ -2117,6 +2429,10 @@ export function useGround(workspacePath: string): GroundView {
           message: "a page's text is already kept here.",
         });
       }
+      // STORY 16.15: an image has no text behind it to pull MORE of.
+      if (readingExtract(reading) === "image") {
+        return Promise.resolve({ ok: false, message: IMAGE_PULL_REFUSAL });
+      }
       return pullReading(workspacePath, reading)
         .then((result): GroundAddResult => {
           if (result.kind === "refused") {
@@ -2298,6 +2614,7 @@ export function useGround(workspacePath: string): GroundView {
     create,
     createSelection,
     createPage,
+    createVideo,
     move,
     refresh,
     repoint,

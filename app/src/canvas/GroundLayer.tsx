@@ -16,7 +16,10 @@ import {
   pageHost,
   proposeSelectionName,
   previewText,
+  readingAbsolutePath,
+  readingExtract,
   readingFileName,
+  readingNeedsLine,
   readingStateWord,
   selectionRefusal,
   selectionSourceSlug,
@@ -24,6 +27,7 @@ import {
   type ReadingState,
 } from "../map/readings";
 import type { Media } from "../map/media";
+import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
 import {
   beginGroundDrag,
@@ -96,6 +100,13 @@ import type { TurnPort } from "../turn/turn";
  * HOST in the footer, never the full address.
  * A selection's verbs are not silently absent: one quiet line says why there
  * is nothing to refresh or point at (shortlist item 2).
+ *
+ * STORY 16.15 gives the card two more reference kinds and NO new reading: an
+ * IMAGE is drawn from the person's own file through the asset protocol (never
+ * copied) with the line "this needs a model that can read images."; a VIDEO
+ * shows the copied title and thumbnail with "the transcript needs a model that
+ * can read video." Neither pretends to have a reading, and neither is an error:
+ * a missing image file says so plainly and claims no kept copy.
  *
  * STORY 16.5 adds ONE small affordance and no meaning: a quiet link handle on
  * the card's edge, hover-revealed like the verbs. A drag from it onto another
@@ -216,12 +227,18 @@ export function readingKind(
   pageTitle: string | null = null,
 ): string {
   if (reading === null) return "a reference with no reading";
+  // STORY 16.15: an IMAGE never says "the reading kept from" — there is no
+  // reading, only the person's own file, drawn where it is.
+  if (readingExtract(reading) === "image") {
+    return "the image from " + readingFileName(reading.from);
+  }
   // STORY 16.14: a page says WHAT IT IS with its own copied title; a page whose
-  // media line is missing (or carries no title) still names its host.
+  // media line is missing (or carries no title) still names its host. STORY
+  // 16.15 reuses that for a video — the title is the media line's.
   if (reading.form === "url") {
-    return pageTitle !== null && pageTitle.trim() !== ""
-      ? pageTitle
-      : "the page kept from " + pageHost(reading.from);
+    if (pageTitle !== null && pageTitle.trim() !== "") return pageTitle;
+    const noun = readingExtract(reading) === "video" ? "video" : "page";
+    return "the " + noun + " kept from " + pageHost(reading.from);
   }
   const source = selectionSourceSlug(reading);
   if (source !== null) {
@@ -239,13 +256,24 @@ export function readingKind(
  * says what happened instead of leaving a broken box. It never claims a kept
  * copy that is not on disk. PURE. PROVISIONAL wording.
  */
-export function readingAbsenceLine(state: ReadingState): string {
+export function readingAbsenceLine(
+  state: ReadingState,
+  reading: Reading | null = null,
+): string {
+  // STORY 16.15: an image is never copied, so its absence must not claim a
+  // "copy kept" — there is nothing but the file the card draws. A video's
+  // artifact is its media line, and its absence is the look that never came.
+  const image = reading !== null && readingExtract(reading) === "image";
+  const video = reading !== null && readingExtract(reading) === "video";
   switch (state) {
     case "missing":
+      if (image) return "the image's file is not there, and no copy was kept.";
       return "the file is gone, and no copy was kept.";
     case "unreadable":
+      if (image) return "the image cannot be read, and no copy was kept.";
       return "the file cannot be read, and no copy was kept.";
     case "unread":
+      if (video) return "no title or thumbnail was kept for this video.";
       return "no reading was taken yet.";
     case "changed":
       return "the file has changed, and no copy was kept.";
@@ -925,7 +953,7 @@ function GroundCard({
     return () => el.removeEventListener("wheel", onWheel);
   }, [open]);
 
-  const word = readingStateWord(state);
+  const word = readingStateWord(state, reading);
   const x = dragPos ? dragPos.x : reference.x;
   const y = dragPos ? dragPos.y : reference.y;
   const shownText = text === undefined || text === "" ? null : text;
@@ -941,6 +969,20 @@ function GroundCard({
   // card's own line above the reading (no image, no line). Both are copies
   // read from the map folder — nothing here fetches, on open or ever.
   const pageTitle = media !== null ? media.title : null;
+  // STORY 16.15: an IMAGE is drawn from the person's own file through the asset
+  // protocol — never a copy, never a remote URL. It is only drawn while the
+  // file is reachable: a gone file leaves the absence line, not a broken box.
+  const imageReading = reading !== null && readingExtract(reading) === "image";
+  const imageGone = state === "missing" || state === "unreadable";
+  const imageSrc =
+    imageReading && reading !== null && !imageGone
+      ? assetSrc(readingAbsolutePath(workspacePath ?? "", reading))
+      : null;
+  // The "needs a model that can read …" line (image: sight, video: the
+  // transcript). It stands in the reading's slot and is never an error.
+  const needsLine = readingNeedsLine(reading);
+  const showNeeds =
+    needsLine !== null && (imageReading ? !imageGone : state !== "unread");
   // STORY 16.13: when the body carries the absence line, the footer does not
   // repeat a state word that would claim a kept copy which is not on disk.
   const showStateWord = word !== null && bodyText !== null;
@@ -1159,6 +1201,12 @@ function GroundCard({
         {thumbSrc !== undefined && (
           <img className="ground-thumb" src={thumbSrc} alt="" />
         )}
+        {/* STORY 16.15: the person's image, rendered in place from its own file
+            through the asset protocol. Nothing is copied into the workspace and
+            no request leaves the machine: offline, it is the same bytes. */}
+        {imageSrc !== null && (
+          <img className="ground-image" src={imageSrc} alt="" />
+        )}
         {/* STORY 16.6: the note sits ABOVE the reading, in the person's own
             voice. Small: a two-line crop cut by `previewText`. Expanded: the
             whole note. Editing: a textarea in its place, Enter a newline. */}
@@ -1243,12 +1291,16 @@ function GroundCard({
           <div className="ground-reading" ref={readingRef}>
             {bodyText}
           </div>
+        ) : showNeeds && needsLine !== null ? (
+          // STORY 16.15: an image or a video has no reading and never pretends
+          // to. Its slot says, in one quiet line, what the reading needs.
+          <div className="ground-reading ground-needs">{needsLine}</div>
         ) : (
           // STORY 16.13 (shortlist item 3): the reading's slot still says what
           // happened. A refused or absent reading leaves a card with its name,
           // its kind and this one quiet line — never an empty box.
           <div className="ground-reading ground-refusal">
-            {readingAbsenceLine(state)}
+            {readingAbsenceLine(state, reading)}
           </div>
         )}
         {/* STORY 16.8 — the PULL, below the stored reading as a CONTINUATION
@@ -1395,7 +1447,11 @@ function GroundCard({
               no background read. It reprocesses an existing pull harmlessly
               (the text is replaced in view state) and never writes. Story
               16.12: a selection has no source to read more of, so no verb. */}
-          {open && reading !== null && isFileReading(reading) && onPull !== undefined && (
+          {open &&
+            reading !== null &&
+            isFileReading(reading) &&
+            readingExtract(reading) !== "image" &&
+            onPull !== undefined && (
             <button
               type="button"
               className="ground-read-more"
@@ -1409,7 +1465,7 @@ function GroundCard({
               neither verb is drawn for it — its bytes are the map's own. STORY
               16.13 (shortlist item 2): the missing verbs are not silent; one
               quiet line here says why there is nothing behind them. */}
-          {fileReading && (
+          {fileReading && readingExtract(reading as Reading) !== "image" && (
             <button
               type="button"
               className="ground-refresh"
@@ -1432,6 +1488,13 @@ function GroundCard({
           {reading !== null && reading.form === "selection" && (
             <div className="ground-quiet">
               this is a copy; there is no file to refresh or point at.
+            </div>
+          )}
+          {/* STORY 16.15: an image is drawn from its own file, so it has no
+              reading to refresh — said quietly rather than left silent. */}
+          {reading !== null && readingExtract(reading) === "image" && (
+            <div className="ground-quiet">
+              this is drawn from its own file; there is nothing to refresh.
             </div>
           )}
           <button

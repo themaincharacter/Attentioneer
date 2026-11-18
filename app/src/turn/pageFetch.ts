@@ -2,6 +2,7 @@ import {
   pageRequestLine,
   stopLine,
   thumbRequestLine,
+  videoRequestLine,
   type SidecarLine,
 } from "./protocol";
 import { createSidecarTransport, startSidecar } from "./sidecar";
@@ -26,6 +27,12 @@ import { errorSentence, type TurnTransport } from "./turn";
  * NO RETRY, NO CACHE: one press asks once. A timeout asks the sidecar to stop
  * the fetch at its source so the process does not keep waiting behind a UI that
  * gave up. PROVISIONAL: the budget and the one stop sentence.
+ *
+ * STORY 16.15 reuses the SAME seam for a video: one `video` request asks the
+ * sidecar for the oEmbed look (title and thumbnail address), and the picture
+ * follows through the SAME `thumb` request a page's does. The video's
+ * transcript is NOT here and never will be: a caption track would need a model
+ * that can read video, and this app does not pretend to have one.
  */
 
 /** How long the window waits for a page (or its thumbnail) before giving up. */
@@ -71,7 +78,7 @@ type Once =
 async function once(
   transport: TurnTransport,
   id: number,
-  expected: "page" | "thumb",
+  expected: "page" | "thumb" | "video",
   request: string,
   timeoutMs: number,
 ): Promise<Once> {
@@ -174,6 +181,75 @@ export async function fetchPage(
   };
 }
 
+/** What one video read answered: its look, or one sentence. */
+export type VideoFetchAnswer =
+  | {
+      kind: "video";
+      title: string;
+      provider: string;
+      /** The local-to-be thumbnail; null when the video offered none. */
+      thumb: PageImage | null;
+    }
+  | { kind: "refused"; sentence: string };
+
+/** What one press needs: one video address in, one look (or sentence) out. */
+export type VideoFetcher = (url: string) => Promise<VideoFetchAnswer>;
+
+/**
+ * Read ONE video's look (and, quietly, its thumbnail) — the page's shape, one
+ * request kind over. Nothing here writes anything: the calling write path
+ * decides what to keep.
+ */
+export async function fetchVideo(
+  transport: TurnTransport,
+  url: string,
+  timeoutMs: number = PAGE_FETCH_TIMEOUT_MS,
+): Promise<VideoFetchAnswer> {
+  const id = nextPageFetchId++;
+  const video = await once(
+    transport,
+    id,
+    "video",
+    videoRequestLine(id, url),
+    timeoutMs,
+  );
+  if (video.kind === "timeout") {
+    return { kind: "refused", sentence: "that video took too long to answer." };
+  }
+  if (video.kind === "error") {
+    return { kind: "refused", sentence: video.sentence };
+  }
+  if (video.line.kind !== "video") {
+    return { kind: "refused", sentence: "that video could not be read." };
+  }
+  const look = video.line;
+  let thumb: PageImage | null = null;
+  if (look.thumbUrl !== null && look.thumbUrl !== "") {
+    const thumbId = nextPageFetchId++;
+    const image = await once(
+      transport,
+      thumbId,
+      "thumb",
+      thumbRequestLine(thumbId, look.thumbUrl),
+      timeoutMs,
+    );
+    if (
+      image.kind === "line" &&
+      image.line.kind === "thumb" &&
+      image.line.data !== ""
+    ) {
+      thumb = { mime: image.line.mime, base64: image.line.data };
+    }
+    // Anything else is simply no picture: the card says nothing about it.
+  }
+  return {
+    kind: "video",
+    title: look.title,
+    provider: look.provider,
+    thumb,
+  };
+}
+
 /**
  * The app's fetcher: make sure the child is up, then ask it. A sidecar that
  * will not start is its own sentence — the page was never reached, so the
@@ -188,5 +264,18 @@ export function createPageFetcher(
       return { kind: "refused", sentence: started.sentence };
     }
     return await fetchPage(transport, url);
+  };
+}
+
+/** The video fetcher: the same child, the same one-sentence refusal. */
+export function createVideoFetcher(
+  transport: TurnTransport = createSidecarTransport(),
+): VideoFetcher {
+  return async (url) => {
+    const started = await startSidecar();
+    if (started.kind === "refused") {
+      return { kind: "refused", sentence: started.sentence };
+    }
+    return await fetchVideo(transport, url);
   };
 }

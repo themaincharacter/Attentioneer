@@ -82,6 +82,97 @@ export const EXTRACT_UNREADABLE = "that PDF cannot be read.";
 export function extractKindFor(path: string): "text" | "pdf" {
   return /\.pdf$/i.test(path) ? "pdf" : "text";
 }
+/* ------------------------------------------------------------------------- *
+ * STORY 16.15 — WHAT THE PICK'S NAME SAYS IT IS.
+ *
+ * A reference may now be a text file, a PDF, an IMAGE or a VIDEO. The file
+ * dialog hands over a path and nothing else, and the story's rule is that the
+ * app never sniffs bytes to guess a format: the NAME decides which extractor
+ * runs. So this table IS the app's vocabulary of file kinds — extension only,
+ * lower-cased, no content inspection.
+ *
+ * An image is rendered in place (no copy), so its extension list is limited to
+ * the raster kinds a webview draws: an SVG could reference the network from
+ * inside the "local" picture, which would make the card's offline render a
+ * lie (the same reason a page's thumbnail refuses SVG).
+ *
+ * PROVISIONAL (the story's record shapes): the extension lists, and the rule
+ * that a file with NO extension is read as text — the bridge still refuses one
+ * whose bytes are not text, with its own one sentence. Any OTHER unknown
+ * extension refuses here, before a byte is read.
+ * ------------------------------------------------------------------------- */
+
+/** What a pick's name says it is (story 16.15). */
+export type PickKind = "text" | "pdf" | "image";
+
+/** The one sentence an unknown file type answers (PROVISIONAL wording). */
+export const PICK_UNKNOWN = "that file is not text, a PDF or an image.";
+
+/** The raster image types this app will render in place (no SVG: it could fetch). */
+const IMAGE_EXTENSIONS: Readonly<Record<string, true>> = {
+  png: true,
+  jpg: true,
+  jpeg: true,
+  gif: true,
+  webp: true,
+  avif: true,
+  bmp: true,
+};
+
+/**
+ * The text kinds a pick may name. A \`.txt\` file that is really binary still
+ * fails through the bridge's own read, which is the one place that knows.
+ */
+const TEXT_EXTENSIONS: Readonly<Record<string, true>> = {
+  txt: true,
+  text: true,
+  md: true,
+  markdown: true,
+  mdx: true,
+  rst: true,
+  org: true,
+  adoc: true,
+  asciidoc: true,
+  log: true,
+  csv: true,
+  tsv: true,
+  json: true,
+  jsonl: true,
+  yaml: true,
+  yml: true,
+  toml: true,
+  ini: true,
+  tex: true,
+  xml: true,
+  html: true,
+  htm: true,
+};
+
+/** A path's lower-cased extension without the dot, or "" when it has none. */
+function extensionOf(path: string): string {
+  const name = path.split(/[\\/]/).filter((part) => part !== "").pop() ?? "";
+  const dot = name.lastIndexOf(".");
+  // A leading dot is a hidden file's name, not an extension (".gitignore").
+  if (dot <= 0) return "";
+  return name.slice(dot + 1).toLowerCase();
+}
+
+/**
+ * Which extractor this pick asks for (story 16.15), or null when the name is a
+ * type this app does not know. PURE, and the ONLY classification: nothing here
+ * opens the file.
+ */
+export function pickKindFor(path: string): PickKind | null {
+  if (extractKindFor(path) === "pdf") return "pdf";
+  const extension = extensionOf(path);
+  // No extension is no CLAIM: the head read (and its own not-text refusal) is
+  // the honest default for a file that never said what it is.
+  if (extension === "") return "text";
+  if (IMAGE_EXTENSIONS[extension] === true) return "image";
+  if (TEXT_EXTENSIONS[extension] === true) return "text";
+  return null;
+}
+
 
 /**
  * Extract one PDF's text: read the bytes, hand them to the injected extractor,
