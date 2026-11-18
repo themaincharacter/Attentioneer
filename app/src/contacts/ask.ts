@@ -4,6 +4,7 @@ import { pointerKey, type PointerForm } from "../map/pointers";
 import {
   appendPrismLine,
   type AskChange,
+  type AskRole,
   type DecodeStatus,
   type Prism,
 } from "../map/prisms";
@@ -404,6 +405,12 @@ export interface InFlightAsk {
   packet: string;
   /** How it left. */
   transport: AskTransport;
+  /**
+   * WHICH ROLE THIS EGRESS IS (story 17.12, ADR-0037 decision 9). Absent on a
+   * task call — every old record included — and `"curator"` on the second,
+   * distilling call. A role, never a model name.
+   */
+  role?: AskRole;
 }
 
 /** What sending did: the question is out, or it never left (no Move). */
@@ -698,6 +705,9 @@ function askChange(ask: InFlightAsk): AskChange {
     // STORY 17.9 — NO ANCHOR ON A NEW MOVE. The user's correction made the
     // WIRES the context, so the inclusion set is the record's fact and the old
     // `anchor` field is read-only legacy (old lines still parse and display).
+    // STORY 17.12 — the ROLE rides only when it is the curator's egress; a
+    // task call stays absent, exactly like every line written before it.
+    ...(ask.role === undefined ? {} : { role: ask.role }),
     outcome: "no-response",
     included: ask.included,
     responseSize: null,
@@ -798,6 +808,12 @@ export interface AskCardTurn {
    * wires are the context.
    */
   included: string[] | null;
+  /**
+   * STORY 17.12 — WHICH ROLE MADE THE EGRESS. Absent for the task call (and
+   * for every record written before the story); `"curator"` for the second,
+   * distilling call, which carries NO material and therefore no inclusion.
+   */
+  role?: AskRole;
 }
 
 /**
@@ -819,6 +835,7 @@ export function askCardInFlight(
     question: "",
     packet: "",
     transport: "app",
+    ...(turn.role === undefined ? {} : { role: turn.role }),
   };
 }
 

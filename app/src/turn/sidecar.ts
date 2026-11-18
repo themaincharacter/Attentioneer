@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { parseSidecarLine, type SidecarLine } from "./protocol";
+import {
+  parseSidecarLine,
+  type SidecarLine,
+  type TurnMessage,
+} from "./protocol";
 import {
   buildTurnMessages,
   errorSentence,
@@ -328,6 +332,60 @@ export function createTurnPort(
   }
 
   /**
+   * STORY 17.12 — THE CURATOR'S ONE TURN (ADR-0037 decision 9): the caller's
+   * own messages, over the SAME route and the SAME request line as a task call,
+   * with the MANAGER row. No READ follow-up and no proposal scan: the curator
+   * reads the reply and answers one card. The child is started FIRST, so a
+   * refused route is one sentence BEFORE anything is written to the pipe.
+   */
+  async function runMessages(
+    route: TurnRoute,
+    messages: readonly TurnMessage[],
+    options: TurnOptions = {},
+  ): Promise<TurnResult> {
+    if (route.kind === "cli") {
+      const result = await runRoute(transport, route, messages, {
+        ...options,
+        cli,
+        onCliStart: (runId) => {
+          activeCli = runId;
+        },
+      });
+      activeCli = null;
+      return result;
+    }
+    if (route.kind === "local") {
+      const local = await ensureLocal(route.row, route.model);
+      if (local.kind === "refused") {
+        return { kind: "error", sentence: local.sentence };
+      }
+      const child = await begin();
+      if (child.kind === "refused") {
+        return { kind: "error", sentence: child.sentence };
+      }
+      return await runRoute(transport, route, messages, {
+        ...options,
+        onStart: (id) => {
+          active = id;
+        },
+        local: ensureLocal,
+      });
+    }
+    const started = await begin();
+    if (started.kind === "refused") {
+      return { kind: "error", sentence: started.sentence };
+    }
+    const result = await runRoute(transport, route, messages, {
+      ...options,
+      onStart: (id) => {
+        active = id;
+      },
+    });
+    active = null;
+    return result;
+  }
+
+  /**
    * The app-sent Ask's packet turn (Epic 15 story 3): the child is started
    * FIRST, so "nothing left" is known rather than guessed; then the packet's
    * ONE message crosses the pipe and at most one READ follow-up follows it.
@@ -427,6 +485,7 @@ export function createTurnPort(
       });
     },
     sendPacket: runPacket,
+    sendMessages: runMessages,
     async stop() {
       // A stop reaches BOTH places a turn can be running: the sidecar's fetch
       // (its AbortController answers cancelled) and a CLI child (the host

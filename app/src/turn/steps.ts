@@ -20,7 +20,15 @@ import type { TurnRoute } from "./turn";
  * a retrieval was offered are the whole input. Every branch that could loop
  * asks THIS function; there is no second ceiling written anywhere else.
  *
- * PROVISIONAL: the number per shape, and the sentence's wording.
+ * STORY 17.12 ADDS THE SECOND CALL (ADR-0037 decision 9): an ask is now a
+ * TASK call and a CURATOR call, so its declared ceiling is the sum of the two,
+ * never the task's alone. The task's own loop still asks `turnSteps` (its
+ * ceiling is what it is); the ask-level number is `askSteps`, and it is what
+ * says the second model is spent on purpose. Same rules: no counter, no ratio,
+ * no score — a ceiling said in words.
+ *
+ * PROVISIONAL: the number per shape, the curator's one exchange, and the
+ * sentence's wording.
  */
 
 /** One route's ceiling: how many exchanges, and why it is that number. */
@@ -57,4 +65,43 @@ export function turnSteps(
 ): StepBudget {
   if (route.kind === "cli") return ONE_STEP;
   return retrieval ? ONE_READING : ONE_STEP;
+}
+
+/** The curator's ceiling: ONE distilling exchange, on every route. */
+export const CURATOR_STEP: StepBudget = Object.freeze({
+  steps: 1,
+  reason: "the curator",
+});
+
+/**
+ * THE CURATOR'S CEILING (story 17.12, ADR-0037 decision 9). The curator sends
+ * the reply, the brief and the schema and reads one card back: one exchange,
+ * whether the manager row is an endpoint, a CLI or a local runtime. It never
+ * retrieves and never chains, so there is no shape in which it is more than
+ * one — and this function is where that fact lives, so no caller invents it.
+ */
+export function curatorSteps(_route: Pick<TurnRoute, "kind">): StepBudget {
+  return CURATOR_STEP;
+}
+
+/**
+ * THE WHOLE ASK'S CEILING: the task's exchanges plus the curator's one, when
+ * the ask will curate. A task alone is \`turnSteps\` unchanged, so every earlier
+ * caller keeps its number; with the curator the sum is stated in ONE place.
+ * WHY THE TASK'S LOOP STILL USES \`turnSteps\`: the follow-up loop must not be
+ * allowed to spend the curator's exchange on a second READ. The ceiling is
+ * split by role here, and the total is what the ask declares.
+ */
+export function askSteps(
+  route: Pick<TurnRoute, "kind">,
+  retrieval = false,
+  curator = false,
+): StepBudget {
+  const task = turnSteps(route, retrieval);
+  if (!curator) return task;
+  const all = curatorSteps(route);
+  return {
+    steps: task.steps + all.steps,
+    reason: "the task and the curator",
+  };
 }

@@ -494,6 +494,8 @@ describe("the sidecar's wire is unchanged and the config holds no key", () => {
     // The shape is the spec's: providerId, modelId, providers (id, name,
     // baseUrl, models (id, name, capabilities)).
     expect(Object.keys(stored).sort()).toEqual([
+      "managerModelId",
+      "managerProviderId",
       "modelId",
       "providerId",
       "providers",

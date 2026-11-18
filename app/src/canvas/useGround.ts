@@ -217,7 +217,18 @@ import {
   type AskPacketReadback,
 } from "../turn/packet";
 import { loadTurnSettings } from "../turn/provider";
-import { PROVIDER_SENTENCES, resolveSelection } from "../turn/providers";
+import { askSteps } from "../turn/steps";
+import {
+  PROVIDER_SENTENCES,
+  managerSelection,
+  resolveManager,
+  resolveSelection,
+} from "../turn/providers";
+import {
+  buildCuratorMessages,
+  readCuratorAnswer,
+  type CuratorRead,
+} from "../turn/curator";
 import {
   TURN_SENTENCES,
   routeOf,
@@ -1706,12 +1717,12 @@ export async function writeSelectionCard(
  * STORY 17.11 — A COMPLETED ASK TURN'S REPLY BECOMES A CARD (ADR-0037's
  * first artifact, the rule-based one).
  *
- * The curator does not exist yet, so the first implementation of the artifact
- * is a RULE: copy the reply VERBATIM into a card of its own, wire it back to
- * the ask card that produced it, and say plainly that a rule made it. Nothing
- * is read, distilled, summarised or judged — the point of this story is that
- * the NODE AND THE WIRE exist before a second model can be wrong (ADR-0037's
- * "Alternatives considered").
+ * 17.12 PUTS THE CURATOR IN THIS SEAT (ADR-0037 decision 4). The same writer
+ * makes the artifact the same way — text, readings line, ground line, wire —
+ * but its text is now the distilled card the manager model wrote from the
+ * task model's reply. 17.11's rule copy remains the writer's no-authors path,
+ * so a card a rule made still says a rule made it and no wording had to be
+ * thrown away when the second model arrived.
  *
  * ONE CARD PER COMPLETED TURN, never per send: a stopped, failed, timed-out or
  * empty turn writes NOTHING and the ask card says so in one line. A rerun is a
@@ -1724,6 +1735,26 @@ export async function writeSelectionCard(
 
 /** The one line an ask card gets when no card was made (PROVISIONAL wording). */
 export const ASK_NO_CARD_SENTENCE = "no card was made";
+
+/**
+ * STORY 17.12 — HOW A MODEL IS NAMED IN PROVENANCE: the name its settings row
+ * shows (the person's own label), falling back to the id when it has none. A
+ * pipe would split the reading line's tail, so it is replaced with a slash —
+ * the record stays parsable and the person still reads the row they chose.
+ */
+export function modelAuthorName(name: string, id: string): string {
+  const shown = name.trim() === "" ? id.trim() : name.trim();
+  return shown.split("|").join("/");
+}
+
+/**
+ * STORY 17.12 — THE FAILURE ASYMMETRY (ADR-0037 decision 8): the task answered
+ * and the curator did not, so the REPLY STANDS and one sentence says the card
+ * was not made. It is never written as an error on the answer: the answer is
+ * still the answer.
+ */
+export const ASK_CURATOR_FAILED_SENTENCE =
+  "the reply stands, but no card was made: the curator did not answer.";
 
 /** The one line a completed reply gets when its card could not be written. */
 export const ASK_CARD_WRITE_REFUSAL =
@@ -1739,7 +1770,18 @@ export function askTurnCardNote(sent: AskTurnSend): string | null {
   if (sent.ending !== "answered") return ASK_NO_CARD_SENTENCE;
   if (sent.result.kind !== "answer") return ASK_NO_CARD_SENTENCE;
   if (sent.result.text === "") return ASK_NO_CARD_SENTENCE;
-  return null;
+  // STORY 17.12 — THE CURATOR OWNS THE CARD NOW. A caller that predates it (a
+  // pure test, an old surface) still falls back to 17.11's rule copy by
+  // returning null with no curator facts. Otherwise the parse decides: a card
+  // makes one, a DECLINE is legal and says its sentence, a malformed block or
+  // a failed call says one sentence and makes none (ADR-0037 decisions 7-8).
+  const curator = sent.curator;
+  if (curator === undefined) return null;
+  if (curator.read === null) {
+    return curator.sentence ?? ASK_CURATOR_FAILED_SENTENCE;
+  }
+  if (curator.read.kind === "card") return null;
+  return curator.read.sentence;
 }
 
 /** The bridges a distilled card needs; a test passes its own fakes. */
@@ -1779,11 +1821,12 @@ export type AskDistilledCard =
  *      where the artifact came from and a wire can never name a card that is
  *      not there.
  *
- * Nothing is read, stat'ed, capped or normalized: the bytes are the reply as
- * the answer line holds them. The caller has already decided this turn
- * completed; an empty text still refuses here so no caller can invent a blank
- * card. PURE apart from the bridges it is handed. ADR-0037: the artifact
- * first; 17.12 replaces this rule with the curator, not this shape.
+ * Nothing is stat'ed, capped or normalized: the bytes are handed in whole by
+ * the caller (the curator's distilled text, or 17.11's verbatim reply copy).
+ * The caller has already decided this turn completed; an empty text still
+ * refuses here so no caller can invent a blank
+ * card. PURE apart from the bridges it is handed. ADR-0037: the artifact's
+ * shape is one; its author is the optional pair on the reading.
  */
 export async function writeDistilledCard(
   workspacePath: string,
@@ -1802,10 +1845,22 @@ export async function writeDistilledCard(
   io: DistilledIo = DISTILLED_IO,
   /** The shared slug set (ground + asks + sessions), as every new card mints. */
   options: { taken?: ReadonlySet<string> } = {},
+  /**
+   * STORY 17.12 — THE TWO MODELS when a CURATOR made this card: the manager
+   * that distilled and the task whose reply it read. Absent is 17.11's rule
+   * copy, unchanged, so the same writer serves both and neither wording can
+   * drift into a claim it cannot support (ADR-0037 decision 4).
+   */
+  authors?: { manager: string; task: string },
 ): Promise<AskDistilledCard> {
   if (text === "") return { kind: "refused", message: ASK_NO_CARD_SENTENCE };
   const addition = addGroundReference(references, name.trim(), x, y, options.taken);
-  const reading = distilledReading(addition.reference.on, askSlug, taken);
+  const reading = distilledReading(
+    addition.reference.on,
+    askSlug,
+    taken,
+    authors,
+  );
   await io.storeDistilledText(workspacePath, reading.on, text);
   const nextReadings = withReading(readings, reading);
   await io.saveReadings(workspacePath, nextReadings, malformedReadings);
@@ -2419,6 +2474,31 @@ export function askEndingOf(result: TurnResult): AskEnding {
 }
 
 /**
+ * STORY 17.12 — THE CURATOR'S SECOND EGRESS, as the ask turn hands it on. The
+ * reply is already safe in `result`; this value is the OTHER call's facts:
+ * whether it left (a PRISM when it did), how it ended, the two model NAMES (the
+ * card's author line), the raw reply (the Move's size, never shown) and the
+ * parse. A null `read` is the call itself failing; the reply still stands
+ * (ADR-0037 decision 8).
+ */
+export interface AskCuratorSend {
+  /** Whether the curator request left the app: a Move exists when it did. */
+  left: boolean;
+  /** How the curator call ended (the second PRISM's outcome). */
+  ending: AskEnding;
+  /** The MANAGER model's name as its row shows it: the card's author. */
+  manager: string;
+  /** The TASK model's name: whose reply was distilled. */
+  task: string;
+  /** The curator's raw answer, for the Move's size, or null when none came. */
+  raw: string | null;
+  /** The parsed answer, or null when the call produced no usable text. */
+  read: CuratorRead | null;
+  /** The ONE sentence when `read` is null (the call failed or timed out). */
+  sentence: string | null;
+}
+
+/**
  * What one ask-card turn's SEND produced: what the card and the conversation
  * read, HOW IT ENDED, and whether the question actually left. `left` is false
  * only when the turn never ran (no turn port, no configured provider): nothing
@@ -2436,6 +2516,13 @@ export interface AskTurnSend {
    */
   reached: string | null;
   missed: string | null;
+  /**
+   * STORY 17.12 — the second egress's facts, when the ask asked the manager to
+   * distil the reply. Absent on a turn that did not answer (nothing to distil)
+   * and on callers that predate the curator, whose completed turn still falls
+   * back to 17.11's rule copy.
+   */
+  curator?: AskCuratorSend;
 }
 
 /** What recording one ask turn did: the whole conversation and its sentence. */
@@ -2494,6 +2581,12 @@ const ASK_TURN_WRITE_IO: AskTurnWriteIo = {
 export interface AskTurnWrite {
   /** The ONE PRISM the sending turn made; null when the turn never left. */
   prism: Prism | null;
+  /**
+   * STORY 17.12 — THE SECOND PRISM (ADR-0037 decision 9): the curator's own
+   * egress, written when its request actually left. Null when no curator ran
+   * or the request never left.
+   */
+  curatorPrism: Prism | null;
   /** Every turn the file now holds, in order. */
   turns: readonly AskTurn[];
   /** The one sentence when the turn did not answer; null when it did. */
@@ -2542,7 +2635,30 @@ export async function writeAskTurn(
     io,
     prism === null ? null : prism.id,
   );
-  return { prism, turns: recorded.turns, sentence: recorded.sentence };
+  // STORY 17.12 — THE CURATOR IS ITS OWN MOVE (ADR-0037 decision 9). It left
+  // the machine, so it is recorded even when it declined or failed: an egress
+  // that is not written down is the invisible spend the decision forbids. It
+  // carries NO inclusion set (no material rode) and the ROLE says which of the
+  // two egresses this line is; the task line above stays role-absent, like
+  // every line written before this story.
+  let curatorPrism: Prism | null = null;
+  const curator = sent.curator;
+  if (curator !== undefined && curator.left) {
+    curatorPrism = await io.appendMove(
+      workspacePath,
+      slug,
+      null,
+      curator.ending,
+      curator.raw,
+      "curator",
+    );
+  }
+  return {
+    prism,
+    curatorPrism,
+    turns: recorded.turns,
+    sentence: recorded.sentence,
+  };
 }
 
 /* ------------------------------------------------------------------------- *
@@ -4037,6 +4153,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     async (
       packet: AskPacket,
       context: AskContext,
+      question: string,
       onPart?: (text: string) => void,
     ): Promise<AskTurnSend> => {
       if (turn === undefined) {
@@ -4079,7 +4196,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       // after the send exactly as the Ask Move's readback does. The
       // ENDING rides beside them (story 7b): a cancel is a stop, a timeout is
       // the budget, a break is a failure — none of them is an answer.
-      return {
+      const sent: AskTurnSend = {
         result: askSendResult(answered.result, {
           messages: answered.messages,
           read: answered.read,
@@ -4090,6 +4207,97 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         // to the card and nowhere else.
         reached: answered.reached,
         missed: answered.missed,
+      };
+      // STORY 17.12 — THE SECOND CALL (ADR-0037 decisions 4, 6 and 9). Only a
+      // completed answer can be distilled; the reply is the task's exact bytes
+      // and is never edited here. The manager row is resolved AFTER the task
+      // answered, so a manager misconfiguration cannot cost the person an
+      // answer: the reply stands and one sentence says no card was made.
+      if (
+        sent.ending !== "answered" ||
+        sent.result.kind !== "answer" ||
+        sent.result.text === ""
+      ) {
+        return sent;
+      }
+      const reply = sent.result.text;
+      // THE WHOLE ASK'S CEILING counts BOTH calls: the task's exchanges plus
+      // the curator's one. The curator's exchange is spent here only when the
+      // declared ceiling still allows it; the task's own loop spent only its
+      // own share, never this one.
+      const wholeBudget = askSteps(route, packet.retrievable.length > 0, true);
+      if (wholeBudget.steps < 2) return sent;
+      const manager = resolveManager(current);
+      if (manager.kind !== "resolved") {
+        return {
+          ...sent,
+          curator: {
+            left: false,
+            ending: "failed",
+            manager: managerSelection(current).modelId,
+            task: modelAuthorName(resolved.model.name, resolved.model.id),
+            raw: null,
+            read: null,
+            sentence: PROVIDER_SENTENCES.nothing,
+          },
+        };
+      }
+      let managerKey = "";
+      try {
+        managerKey =
+          manager.provider.kind === "http"
+            ? await readSecret(manager.provider.id)
+            : "";
+      } catch {
+        return {
+          ...sent,
+          curator: {
+            left: false,
+            ending: "failed",
+            manager: modelAuthorName(manager.model.name, manager.model.id),
+            task: modelAuthorName(resolved.model.name, resolved.model.id),
+            raw: null,
+            read: null,
+            sentence: ASK_CURATOR_FAILED_SENTENCE,
+          },
+        };
+      }
+      const managerRoute = routeOf(manager.provider, manager.model, managerKey);
+      // THE PACKET IS PURE AND CARRIES NO MATERIAL (turn/curator.ts): only the
+      // question, the reply and the schema. The same turn port and the same
+      // request line — nothing new crosses the wire.
+      const messages = buildCuratorMessages({ question, reply });
+      let curated: TurnResult;
+      try {
+        curated = await turn.sendMessages(managerRoute, messages);
+      } catch {
+        curated = { kind: "error", sentence: ASK_CURATOR_FAILED_SENTENCE };
+      }
+      if (curated.kind !== "answer" || curated.text === "") {
+        return {
+          ...sent,
+          curator: {
+            left: true,
+            ending: askEndingOf(curated),
+            manager: modelAuthorName(manager.model.name, manager.model.id),
+            task: modelAuthorName(resolved.model.name, resolved.model.id),
+            raw: curated.kind === "answer" ? curated.text : null,
+            read: null,
+            sentence: ASK_CURATOR_FAILED_SENTENCE,
+          },
+        };
+      }
+      return {
+        ...sent,
+        curator: {
+          left: true,
+          ending: "answered",
+          manager: modelAuthorName(manager.model.name, manager.model.id),
+          task: modelAuthorName(resolved.model.name, resolved.model.id),
+          raw: curated.text,
+          read: readCuratorAnswer(curated.text, reply),
+          sentence: null,
+        },
       };
     },
     [turn, workspacePath],
@@ -4943,8 +5151,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * reply's exact bytes (`form: distilled`, ADR-0037's first shape), wired
    * back to this ask card. Only a turn that ANSWERED with text makes one; a
    * stop, break, budget or empty reply writes no card and hands the card one
-   * quiet line. NO MODEL is called here — the rule copies; 17.12's curator
-   * replaces the rule, not this order (text, readings line, ground line, wire).
+   * quiet line. 17.12: the curator WRITES the card (the distilled text, the
+   * two model names), and the ORDER stays 17.11's (text, readings line, ground
+   * line, wire).
    */
   const askTurn = useCallback(
     (
@@ -5036,7 +5245,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         ok: false,
         message: "nothing was written.",
       };
-      return sendAskQuestion(packet, context, onPart)
+      return sendAskQuestion(packet, context, question, onPart)
         .then((sent) =>
           queueRef.current.push(async () => {
             // ONE PRISM PER SENDING TURN (story 17.4), then the words: the
@@ -5062,11 +5271,25 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             // beside the ask card it came from and wired back to it, in the
             // house order (text, readings line, ground line, then the wire).
             const noCard = askTurnCardNote(sent);
+            // STORY 17.12 — WHEN THE CURATOR MADE A CARD, ITS FIELDS ARE THE
+            // CARD: the title names the node, the distilled text is the
+            // reading, and the two model ids are the provenance. A turn whose
+            // caller predates the curator still writes 17.11's rule copy, so
+            // the writer has exactly one call site for both.
+            const curated =
+              sent.curator?.read?.kind === "card" ? sent.curator.read : null;
+            const curatedAuthors =
+              curated === null || sent.curator === undefined
+                ? undefined
+                : { manager: sent.curator.manager, task: sent.curator.task };
             let cardRefusal: string | null = null;
             if (noCard === null) {
               const askNow =
                 asksRef.current.find((entry) => entry.on === slug) ?? ask;
-              const cardName = askNameFromQuestion(question) || askNow.name;
+              const cardName =
+                curated?.card.title ||
+                askNameFromQuestion(question) ||
+                askNow.name;
               const at = besidePlacement(askNow.x, askNow.y);
               const written = await writeDistilledCard(
                 workspacePath,
@@ -5080,7 +5303,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
                 cardName,
                 at.x,
                 at.y,
-                sent.result.kind === "answer" ? sent.result.text : "",
+                curated?.text ??
+                  (sent.result.kind === "answer" ? sent.result.text : ""),
                 new Date().toISOString(),
                 undefined,
                 {
@@ -5090,6 +5314,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
                     sessionsRef.current,
                   ),
                 },
+                curatedAuthors,
               );
               if (written.kind === "refused") {
                 cardRefusal = written.message;

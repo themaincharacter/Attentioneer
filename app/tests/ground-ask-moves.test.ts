@@ -404,10 +404,11 @@ describe("the join: the answer line names the Move, the person's line does not",
     expect(esc).not.toContain("prism");
     // The hook appends a Move only inside writeAskTurn and only when sent.
     const hookCode = HOOK.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-    // The machinery is named in THREE places and called in ONE: the import,
-    // the injected-bridge type and the bound constant.
+    // The machinery is named in THREE places and called in TWO: the import,
+    // the injected-bridge type and the bound constant; the task's Move and
+    // STORY 17.12's curator Move.
     expect(hookCode.match(/appendAskCardMove/g)).toHaveLength(3);
-    expect(hookCode.match(/io\.appendMove\(/g)).toHaveLength(1);
+    expect(hookCode.match(/io\.appendMove\(/g)).toHaveLength(2);
     expect(hookCode).toContain("const ASK_TURN_WRITE_IO: AskTurnWriteIo = {");
     // A turn that never left records no Move: the call is gated by `sent.left`.
     const write = hookCode.slice(
@@ -447,7 +448,7 @@ describe("the ending vocabulary, and the closing of the union", () => {
     ).toBeNull();
   });
 
-  test("anchor is the ONE optional key, and no kind gained a content slot", () => {
+  test("anchor and role are the only optional keys, and no kind gained a content slot", () => {
     const FORBIDDEN = ["content", "text", "head", "question", "answer", "body", "bytes", "preview"];
     for (const kind of CHANGE_KINDS) {
       const optional = CHANGE_OPTIONAL_KEYS[kind];
@@ -455,7 +456,9 @@ describe("the ending vocabulary, and the closing of the union", () => {
       for (const key of CHANGE_KEYS[kind]) expect(FORBIDDEN).not.toContain(key);
       if (kind !== "ask") expect(optional).toEqual([]);
     }
-    expect(CHANGE_OPTIONAL_KEYS.ask).toEqual(["anchor"]);
+    // STORY 17.12: the curator's second egress names its ROLE; the task call
+    // stays absent, exactly like every line written before the story.
+    expect(CHANGE_OPTIONAL_KEYS.ask).toEqual(["anchor", "role"]);
     for (const key of PRISM_KEYS) expect(FORBIDDEN).not.toContain(key);
   });
 

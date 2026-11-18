@@ -80,7 +80,7 @@ export type ProposalRead =
 const NONE: ProposalRead = { kind: "none" };
 
 /** One fenced block as the answer wrote it (its body lines, joined). */
-interface FencedBlock {
+export interface FencedBlock {
   tag: string;
   body: string;
 }
@@ -91,8 +91,12 @@ interface FencedBlock {
  * a line that is exactly three backticks. An unclosed fence is not a block.
  * This is deliberately stricter than the paste path's permissive `json` scan:
  * a proposal must say which fence it is.
+ *
+ * STORY 17.12 uses the SAME scanner for the curator's card block: one discipline
+ * for every fenced block a model is asked to write, so a malformed block is
+ * refused the same way wherever it appears.
  */
-function fencedBlocksOf(answer: string): FencedBlock[] {
+export function fencedBlocksOf(answer: string): FencedBlock[] {
   const lines = answer.split(/\r?\n/);
   const blocks: FencedBlock[] = [];
   let at = 0;

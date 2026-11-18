@@ -186,6 +186,37 @@ export const ASK_OUTCOMES = ["answered", "no-response"] as const;
 export type AskOutcome = (typeof ASK_OUTCOMES)[number];
 
 /**
+ * WHICH OF THE TWO ROLES MADE AN ASK MOVE (story 17.12, ADR-0037 decisions 1
+ * and 9, PROVISIONAL). An ask is answered by the TASK model and then distilled
+ * by the MANAGER model: two egresses, two PRISMs, and this field is what tells
+ * them apart without a new Change kind. It is a ROLE, never a model name — the
+ * unions stay closed to content, and the rows live in the config.
+ *
+ * ABSENT MEANS "task": every line written before this story is a task call,
+ * so an old record parses untouched and needs no migration. A new task call
+ * stays absent too; only the curator's second egress writes the word.
+ */
+export const ASK_ROLES = ["task", "curator"] as const;
+export type AskRole = (typeof ASK_ROLES)[number];
+
+/** Is a value one of the two roles? */
+export function isAskRole(value: unknown): value is AskRole {
+  return (
+    typeof value === "string" &&
+    (ASK_ROLES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * WHICH ROLE A RECORD MAKES: absent parses as "task", because every line
+ * written before story 17.12 was a task call. One accessor, so no reader has
+ * to remember the default or invent a third word.
+ */
+export function askRoleOf(change: AskChange): AskRole {
+  return change.role ?? "task";
+}
+
+/**
  * run's outcomes (Epic 18 story 5, PROVISIONAL): the SAME two words an Ask's
  * ending uses, because they mean the same thing — a completed run answered; a
  * stop, a break, a timeout or a dead connection did not. Kept as its own
@@ -296,6 +327,13 @@ export interface AskChange {
    * no words, previews or content sizes ride with it.
    */
   anchor?: string;
+  /**
+   * WHICH ROLE MADE THIS EGRESS (story 17.12, ADR-0037 decision 9): absent on
+   * every task call — old lines included, so they keep their bytes and need no
+   * migration — and "curator" on the second, distilling call. A ROLE is
+   * structure, never content: the model's name stays in the settings row.
+   */
+  role?: AskRole;
   outcome: AskOutcome;
   /** The inclusion set: pointer natural keys that rode, or null for none. */
   included: string[] | null;
@@ -432,7 +470,7 @@ export const CHANGE_OPTIONAL_KEYS: Readonly<
   "mint-pointer": [],
   "write-text": [],
   "open-os": [],
-  ask: ["anchor"],
+  ask: ["anchor", "role"],
   run: [],
 };
 
@@ -624,6 +662,9 @@ export function parsePrismChange(value: unknown): Change | null {
       // The optional anchor is a SLUG when present — structure, never content.
       const anchor = value.anchor;
       if (anchor !== undefined && !isNonEmptyString(anchor)) return null;
+      // The optional role is one of the two words; absent is the task call.
+      const role = value.role;
+      if (role !== undefined && !isAskRole(role)) return null;
       if (!isIn(ASK_OUTCOMES, value.outcome)) return null;
       let included: string[] | null = null;
       if (value.included !== null) {
@@ -653,6 +694,7 @@ export function parsePrismChange(value: unknown): Change | null {
         kind,
         pointer,
         ...(anchor === undefined ? {} : { anchor }),
+        ...(role === undefined ? {} : { role }),
         outcome: value.outcome,
         included,
         responseSize,
@@ -763,6 +805,9 @@ function changeFields(change: Change): Record<string, unknown> {
         // PROVISIONAL (story 17.4): the ask card's anchor rides only when the
         // Move was made in a card; a concept map Ask's line is unchanged.
         ...(change.anchor === undefined ? {} : { anchor: change.anchor }),
+        // STORY 17.12: only the curator's second egress writes its role; a
+        // task call (old and new) stays absent, so old lines keep their bytes.
+        ...(change.role === undefined ? {} : { role: change.role }),
         outcome: change.outcome,
         included: change.included === null ? null : [...change.included],
         responseSize: change.responseSize,

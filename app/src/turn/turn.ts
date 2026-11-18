@@ -727,6 +727,18 @@ export interface TurnPort {
     options?: TurnOptions,
   ) => Promise<PacketTurnAnswer>;
   /**
+   * STORY 17.12 — THE CURATOR'S DOOR (ADR-0037 decision 9): the caller's OWN
+   * messages over a route, with no READ follow-up and no proposal scan. The
+   * curator composes its packet in turn/curator.ts (the reply, the brief and
+   * the schema) and hands it here; nothing new crosses the wire, because this
+   * is the SAME request line the task call uses, with the manager row.
+   */
+  sendMessages: (
+    route: TurnRoute,
+    messages: readonly TurnMessage[],
+    options?: TurnOptions,
+  ) => Promise<TurnResult>;
+  /**
    * Whether anything can leave, checked BEFORE a request is written: an HTTP
    * route needs a live sidecar, a CLI route needs a command that resolves.
    * The route is optional so a caller that only knows it must start the

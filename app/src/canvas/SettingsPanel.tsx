@@ -9,10 +9,13 @@ import {
 } from "../lib/readingPreference";
 import { loadTurnSettings, saveTurnSettings } from "../turn/provider";
 import {
+  managerSelection,
   modelsForMove,
   providerOptions,
   PROVIDER_SENTENCES,
   withLocalIdle,
+  withManagerSameAsTask,
+  withManagerSelection,
   withSelection,
   type TurnSettings,
 } from "../turn/providers";
@@ -66,6 +69,18 @@ export const SETTINGS_SECTIONS = [
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["id"];
+
+/**
+ * STORY 17.12 — THE TWO ROWS' ONE-LINE EXPLANATIONS (ADR-0037 decision 1). The
+ * wording is the user's ruling, verbatim: a second model setting nobody
+ * understands is worse than none, so each row says what its model is FOR and
+ * the manager row says outright that it may be the same model.
+ */
+export const TASK_MODEL_TOOLTIP =
+  "the model that does the work: answers the question, using the context you wired in.";
+
+export const MANAGER_MODEL_TOOLTIP =
+  "the model that writes the brief and, after the answer, distils the reply into a card. It can be the same model — a smaller one is often enough for distillation.";
 
 export function SettingsPanel({
   section,
@@ -191,9 +206,13 @@ function TurnDefaults({
     };
   }, []);
 
-  async function choose(providerId: string, modelId: string): Promise<void> {
+  /**
+   * ONE write path for BOTH rows: every change is the config's existing queued
+   * merge (turn/provider.ts), so the task and manager rows can never be saved
+   * by two different mechanisms or interleave under each other.
+   */
+  async function persist(next: TurnSettings): Promise<void> {
     if (settings === null || busy) return;
-    const next = withSelection(settings, providerId, modelId);
     setSettings(next);
     setSentence(null);
     setBusy(true);
@@ -208,6 +227,31 @@ function TurnDefaults({
     }
   }
 
+  async function choose(providerId: string, modelId: string): Promise<void> {
+    if (settings === null) return;
+    await persist(withSelection(settings, providerId, modelId));
+  }
+
+  async function chooseManager(
+    providerId: string,
+    modelId: string,
+  ): Promise<void> {
+    if (settings === null) return;
+    await persist(withManagerSelection(settings, providerId, modelId));
+  }
+
+  async function sameAsTask(same: boolean): Promise<void> {
+    if (settings === null) return;
+    if (same) {
+      await persist(withManagerSameAsTask(settings));
+      return;
+    }
+    // Turning "same" OFF states the current model explicitly, so the row keeps
+    // its meaning while the person picks a different one.
+    const chosen = managerSelection(settings);
+    await persist(withManagerSelection(settings, chosen.providerId, chosen.modelId));
+  }
+
   if (settings === null) {
     return <div className="settings-note">reading the turn settings…</div>;
   }
@@ -216,11 +260,24 @@ function TurnDefaults({
   const selected =
     settings.providers.find((row) => row.id === settings.providerId) ?? null;
   const models = selected === null ? [] : modelsForMove(selected, {});
+  // STORY 17.12 — THE MANAGER ROW. "Same as the task model" is the EMPTY pair
+  // (managerSelection reads it), so the default needs no copied value. The row
+  // still SHOWS the provider and model it means, so the state is legible at a
+  // glance; unticking it states the current choice explicitly.
+  const managerSame =
+    settings.managerProviderId === "" || settings.managerModelId === "";
+  const managerChosen = managerSelection(settings);
+  const managerRow =
+    settings.providers.find((row) => row.id === managerChosen.providerId) ??
+    null;
+  const managerModels =
+    managerRow === null ? [] : modelsForMove(managerRow, {});
 
   return (
     <div className="settings-block">
       <p className="settings-prose">
-        The provider and model a new ask starts from.
+        Two models, two rows. They may be the same model; the manager row
+        starts that way.
       </p>
       {options.length === 0 ? (
         <>
@@ -235,6 +292,18 @@ function TurnDefaults({
         </>
       ) : (
         <>
+          <p className="settings-row-title">
+            Task model
+            <span
+              className="settings-help"
+              role="note"
+              aria-label={TASK_MODEL_TOOLTIP}
+              title={TASK_MODEL_TOOLTIP}
+            >
+              ?
+            </span>
+          </p>
+          <p className="settings-row-note">{TASK_MODEL_TOOLTIP}</p>
           <label className="settings-field">
             <span>provider</span>
             <select
@@ -268,6 +337,68 @@ function TurnDefaults({
             >
               <option value="">no model</option>
               {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <p className="settings-row-title">
+            Manager model
+            <span
+              className="settings-help"
+              role="note"
+              aria-label={MANAGER_MODEL_TOOLTIP}
+              title={MANAGER_MODEL_TOOLTIP}
+            >
+              ?
+            </span>
+          </p>
+          <p className="settings-row-note">{MANAGER_MODEL_TOOLTIP}</p>
+          <label className="settings-field settings-field-inline">
+            <input
+              type="checkbox"
+              checked={managerSame}
+              disabled={busy}
+              aria-label="the manager model is the task model"
+              onChange={(e) => void sameAsTask(e.target.checked)}
+            />
+            <span>same as the task model</span>
+          </label>
+          <label className="settings-field">
+            <span>provider</span>
+            <select
+              value={managerChosen.providerId}
+              disabled={busy || managerSame}
+              aria-label="the manager provider"
+              onChange={(e) => {
+                const row = settings.providers.find(
+                  (provider) => provider.id === e.target.value,
+                );
+                void chooseManager(e.target.value, row?.models[0]?.id ?? "");
+              }}
+            >
+              <option value="">nothing selected</option>
+              {options.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-field">
+            <span>model</span>
+            <select
+              value={managerChosen.modelId}
+              disabled={busy || managerSame}
+              aria-label="the manager model"
+              onChange={(e) =>
+                void chooseManager(managerChosen.providerId, e.target.value)
+              }
+            >
+              <option value="">no model</option>
+              {managerModels.map((model) => (
                 <option key={model.id} value={model.id}>
                   {model.name}
                 </option>

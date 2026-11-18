@@ -6,6 +6,7 @@ import type { GroundReference } from "./ground";
 import { serializeGroundLinkLine, type GroundLink } from "./groundLinks";
 import { serializeMediaLine, type Media } from "./media";
 import {
+  distilledAuthors,
   cardProvenanceSourceSlug,
   distilledSourceSlug,
   pageHost,
@@ -325,9 +326,19 @@ export function renderMirror(view: MirrorView): string {
       } else if (sourceSlug === null) {
         lines.push("file: " + readingFileName(reading.from));
       } else if (distilledSourceSlug(reading) !== null) {
+        // STORY 17.12: a curator card says WHO distilled it from WHOSE reply
+        // (the two model ids); a 17.11 rule card keeps "a rule's copy", which
+        // is still the truth for a card a rule made.
+        const authors = distilledAuthors(reading);
         lines.push(
-          "rule: a rule's copy of " +
-            (nameOf.get(sourceSlug) ?? "a card that is gone"),
+          authors === null
+            ? "rule: a rule's copy of " +
+              (nameOf.get(sourceSlug) ?? "a card that is gone")
+            : "distilled by " +
+              authors.manager +
+              " from " +
+              authors.task +
+              "'s reply",
         );
       } else {
         lines.push(

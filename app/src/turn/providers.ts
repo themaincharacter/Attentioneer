@@ -159,18 +159,29 @@ export type ProviderRow = HttpProviderRow | CliProviderRow | LocalProviderRow;
  * field for it.
  */
 export interface TurnSettings {
-  /** The selected provider row's id ("" when nothing is selected). */
+  /** The TASK row's id (the model that does the work; "" when none). */
   providerId: string;
-  /** The selected model row's id ("" when nothing is selected). */
+  /** The TASK model's id ("" when none). */
   modelId: string;
+  /**
+   * STORY 17.12 — THE MANAGER ROW (ADR-0037 decision 1, PROVISIONAL). The
+   * second model writes the brief and distils the reply. An EMPTY pair is the
+   * person's explicit "same as the task model": the row is drawn on the task
+   * selection and no second row is stored, so the two-call default needs no
+   * copied value that could drift. A non-empty pair is the manager's own.
+   */
+  managerProviderId: string;
+  managerModelId: string;
   /** Every provider row, in the order the person made them. */
   providers: ProviderRow[];
 }
 
-/** The honest nothing: no rows, no selection. */
+/** The honest nothing: no rows, no selection, no manager row of its own. */
 export const EMPTY_SETTINGS: TurnSettings = {
   providerId: "",
   modelId: "",
+  managerProviderId: "",
+  managerModelId: "",
   providers: [],
 };
 
@@ -475,14 +486,20 @@ export function readTurnSettings(value: unknown): TurnSettings {
   return {
     providerId: textOf(value.providerId),
     modelId: textOf(value.modelId),
+    // STORY 17.12 — an old config has no manager pair, which reads as exactly
+    // the default: "same as the task model". No migration, no invented value.
+    managerProviderId: textOf(value.managerProviderId),
+    managerModelId: textOf(value.managerModelId),
     providers,
   };
 }
 
-/** What the config file holds: a selection and rows, field by field. */
+/** What the config file holds: the two selections and the rows, field by field. */
 export interface StoredTurnSettings {
   providerId: string;
   modelId: string;
+  managerProviderId: string;
+  managerModelId: string;
   providers: Record<string, unknown>[];
 }
 
@@ -497,6 +514,8 @@ export function storedTurnSettings(settings: TurnSettings): StoredTurnSettings {
   return {
     providerId: settings.providerId,
     modelId: settings.modelId,
+    managerProviderId: settings.managerProviderId,
+    managerModelId: settings.managerModelId,
     providers: settings.providers.map(storedProviderRow),
   };
 }
@@ -979,10 +998,17 @@ export function withoutProvider(
     (provider) => provider.id !== providerId,
   );
   const clearing = settings.providerId === providerId;
+  // STORY 17.12: a removed row also releases the MANAGER selection, falling
+  // back to the legible default ("same as the task model") rather than to a
+  // half-remembered row id.
+  const clearingManager = settings.managerProviderId === providerId;
   return {
+    ...settings,
     providers,
     providerId: clearing ? "" : settings.providerId,
     modelId: clearing ? "" : settings.modelId,
+    managerProviderId: clearingManager ? "" : settings.managerProviderId,
+    managerModelId: clearingManager ? "" : settings.managerModelId,
   };
 }
 
@@ -993,6 +1019,51 @@ export function withSelection(
   modelId: string,
 ): TurnSettings {
   return { ...settings, providerId, modelId };
+}
+
+/**
+ * STORY 17.12 — THE MANAGER ROW the settings currently mean. An empty pair is
+ * "same as the task model" — the explicit default the two rows show — and it
+ * is read HERE once, so the app and the settings surface can never disagree
+ * about which model distils.
+ */
+export function managerSelection(settings: TurnSettings): {
+  providerId: string;
+  modelId: string;
+} {
+  if (settings.managerProviderId === "" || settings.managerModelId === "") {
+    return { providerId: settings.providerId, modelId: settings.modelId };
+  }
+  return {
+    providerId: settings.managerProviderId,
+    modelId: settings.managerModelId,
+  };
+}
+
+/** Choose the manager's own row (turning "same as the task model" OFF). */
+export function withManagerSelection(
+  settings: TurnSettings,
+  providerId: string,
+  modelId: string,
+): TurnSettings {
+  return { ...settings, managerProviderId: providerId, managerModelId: modelId };
+}
+
+/**
+ * STORY 17.12 — "SAME AS THE TASK MODEL", chosen EXPLICITLY. It stores the
+ * empty pair rather than copying the task selection: a copied value would go
+ * stale when the task row changes, and the person's toggle would silently
+ * mean something else. The state stays legible because the row reads the task
+ * row as its value.
+ */
+export function withManagerSameAsTask(settings: TurnSettings): TurnSettings {
+  return { ...settings, managerProviderId: "", managerModelId: "" };
+}
+
+/** Resolve the manager's model against the rows (the second egress). */
+export function resolveManager(settings: TurnSettings): Resolution {
+  const chosen = managerSelection(settings);
+  return resolveProvider(settings, chosen.providerId, chosen.modelId);
 }
 
 /** One option a provider select offers: the id a turn carries, the name shown. */

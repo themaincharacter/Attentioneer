@@ -30,6 +30,7 @@ import {
   readingNeedsLine,
   readingStateWord,
   cardProvenanceSourceSlug,
+  distilledAuthors,
   distilledSourceSlug,
   selectionSourceSlug,
   type Reading,
@@ -303,13 +304,23 @@ export function readingKind(
     const noun = readingExtract(reading) === "video" ? "video" : "page";
     return "the " + noun + " kept from " + pageHost(reading.from);
   }
-  // STORY 17.11 — A DISTILLED CARD SAYS WHAT MADE IT: a RULE, never a model.
-  // Until 17.12's curator exists, claiming a model distilled this would be a
-  // lie; the sentence is the form's own, so a rule-made card can never drift
-  // into the selection's "selected from" wording. ADR-0037: the artifact
-  // first, the curator next.
+  // STORY 17.11 — A DISTILLED CARD SAYS WHAT MADE IT. A RULE card says a rule,
+  // never a model; STORY 17.12's CURATOR card says exactly the two models
+  // (ADR-0037 decision 4): the manager that distilled, and the task whose
+  // reply it read. The form is one; the AUTHOR is the reading's own optional
+  // provenance, so a rule card can never drift into a claim it cannot support.
   const distilled = distilledSourceSlug(reading);
   if (distilled !== null) {
+    const authors = distilledAuthors(reading);
+    if (authors !== null) {
+      return (
+        "distilled by " +
+        authors.manager +
+        " from " +
+        authors.task +
+        "'s reply"
+      );
+    }
     const name = cardNames.get(distilled);
     return name === undefined
       ? "a rule's copy of a card that is gone"
@@ -2125,7 +2136,13 @@ function GroundCard({
               RULE made this card, so there is no file behind it to re-read. */}
           {reading !== null && distilledSourceSlug(reading) !== null && (
             <div className="ground-quiet">
-              a rule's copy; there is no file to refresh or point at.
+              {distilledAuthors(reading) === null
+                ? "a rule's copy; there is no file to refresh or point at."
+                : "distilled by " +
+                  distilledAuthors(reading)!.manager +
+                  " from " +
+                  distilledAuthors(reading)!.task +
+                  "'s reply; there is no file to refresh or point at."}
             </div>
           )}
           {/* STORY 16.15: an image is drawn from its own file, so it has no

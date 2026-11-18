@@ -208,6 +208,21 @@ export interface Reading {
    * and a legacy line is never rewritten to add it.
    */
   extract?: ReadingExtract;
+  /**
+   * STORY 17.12 — WHO DISTILLED THIS CARD (ADR-0037 decisions 4 and 9): the
+   * MANAGER model that wrote the brief and distilled the reply, and the TASK
+   * model whose reply it read. Both are the settings rows' MODEL NAMES (the
+   * id when a row has none) — a provenance fact, never a key, an endpoint or
+   * a word of the artifact.
+   * ABSENT on a rule card (17.11): a rule copy names no model, and its line
+   * keeps exactly the bytes it always had.
+   *
+   * They ride as two optional tail fields on the existing line — no new record
+   * family, no Rust, and an old line without them still parses as a rule card.
+   * PROVISIONAL: the field names and their position in the line.
+   */
+  manager?: string;
+  task?: string;
 }
 
 /** A read of `map/readings.txt`: what parsed and what is kept but unreadable. */
@@ -277,13 +292,13 @@ export function readingTextPath(
  * rewrite. The writer emits them in this order, the reader needs that order.
  */
 const READING_LINE =
-  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf|page|image|video))?$/;
+  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf|page|image|video))?(?: \| manager: ([^|]+?))?(?: \| task: ([^|]+?))?$/;
 
 /** Parse one line; anything out of shape is `null` (kept and reported). */
 export function parseReadingLine(line: string): Reading | null {
   const match = READING_LINE.exec(line);
   if (!match) return null;
-  const [, on, form, from, taken, bytes, extract] = match;
+  const [, on, form, from, taken, bytes, extract, manager, task] = match;
   if (on === "" || from === "" || taken === "") return null;
   // The vocabulary is provisional: a form the app does not know yet is
   // preserved and surfaced, never guessed into `path`. A SELECTION must name a
@@ -309,6 +324,18 @@ export function parseReadingLine(line: string): Reading | null {
   // Absent means TEXT (a story-1 line), and it stays absent: a load never
   // writes the field in. A hand edit that says `text` is preserved as written.
   if (extract !== undefined) reading.extract = extract as ReadingExtract;
+  // STORY 17.12: the two authors ride TOGETHER or not at all. One without the
+  // other is an out-of-shape line, kept and reported like any other — never a
+  // half-attributed card. Only a distilled reading may carry them.
+  if (manager !== undefined || task !== undefined) {
+    if (manager === undefined || task === undefined) return null;
+    if (form !== "distilled") return null;
+    const who = manager.trim();
+    const of = task.trim();
+    if (who === "" || of === "") return null;
+    reading.manager = who;
+    reading.task = of;
+  }
   return reading;
 }
 
@@ -324,7 +351,13 @@ export function serializeReadingLine(reading: Reading): string {
       : ` | bytes: ${reading.bytes}`;
   const extract =
     reading.extract === undefined ? "" : ` | extract: ${reading.extract}`;
-  return `on: ${reading.on} | form: ${reading.form} | from: ${reading.from} | taken: ${reading.taken}${size}${extract}`;
+  // STORY 17.12: the authors append only on a card a curator made; a rule
+  // card's line stays byte-identical to the one 17.11 wrote.
+  const authors =
+    reading.manager === undefined || reading.task === undefined
+      ? ""
+      : ` | manager: ${reading.manager} | task: ${reading.task}`;
+  return `on: ${reading.on} | form: ${reading.form} | from: ${reading.from} | taken: ${reading.taken}${size}${extract}${authors}`;
 }
 
 /**
@@ -520,13 +553,36 @@ export function distilledReading(
   on: string,
   askSlug: string,
   taken: string,
+  /**
+   * STORY 17.12 — THE TWO MODELS, when a CURATOR made this card: the manager
+   * that distilled and the task whose reply it read. Absent keeps 17.11's rule
+   * card exactly as it was ("a rule's copy"), so the two are one form with one
+   * optional provenance pair, never two record families.
+   */
+  authors?: { manager: string; task: string },
 ): Reading {
   return {
     on,
     form: "distilled",
     from: selectionProvenance(askSlug),
     taken,
+    ...(authors === undefined
+      ? {}
+      : { manager: authors.manager, task: authors.task }),
   };
+}
+
+/**
+ * STORY 17.12 — the two models a curator card names, or null for a rule card.
+ * One accessor, so the card's line, the mirror and any later reader ask the
+ * same question and never differ about who made an artifact.
+ */
+export function distilledAuthors(
+  reading: Reading,
+): { manager: string; task: string } | null {
+  if (reading.form !== "distilled") return null;
+  if (reading.manager === undefined || reading.task === undefined) return null;
+  return { manager: reading.manager, task: reading.task };
 }
 
 // STORY 18 removed the selection→card affordance, and with it this file's two

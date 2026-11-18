@@ -9,6 +9,7 @@ import { openOutward } from "../canvas/outward";
 import { pointersPath } from "../map/pointers";
 import { isProposal } from "../turn/turn";
 import {
+  type AskRole,
   loadLatestPrism,
   mintPrismId,
   prismsPath,
@@ -353,13 +354,16 @@ export function appendAskCardMove(
   included: string[] | null,
   ending: AskEnding,
   answer: string | null,
+  role?: AskRole,
 ): Promise<Prism | null> {
   return enqueue(async () => {
     // STORY 17.9 — NO ANCHOR. The Move names the ask card and the WIRED
     // context's inclusion set; the old `anchor` field is legacy and new lines
     // do not carry it (old lines still parse and display).
+    // STORY 17.12 — the curator's egress names its ROLE; a task call leaves it
+    // absent, so old lines and new task lines keep the same shape.
     const moved = await recordAskCardTurn(
-      askCardInFlight(workspacePath, { on, included }),
+      askCardInFlight(workspacePath, { on, included, role }),
       ending,
       answer,
       askContactDeps(workspacePath),
