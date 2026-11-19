@@ -592,7 +592,7 @@ describe("the hook queues the mirror after every ground write", () => {
     });
   }
 
-  test("exactly twenty-six call sites (one per write path, not on load)", () => {
+  test("exactly twenty-seven call sites (one per write path, not on load)", () => {
     // STORY 18 removes story 16.12's selection card from the write paths with
     // its verb, so this is one fewer than the twenty-three 18.5 left.
     // Story 16.13 adds restore as the tenth; story 16.14 the page card and
@@ -609,7 +609,9 @@ describe("the hook queues the mirror after every ground write", () => {
     // reference, so its appearance reaches the mirror like any other add.
     // STORY 16.21 adds one: renaming a card changes a name MAP.md renders.
     // STORY 16.22 adds one: a session card's rename does too.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(26);
+    // PROVISIONAL — the PROJECT CARD adds one: its add is a ground write like
+    // any other and reaches the mirror (the folder's NAME, never its path).
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(27);
   });
 
   test("opening never writes the mirror", () => {

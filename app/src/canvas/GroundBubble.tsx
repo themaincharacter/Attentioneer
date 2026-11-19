@@ -6,7 +6,7 @@ import {
   proposeSessionName,
 } from "../map/sessions";
 import { ACP_SPECS, acpRowLabel } from "../turn/acpSpecs";
-import { pickReadingFile } from "../workspace/dialogs";
+import { pickFolder, pickReadingFile } from "../workspace/dialogs";
 import { usePlane } from "./CanvasPlane";
 import type { GroundAddResult } from "./useGround";
 import { counterScale } from "./veilRules";
@@ -17,11 +17,14 @@ import { counterScale } from "./veilRules";
  * read on device. Story 16.15: it may also be an IMAGE, drawn in place, or a
  * VIDEO, whose title and thumbnail are copied beside the map.)
  *
- * THE THREE INTENTS (story 16.15): a FILE (text, PDF or image, by the pick's
- * name), a PAGE (a pasted web address) or a VIDEO (a pasted address on a host
- * this app knows). The INTENT chooses the extractor — the file's own bytes are
- * never sniffed, and a file that is neither text, PDF nor a known image type
- * refuses with one sentence. The choice is the person's, not the app's guess.
+ * THE INTENTS (story 16.15, then the provisional project card): a FILE (text,
+ * PDF or image, by the pick's name), a FOLDER (a project card: a reference
+ * whose pointer is a folder elsewhere on this machine, with nothing read or
+ * copied from it), a PAGE (a pasted web address) or a VIDEO (a pasted address
+ * on a host this app knows). The INTENT chooses the extractor — the file's own
+ * bytes are never sniffed, and a file that is neither text, PDF nor a known
+ * image type refuses with one sentence. The choice is the person's, not the
+ * app's guess.
  *
  * This is NOT the concept map's word bubble and NOT a `CreationKind`
  * (`wordCreationOffered` stays concept-only): the noun is the ground map's
@@ -46,16 +49,21 @@ import { counterScale } from "./veilRules";
  * popover instead of a shrunken card. Its title stays the quiet meta label.
  *
  * PROVISIONAL: the card's size, the intent row's look, the wording of the
- * sentences and the "name it first." rule (ADR-0003's rendering seam and the
- * story's record shapes).
+ * sentences, the "name it first." rule and the `folder` intent with its
+ * absolute pointer (ADR-0003's rendering seam and the story's record shapes).
  */
 
-/** What the person means to point the reference at (story 16.15). */
-export type GroundIntent = "file" | "page" | "video" | "session";
+/**
+ * What the person means to point the reference at (story 16.15).
+ * PROVISIONAL: `folder` is the PROJECT CARD — a reference whose pointer is a
+ * folder elsewhere on this machine, with no reading taken from it.
+ */
+export type GroundIntent = "file" | "folder" | "page" | "video" | "session";
 
 /** The intent row's words, in order. PROVISIONAL. */
 const INTENTS: readonly { intent: GroundIntent; label: string }[] = [
   { intent: "file", label: "a file" },
+  { intent: "folder", label: "a folder" },
   { intent: "page", label: "a page" },
   { intent: "video", label: "a video" },
   // STORY 18.3 — the SESSION CARD is created here too: the person is already
@@ -78,6 +86,12 @@ interface GroundBubbleProps {
   initialIntent?: GroundIntent;
   /** Add the reference (the app's one write path); a refusal is a sentence. */
   onAdd: (name: string, from: string) => Promise<GroundAddResult>;
+  /**
+   * PROVISIONAL — add a PROJECT CARD from a picked FOLDER elsewhere: the ground
+   * reference's pointer is the folder, and nothing is read from it. Optional so
+   * a render test (and an older caller) needs no disk.
+   */
+  onAddFolder?: (name: string, folder: string) => Promise<GroundAddResult>;
   /**
    * Add a reference from a pasted web address (story 16.14): the sidecar
    * fetches it once and the card keeps the text and a local image. A refusal
@@ -106,6 +120,7 @@ export function GroundBubble({
   y,
   initialIntent = "file",
   onAdd,
+  onAddFolder,
   onAddPage,
   onAddVideo,
   onAddSession,
@@ -181,6 +196,10 @@ export function GroundBubble({
 
   async function commit(chosen: string) {
     if (doneRef.current || busy) return;
+    // A PROJECT CARD goes through its own writer: the same flow, with a folder
+    // pointer and no reading taken. A bubble without that door cannot commit it.
+    const add = intent === "folder" ? onAddFolder : onAdd;
+    if (add === undefined) return;
     const trimmed = name.trim();
     if (trimmed === "") {
       setProblem("name it first.");
@@ -189,7 +208,7 @@ export function GroundBubble({
     }
     setBusy(true);
     setProblem(null);
-    const result = await onAdd(trimmed, chosen);
+    const result = await add(trimmed, chosen);
     if (result.ok) {
       doneRef.current = true;
       onClose();
@@ -283,9 +302,41 @@ export function GroundBubble({
     await commit(picked);
   }
 
+  /**
+   * PROVISIONAL — the FOLDER pick for a project card. The OS dialog chooses a
+   * directory; the handed path is stored exactly as given and nothing inside
+   * it is opened. The picking flag keeps the native dialog from closing the
+   * bubble under itself, exactly as the file door does.
+   */
+  async function chooseFolder() {
+    if (doneRef.current || busy || intent !== "folder") return;
+    if (onAddFolder === undefined) return;
+    if (name.trim() === "") {
+      setProblem("name it first.");
+      nameRef.current?.focus();
+      return;
+    }
+    pickingRef.current = true;
+    setProblem(null);
+    let picked: string | null = null;
+    try {
+      picked = await pickFolder("pick a folder");
+    } finally {
+      pickingRef.current = false;
+    }
+    if (picked === null) return;
+    setFrom(picked);
+    // The pick is the commit once the name is there, as with a file.
+    await commit(picked);
+  }
+
   /** The intent row never loses a draft: it only changes which door is shown. */
   function chooseIntent(next: GroundIntent) {
     if (busy) return;
+    // A picked source belongs to the door it was picked for: leaving the FILE
+    // or FOLDER door drops it, so a file path can never be committed as a
+    // project card (or the reverse) after a refused or reconsidered pick.
+    if (next !== intent) setFrom(null);
     setIntent(next);
     setProblem(null);
     // STORY 18.3: choosing a session PROPOSES the row's name as the card's, so
@@ -301,7 +352,7 @@ export function GroundBubble({
   const hasSource =
     intent === "session"
       ? tool !== ""
-      : intent === "file"
+      : intent === "file" || intent === "folder"
         ? from !== null
         : url.trim() !== "";
   const canAdd = !busy && name.trim() !== "" && hasSource;
@@ -339,11 +390,13 @@ export function GroundBubble({
           const offered =
             option.intent === "file"
               ? true
-              : option.intent === "page"
-                ? onAddPage !== undefined
-                : option.intent === "video"
-                  ? onAddVideo !== undefined
-                  : onAddSession !== undefined;
+              : option.intent === "folder"
+                ? onAddFolder !== undefined
+                : option.intent === "page"
+                  ? onAddPage !== undefined
+                  : option.intent === "video"
+                    ? onAddVideo !== undefined
+                    : onAddSession !== undefined;
           if (!offered) return null;
           return (
             <button
@@ -382,6 +435,7 @@ export function GroundBubble({
           if (intent === "session") void commitSession();
           else if (addressIntent) void commitAddress();
           else if (from !== null) void commit(from);
+          else if (intent === "folder") void chooseFolder();
           else void chooseFile();
         }}
       />
@@ -409,9 +463,13 @@ export function GroundBubble({
             ))}
           </select>
         </div>
-      ) : intent === "file" ? (
+      ) : intent === "file" || intent === "folder" ? (
         <div className="ground-bubble-file">
-          {from === null ? "no file yet" : readingFileName(from)}
+          {from === null
+            ? intent === "folder"
+              ? "no folder yet"
+              : "no file yet"
+            : readingFileName(from)}
         </div>
       ) : (
         <input
@@ -445,14 +503,20 @@ export function GroundBubble({
         </div>
       )}
       <div className="ground-bubble-actions">
-        {intent === "file" && (
+        {(intent === "file" || intent === "folder") && (
           <button
             type="button"
             className="ground-bubble-pick"
             disabled={busy}
-            onClick={() => void chooseFile()}
+            onClick={() =>
+              void (intent === "folder" ? chooseFolder() : chooseFile())
+            }
           >
-            {from === null ? "choose a file…" : "choose another…"}
+            {from === null
+              ? intent === "folder"
+                ? "choose a folder…"
+                : "choose a file…"
+              : "choose another…"}
           </button>
         )}
         <button

@@ -227,6 +227,15 @@ export async function pullReading(
   // no source file to locate, so no path is resolved and nothing is stat'ed.
   // STORY 17.11: a distilled card is the same shape one form over (a completed
   // ask turn's reply, copied), so the pull reads the map's own bytes.
+  // PROVISIONAL — a FOLDER card points at a place, not a reading: nothing was
+  // taken from it and there is nothing to pull. The guard is here as well as
+  // on the card's verbs, so no caller can make this path open a directory.
+  if (reading.form === "folder") {
+    return {
+      kind: "refused",
+      message: "a project card points at a folder; there is no reading to pull.",
+    };
+  }
   if (reading.form === "selection" || reading.form === "distilled") {
     const readStored = io.readStoredText ?? readTextFile;
     const stored = await readStored(readingTextPath(workspacePath, reading.on));

@@ -4017,6 +4017,22 @@ function App() {
   );
 
   /**
+   * PROVISIONAL — the ground bubble's FOLDER door: a PROJECT CARD at the
+   * double-clicked point. The picked folder is stored as the pointer; nothing
+   * is read or copied from it. A blank name or no folder refuses and writes
+   * nothing.
+   */
+  const addGroundFolderAt = useCallback(
+    async (name: string, folder: string) => {
+      if (groundAt === null) {
+        return { ok: false, message: "nothing was written." };
+      }
+      return ground.createFolder(name, groundAt.x, groundAt.y, folder);
+    },
+    [ground, groundAt],
+  );
+
+  /**
    * The ground bubble's OTHER source (story 16.14): a pasted web address. The
    * sidecar reads it once; the app keeps the text and a local image. A refused
    * page creates nothing.
@@ -5011,6 +5027,12 @@ function App() {
                 onPress: () => chooseGroundDoor("file"),
               },
               {
+                id: "folder",
+                label: "a folder",
+                title: "add a project card from a folder elsewhere",
+                onPress: () => chooseGroundDoor("folder"),
+              },
+              {
                 id: "page",
                 label: "a page",
                 title: "add a reference from a web page",
@@ -5045,6 +5067,7 @@ function App() {
             y={groundAt.y}
             initialIntent={groundIntent}
             onAdd={addGroundAt}
+            onAddFolder={addGroundFolderAt}
             onAddPage={addGroundPageAt}
             onAddVideo={addGroundVideoAt}
             /* STORY 18.3 — the fourth door: a SESSION CARD bound to one tool

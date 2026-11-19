@@ -142,7 +142,10 @@ import {
   REFRESH_UNCHANGED,
   loadReadings,
   loadReadingTexts,
+  isAbsolutePath,
   isFileReading,
+  isStatableReading,
+  folderReading,
   pageReading,
   readingAbsolutePath,
   readingExtract,
@@ -826,6 +829,18 @@ export interface GroundView {
     from: string,
   ) => Promise<GroundAddResult>;
   /**
+   * PROVISIONAL — Add one PROJECT CARD from a picked FOLDER elsewhere on this
+   * machine: a ground reference whose pointer is the folder itself. Nothing is
+   * read or copied; the card's one sentence says it is a folder the workspace
+   * does not own. A blank name or no folder refuses before the queue writes.
+   */
+  createFolder: (
+    name: string,
+    x: number,
+    y: number,
+    folder: string,
+  ) => Promise<GroundAddResult>;
+  /**
    * Add one reference from a pasted web address (story 16.14): the sidecar
    * fetches it ONCE, the text becomes the reading and a local thumbnail is
    * kept. A refused fetch writes NOTHING — there is no half-formed card.
@@ -927,6 +942,7 @@ type GroundLoaded = Omit<
   | "answerSessionPermission"
   | "makeCardFromRun"
   | "create"
+  | "createFolder"
   | "createPage"
   | "createVideo"
   | "move"
@@ -3289,6 +3305,93 @@ export function pageRefusal(name: string, url: string): string | null {
   return null;
 }
 
+/** PROVISIONAL — the two things a project card refuses before anything runs. */
+export const PROJECT_NAME_REFUSAL = "name it first.";
+export const PROJECT_FOLDER_REFUSAL = "pick a folder first.";
+
+/**
+ * PROVISIONAL — the project card's ONE refusal rule, PURE: the person's word is
+ * the name, and the pointer must be an ABSOLUTE place on this machine (a
+ * folder outside the workspace has no workspace-relative form). Both run
+ * BEFORE the queue, so a refusal reaches neither a file nor a stat.
+ */
+export function projectCardRefusal(
+  name: string,
+  folder: string,
+): string | null {
+  if (name.trim() === "") return PROJECT_NAME_REFUSAL;
+  if (folder === "" || !isAbsolutePath(folder)) return PROJECT_FOLDER_REFUSAL;
+  return null;
+}
+
+/** The two writers a project card's add needs; injectable for a test. */
+export interface ProjectCardIo {
+  saveReadings: typeof saveReadings;
+  saveGround: typeof saveGround;
+}
+
+const PROJECT_CARD_IO: ProjectCardIo = { saveReadings, saveGround };
+
+/** What writing one project card produced: both lists and the two new lines. */
+export interface ProjectCardWrite {
+  references: GroundReference[];
+  readings: Reading[];
+  reference: GroundReference;
+  reading: Reading;
+}
+
+export type ProjectCardWriteResult =
+  | ({ ok: true } & ProjectCardWrite)
+  | { ok: false; message: string };
+
+/**
+ * PROVISIONAL — WRITE ONE PROJECT CARD: a ground line and a readings line whose
+ * FORM IS `folder`. NO reading text is written, because nothing is read or
+ * copied from the folder; the reading slot on the card carries the one honest
+ * sentence instead. The lines follow the same order as a file card (readings
+ * first, ground LAST), so a crash can leave an orphan reading line but never a
+ * card whose record is absent. The slug is minted against the shared set the
+ * caller hands in (ground, ask and session cards share one slug space).
+ *
+ * PURE apart from the two writers, and a refusal (a blank name, no folder, a
+ * relative one) writes NOTHING — this is what the refusal test pins.
+ */
+export async function writeProjectCard(
+  workspacePath: string,
+  references: readonly GroundReference[],
+  readings: readonly Reading[],
+  malformedGround: readonly string[],
+  malformedReadings: readonly string[],
+  name: string,
+  x: number,
+  y: number,
+  folder: string,
+  takenSlugs: ReadonlySet<string>,
+  when: string = new Date().toISOString(),
+  io: ProjectCardIo = PROJECT_CARD_IO,
+): Promise<ProjectCardWriteResult> {
+  const refusal = projectCardRefusal(name, folder);
+  if (refusal !== null) return { ok: false, message: refusal };
+  const addition = addGroundReference(
+    references,
+    name.trim(),
+    x,
+    y,
+    takenSlugs,
+  );
+  const reading = folderReading(addition.reference.on, folder, when);
+  const nextReadings = withReading(readings, reading);
+  await io.saveReadings(workspacePath, nextReadings, malformedReadings);
+  await io.saveGround(workspacePath, addition.references, malformedGround);
+  return {
+    ok: true,
+    references: addition.references,
+    readings: nextReadings,
+    reference: addition.reference,
+    reading,
+  };
+}
+
 /**
  * STORY 16.14 — CREATE A PAGE CARD; STORY 16.26 TAKES THE TEXT OUT OF IT.
  *
@@ -3670,8 +3773,10 @@ export async function metasOf(
   const metas = new Map<string, FileMetaAnswer>();
   await Promise.all(
     readings.map(async (reading) => {
-      // No source file, no stat: a selection and a page can never be stale.
-      if (!isFileReading(reading)) return;
+      // No source to stat: a selection, a page and a video have nothing on
+      // disk to ask about. A FOLDER pointer does: the stat is what says
+      // whether the place is still there.
+      if (!isStatableReading(reading)) return;
       metas.set(
         reading.on,
         await fileMeta(readingAbsolutePath(workspacePath, reading)),
@@ -4175,6 +4280,75 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
               ),
             ];
           });
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * PROVISIONAL — CREATE A PROJECT CARD: the person picked a FOLDER elsewhere
+   * on this machine. The same flow as a file card (shared slug, readings line
+   * first, ground line LAST, one history event, then the mirror), with the one
+   * branch the pointer needs: NO read, NO copy and NO text. A refusal is one
+   * sentence and writes nothing at all.
+   */
+  const createFolder = useCallback(
+    (name: string, x: number, y: number, folder: string): Promise<GroundAddResult> => {
+      const refusal = projectCardRefusal(name, folder);
+      if (refusal !== null) {
+        return Promise.resolve({ ok: false, message: refusal });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const written = await writeProjectCard(
+            workspacePath,
+            referencesRef.current,
+            readingsRef.current,
+            malformedGroundRef.current,
+            malformedReadingsRef.current,
+            name,
+            x,
+            y,
+            folder,
+            // STORY 17.1 / 18.3: the ONE slug space, all three families, so a
+            // project card can never twin a card a link or a mention names.
+            sharedSlugs(referencesRef.current, asksRef.current, sessionsRef.current),
+          );
+          if (!written.ok) {
+            outcome = { ok: false, message: written.message };
+            return;
+          }
+          referencesRef.current = written.references;
+          readingsRef.current = written.readings;
+          // Nothing was read, so there is no text and no size to record; the
+          // folder's own line is what the card points at. Its stat was just
+          // satisfied by the picker, so the card opens current.
+          statesRef.current = {
+            ...statesRef.current,
+            [written.reference.on]: "current" as ReadingState,
+          };
+          setState(snapshot());
+          outcome = { ok: true };
+          // One structural event, like any card: a project card took no
+          // reading, so no reading.take line is invented for it.
+          queueHistory(() => [
+            cardAddEvent(
+              Date.now(),
+              written.reference.on,
+              written.reference.x,
+              written.reference.y,
+            ),
+          ]);
           queueMirror();
         })
         .then(() => outcome)
@@ -6094,10 +6268,15 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             return;
           }
           // A page has no file behind it: its text is the map's own copy.
+          // PROVISIONAL — a PROJECT CARD has no reading at all to re-take; its
+          // pointer is the folder, and the sentence says that instead.
           if (!isFileReading(reading)) {
             outcome = {
               ok: false,
-              message: "a page has no file to re-read; its text is kept here.",
+              message:
+                reading.form === "folder"
+                  ? "a project card points at a folder; there is no reading to re-take."
+                  : "a page has no file to re-read; its text is kept here.",
             };
             return;
           }
@@ -6903,6 +7082,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     answerSessionPermission,
     makeCardFromRun,
     create,
+    createFolder,
     createPage,
     createVideo,
     move,

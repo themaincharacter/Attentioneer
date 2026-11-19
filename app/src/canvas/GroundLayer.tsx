@@ -19,6 +19,9 @@ import {
   type PulledText,
 } from "../map/pull";
 import {
+  PROJECT_FOLDER_GONE,
+  PROJECT_FOLDER_SENTENCE,
+  PROJECT_FOLDER_UNREACHABLE,
   isFileReading,
   pageHost,
   previewOverflows,
@@ -359,6 +362,11 @@ export function readingKind(
   pageTitle: string | null = null,
 ): string | null {
   if (reading === null) return "a reference with no reading";
+  // PROVISIONAL — a PROJECT CARD has no separate "what this is" line: its one
+  // sentence in the reading slot says it is a folder elsewhere AND that the
+  // workspace does not own it. A second line here would only repeat that, so
+  // the kind row is omitted (null is the existing "no kind line" shape).
+  if (reading.form === "folder") return null;
   // STORY 16.15: an IMAGE never says "the reading kept from" — there is no
   // reading, only the person's own file, drawn where it is.
   if (readingExtract(reading) === "image") {
@@ -410,6 +418,15 @@ export function readingAbsenceLine(
   // artifact is its media line, and its absence is the look that never came.
   const image = reading !== null && readingExtract(reading) === "image";
   const video = reading !== null && readingExtract(reading) === "video";
+  // PROVISIONAL — a PROJECT CARD fills the reading slot with what it IS, not
+  // with a missing copy: nothing was ever read, so no state here may claim one.
+  if (reading !== null && reading.form === "folder") {
+    return state === "missing"
+      ? PROJECT_FOLDER_GONE
+      : state === "unreadable"
+        ? PROJECT_FOLDER_UNREACHABLE
+        : PROJECT_FOLDER_SENTENCE;
+  }
   switch (state) {
     case "missing":
       if (image) return "the image's file is not there, and no copy was kept.";

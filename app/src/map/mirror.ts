@@ -66,6 +66,9 @@ import {
  *
  * NO FULL PATHS: a mirror may be shared with another agent or pasted into a
  * message, so a card names its reading's FILE NAME only (readingFileName).
+ * PROVISIONAL — a PROJECT CARD's row does the same with a FOLDER: `folder:`
+ * and the folder's NAME, never the absolute path, and its state sentence says
+ * the workspace does not own the place.
  * STORY 16.15: an image card says `image: <file name>` and a video says
  * `video: <host>` — the same two quiet facts the card's face carries, no count
  * and no reading claimed.
@@ -176,6 +179,20 @@ const STATE_SENTENCES: Record<ReadingState, string | null> = {
   missing: "the file is missing",
   unreadable: "the file cannot be read",
   unread: "no reading has been taken",
+};
+
+/**
+ * PROVISIONAL — a PROJECT CARD's state sentence. It never says "the file":
+ * the card points at a folder elsewhere, and the sentence says what that fact
+ * is without claiming a copy. The folder's NAME is the only place on the row;
+ * the path stays in the record.
+ */
+const FOLDER_STATE_SENTENCES: Record<ReadingState, string | null> = {
+  current: "a folder elsewhere; this workspace does not own it",
+  changed: "a folder elsewhere; this workspace does not own it",
+  missing: "the folder is not there",
+  unreadable: "the folder cannot be reached",
+  unread: "no folder has been chosen",
 };
 
 /** One line's text, flattened for the markdown block (no embedded breaks). */
@@ -319,6 +336,10 @@ export function renderMirror(view: MirrorView): string {
           (readingExtract(reading) === "video" ? "video: " : "page: ") +
             pageHost(reading.from),
         );
+      } else if (reading.form === "folder") {
+        // PROVISIONAL — a project card's row says FOLDER and its NAME only: the
+        // mirror may be shared, so the absolute path never reaches it.
+        lines.push("folder: " + readingFileName(reading.from));
       } else if (readingExtract(reading) === "image") {
         // STORY 16.15: an image is a FILE reading with no text; the mirror says
         // so in one line, with the file's NAME and never its path.
@@ -346,7 +367,10 @@ export function renderMirror(view: MirrorView): string {
         );
       }
     }
-    const sentence = STATE_SENTENCES[state];
+    const sentence =
+      reading !== null && reading.form === "folder"
+        ? FOLDER_STATE_SENTENCES[state]
+        : STATE_SENTENCES[state];
     if (sentence !== null) lines.push("state: " + sentence);
     const text = view.texts[reference.on];
     if (text !== undefined) lines.push("reading: " + previewLine(text));

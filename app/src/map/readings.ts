@@ -104,6 +104,14 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * `taken`/`bytes`. Nothing here watches, polls or re-reads on open; a
  * refused refresh keeps the old reading and answers one sentence.
  *
+ * THE PROJECT CARD (PROVISIONAL) adds `folder`: a reference whose pointer is a
+ * FOLDER elsewhere on this machine — a code repo the workspace does not own.
+ * Nothing is read or copied from it: there is no extract and no reading text,
+ * the line carries the absolute path and the card's reading slot says plainly
+ * what it is and what is not claimed. The state is stat-only (a folder that is
+ * there is current; a folder that is gone is gone), and the path never reaches
+ * MAP.md — the mirror names the folder, as it names a file.
+ *
  * A REFUSAL IS A SENTENCE, AND NOTHING IS CREATED HALF-FORMED: an absent file,
  * a binary file or an unreadable one refuses the whole take (the text file is
  * only written after a successful head read). Malformed lines in
@@ -138,8 +146,19 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * exists (17.12). The reply stays where it was; this line never claims a model
  * read it. PROVISIONAL: the form's name and the `from` shape, until 17.12
  * settles the curator's provenance.
+ *
+ * PROVISIONAL — `folder` adds THE PROJECT CARD: a reference whose pointer is a
+ * folder elsewhere on this machine (a repo the workspace does not own). Its
+ * `from` is an ABSOLUTE path, because a folder outside the workspace has no
+ * portable form; it carries NO `bytes` and NO `extract`, because nothing is
+ * read or copied from it, and its state is stat-only.
  */
-export type ReadingForm = PointerForm | "selection" | "url" | "distilled";
+export type ReadingForm =
+  | PointerForm
+  | "selection"
+  | "url"
+  | "distilled"
+  | "folder";
 
 export const READING_FORMS: readonly ReadingForm[] = [
   "path",
@@ -147,6 +166,7 @@ export const READING_FORMS: readonly ReadingForm[] = [
   "selection",
   "url",
   "distilled",
+  "folder",
 ];
 
 /** Story 1's cap: the first 64 lines... (PROVISIONAL, not a rule). */
@@ -314,6 +334,11 @@ export function parseReadingLine(line: string): Reading | null {
   // verbatim; the fetch's own guard refuses an address it cannot take, and
   // nothing here repairs or normalizes what the person pasted.
   if (form === "url" && !isWebUrl(from)) return null;
+  // PROVISIONAL: a folder card points at a place on THIS machine, so its value
+  // must be an absolute path. A relative one is refused (kept and reported)
+  // rather than half-read as a workspace path — a folder card has nothing in
+  // the workspace to point at.
+  if (form === "folder" && !isAbsolutePath(from)) return null;
   const reading: Reading = {
     on,
     form: form as ReadingForm,
@@ -462,6 +487,21 @@ export function readingFormFor(
     return { form: "path", from: slashed(picked).slice(root.length + 1) };
   }
   return { form: "at", from: picked };
+}
+
+/**
+ * PROVISIONAL — ONE project card's reading: a FOLDER elsewhere, stored as an
+ * absolute path with NOTHING read, copied, sized or extracted. PURE, so a
+ * test can assert the line without a disk; the caller writes the text (there
+ * is none) and the line in the house order. A folder is never a `path` — the
+ * workspace cannot own it.
+ */
+export function folderReading(
+  on: string,
+  folder: string,
+  taken: string,
+): Reading {
+  return { on, form: "folder", from: folder, taken };
 }
 
 /* ------------------------------------------------------------------------- *
@@ -702,6 +742,17 @@ export function isFileReading(reading: Reading): boolean {
 }
 
 /**
+ * PROVISIONAL — does this reading have a SOURCE ON DISK to stat? A file
+ * reading does; so does a folder pointer. The two questions stay apart:
+ * `isFileReading` decides the card's file VERBS (refresh, re-point, read
+ * more), which a folder has nothing to act on, while this decides whether the
+ * load asks the bridge for metadata at all.
+ */
+export function isStatableReading(reading: Reading): boolean {
+  return isFileReading(reading) || reading.form === "folder";
+}
+
+/**
  * ONE page reading, built from the sidecar's extract (story 16.14). The URL is
  * stored VERBATIM — never normalized, trimmed or repaired — and the line
  * records `extract: page` so the app knows which extractor produced the text.
@@ -831,6 +882,23 @@ export async function takeImageReading(
   };
 }
 
+/**
+ * PROVISIONAL — THE PROJECT CARD'S ONE SENTENCE. A card pointing at a folder is
+ * a REFERENCE, not a copy: nothing was read, nothing was kept, and the
+ * workspace does not own the place. One clean line says what it is and what is
+ * not claimed — no "verified", no claim about what the folder holds.
+ */
+export const PROJECT_FOLDER_SENTENCE =
+  "a project folder elsewhere on this machine; this workspace does not own it and reads nothing from it.";
+
+/** PROVISIONAL — the same card once the folder is no longer there. */
+export const PROJECT_FOLDER_GONE =
+  "the project folder is not there on this machine; nothing was copied, so nothing is left to show.";
+
+/** PROVISIONAL — the folder exists but this machine cannot stat it. */
+export const PROJECT_FOLDER_UNREACHABLE =
+  "the project folder cannot be reached; nothing was copied, so nothing is left to show.";
+
 /** The map's five reading states, computed at load and never stored. */
 export type ReadingState =
   | "current"
@@ -863,6 +931,14 @@ export function resolveReadingState(
   mediaPresent: boolean | null = null,
 ): ReadingState {
   if (reading === null) return "unread";
+  // PROVISIONAL — a FOLDER card is a pointer, not a copy: the stat decides only
+  // whether the place is still there. A folder's answer (`exists: true,
+  // is_file: false`) is the shape this branch expects, so it is CURRENT and
+  // never "unreadable"; no metadata field is compared because nothing was taken.
+  if (reading.form === "folder") {
+    if (meta === null || meta.kind === "refused") return "unreadable";
+    return meta.exists ? "current" : "missing";
+  }
   // STORY 16.12: a selection has NO source file, so it can never be stale. Its
   // state is `current` by construction — the map's own excerpt is the source —
   // and the SHORT-CIRCUIT comes before any metadata answer: no caller ever
@@ -922,22 +998,29 @@ export function readingStateWord(
   // that is gone simply leaves nothing to draw.
   const image = reading !== null && readingExtract(reading) === "image";
   const video = reading !== null && readingExtract(reading) === "video";
+  const folder = reading !== null && reading.form === "folder";
   switch (state) {
     case "current":
       return null;
     case "changed":
+      // A folder pointer can never be "changed": the state branch above only
+      // answers current, missing or unreadable. Nothing was taken to go stale.
+      if (folder) return null;
       // STORY 16.13 (shortlist item 10): the state now says WHAT THE WORDS ON
       // SCREEN ARE. The reading is the copy taken when the card was added, so
       // a file that moved or changed has not emptied the card.
       if (image) return "the image's file has changed";
       return "the file has changed since this reading; this is the copy kept when it was added";
     case "missing":
+      if (folder) return "the folder is not there";
       if (image) return "the image's file is not there";
       return "the file is gone; this is the copy kept when it was added";
     case "unreadable":
+      if (folder) return "the folder cannot be reached";
       if (image) return "the image cannot be read";
       return "the file cannot be read";
     case "unread":
+      if (folder) return "no folder chosen yet";
       if (video) return "no title or thumbnail was kept for this video";
       return "no reading taken yet";
   }

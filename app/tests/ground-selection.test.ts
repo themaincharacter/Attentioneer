@@ -287,7 +287,10 @@ describe("the form stays legal: a reading with no source file", () => {
     expect(asked).toEqual(["/w/garden/notes/a.md"]);
     expect(metas.has("nights")).toBe(false);
     expect(HOOK).toContain("metasOf(workspacePath, readings.readings)");
-    expect(HOOK).toContain("if (!isFileReading(reading)) return;");
+    // PROVISIONAL — the stat rule is now `isStatableReading`: a folder card
+    // IS stat'ed (its state says whether the place is still there), while a
+    // selection is still skipped and never asks for a metadata answer.
+    expect(HOOK).toContain("if (!isStatableReading(reading)) return;");
   });
 });
 
