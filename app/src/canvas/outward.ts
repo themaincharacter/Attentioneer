@@ -65,6 +65,28 @@ export async function revealOutward(
   return attempt(() => revealItemInDir(target.path), CANNOT_REVEAL);
 }
 
+/**
+ * STORY 20.1 (PROVISIONAL) — OPEN A PROJECT CARD'S FOLDER in the system's file
+ * manager: the card's one outward move, and the person makes their writes in
+ * their own tools. READ-ONLY FACE: nothing is written, watched or held.
+ *
+ * The folder goes to `openPath` — this module is the ONLY call site the opener
+ * plugin has — and the capability's scope stays the ONE authority (it allows
+ * `$HOME/**` and `/mnt/c/**` only). A folder outside that scope is refused by
+ * the IPC authority and reads `CANNOT_OPEN`; this box may also have no handler
+ * for the scheme at all, and that refusal is the honest outcome. No fallback
+ * shells out, and nothing here repairs the path.
+ *
+ * `open` is injectable so a test can prove the exact path handed over and that
+ * a refused path reaches no launcher (and no writer — there is none).
+ */
+export async function openFolderOutward(
+  folder: string,
+  open: (path: string) => Promise<void> = openPath,
+): Promise<OutwardResult> {
+  return attempt(() => open(folder), CANNOT_OPEN);
+}
+
 /** Run one outward call, turning any rejection into its quiet sentence. */
 async function attempt(
   run: () => Promise<void>,

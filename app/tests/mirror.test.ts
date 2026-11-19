@@ -592,7 +592,7 @@ describe("the hook queues the mirror after every ground write", () => {
     });
   }
 
-  test("exactly twenty-eight call sites (one per write path, not on load)", () => {
+  test("exactly thirty call sites (one per write path, not on load)", () => {
     // STORY 18 removes story 16.12's selection card from the write paths with
     // its verb, so this is one fewer than the twenty-three 18.5 left.
     // Story 16.13 adds restore as the tenth; story 16.14 the page card and
@@ -613,7 +613,11 @@ describe("the hook queues the mirror after every ground write", () => {
     // any other and reaches the mirror (the folder's NAME, never its path).
     // STORY 19.4 adds one: a run's distilled card is an ordinary reference, so
     // its appearance reaches the mirror like any other add.
-    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(28);
+    // STORY 20.1 adds two: the project card's FIRST listing is a reading taken
+    // on the person's expand (its own queued take), and its refresh is a second
+    // branch INSIDE the existing refresh verb — each reaches the mirror once,
+    // with the folder's NAME and its state and never a word of the listing.
+    expect(HOOK.match(/queueMirror\(\);/g)?.length ?? 0).toBe(30);
   });
 
   test("opening never writes the mirror", () => {

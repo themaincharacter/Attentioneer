@@ -655,11 +655,15 @@ describe("a refused refresh says what still stands", () => {
       HOOK.indexOf("const repoint = useCallback"),
     );
     expect(refreshBlock).toContain("REFRESH_UNCHANGED");
-    // The refusal writes nothing: the return precedes every save.
+    // The refusal writes nothing: ITS branch returns before the reading's save.
+    // (STORY 20.1 puts the project card's own re-take and save ABOVE this
+    // branch, so the two are compared within the file branch's own tail.)
     const refusalAt = refreshBlock.indexOf("REFRESH_UNCHANGED");
-    const saveAt = refreshBlock.indexOf("await saveReadings");
+    const branchEnd = refreshBlock.indexOf("return;", refusalAt);
+    const saveAt = refreshBlock.indexOf("await saveReadings", refusalAt);
     expect(refusalAt).toBeGreaterThan(-1);
-    expect(saveAt).toBeGreaterThan(refusalAt);
+    expect(branchEnd).toBeGreaterThan(refusalAt);
+    expect(branchEnd).toBeLessThan(saveAt);
   });
 });
 

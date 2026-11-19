@@ -337,7 +337,7 @@ describe("authored moves only: the look leaves no line", () => {
     expect(existsSync(historyPath(workspace))).toBe(false);
   });
 
-  test("the hook appends from the thirty authored write paths, no more", () => {
+  test("the hook appends from the thirty-two authored write paths, no more", () => {
     // The only call form the verbs use; the definition is not a call site.
     // STORY 18 removes story 16.12's selection card from the authored write
     // paths with its verb (the user corrected the intent), so the count drops
@@ -359,8 +359,11 @@ describe("authored moves only: the look leaves no line", () => {
     // card.add like any other, and it takes no reading to log.
     // STORY 19.4 adds one: a run's distilled card logs its add and the session
     // it came from, the same two lines the rule's copy writes.
+    // STORY 20.1 adds two: a project card's FIRST listing is a reading.take,
+    // logged from the expand gesture's own queued path; its refresh is a second
+    // branch inside the existing refresh verb and logs reading.refresh there.
     const calls = HOOK.match(/queueHistory\(\(\) =>/g) ?? [];
-    expect(calls.length).toBe(30);
+    expect(calls.length).toBe(32);
   });
 
   test("the mirror and the history own the same verbs", () => {
@@ -397,6 +400,8 @@ describe("authored moves only: the look leaves no line", () => {
       "rename",
       "renameAskTo",
       "renameSessionTo",
+      // STORY 20.1: the project card's first listing is an authored take.
+      "takeListing",
     ];
     for (const verb of verbs) {
       const start = HOOK.indexOf("const " + verb + " = useCallback");
@@ -634,7 +639,10 @@ describe("the whole log", () => {
       const start = HOOK.indexOf("const " + verb + " = useCallback");
       const next = HOOK.indexOf("\n  const ", start + 1);
       const body = HOOK.slice(start, next === -1 ? HOOK.length : next);
-      const historyAt = body.indexOf("queueHistory(() =>");
+      // STORY 20.1 gives the refresh verb TWO branches (a file's and a project
+      // card's); each queues its line after its own write, so the LAST pair is
+      // the one compared here.
+      const historyAt = body.lastIndexOf("queueHistory(() =>");
       const writeAt = Math.max(
         body.lastIndexOf("await save"),
         body.lastIndexOf("await remove"),

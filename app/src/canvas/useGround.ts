@@ -158,6 +158,7 @@ import {
   readingTextPath,
   distilledReading,
   distilledSourceSlug,
+  refreshFolderReading,
   refreshReading,
   restoreReadingText,
   resolveReadingState,
@@ -165,6 +166,7 @@ import {
   selectionReading,
   storeDistilledText,
   storeSelectionText,
+  takeFolderReading,
   takeReading,
   videoReading,
   withReading,
@@ -875,9 +877,10 @@ export interface GroundView {
   ) => Promise<GroundAddResult>;
   /**
    * PROVISIONAL — Add one PROJECT CARD from a picked FOLDER elsewhere on this
-   * machine: a ground reference whose pointer is the folder itself. Nothing is
-   * read or copied; the card's one sentence says it is a folder the workspace
-   * does not own. A blank name or no folder refuses before the queue writes.
+   * machine: a ground reference whose pointer is the folder itself. NOTHING is
+   * read at add time; story 20.1 takes the card's one listing only when the
+   * person EXPANDS it (queued, once per gesture), and says then when it was
+   * read. A blank name or no folder refuses before the queue writes.
    */
   createFolder: (
     name: string,
@@ -919,6 +922,12 @@ export interface GroundView {
   rename: (on: string, name: string) => Promise<GroundAddResult>;
   /** Re-read this reference's file, by the person's press only. */
   refresh: (on: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 20.1 (PROVISIONAL) — take this PROJECT CARD's first listing, on the
+   * person's EXPAND gesture. The only read of a folder: nothing is read at add
+   * time and nothing is read without the gesture.
+   */
+  takeListing: (on: string) => Promise<GroundAddResult>;
   /** Point this reference at another file and take its head (one write). */
   repoint: (on: string, from: string) => Promise<GroundAddResult>;
   /**
@@ -996,6 +1005,7 @@ type GroundLoaded = Omit<
   | "move"
   | "rename"
   | "refresh"
+  | "takeListing"
   | "repoint"
   | "remove"
   | "link"
@@ -4662,8 +4672,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * PROVISIONAL — CREATE A PROJECT CARD: the person picked a FOLDER elsewhere
    * on this machine. The same flow as a file card (shared slug, readings line
    * first, ground line LAST, one history event, then the mirror), with the one
-   * branch the pointer needs: NO read, NO copy and NO text. A refusal is one
-   * sentence and writes nothing at all.
+   * branch the pointer needs: NO read, NO copy and NO text at ADD time. The
+   * card's kept reading arrives with the person's expand (story 20.1) and with
+   * their refresh, never here and never on its own. A refusal is one sentence
+   * and writes nothing at all.
    */
   const createFolder = useCallback(
     (name: string, x: number, y: number, folder: string): Promise<GroundAddResult> => {
@@ -6980,16 +6992,48 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             outcome = { ok: false, message: "there is no reading to refresh." };
             return;
           }
+          // STORY 20.1 (PROVISIONAL) — A PROJECT CARD'S REFRESH RE-TAKES ITS
+          // LISTING. Identical bytes write NOTHING and answer the "unchanged"
+          // sentence; changed bytes rewrite the text (inside the reader) and
+          // the line here, in the house order. One reading.refresh line and one
+          // mirror rewrite per real re-take, exactly like a file's refresh.
+          if (reading.form === "folder") {
+            const retaken = await refreshFolderReading(workspacePath, reading);
+            if (retaken.kind !== "taken") {
+              outcome = { ok: false, message: retaken.message };
+              return;
+            }
+            const nextReadings = writtenReading(retaken.reading);
+            await saveReadings(
+              workspacePath,
+              nextReadings,
+              malformedReadingsRef.current,
+            );
+            readingsRef.current = nextReadings;
+            textsRef.current = { ...textsRef.current, [on]: retaken.text };
+            statesRef.current = {
+              ...statesRef.current,
+              [on]: "current" as ReadingState,
+            };
+            setState(snapshot());
+            outcome = { ok: true };
+            // Story 16.10: a re-read of the SAME folder — form and size, no text.
+            queueHistory(() => [
+              readingRefreshEvent(
+                Date.now(),
+                on,
+                retaken.reading.form,
+                retaken.reading.bytes ?? null,
+              ),
+            ]);
+            queueMirror();
+            return;
+          }
           // A page has no file behind it: its text is the map's own copy.
-          // PROVISIONAL — a PROJECT CARD has no reading at all to re-take; its
-          // pointer is the folder, and the sentence says that instead.
           if (!isFileReading(reading)) {
             outcome = {
               ok: false,
-              message:
-                reading.form === "folder"
-                  ? "a project card points at a folder; there is no reading to re-take."
-                  : "a page has no file to re-read; its text is kept here.",
+              message: "a page has no file to re-read; its text is kept here.",
             };
             return;
           }
@@ -7024,6 +7068,70 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           // Story 16.10: a re-read of the SAME file — form and size, no text.
           queueHistory(() => [
             readingRefreshEvent(
+              Date.now(),
+              on,
+              taken.reading.form,
+              taken.reading.bytes ?? null,
+            ),
+          ]);
+          queueMirror();
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath, writtenReading],
+  );
+
+  /**
+   * STORY 20.1 (PROVISIONAL) — TAKE THE PROJECT CARD'S FIRST LISTING. The
+   * person EXPANDED a folder card that keeps no reading, so this ONE gesture is
+   * the only trigger: nothing is read at add time and nothing is read without
+   * it. Queued like every other take; the text lands first and the line last;
+   * a refusal writes nothing and answers one sentence. No watcher, no poll and
+   * no handle: this runs once per gesture and stops.
+   */
+  const takeListing = useCallback(
+    (on: string): Promise<GroundAddResult> => {
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const reading = readingFor(readingsRef.current, on);
+          if (reading === null || reading.form !== "folder") {
+            outcome = { ok: false, message: "there is no project card to read." };
+            return;
+          }
+          const taken = await takeFolderReading(workspacePath, on, reading.from);
+          if (taken.kind !== "taken") {
+            outcome = { ok: false, message: taken.message };
+            return;
+          }
+          const nextReadings = writtenReading(taken.reading);
+          // Text first (the take wrote it), the line last: a crash can never
+          // leave a line pointing at a text that is not there.
+          await saveReadings(
+            workspacePath,
+            nextReadings,
+            malformedReadingsRef.current,
+          );
+          readingsRef.current = nextReadings;
+          textsRef.current = { ...textsRef.current, [on]: taken.text };
+          statesRef.current = {
+            ...statesRef.current,
+            [on]: "current" as ReadingState,
+          };
+          setState(snapshot());
+          outcome = { ok: true };
+          // The take is an AUTHORED move: one reading.take line, then the
+          // mirror. The line names the form and the kept text's size, never a
+          // word of the folder.
+          queueHistory(() => [
+            readingTakeEvent(
               Date.now(),
               on,
               taken.reading.form,
@@ -7804,6 +7912,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     move,
     rename,
     refresh,
+    takeListing,
     repoint,
     remove,
     link,

@@ -388,7 +388,15 @@ export function renderMirror(view: MirrorView): string {
         ? FOLDER_STATE_SENTENCES[state]
         : STATE_SENTENCES[state];
     if (sentence !== null) lines.push("state: " + sentence);
-    const text = view.texts[reference.on];
+    // STORY 20.1 — A FOLDER CARD'S KEPT LISTING NEVER REACHES THIS FILE. The
+    // mirror may be shared, and a listing names the project's own files; the
+    // row keeps naming the folder and its state (above) and says nothing of
+    // what was read. A FILE card's first line still stands in, as it always
+    // did.
+    const text =
+      reading !== null && reading.form === "folder"
+        ? undefined
+        : view.texts[reference.on];
     if (text !== undefined) lines.push("reading: " + previewLine(text));
     const note = view.notes[reference.on];
     if (note !== undefined) lines.push("note: " + previewLine(note));

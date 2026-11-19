@@ -1,16 +1,19 @@
 import {
   createDirAll,
   fileMeta,
+  listDirEntries,
   readFileBytes,
   readTextFile,
   readTextHead,
   writeTextFile,
+  type DirEntry,
   type FileBytesAnswer,
   type FileMetaAnswer,
   type HeadRefusalCode,
   type TextHead,
 } from "../lib/fs";
 import { clipHead } from "../lib/headBounds";
+import { utf8ByteLength } from "../lib/textBytes";
 import { READING_PREVIEW_DEFAULT } from "../lib/readingPreference";
 import { canonicalText } from "../lib/serialize";
 import {
@@ -28,7 +31,7 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * The GROUND map's readings (story 16.1, made honest by story 16.2): the text
  * the person's pointed-at file opened with, kept beside the map.
  *
- *   map/readings.txt         on: <slug> | form: path | from: <path> | taken: <ISO-8601> | bytes: <n> | extract: text|pdf
+ *   map/readings.txt         on: <slug> | form: path | from: <path> | taken: <ISO-8601> | bytes: <n> | extract: text|pdf|page|image|video|listing
  *   map/readings/<slug>.md   the text as read, bytes verbatim
  *
  * A reading is NOT a Pointer (ADR-0017): a pointer is a reach the person keeps
@@ -106,11 +109,22 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  *
  * THE PROJECT CARD (PROVISIONAL) adds `folder`: a reference whose pointer is a
  * FOLDER elsewhere on this machine — a code repo the workspace does not own.
- * Nothing is read or copied from it: there is no extract and no reading text,
- * the line carries the absolute path and the card's reading slot says plainly
- * what it is and what is not claimed. The state is stat-only (a folder that is
- * there is current; a folder that is gone is gone), and the path never reaches
- * MAP.md — the mirror names the folder, as it names a file.
+ * The line carries the absolute path; an UNTOUCHED card has no extract and no
+ * reading text, and its reading slot says plainly what it is and what is not
+ * claimed (the bare line still parses forever).
+ *
+ * STORY 20.1 — THE PROJECT CARD OPENS, BY THE PERSON'S GESTURE ONLY. Expanding
+ * a folder card with no kept listing takes ONE bounded reading of the place: a
+ * top-level listing with directories marked, then the README's head VERBATIM
+ * under a quiet heading. The taken line records `bytes` (the kept text's own
+ * size) and `extract: listing`; the text lands in the same store a file's does.
+ * NOTHING is interpreted — no summary, no "what this project is" — because the
+ * handle is structure, never meaning (ADR-0039). NOTHING is watched, polled or
+ * held: no handle stays open, and the state stays stat-only (there is no source
+ * file to compare and no metadata claim to make). A REFRESH re-takes the same
+ * two pieces and answers `REFRESH_SAME` when the bytes match, writing nothing;
+ * the listing NEVER reaches MAP.md (it may be shared, so no project filenames
+ * leak) — the mirror names the folder and its state, as it does for a file.
  *
  * A REFUSAL IS A SENTENCE, AND NOTHING IS CREATED HALF-FORMED: an absent file,
  * a binary file or an unreadable one refuses the whole take (the text file is
@@ -121,7 +135,9 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * PROVISIONAL (the story's record shapes, before an ADR settles them): the
  * `readings.txt` name, the line shape and its key order, the `path`/`at`
  * form rule for NEW picks, the `bytes` field, the `extract` field, the 64/8
- * KiB cap, the ISO timestamp and the state names.
+ * KiB cap, the ISO timestamp and the state names; STORY 20.1 adds the
+ * `listing` extract, the entry cap, the folder reading's shape and the
+ * "unchanged" sentence.
  */
 
 /**
@@ -150,8 +166,10 @@ import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
  * PROVISIONAL — `folder` adds THE PROJECT CARD: a reference whose pointer is a
  * folder elsewhere on this machine (a repo the workspace does not own). Its
  * `from` is an ABSOLUTE path, because a folder outside the workspace has no
- * portable form; it carries NO `bytes` and NO `extract`, because nothing is
- * read or copied from it, and its state is stat-only.
+ * portable form. TWO SHAPES ARE VALID: an untouched card carries NO `bytes`
+ * and NO `extract` (the bare line, kept forever), while STORY 20.1's kept
+ * listing carries the text's own `bytes` and `extract: listing`. Its state
+ * stays stat-only either way: there is no source file to compare.
  */
 export type ReadingForm =
   | PointerForm
@@ -176,6 +194,15 @@ export const READING_MAX_LINES = 64;
 export const READING_MAX_BYTES = 8 * 1024;
 
 /**
+ * STORY 20.1 — HOW MANY TOP-LEVEL ENTRIES A FOLDER READING KEEPS: 200
+ * (PROVISIONAL, not a rule). The listing is read whole and then CUT as whole
+ * entries — an entry is never halved and no "more" is invented about the rest
+ * (the card's fold and the person's refresh are the only moves). The README's
+ * head carries the reading cap above, because it is a text head like any other.
+ */
+export const LISTING_MAX_ENTRIES = 200;
+
+/**
  * How many lines of the stored reading a SMALL card shows (story 16.3) when
  * the person has not stated a threshold (story 17). The DEFAULT now lives in
  * lib/readingPreference.ts, with the preference's bounds; this name stays the
@@ -197,7 +224,16 @@ export const READING_PREVIEW_LINES = READING_PREVIEW_DEFAULT;
  *           live in `map/media.jsonl`; the transcript waits for a model that
  *           can read video. Neither kind ever pretends to have a reading.
  */
-export type ReadingExtract = "text" | "pdf" | "page" | "image" | "video";
+export type ReadingExtract =
+  | "text"
+  | "pdf"
+  | "page"
+  | "image"
+  | "video"
+  // STORY 20.1 (PROVISIONAL): the project card's ONE kept reading — a bounded
+  // top-level listing plus the README's head, taken when the person expanded
+  // the card. It is text like any other and carries no artifact of its own.
+  | "listing";
 
 /** One reading: the source the person pointed at and when it was taken. */
 export interface Reading {
@@ -220,6 +256,9 @@ export interface Reading {
    * The file's SIZE when the head was taken (story 16.2's staleness fact).
    * Absent on a legacy line: unknown, never invented, and never rewritten on
    * load. A null/undefined `bytes` means the size comparison is skipped.
+   * STORY 20.1 (PROVISIONAL): a FOLDER reading's `bytes` is the KEPT TEXT's
+   * own size — there is no single source file — and the folder branch of the
+   * state rule never compares it.
    */
   bytes?: number | null;
   /**
@@ -312,7 +351,7 @@ export function readingTextPath(
  * rewrite. The writer emits them in this order, the reader needs that order.
  */
 const READING_LINE =
-  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf|page|image|video))?(?: \| manager: ([^|]+?))?(?: \| task: ([^|]+?))?$/;
+  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf|page|image|video|listing))?(?: \| manager: ([^|]+?))?(?: \| task: ([^|]+?))?$/;
 
 /** Parse one line; anything out of shape is `null` (kept and reported). */
 export function parseReadingLine(line: string): Reading | null {
@@ -349,6 +388,10 @@ export function parseReadingLine(line: string): Reading | null {
   // Absent means TEXT (a story-1 line), and it stays absent: a load never
   // writes the field in. A hand edit that says `text` is preserved as written.
   if (extract !== undefined) reading.extract = extract as ReadingExtract;
+  // STORY 20.1 (PROVISIONAL): a LISTING belongs to a folder card and to nothing
+  // else. A file line carrying it is refused (kept and reported), because no
+  // file take could ever have produced one; the bare folder line stays valid.
+  if (extract === "listing" && form !== "folder") return null;
   // STORY 17.12: the two authors ride TOGETHER or not at all. One without the
   // other is an out-of-shape line, kept and reported like any other — never a
   // half-attributed card. Only a distilled reading may carry them.
@@ -490,11 +533,11 @@ export function readingFormFor(
 }
 
 /**
- * PROVISIONAL — ONE project card's reading: a FOLDER elsewhere, stored as an
- * absolute path with NOTHING read, copied, sized or extracted. PURE, so a
- * test can assert the line without a disk; the caller writes the text (there
- * is none) and the line in the house order. A folder is never a `path` — the
- * workspace cannot own it.
+ * PROVISIONAL — ONE project card's BARE reading: a FOLDER elsewhere, stored as
+ * an absolute path with NOTHING read, copied, sized or extracted. PURE, so a
+ * test can assert the line without a disk; this is what the card's ADD writes,
+ * because nothing is read until the person expands the card (story 20.1). A
+ * folder is never a `path` — the workspace cannot own it.
  */
 export function folderReading(
   on: string,
@@ -502,6 +545,109 @@ export function folderReading(
   taken: string,
 ): Reading {
   return { on, form: "folder", from: folder, taken };
+}
+
+/**
+ * STORY 20.1 (PROVISIONAL) — THE QUIET HEADING ABOVE THE README'S HEAD. It
+ * names what the lines below ARE, in the map's lowercase voice; it is not a
+ * summary and it claims nothing about them.
+ */
+export const FOLDER_README_HEADING = "readme:";
+
+/**
+ * STORY 20.1 (PROVISIONAL) — WHICH TOP-LEVEL ENTRY IS "THE README", in this
+ * order, by name and case-insensitively: `readme.md`, `readme.txt`, then a
+ * bare `readme`. A directory never counts. A folder with none simply keeps
+ * its listing — no heading, nothing invented.
+ */
+const README_NAMES: readonly string[] = ["readme.md", "readme.txt", "readme"];
+
+/** The README's top-level entry, or null when the folder has none. */
+export function readmeEntryOf(
+  entries: readonly DirEntry[],
+): DirEntry | null {
+  for (const wanted of README_NAMES) {
+    const found = entries.find(
+      (entry) => !entry.isDir && entry.name.toLowerCase() === wanted,
+    );
+    if (found !== undefined) return found;
+  }
+  return null;
+}
+
+/** One entry's line: its verbatim name, with a trailing slash for a folder. */
+function entryLine(entry: DirEntry): string {
+  return entry.isDir ? entry.name + "/" : entry.name;
+}
+
+/**
+ * STORY 20.1 (PROVISIONAL) — THE FOLDER READING'S TEXT, PURE: the bounded
+ * top-level listing (one line per entry, directories marked with a trailing
+ * slash, names verbatim) and then the README's head VERBATIM under a quiet
+ * heading. NOTHING IS INTERPRETED: no summary, no count, no "what this project
+ * is" — the text is what the folder's top level says and the words the README
+ * opens with, byte for byte (ADR-0039: the handle is structure, never meaning).
+ *
+ * The listing is CUT AS WHOLE ENTRIES at `LISTING_MAX_ENTRIES` (the over-cap
+ * entries simply drop; no partial name is ever kept); the README head arrives
+ * already bounded by `READING_MAX_LINES`/`READING_MAX_BYTES` because the
+ * caller reads it with the head reader, so no word is cut here. Entries are
+ * ordered here AGAIN, by name as this language compares them, so the pure
+ * answer never depends on a caller's order (the bridge sorts by its own byte
+ * order; the two agree for the provisional ASCII-named rule, and this function
+ * is the one shape the test pins). A folder with no README keeps its listing
+ * alone. No entries and no README is the empty string: an empty reading is
+ * refused by the caller, never invented.
+ */
+export function folderReadingText(
+  entries: readonly DirEntry[],
+  readmeHead: string | null,
+): string {
+  const listing = [...entries]
+    .sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+    )
+    .slice(0, LISTING_MAX_ENTRIES)
+    .map(entryLine)
+    .join("\n");
+  if (readmeHead === null || readmeHead === "") return listing;
+  const head = FOLDER_README_HEADING + "\n" + readmeHead;
+  return listing === "" ? head : listing + "\n\n" + head;
+}
+
+/**
+ * STORY 20.1 (PROVISIONAL) — DOES THIS FOLDER CARD KEEP A READING? True only
+ * when the line says `extract: listing`, which the take writes LAST, after the
+ * text file landed (the house order). A bare folder line is an untouched card
+ * and stays valid forever: no copy is claimed for it.
+ */
+export function folderListingKept(reading: Reading | null): boolean {
+  return (
+    reading !== null &&
+    reading.form === "folder" &&
+    reading.extract === "listing"
+  );
+}
+
+/**
+ * STORY 20.1 (PROVISIONAL) — THE KEPT COPY'S PROVENANCE LINE, for the card's
+ * footer: "the listing kept when it was read" and ONE quiet date (the ISO
+ * date of `taken`), so the card says WHEN without a clock or a badge. A line
+ * whose `taken` is not an ISO date says the sentence alone — no date is
+ * invented. Null for a card that keeps no reading.
+ */
+export function folderKeptProvenance(reading: Reading): string | null {
+  if (!folderListingKept(reading)) return null;
+  const date = reading.taken.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? "the listing kept when it was read · " + date
+    : "the listing kept when it was read";
+}
+
+/** Join one top-level entry's name onto its folder, in the folder's convention. */
+function joinFolderPath(folder: string, name: string): string {
+  const separator = folder.includes("\\") && !folder.includes("/") ? "\\" : "/";
+  return folder.replace(/[\\/]+$/, "") + separator + name;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -883,21 +1029,49 @@ export async function takeImageReading(
 }
 
 /**
- * PROVISIONAL — THE PROJECT CARD'S ONE SENTENCE. A card pointing at a folder is
- * a REFERENCE, not a copy: nothing was read, nothing was kept, and the
- * workspace does not own the place. One clean line says what it is and what is
- * not claimed — no "verified", no claim about what the folder holds.
+ * PROVISIONAL — THE PROJECT CARD'S ONE SENTENCE for a card that keeps NO
+ * reading: a reference, not a copy, and the workspace does not own the place.
+ * No "verified", no claim about what the folder holds. STORY 20.1 DROPS
+ * "reads nothing from it": once the person expands the card a listing IS kept,
+ * and the sentence that says so is the provenance line's.
  */
 export const PROJECT_FOLDER_SENTENCE =
-  "a project folder elsewhere on this machine; this workspace does not own it and reads nothing from it.";
+  "a project folder elsewhere on this machine; this workspace does not own it.";
 
-/** PROVISIONAL — the same card once the folder is no longer there. */
+/**
+ * STORY 20.1 (PROVISIONAL) — THE SAME CARD ONCE THE FOLDER IS GONE AND A
+ * LISTING WAS KEPT: the copy on screen is still the truth about when it was
+ * read, so the card says that plainly instead of claiming an empty slot.
+ */
+export const PROJECT_FOLDER_GONE_KEPT =
+  "the project folder is not there now; this is the listing kept when it was read.";
+
+/** PROVISIONAL — a card with NO copy and a folder that is no longer there. */
 export const PROJECT_FOLDER_GONE =
-  "the project folder is not there on this machine; nothing was copied, so nothing is left to show.";
+  "the project folder is not there on this machine; nothing was copied from it, so nothing is left to show.";
 
 /** PROVISIONAL — the folder exists but this machine cannot stat it. */
 export const PROJECT_FOLDER_UNREACHABLE =
   "the project folder cannot be reached; nothing was copied, so nothing is left to show.";
+
+/**
+ * STORY 20.1 (PROVISIONAL) — the ONE sentence a take answers when the place is
+ * not there: nothing was written, and the card keeps whatever it already had.
+ */
+export const FOLDER_TAKE_GONE =
+  "the project folder is not there; nothing was kept.";
+
+/** STORY 20.1 (PROVISIONAL) — the same sentence when the place cannot be listed. */
+export const FOLDER_TAKE_UNREACHABLE =
+  "the project folder cannot be reached; nothing was kept.";
+
+/**
+ * STORY 20.1 (PROVISIONAL) — a folder with nothing at its top level keeps no
+ * reading: an empty reading is never pretended. One honest sentence, nothing
+ * written, and the card stays the bare pointing it was.
+ */
+export const FOLDER_TAKE_EMPTY =
+  "the project folder has nothing at its top level; nothing was kept.";
 
 /** The map's five reading states, computed at load and never stored. */
 export type ReadingState =
@@ -1012,7 +1186,14 @@ export function readingStateWord(
       if (image) return "the image's file has changed";
       return "the file has changed since this reading; this is the copy kept when it was added";
     case "missing":
-      if (folder) return "the folder is not there";
+      // STORY 20.1: a folder that is gone with a listing kept says what the
+      // words on screen ARE; with no copy it keeps the bare word (the reading
+      // slot carries the longer no-copy sentence).
+      if (folder) {
+        return folderListingKept(reading)
+          ? PROJECT_FOLDER_GONE_KEPT
+          : "the folder is not there";
+      }
       if (image) return "the image's file is not there";
       return "the file is gone; this is the copy kept when it was added";
     case "unreadable":
@@ -1033,6 +1214,15 @@ export function readingStateWord(
  */
 export const REFRESH_UNCHANGED =
   "the file could not be read; the reading you have is unchanged.";
+
+/**
+ * STORY 20.1 (PROVISIONAL) — the ONE sentence a FOLDER refresh answers when the
+ * two readings are the same bytes: nothing was written at all (no text file, no
+ * line, no history line, no mirror), so the person is told the copy still
+ * stands. A DIFFERENT fact from `REFRESH_UNCHANGED` above, which is a REFUSED
+ * read — the two sentences are never swapped for one another.
+ */
+export const REFRESH_SAME = "nothing has changed since this reading.";
 
 /** The one quiet sentence per refusal code (the bubble shows it). */
 export const READING_REFUSALS: Readonly<Record<HeadRefusalCode | "absent", string>> = {
@@ -1240,6 +1430,157 @@ export async function refreshReading(
     read.taken,
     // The line's own field, verbatim: a refresh is a re-read, not a migration.
     reading.extract,
+    taken,
+    io,
+  );
+}
+
+/* ------------------------------------------------------------------------- *
+ * STORY 20.1 — THE PROJECT CARD'S KEPT READING (PROVISIONAL).
+ *
+ * Expanding a folder card with no kept listing takes ONE bounded reading of
+ * the place; the README's head and the top-level listing are verbatim words,
+ * never an interpretation. Refresh is the ONLY re-take, the person's press:
+ * identical bytes write nothing and say so.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * STORY 20.1 (PROVISIONAL) — THE PROJECT CARD'S ONE EXTRA BRIDGE: the folder's
+ * own top-level listing. It rides as its own interface (extending a file
+ * reading's) so every existing `ReadingIo` fake — and the file take/refresh
+ * paths — stay exactly as they are: only a folder take ever asks for a listing.
+ */
+export interface FolderReadingIo extends ReadingIo {
+  listDirEntries(path: string): Promise<DirEntry[]>;
+}
+
+/** The real bridges, bound once so the module stays importable in bun tests. */
+export const FOLDER_READING_IO: FolderReadingIo = {
+  ...READING_IO,
+  listDirEntries,
+};
+
+/** What one folder take or refresh produced: the reading and its text. */
+export type FolderReadingResult =
+  | { kind: "taken"; reading: Reading; text: string }
+  /** STORY 20.1: the refresh found the same bytes; NOTHING was written. */
+  | { kind: "same"; message: string }
+  | { kind: "refused"; message: string };
+
+/** One folder read's answer: the kept text and its own size, or the sentence. */
+type FolderRead =
+  | { ok: true; text: string; bytes: number }
+  | { ok: false; message: string };
+
+/**
+ * Read ONE folder's kept text under the caps, or answer the one sentence.
+ *
+ * The stat comes FIRST so a MISSING place is never mistaken for an EMPTY one:
+ * the listing bridge answers an empty list for a folder that is not there,
+ * exactly as the map's other listings do, and "nothing at its top level" must
+ * never be invented for "not there". Then the listing, then the README's head
+ * through the SAME head reader and the SAME caps a text file's reading uses.
+ * A README whose head refuses (binary, unreadable) is simply no head — the
+ * listing is still the truthful reading, and nothing is invented to fill it.
+ */
+async function readFolderText(
+  folder: string,
+  io: FolderReadingIo,
+): Promise<FolderRead> {
+  const meta = await io.fileMeta(folder);
+  if (meta.kind === "refused") {
+    return { ok: false, message: FOLDER_TAKE_UNREACHABLE };
+  }
+  if (!meta.exists) return { ok: false, message: FOLDER_TAKE_GONE };
+  if (meta.is_file) return { ok: false, message: FOLDER_TAKE_UNREACHABLE };
+  let entries: DirEntry[];
+  try {
+    entries = await io.listDirEntries(folder);
+  } catch {
+    return { ok: false, message: FOLDER_TAKE_UNREACHABLE };
+  }
+  const readme = readmeEntryOf(entries);
+  let readmeHead: string | null = null;
+  if (readme !== null) {
+    try {
+      const head = await io.readTextHead(
+        joinFolderPath(folder, readme.name),
+        READING_MAX_LINES,
+        READING_MAX_BYTES,
+      );
+      readmeHead = head.exists ? head.head : null;
+    } catch {
+      readmeHead = null;
+    }
+  }
+  const text = folderReadingText(entries, readmeHead);
+  if (text === "") return { ok: false, message: FOLDER_TAKE_EMPTY };
+  return { ok: true, text, bytes: utf8ByteLength(text) };
+}
+
+/**
+ * STORY 20.1 (PROVISIONAL) — TAKE ONE FOLDER READING, the expand gesture's read:
+ * the bounded top-level listing and the README's head, VERBATIM, stored in the
+ * same text file a file card's reading uses. The line records the kept text's
+ * own `bytes` and `extract: listing`, and it is written LAST — the house
+ * order, text first. A refusal writes NOTHING and answers one sentence.
+ */
+export async function takeFolderReading(
+  workspacePath: string,
+  on: string,
+  folder: string,
+  io: FolderReadingIo = FOLDER_READING_IO,
+  taken: string = new Date().toISOString(),
+): Promise<FolderReadingResult> {
+  const read = await readFolderText(folder, io);
+  if (!read.ok) return { kind: "refused", message: read.message };
+  return await storeReading(
+    workspacePath,
+    on,
+    "folder",
+    folder,
+    { text: read.text, bytes: read.bytes },
+    "listing",
+    taken,
+    io,
+  );
+}
+
+/**
+ * STORY 20.1 (PROVISIONAL) — REFRESH A FOLDER READING: re-take the same two
+ * pieces and compare the kept text with what came back, BY BYTES. Identical
+ * bytes mean the copy still stands: `same`, and NOTHING is written (no text
+ * file, no line — the caller writes neither). Different bytes rewrite the text
+ * first and answer the new line, exactly as a file refresh does. A refusal
+ * keeps the old copy and answers one sentence.
+ */
+export async function refreshFolderReading(
+  workspacePath: string,
+  reading: Reading,
+  io: FolderReadingIo = FOLDER_READING_IO,
+  taken: string = new Date().toISOString(),
+): Promise<FolderReadingResult> {
+  if (reading.form !== "folder") {
+    return { kind: "refused", message: READING_REFUSALS["cannot-reach"] };
+  }
+  const read = await readFolderText(reading.from, io);
+  if (!read.ok) return { kind: "refused", message: read.message };
+  // The kept text is the map's own copy; a text file that is gone (or that
+  // this machine cannot read) is simply "no copy to compare", never a refusal.
+  let before: string | null = null;
+  try {
+    before = await io.readTextFile(readingTextPath(workspacePath, reading.on));
+  } catch {
+    before = null;
+  }
+  if (before === read.text) return { kind: "same", message: REFRESH_SAME };
+  return await storeReading(
+    workspacePath,
+    reading.on,
+    "folder",
+    reading.from,
+    { text: read.text, bytes: read.bytes },
+    "listing",
     taken,
     io,
   );

@@ -83,6 +83,26 @@ export async function listDir(path: string): Promise<string[]> {
   return await invoke<string[]>("list_dir", { path });
 }
 
+/**
+ * STORY 20.1 (PROVISIONAL) — ONE TOP-LEVEL ENTRY of a folder: its name
+ * VERBATIM and whether it is a directory. The bridge moves facts only; nothing
+ * here interprets, sizes or reads an entry, and no handle stays open.
+ */
+export interface DirEntry {
+  name: string;
+  /** True for a directory, false for anything else (a link included). */
+  isDir: boolean;
+}
+
+/**
+ * List one folder's top level (story 20.1). Sorted by name, like `listDir`;
+ * a missing path answers an empty list and every other refusal rejects with the
+ * bridge's one line, so the caller answers a sentence and keeps the old copy.
+ */
+export async function listDirEntries(path: string): Promise<DirEntry[]> {
+  return await invoke<DirEntry[]>("list_dir_entries", { path });
+}
+
 export async function renameFile(from: string, to: string): Promise<void> {
   await invoke("rename_file", { from, to });
 }

@@ -4708,6 +4708,7 @@ function App() {
                name is the record's field and the slug stays identity. */
             onRename={ground.rename}
             onRefresh={ground.refresh}
+            onTakeListing={ground.takeListing}
             onRepoint={ground.repoint}
             onRemove={ground.remove}
             onSetNote={ground.setNote}

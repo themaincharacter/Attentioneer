@@ -352,6 +352,10 @@ export const CONTENT_CLASSES = [
   "ground-state",
   "ground-actions",
   "ground-refresh",
+  // STORY 20.1: the project card's one outward verb, beside refresh. Content
+  // like its neighbours, so a press on it never pans the plane or starts a
+  // gesture — and it writes nothing on the map at all.
+  "ground-open-folder",
   "ground-repoint",
   "ground-problem",
   // Story 16.3: the card's cropped/scrollable body, its meta footer, its one

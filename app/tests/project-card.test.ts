@@ -25,8 +25,10 @@ import {
 import type { GroundReference } from "../src/map/ground";
 import {
   PROJECT_FOLDER_GONE,
+  PROJECT_FOLDER_GONE_KEPT,
   PROJECT_FOLDER_SENTENCE,
   PROJECT_FOLDER_UNREACHABLE,
+  folderKeptProvenance,
   folderReading,
   parseReadingLine,
   parseReadings,
@@ -167,7 +169,7 @@ describe("a folder is a pointer, not an unreadable file", () => {
     ).toBe("unreadable");
   });
 
-  test("a missing folder says it is gone, never that a copy stands in", () => {
+  test("with NO copy kept, the card never claims one", () => {
     expect(readingStateWord("current", reading)).toBeNull();
     expect(readingAbsenceLine("current", reading)).toBe(
       PROJECT_FOLDER_SENTENCE,
@@ -176,16 +178,47 @@ describe("a folder is a pointer, not an unreadable file", () => {
     expect(readingAbsenceLine("unreadable", reading)).toBe(
       PROJECT_FOLDER_UNREACHABLE,
     );
-    // The sentence is what it is: no claim about the folder's contents.
-    for (const sentence of [
-      PROJECT_FOLDER_SENTENCE,
-      PROJECT_FOLDER_GONE,
+    // STORY 20.1: the place is elsewhere and NOT owned — the user's words stay.
+    // "reads nothing from it" is gone, because an expand now keeps a listing.
+    expect(PROJECT_FOLDER_SENTENCE).toContain("does not own it");
+    expect(PROJECT_FOLDER_SENTENCE).not.toContain("reads nothing");
+    // The no-copy sentences stay true: nothing was copied, so nothing is left.
+    for (const sentence of [PROJECT_FOLDER_GONE, PROJECT_FOLDER_UNREACHABLE]) {
+      expect(sentence).not.toContain("verified");
+      expect(sentence).toContain("nothing was copied");
+    }
+  });
+
+  test("with a copy kept, the card says WHAT the words are and WHEN", () => {
+    const kept: Reading = {
+      ...folderReading(SLUG, POSIX_FOLDER, TAKEN),
+      bytes: 64,
+      extract: "listing",
+    };
+    // The footer's one line names the kept listing and its one quiet date.
+    expect(folderKeptProvenance(kept)).toBe(
+      "the listing kept when it was read · 2026-11-19",
+    );
+    // A bare card keeps naming the folder instead.
+    expect(folderKeptProvenance(reading)).toBeNull();
+    // A gone folder WITH a copy says the copy is still what is on screen.
+    expect(readingStateWord("missing", kept)).toBe(PROJECT_FOLDER_GONE_KEPT);
+    expect(readingAbsenceLine("missing", kept)).toBe(PROJECT_FOLDER_GONE_KEPT);
+    // Unreachable keeps its existing shape; a current card says nothing.
+    expect(readingAbsenceLine("unreadable", kept)).toBe(
       PROJECT_FOLDER_UNREACHABLE,
+    );
+    expect(readingStateWord("current", kept)).toBeNull();
+    // A line that claims a listing whose text file is gone says so plainly.
+    expect(readingAbsenceLine("current", kept)).toBe(
+      "the reading text is not here.",
+    );
+    for (const sentence of [
+      PROJECT_FOLDER_GONE_KEPT,
+      folderKeptProvenance(kept) as string,
     ]) {
       expect(sentence).not.toContain("verified");
-      expect(sentence).toContain("nothing");
     }
-    expect(PROJECT_FOLDER_SENTENCE).toContain("does not own it");
   });
 
   test("nothing opens the folder: the pull guard refuses before a read", async () => {
@@ -253,6 +286,67 @@ describe("the card's face says what it is and claims no reading", () => {
 
   test("a gone folder says gone and still claims no copy", () => {
     expect(render("missing")).toContain(PROJECT_FOLDER_GONE);
+  });
+
+  test("a TAKEN card renders the kept listing, the date and no verdict", () => {
+    const kept: Reading = {
+      ...folderReading(SLUG, POSIX_FOLDER, TAKEN),
+      bytes: 64,
+      extract: "listing",
+    };
+    const listing = "readme.md\nsrc/\n\nreadme:\n# A quiet map\n";
+    const html = renderToStaticMarkup(
+      createElement(GroundLayer, {
+        references: [reference],
+        readings: [kept],
+        texts: { [SLUG]: listing },
+        states: { [SLUG]: "current" },
+        ...inertVerbs,
+      }),
+    );
+    // The kept words render like any reading, with the kept line in the footer.
+    expect(html).toContain("src/");
+    expect(html).toContain("# A quiet map");
+    expect(html).toContain("the listing kept when it was read");
+    expect(html).toContain("2026-11-19");
+    // The no-copy sentence is not repeated once a copy is kept.
+    expect(html).not.toContain(PROJECT_FOLDER_SENTENCE);
+    expect(html).not.toContain("verified");
+    // No full path reaches the plane, exactly as before.
+    expect(html).not.toContain(POSIX_FOLDER);
+  });
+
+  test("a gone folder WITH a kept copy still shows the words and says why", () => {
+    const kept: Reading = {
+      ...folderReading(SLUG, POSIX_FOLDER, TAKEN),
+      bytes: 64,
+      extract: "listing",
+    };
+    const html = renderToStaticMarkup(
+      createElement(GroundLayer, {
+        references: [reference],
+        readings: [kept],
+        texts: { [SLUG]: "readme.md\nsrc/\n" },
+        states: { [SLUG]: "missing" },
+        ...inertVerbs,
+      }),
+    );
+    expect(html).toContain(PROJECT_FOLDER_GONE_KEPT);
+    expect(html).toContain("src/");
+    expect(html).not.toContain(PROJECT_FOLDER_GONE);
+  });
+
+  test("the expanded card grows the refresh and the folder verbs, and the expand takes", () => {
+    // The layer is the app's view; the take and the opener are the hook's and
+    // the outward door's. The card only asks, and only on the person's gesture.
+    const layer = source("canvas/GroundLayer.tsx");
+    expect(layer).toContain("onTakeListing(reference.on)");
+    expect(layer).toContain("folderListingKept(reading)");
+    expect(layer).toContain("const canOpenFolder = open && folderCard;");
+    expect(layer).toContain("const canRefresh =");
+    const hook = source("canvas/useGround.ts");
+    expect(hook).toContain("takeFolderReading");
+    expect(hook).toContain("refreshFolderReading");
   });
 
   test("no separate kind row repeats what the one sentence already says", () => {

@@ -20,8 +20,11 @@ import {
 } from "../map/pull";
 import {
   PROJECT_FOLDER_GONE,
+  PROJECT_FOLDER_GONE_KEPT,
   PROJECT_FOLDER_SENTENCE,
   PROJECT_FOLDER_UNREACHABLE,
+  folderKeptProvenance,
+  folderListingKept,
   isFileReading,
   pageHost,
   previewOverflows,
@@ -44,6 +47,7 @@ import { askCardOf } from "../turn/context";
 import { sessionDistilWords, type AskCallsFacts, type AskWorkPhase } from "./contactRules";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
+import { openFolderOutward } from "./outward";
 import { attachGroundCardDrag } from "./groundDrag";
 import {
   frameGroundCard,
@@ -344,6 +348,12 @@ export function readingProvenance(
       (name === undefined ? "a card that is gone" : name)
     );
   }
+  // STORY 20.1 (PROVISIONAL) — A PROJECT CARD THAT KEEPS A LISTING SAYS WHAT
+  // THE WORDS ARE AND WHEN THEY WERE READ: one quiet date, no clock, no badge.
+  // An untouched card still names the folder, exactly as it always did.
+  if (reading.form === "folder") {
+    return folderKeptProvenance(reading) ?? readingFileName(reading.from);
+  }
   const source = cardProvenanceSourceSlug(reading);
   if (source === null) return readingFileName(reading.from);
   const name = cardNames.get(source);
@@ -422,11 +432,16 @@ export function readingAbsenceLine(
   // PROVISIONAL — a PROJECT CARD fills the reading slot with what it IS, not
   // with a missing copy: nothing was ever read, so no state here may claim one.
   if (reading !== null && reading.form === "folder") {
-    return state === "missing"
-      ? PROJECT_FOLDER_GONE
-      : state === "unreadable"
-        ? PROJECT_FOLDER_UNREACHABLE
-        : PROJECT_FOLDER_SENTENCE;
+    // STORY 20.1: a KEPT listing that is gone from the face is still the truth
+    // about when it was read, so the card says that; an untouched card keeps
+    // the no-copy sentences. A line that claims a listing whose text file is
+    // not here says so plainly rather than claiming a whole card.
+    const kept = folderListingKept(reading);
+    if (state === "missing") {
+      return kept ? PROJECT_FOLDER_GONE_KEPT : PROJECT_FOLDER_GONE;
+    }
+    if (state === "unreadable") return PROJECT_FOLDER_UNREACHABLE;
+    return kept ? "the reading text is not here." : PROJECT_FOLDER_SENTENCE;
   }
   switch (state) {
     case "missing":
@@ -676,6 +691,12 @@ interface GroundLayerProps {
   onRename?: (on: string, name: string) => Promise<GroundAddResult>;
   /** Re-read this reference's file (the person's press only). */
   onRefresh: (on: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 20.1 (PROVISIONAL) — take this PROJECT CARD's first listing, on the
+   * person's EXPAND gesture. The hook owns the read and the one write; the card
+   * only asks. A failure answers one sentence where the person pressed.
+   */
+  onTakeListing?: (on: string) => Promise<GroundAddResult>;
   /** Point this reference at another file (a new pick, one write). */
   onRepoint: (on: string, from: string) => Promise<GroundAddResult>;
   /** Remove this reference, its reading and its kept text (story 16.3). */
@@ -788,6 +809,7 @@ export function GroundLayer({
   onMove,
   onRename,
   onRefresh,
+  onTakeListing,
   onRepoint,
   onRemove,
   onSetNote,
@@ -1205,6 +1227,7 @@ export function GroundLayer({
           onMove={onMove}
           onRename={onRename}
           onRefresh={onRefresh}
+          onTakeListing={onTakeListing}
           onRepoint={onRepoint}
           onRemove={remove}
           onCreateAsk={onCreateAsk}
@@ -1600,6 +1623,7 @@ function GroundCard({
   onMove,
   onRename,
   onRefresh,
+  onTakeListing,
   onRepoint,
   onRemove,
   onCreateAsk,
@@ -1654,6 +1678,8 @@ function GroundCard({
   /** STORY 16.21: the name pill's one writer (absent in a render test). */
   onRename?: GroundLayerProps["onRename"];
   onRefresh: GroundLayerProps["onRefresh"];
+  /** STORY 20.1: the project card's first take, on the person's expand. */
+  onTakeListing?: GroundLayerProps["onTakeListing"];
   onRepoint: GroundLayerProps["onRepoint"];
   onRemove: (reference: GroundReference) => Promise<GroundAddResult>;
   /** STORY 17.1: make an ask card beside this reference (one record line). */
@@ -2004,6 +2030,24 @@ function GroundCard({
     return () => el.removeEventListener("wheel", onWheel);
   }, [open]);
 
+  // STORY 20.1 (PROVISIONAL) — THE EXPAND GESTURE TAKES THE FIRST LISTING.
+  // Opening a project card that keeps no reading IS the person's one gesture,
+  // so the take happens here and nowhere else: no read at add time, no watcher,
+  // no poll and no handle. A failure answers one sentence on the card, and the
+  // next expand may try again; a success fills the text, which re-runs this
+  // effect once and stops at the kept-listing guard. The read and the write are
+  // the hook's queued take; the layer only asks.
+  useEffect(() => {
+    if (!open) return;
+    if (reading === null || reading.form !== "folder") return;
+    if (folderListingKept(reading)) return;
+    if (onTakeListing === undefined) return;
+    void run(() => onTakeListing(reference.on));
+    // The FACTS that decide whether a take is owed: opening, and whether a
+    // listing is already kept. A refusal leaves both unchanged, so nothing
+    // repeats without another gesture.
+  }, [open, reading, onTakeListing]);
+
   const word = readingStateWord(state, reading);
   // STORY 16.25 — the RECORD's point is what React renders; the hand's own
   // frame is written on the card's element, so a drag re-renders nothing here.
@@ -2055,6 +2099,15 @@ function GroundCard({
   // Story 16.12: a selection has no source file, so the FILE verbs (refresh,
   // re-point, read more) have nothing to act on; its bytes are already here.
   const fileReading = reading !== null && isFileReading(reading);
+  // STORY 20.1: a PROJECT CARD's refresh re-takes its own listing, and the
+  // expanded card's one OUTWARD move opens the folder where it lives. Neither
+  // is a file verb: the folder branch is a place, not a reading with a path.
+  const folderCard = reading !== null && reading.form === "folder";
+  const canRefresh =
+    reading !== null &&
+    (fileReading || folderCard) &&
+    readingExtract(reading) !== "image";
+  const canOpenFolder = open && folderCard;
   // The footer's one attribution: a file's NAME, or a selection's SOURCE NAME.
   // STORY 17.15: for a distilled card this is the WHOLE provenance sentence,
   // and the kind line above the body is omitted (null), so the face says it once.
@@ -2079,6 +2132,19 @@ function GroundCard({
     const result = await action();
     setBusy(false);
     if (!result.ok) setProblem(result.message);
+  }
+
+  /**
+   * STORY 20.1 (PROVISIONAL) — OPEN THE PROJECT FOLDER in the system's file
+   * manager: the card's ONE outward move, and the person makes their writes in
+   * their own tools. It writes nothing, holds nothing open and has no fallback:
+   * a refused path (outside the capability's scope, or no handler on this box)
+   * shows the existing one sentence.
+   */
+  async function openFolder() {
+    if (reading === null || reading.form !== "folder") return;
+    const result = await openFolderOutward(reading.from);
+    if (!result.ok && result.message !== null) setProblem(result.message);
   }
 
   /** Enter the note editor in place, seeded with the stored note (or empty). */
@@ -2594,7 +2660,7 @@ function GroundCard({
               neither verb is drawn for it — its bytes are the map's own. STORY
               16.13 (shortlist item 2): the missing verbs are not silent; one
               quiet line here says why there is nothing behind them. */}
-          {fileReading && readingExtract(reading as Reading) !== "image" && (
+          {canRefresh && (
             <button
               type="button"
               className="ground-refresh"
@@ -2602,6 +2668,21 @@ function GroundCard({
               onClick={() => void run(() => onRefresh(reference.on))}
             >
               refresh
+            </button>
+          )}
+          {/* STORY 20.1 (PROVISIONAL) — THE ONE OUTWARD MOVE: the system's file
+              manager at this folder. READ-ONLY: the card writes nothing here,
+              and the person makes their writes in their own tools. A path the
+              capability does not allow, or a box with no handler, answers the
+              existing "cannot open" sentence — there is no fallback. */}
+          {canOpenFolder && (
+            <button
+              type="button"
+              className="ground-open-folder"
+              disabled={busy}
+              onClick={() => void openFolder()}
+            >
+              open in file explorer
             </button>
           )}
           {reading === null || fileReading ? (

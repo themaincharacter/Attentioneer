@@ -227,9 +227,11 @@ export async function pullReading(
   // no source file to locate, so no path is resolved and nothing is stat'ed.
   // STORY 17.11: a distilled card is the same shape one form over (a completed
   // ask turn's reply, copied), so the pull reads the map's own bytes.
-  // PROVISIONAL — a FOLDER card points at a place, not a reading: nothing was
-  // taken from it and there is nothing to pull. The guard is here as well as
-  // on the card's verbs, so no caller can make this path open a directory.
+  // PROVISIONAL — a FOLDER card points at a place, not a file reading. STORY
+  // 20.1 may keep a bounded LISTING of it, but there is still no file to pull
+  // MORE of, and a directory is never opened as a reading (ADR-0039 §5). The
+  // guard is here as well as on the card's verbs, so no caller can make this
+  // path open a directory.
   if (reading.form === "folder") {
     return {
       kind: "refused",

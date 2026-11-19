@@ -2,6 +2,8 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 mod bytes;
 mod cli;
 mod head;
@@ -56,6 +58,42 @@ fn list_dir(path: String) -> Result<Vec<String>, String> {
         .collect();
     names.sort();
     Ok(names)
+}
+
+/// One entry of a folder's top level (story 20.1): the name VERBATIM and
+/// whether it is a directory. The field is serialized as `isDir` for the
+/// window, which reads facts only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+/// STORY 20.1 — A FOLDER'S TOP LEVEL, for a project card's kept reading: one
+/// `{name, isDir}` per entry, sorted by name exactly as `list_dir` sorts.
+///
+/// READ-ONLY BY CONSTRUCTION: nothing is opened, read or written, and no
+/// handle outlives the call. A missing path is an honest empty list (the
+/// existing listing rule); a path that is not a folder, or a listing the OS
+/// refuses, is one `Err` line the bridge answers as a refusal — never a guess.
+/// `list_dir` stays exactly as it is: its seven callers read `Vec<String>`.
+#[tauri::command]
+fn list_dir_entries(path: String) -> Result<Vec<DirEntry>, String> {
+    let entries = match fs::read_dir(&path) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("list {}: {}", path, e)),
+    };
+    let mut rows: Vec<DirEntry> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| DirEntry {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            is_dir: entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false),
+        })
+        .collect();
+    rows.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(rows)
 }
 
 /// Rename a reference file when its slug changes (ADR-0005's atomic patch).
@@ -273,6 +311,7 @@ pub fn run() {
             create_dir_all,
             path_exists,
             list_dir,
+            list_dir_entries,
             rename_file,
             remove_file,
             remove_dir_all,
@@ -397,5 +436,63 @@ mod tests {
             dir.join("config.json")
         );
         assert_eq!(secrets::secrets_path().unwrap(), dir.join("secrets.json"));
+    }
+
+    /// A scratch folder for the listing tests: one unique path under the OS
+    /// temp directory, removed by each test when it is done.
+    fn scratch_folder(tag: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "attentioneer-listing-{}-{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("a scratch folder");
+        path
+    }
+
+    /// STORY 20.1 — THE LISTING IS NAMES AND ONE FACT: sorted by name (the same
+    /// order `list_dir` answers), with folders marked and files not.
+    #[test]
+    fn list_dir_entries_answers_names_and_folder_marks_in_name_order() {
+        let folder = scratch_folder("sorted");
+        std::fs::write(folder.join("beta.txt"), "b").expect("a file");
+        std::fs::write(folder.join("alpha.txt"), "a").expect("a file");
+        std::fs::create_dir(folder.join("nested")).expect("a folder");
+        let listed = list_dir_entries(folder.to_string_lossy().into_owned()).expect("a listing");
+        let rows: Vec<(&str, bool)> = listed
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.is_dir))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![("alpha.txt", false), ("beta.txt", false), ("nested", true)]
+        );
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A folder that is not there is an honest empty list, exactly as `list_dir`
+    /// answers: the window says "the project folder is not there" from its stat,
+    /// never from an invented entry.
+    #[test]
+    fn list_dir_entries_answers_nothing_for_a_missing_folder() {
+        let folder = scratch_folder("missing");
+        let gone = folder.join("not-there");
+        let listed = list_dir_entries(gone.to_string_lossy().into_owned()).expect("a listing");
+        assert_eq!(listed, Vec::<DirEntry>::new());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A path that is a FILE is not a folder's top level: the OS refuses the
+    /// listing and the bridge answers ONE refusal line, never an empty list
+    /// that the window could mistake for an empty folder.
+    #[test]
+    fn list_dir_entries_refuses_a_path_that_is_a_file() {
+        let folder = scratch_folder("file");
+        let file = folder.join("notes.md");
+        std::fs::write(&file, "words").expect("a file");
+        let refused = list_dir_entries(file.to_string_lossy().into_owned());
+        assert!(refused.is_err());
+        let _ = std::fs::remove_dir_all(&folder);
     }
 }
