@@ -34,10 +34,17 @@
  * folder it was recorded in, and the answer is read strictly — an id the server
  * did not state is an honest failure, never an invented continuation.
  *
- * PROVISIONAL: the helper names, the capability object sent in \`initialize\`
- * and the sentence wording. The wire shapes are ACP v1's (as the spike's
- * server answered them); every observed shape is recorded in
- * \`notes/acp-spike.md\`.
+ * STORY 22.2 — THE PROMPT'S WAIT IS THE CALLER'S, NOT A TRANSPORT CONSTANT.
+ * \`session/prompt\` resolves only when the turn SETTLES, and a turn that uses
+ * tools can legitimately run for minutes; the flat request timeout below is
+ * right for a handshake and wrong for a turn. So \`prompt\` accepts an explicit
+ * wait (the caller passes the run's remaining budget) and every other request
+ * keeps the flat default, which keeps a hung handshake failing fast.
+ *
+ * PROVISIONAL: the helper names, the capability object sent in \`initialize\`,
+ * the prompt's optional wait and the sentence wording. The wire shapes are ACP
+ * v1's (as the spike's server answered them); every observed shape is recorded
+ * in \`notes/acp-spike.md\`.
  */
 
 /** The one protocol version these helpers speak (ACP v1). */
@@ -525,12 +532,27 @@ export class AcpTransport {
    * Send ONE prompt and wait for the turn to settle. Streamed chunks arrive
    * through \`onNotification\` while this promise is pending; the answer is the
    * server's stop reason.
+   *
+   * STORY 22.2 — THE TURN'S WAIT IS THE CALLER'S BUDGET (PROVISIONAL). The
+   * answer arrives at TURN END, not at request time, so \`options.timeoutMs\`
+   * lets the run hand in what its own budget has left; without it the flat
+   * request default still applies. Every other call on this class keeps that
+   * flat default, so a server that never answers the handshake still fails
+   * fast rather than waiting a turn's worth of minutes.
    */
-  async prompt(sessionId: string, text: string): Promise<AcpPromptResult> {
-    const result = await this.request(ACP_METHODS.sessionPrompt, {
-      sessionId,
-      prompt: [{ type: "text", text }],
-    });
+  async prompt(
+    sessionId: string,
+    text: string,
+    options?: { timeoutMs?: number },
+  ): Promise<AcpPromptResult> {
+    const result = await this.request(
+      ACP_METHODS.sessionPrompt,
+      {
+        sessionId,
+        prompt: [{ type: "text", text }],
+      },
+      options?.timeoutMs,
+    );
     return readPromptResult(result);
   }
 
@@ -575,15 +597,24 @@ export class AcpTransport {
 
   /* -------------------------------------------------------------- */
 
-  private request(method: string, params: unknown): Promise<unknown> {
+  private request(
+    method: string,
+    params: unknown,
+    timeoutMs?: number,
+  ): Promise<unknown> {
     if (this.closed) return Promise.reject(new AcpFailure("the transport is closed"));
     const id = this.nextId;
     this.nextId += 1;
+    // STORY 22.2 — a caller that knows the work's own budget waits that long;
+    // every other request keeps the flat default. The one sentence is the
+    // same either way: what expired was a wait, not a refusal.
+    const waitMs =
+      timeoutMs === undefined ? this.requestTimeoutMs : Math.max(1, timeoutMs);
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new AcpFailure("the server did not answer " + method + " in time"));
-      }, this.requestTimeoutMs);
+      }, waitMs);
       this.pending.set(id, { resolve, reject, timer, method });
       this.send({ jsonrpc: "2.0", id, method, params });
     });

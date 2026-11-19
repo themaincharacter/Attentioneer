@@ -33,6 +33,12 @@
  *   drip          handshake and session, then one update every 100 ms until
  *                 cancelled — the shape a run has when the sidecar's stdout
  *                 closes underneath it (18.3b's closed-pipe kill probe).
+ *   slow-turn     STORY 22.2: handshake and session answer at once, then the
+ *                 prompt streams four updates 120 ms apart before settling
+ *                 \`end_turn\` — a turn whose ANSWER arrives long after the
+ *                 request, which is what every tool-using turn looks like on
+ *                 the wire. It proves the prompt's wait is the caller's
+ *                 budget, not the flat request default.
  *   sign-in       STORY 22.1b: NOT an ACP server at all — a tool's own sign-in.
  *                 Prints one URL line, waits for ONE line of its own stdin (the
  *                 code the page showed), confirms it with a SHA-256 digest (so
@@ -294,6 +300,18 @@ async function runPrompt(id: number): Promise<void> {
     update("one ");
     await Bun.sleep(20);
     process.exit(3);
+  }
+
+  if (mode === "slow-turn") {
+    // THE ANSWER COMES AT TURN END, minutes after the question in a real run:
+    // stream first, settle last. The delay is small so the proof stays quick.
+    for (let at = 1; at <= 4; at += 1) {
+      await Bun.sleep(120);
+      if (active === null || active.cancelled) break;
+      update("step " + at + " ");
+    }
+    settlePrompt("end_turn");
+    return;
   }
 
   if (mode === "tools") {

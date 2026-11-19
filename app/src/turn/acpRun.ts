@@ -107,6 +107,24 @@ export const ACP_INHERITED_ENV = ["PATH", "HOME"] as const;
 /** How long one request may wait while the run's own budget is the backstop. */
 export const ACP_REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * STORY 22.2 — HOW LONG THE PROMPT MAY WAIT (PURE, PROVISIONAL). \`session/prompt\`
+ * answers at TURN END, so its wait is whatever the run's own budget has left —
+ * never the flat request default that suits a handshake. A run whose budget has
+ * already gone answers with the smallest honest wait (the budget timer is the
+ * backstop that states the ending then).
+ *
+ * ROUNDED UP, so the request's wait never preempts the budget by a fraction of
+ * a millisecond: the run's own timer is the one that states a timed-out ending,
+ * and the prompt's wait can only ever agree with it or outlast it.
+ */
+export function acpPromptTimeoutMs(
+  budgetMs: number,
+  elapsedMs: number,
+): number {
+  return Math.max(1, Math.ceil(budgetMs - elapsedMs));
+}
+
 /** How long a cancelled turn may take to settle before the child is killed. */
 export const ACP_CANCEL_GRACE_MS = 3_000;
 
@@ -238,6 +256,13 @@ export interface AcpRunOptions {
   resume?: { sessionId: string; cwd: string };
   /** Shorten the row's budget (a caller's own deadline; tests use it too). */
   timeoutMs?: number;
+  /**
+   * STORY 22.2 — SHORTEN THE WAIT FOR EVERY REQUEST THAT IS NOT THE PROMPT
+   * (PROVISIONAL). A caller may tighten it; the prompt's wait is never this
+   * number, it is the run's remaining budget. Absent keeps
+   * \`ACP_REQUEST_TIMEOUT_MS\`.
+   */
+  requestTimeoutMs?: number;
   /** Every progress entry as it happens, in order. */
   onProgress?: (entry: AcpProgressEntry) => void;
   /** The name this client tells the server in `initialize`. */
@@ -587,6 +612,7 @@ export function startAcpRun(
 
   // The overall budget starts now: it covers the handshake, the session and
   // the turn. Timeout is its own ending, never a failed one.
+  const budgetStartedAt = Date.now();
   timer = setTimeout(() => {
     if (settled) return;
     timedOut = true;
@@ -677,7 +703,7 @@ export function startAcpRun(
       cwd: made,
       env,
       spawn: options.spawn,
-      requestTimeoutMs: ACP_REQUEST_TIMEOUT_MS,
+      requestTimeoutMs: options.requestTimeoutMs ?? ACP_REQUEST_TIMEOUT_MS,
       onNotification: (notification: AcpNotificationMessage) => {
         const summary = summarizeUpdate(notification.params);
         // Only agent text is a candidate answer; a thought or a tool call is
@@ -744,7 +770,15 @@ export function startAcpRun(
     emit({ kind: "session", sessionId, cwd: made });
 
     try {
-      const turned = await transport.prompt(sessionId, prompt);
+      // STORY 22.2 — THE TURN IS WAITED FOR WITH THE RUN'S OWN BUDGET. The
+      // prompt answers at turn end, and a tool-using turn may legitimately run
+      // for minutes; the flat request default stays for every other call.
+      const turned = await transport.prompt(sessionId, prompt, {
+        timeoutMs: acpPromptTimeoutMs(
+          budgetMs,
+          Date.now() - budgetStartedAt,
+        ),
+      });
       if (cancelled || turned.stopReason === "cancelled") {
         await finish("stopped", null, turned.stopReason);
         return;

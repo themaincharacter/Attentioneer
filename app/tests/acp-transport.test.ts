@@ -58,6 +58,7 @@ function workspace(): string {
 async function fake(
   mode = "normal",
   framing: AcpFraming = "ndjson",
+  requestTimeoutMs = 5_000,
 ): Promise<{ transport: AcpTransport; dir: string; events: Events }> {
   const dir = workspace();
   const events: Events = {
@@ -72,7 +73,7 @@ async function fake(
     args: [FAKE, mode, "--framing", framing],
     cwd: dir,
     framing,
-    requestTimeoutMs: 5_000,
+    requestTimeoutMs,
     onNotification: (notification) => events.notifications.push(notification),
     onRequest: (request) => events.requests.push(request),
     onProblem: (sentence) => events.problems.push(sentence),
@@ -237,6 +238,61 @@ describe("a broken server", () => {
     expect((failure as Error).message).toBe("the server exited (code 3)");
     await waitFor(() => texts(events).includes("one "));
     expect((await transport.newSession(dir).catch((error) => error))).toBeInstanceOf(AcpFailure);
+  });
+});
+
+/**
+ * STORY 22.2 — THE TURN'S WAIT IS THE CALLER'S. \`session/prompt\` answers at
+ * TURN END, so a caller that knows the work's budget can hand it in; every
+ * other request keeps the flat default, and a server that never answers the
+ * handshake still fails fast rather than waiting a turn's worth of minutes.
+ */
+describe("a prompt that outlasts the flat request default", () => {
+  test("the prompt's own wait covers a turn that settles after the flat default", async () => {
+    const { transport, dir } = await fake("slow-turn", "ndjson", 200);
+    await transport.initialize();
+    const session = await transport.newSession(dir);
+
+    // The turn streams for about half a second and answers last: with the flat
+    // 200 ms default this call would have failed at the handshake's pace.
+    const turned = await transport.prompt(session.sessionId, "work", {
+      timeoutMs: 5_000,
+    });
+    expect(turned.stopReason).toBe("end_turn");
+  });
+
+  test("without the caller's wait, the flat default still bounds the prompt", async () => {
+    const { transport, dir } = await fake("slow-turn", "ndjson", 200);
+    await transport.initialize();
+    await transport.newSession(dir);
+
+    let failure: unknown = null;
+    try {
+      await transport.prompt("fake-session", "work");
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(AcpFailure);
+    expect((failure as Error).message).toBe(
+      "the server did not answer session/prompt in time",
+    );
+  });
+
+  test("a hung handshake still fails at the flat default", async () => {
+    const startedAt = Date.now();
+    const { transport } = await fake("silent", "ndjson", 150);
+    let failure: unknown = null;
+    try {
+      await transport.initialize();
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(AcpFailure);
+    expect((failure as Error).message).toBe(
+      "the server did not answer initialize in time",
+    );
+    // It failed at the short default, not after a turn's budget.
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 });
 

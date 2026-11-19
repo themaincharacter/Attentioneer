@@ -1073,6 +1073,47 @@ describe("the session card", () => {
     );
   });
 
+  test("the run block states why the last run ended, without a press", () => {
+    const reason = "the server did not answer session/prompt in time";
+    const withEnding = (ending: "failed" | "timed-out" | "stopped" | "completed", sentence?: string) =>
+      rendered({
+        entries: [
+          { kind: "started", t: "1" },
+          sentence === undefined
+            ? { kind: "ended", ending, t: "2" }
+            : { kind: "ended", ending, t: "2", sentence },
+        ],
+      });
+
+    // A failed run carries the run's OWN sentence beside the word.
+    const failed = withEnding("failed", reason);
+    expect(failed).toContain("session-card-ending");
+    expect(failed).toContain("the run failed: " + reason);
+    // The small face is the same card: its run line is the ending too.
+    expect(
+      rendered({
+        open: false,
+        entries: [
+          { kind: "started", t: "1" },
+          { kind: "ended", ending: "failed", t: "2", sentence: reason },
+        ],
+      }),
+    ).toContain("the run failed: " + reason);
+
+    // Timed-out and stopped say their own word, so the WHY is visible too.
+    expect(withEnding("timed-out")).toContain(
+      "it ran out of its budget; what arrived stays.",
+    );
+    expect(withEnding("stopped")).toContain(
+      "you stopped it; what arrived stays.",
+    );
+
+    // A completed run shows its word and no empty sentence block.
+    const completed = withEnding("completed");
+    expect(completed).toContain("the run finished.");
+    expect(completed).not.toMatch(/session-card-ending[^>]*><\/div>/);
+  });
+
   test("the card re-renders from the file on reopen", async () => {
     const base = workspace();
     await writeSessionCard(

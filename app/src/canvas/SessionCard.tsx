@@ -8,6 +8,7 @@ import {
   SESSION_RUNNING_SENTENCE,
   sessionBindingLine,
   sessionDisplayName,
+  sessionEndingLine,
   sessionEntryLine,
   sessionKindLine,
   sessionNameForWrite,
@@ -943,6 +944,13 @@ export function SessionCard({
     : (packet?.declaration ?? null);
 
   const newest = sessionNewestEntry(entries);
+  // STORY 22.2 — THE LAST ENDING, so the run block can state why the last run
+  // ended without the person pressing anything or scrolling the transcript. A
+  // completed run's word is enough (it carries no sentence); a failed,
+  // timed-out or stopped one shows its own sentence beside the word.
+  const lastEnded = entries.reduce<
+    Extract<SessionEntry, { kind: "ended" }> | null
+  >((last, entry) => (entry.kind === "ended" ? entry : last), null);
   const smallFolded =
     !open &&
     newest !== null &&
@@ -1123,6 +1131,20 @@ export function SessionCard({
       )}
       {open && (
         <div className="session-card-run">
+          {/* STORY 22.2 — WHY THE LAST RUN ENDED, beside the verbs. The
+              transcript lists the same ending as an entry, but a person who
+              scrolled up (or who never opened the transcript) must not have to
+              press anything to learn it: the word AND the run's own sentence
+              sit here, quietly. A partial is still not a result — this line
+              states the ending, it never dresses one up. */}
+          {lastEnded !== null && (
+            <div
+              className={"session-card-ending ending-" + lastEnded.ending}
+              role="status"
+            >
+              {sessionEndingLine(lastEnded.ending, lastEnded.sentence ?? null)}
+            </div>
+          )}
           {/* A CARD WHOSE ROW IS GONE says so and offers the rows this build
               ships again. One field's change, and the card is usable again. */}
           {toolName === null && (

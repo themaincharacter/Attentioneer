@@ -23,6 +23,7 @@ import {
 import {
   ACP_RUN_SENTENCES,
   acpInheritedEnvironment,
+  acpPromptTimeoutMs,
   acpRunEnvironment,
   startAcpRun,
   type AcpProgressEntry,
@@ -100,6 +101,7 @@ interface BeginOptions {
   replyToPermission?: AcpRunOptions["replyToPermission"];
   environment?: Record<string, string | undefined>;
   timeoutMs?: number;
+  requestTimeoutMs?: number;
 }
 
 /** Start a run against the fake and keep everything a proof needs. */
@@ -129,6 +131,9 @@ function begin(
     },
     sessionRoot,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.requestTimeoutMs === undefined
+      ? {}
+      : { requestTimeoutMs: options.requestTimeoutMs }),
     onProgress: (entry) => progress.push(entry),
     spawn: (command, args, spawnOptions) => {
       spawned.env = { ...(spawnOptions.env ?? {}) };
@@ -570,6 +575,30 @@ describe("one headless run, every ending", () => {
     expect(result.answer).toBeNull();
     expect(result.partial).toBeNull();
     expect(result.sentence).toBe(ACP_RUN_SENTENCES.timedOut);
+    expect(await gone(run.report().pid)).toBe(true);
+  });
+
+  test("the prompt's wait is the run's remaining budget (the seam's value)", () => {
+    // STORY 22.2 — the prompt does not wait a transport constant; it waits
+    // what the row's budget has left. This is the value the call is handed.
+    expect(acpPromptTimeoutMs(10 * 60_000, 0)).toBe(600_000);
+    expect(acpPromptTimeoutMs(10 * 60_000, 12_000)).toBe(588_000);
+    // A budget already gone is the smallest honest wait; the budget timer
+    // states the ending, not this number.
+    expect(acpPromptTimeoutMs(5, 50)).toBe(1);
+  });
+
+  test("a turn that answers after the old flat wait finishes normally", async () => {
+    // The old flat transport constant stands in as 200 ms; the row's own
+    // budget is a minute. The turn streams for about half a second and answers
+    // last, so a prompt bounded by the flat default would have failed here.
+    const run = begin("slow-turn", { requestTimeoutMs: 200 });
+    const result = await run.handle.result;
+
+    expect(result.ending).toBe("completed");
+    expect(result.answer).toContain("step 4");
+    expect(result.partial).toBeNull();
+    expect(result.stopReason).toBe("end_turn");
     expect(await gone(run.report().pid)).toBe(true);
   });
 });

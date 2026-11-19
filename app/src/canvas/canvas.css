@@ -8423,6 +8423,16 @@ body {
   border-top: 1px solid rgba(141, 136, 124, 0.16);
 }
 
+/* STORY 22.2 — WHY THE LAST RUN ENDED: the ending's own sentence, quiet but
+   plain, beside the verbs. The transcript already carries the same ending as
+   an entry; this line means a person never has to press anything to read it. */
+.session-card-ending {
+  font-size: 11.5px;
+  line-height: 1.5;
+  font-style: italic;
+  color: var(--ink-marker);
+}
+
 /* THE DECLARATION FOR THE NEXT RUN: 18.2's one sentence (which names a
    provider row, never a key), quiet, above the verb it describes. */
 .session-card-declaration {
