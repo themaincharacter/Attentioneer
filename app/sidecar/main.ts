@@ -107,6 +107,10 @@ import {
   type RunLane,
 } from "./runs.ts";
 import {
+  createSetupLane,
+  type SetupLane,
+} from "./setups.ts";
+import {
   OEMBED_BASE_ENV,
   VIDEO_MAX_BYTES,
   VIDEO_SENTENCES,
@@ -131,13 +135,21 @@ let outbox: Promise<unknown> = Promise.resolve();
  */
 let runLane: RunLane | null = null;
 
+/**
+ * STORY 22.1b — THE SETUP CHILD LANE, its own table beside the run lane's. A
+ * tool's own sign-in is not a run: it writes no transcript, sends no prompt and
+ * gets no PRISM. It gets the same kill-on-close treatment and nothing else.
+ */
+let setupLane: SetupLane | null = null;
+
 function say(line: string): void {
   outbox = outbox
     .then(() => Bun.write(Bun.stdout, line + "\n"))
     .catch(() => {
       // A closed pipe means the host is gone; there is nobody left to tell.
-      // Its children still have to die, so the lane is closed here.
+      // Its children still have to die, so both lanes are closed here.
       void runLane?.shutdown();
+      void setupLane?.shutdown();
     });
 }
 
@@ -1091,12 +1103,29 @@ function handleLine(raw: string): void {
     runLane?.answerPermission(request);
     return;
   }
+  // STORY 22.1b: a tool's own sign-in, hosted by its own lane — never a run.
+  if (request.kind === "setup") {
+    setupLane?.start(request);
+    return;
+  }
+  if (request.kind === "setup-stdin") {
+    setupLane?.feed(request);
+    return;
+  }
+  if (request.kind === "setup-cancel") {
+    setupLane?.cancel(request);
+    return;
+  }
   void runTurn(request);
 }
 
 // The lane that owns the app's session runs. Its children get this process's
 // PATH/HOME and the payload's map, and nothing else.
 runLane = createRunLane({ say });
+// STORY 22.1b: the setup children, in their own table. Nothing here writes a
+// transcript, sends a prompt or reaches the map; the child's own sign-in is
+// the only conversation, and the person has it in their own browser.
+setupLane = createSetupLane({ say });
 
 // The first thing the host hears: this process is alive and speaks wire v1.
 // The host's 5-second health budget watches for THIS line (sidecar.rs).
@@ -1125,5 +1154,8 @@ try {
   // STORY 18.3b: and close every live RUN — close() kills its child, and this
   // await means the sidecar cannot exit before its ACP children are gone.
   await runLane?.shutdown();
+  // STORY 22.1b: and every live SETUP CHILD, through the same sweep — one
+  // process class more, killed the same way, so nothing outlives the sidecar.
+  await setupLane?.shutdown();
   await outbox;
 }

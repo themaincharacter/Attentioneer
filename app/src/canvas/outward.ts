@@ -87,6 +87,27 @@ export async function openFolderOutward(
   return attempt(() => open(folder), CANNOT_OPEN);
 }
 
+/**
+ * STORY 22.1b (PROVISIONAL) — OPEN THE PAGE a tool's own sign-in printed: one
+ * address, the system's browser, and nothing else. The address came from the
+ * CHILD's output, so it is DATA, not an authored pointer: the scheme guard runs
+ * on it exactly as it runs on every other url, and a scheme the opener cannot
+ * take is refused with the one sentence rather than handed over.
+ *
+ * This module stays the ONLY place that calls the opener plugin; a card hands
+ * the address here and never touches the plugin itself. `open` is injectable so
+ * a test can prove the exact url handed over and that a refused one reaches no
+ * launcher.
+ */
+export async function openPageOutward(
+  url: string,
+  open: (value: string) => Promise<void> = openUrl,
+): Promise<OutwardResult> {
+  const refused = schemeNotice(url);
+  if (refused !== null) return { ok: false, message: refused };
+  return attempt(() => open(url), CANNOT_OPEN);
+}
+
 /** Run one outward call, turning any rejection into its quiet sentence. */
 async function attempt(
   run: () => Promise<void>,

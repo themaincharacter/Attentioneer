@@ -4680,6 +4680,13 @@ function App() {
                answers) the fact the face and the picker's label both read. */
             toolRowFacts={ground.toolRowFacts}
             onTestSessionRow={ground.testSessionRow}
+            /* STORY 22.1b — the tool's own sign-in: a setup child hosted by the
+               sidecar's own lane, its newest line as view state, and the three
+               presses. Nothing about the row's state changes here. */
+            sessionSignIn={ground.sessionSignIn}
+            onStartSessionSignIn={ground.startSessionSignIn}
+            onSendSessionSignInCode={ground.sendSessionSignInCode}
+            onStopSessionSignIn={ground.stopSessionSignIn}
             /* STORY 19.4 — the artifact path: one curator call distils the
                completed run's result into a card, wired back to the card. */
             onDistilSessionResult={ground.distilRunResult}

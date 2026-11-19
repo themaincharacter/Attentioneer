@@ -33,6 +33,11 @@
  *   drip          handshake and session, then one update every 100 ms until
  *                 cancelled — the shape a run has when the sidecar's stdout
  *                 closes underneath it (18.3b's closed-pipe kill probe).
+ *   sign-in       STORY 22.1b: NOT an ACP server at all — a tool's own sign-in.
+ *                 Prints one URL line, waits for ONE line of its own stdin (the
+ *                 code the page showed), confirms it with a SHA-256 digest (so
+ *                 the bytes that arrived are proven WITHOUT printing them back)
+ *                 and exits zero. It is what the setup lane is proven against.
  *   resume        STORY 21.1: a session family with a STORE that outlives the
  *                 process (a small JSON file beside the report). session/new
  *                 makes a numbered id and records the exact cwd; session/resume
@@ -139,6 +144,42 @@ function say(payload: string): void {
     .catch(() => {
       // The client is gone; there is nobody left to tell.
     });
+}
+
+/**
+ * STORY 22.1b — THE SIGN-IN MODE. A tool's own sign-in is NOT an ACP server:
+ * it prints a page for the person to open, waits for ONE line on its stdin
+ * (the code the page showed), echoes it and exits zero. The file's JSON framing
+ * is deliberately bypassed here — a sign-in child speaks the tool's own words,
+ * not the app's protocol — which is exactly why a setup child needs its own
+ * wire kinds rather than a run with a flag.
+ *
+ * It is the fixture the setup lane is proven against: a URL line, then a wait,
+ * then an echo that proves the pasted code reached the child.
+ */
+if (mode === "sign-in") {
+  await runSignIn();
+}
+
+async function runSignIn(): Promise<never> {
+  say("open this page to sign in: https://example.test/sign-in");
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for await (const chunk of Bun.stdin.stream()) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const newline = buffer.indexOf("\n");
+    if (newline < 0) continue;
+    const code = buffer.slice(0, newline).replace(/\r$/, "");
+    // THE CODE ITSELF IS NEVER PRINTED BACK: the digest proves the exact bytes
+    // arrived while leaving no copy of them on any pipe, view or file.
+    const digest = new Bun.CryptoHasher("sha256").update(code).digest("hex");
+    say("the code reached the child: sha256 " + digest);
+    await outbox;
+    process.exit(0);
+  }
+  // stdin closed before a code ever arrived: the person did not finish.
+  await outbox;
+  process.exit(0);
 }
 
 function respond(id: number, result: unknown): void {

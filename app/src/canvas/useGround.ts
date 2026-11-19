@@ -143,6 +143,15 @@ import {
 } from "../turn/acpRowStore";
 import { ROW_TEST_SENTENCES, runRowTest } from "../turn/acpRowTest";
 import {
+  startSetupChild,
+  type SetupChildHandle,
+} from "../turn/acpSetupChild";
+import {
+  SETUP_SENTENCES,
+  signInToolOf,
+  type SessionSignIn,
+} from "../turn/acpSetup";
+import {
   GROUND_LINK_IO,
   addGroundLink,
   groundLinkRefusal,
@@ -547,6 +556,13 @@ export interface GroundView {
    */
   sessionPermission: Readonly<Record<string, AcpPermissionAsk>>;
   /**
+   * STORY 22.1b — each session card's TOOL SIGN-IN, as view state (PROVISIONAL):
+   * whether its setup child is alive, the child's newest line, and how it ended.
+   * It is filled by the person's press and dropped with the card; the pasted
+   * CODE never enters it (the card's own field holds that for one send).
+   */
+  sessionSignIn: Readonly<Record<string, SessionSignIn>>;
+  /**
    * STORY 22.1 — each tool row's PER-MACHINE fact, read from the app config's
    * `toolRows` key and laid over the shipped rows by id (PROVISIONAL). It is
    * the only place the app keeps what a "test this row" press saw; the shipped
@@ -904,6 +920,21 @@ export interface GroundView {
    */
   testSessionRow: (slug: string) => Promise<GroundAddResult>;
   /**
+   * STORY 22.1b — START THE CARD'S TOOL SIGN-IN (PROVISIONAL): the row's own
+   * sign-in argv as a SETUP CHILD through the sidecar's setup lane. It sends no
+   * prompt, writes no transcript and touches no map; its newest line is view
+   * state and its ending is one sentence. It changes NO row fact — the state
+   * line stays exactly as the last test left it.
+   */
+  startSessionSignIn: (slug: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 22.1b — hand the person's code to the live child's stdin, and keep
+   * it nowhere: it crosses one wire line and the card's field clears.
+   */
+  sendSessionSignInCode: (slug: string, code: string) => void;
+  /** STORY 22.1b — stop the card's live sign-in (its own cancel). */
+  stopSessionSignIn: (slug: string) => void;
+  /**
    * STORY 19.4 — DISTIL THE LAST COMPLETED RUN'S RESULT into an artifact card:
    * ONE curator model call (the reused module, the manager row, the same turn
    * port), its own PRISM when the request actually left, and the same writer an
@@ -1042,6 +1073,9 @@ type GroundLoaded = Omit<
   | "answerSessionPermission"
   | "makeCardFromRun"
   | "testSessionRow"
+  | "startSessionSignIn"
+  | "sendSessionSignInCode"
+  | "stopSessionSignIn"
   | "distilRunResult"
   | "create"
   | "createFolder"
@@ -1074,6 +1108,7 @@ const EMPTY: GroundLoaded = {
   orphanSessionTranscripts: [],
   sessionRunning: [],
   sessionPermission: {},
+  sessionSignIn: {},
   toolRowFacts: [],
   readings: [],
   media: [],
@@ -4387,6 +4422,11 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   // STORY 18.4: a pending permission ask per card. VIEW STATE — the run WAITS
   // in the sidecar; this map is only what the card draws and answers.
   const sessionPermissionRef = useRef<Record<string, AcpPermissionAsk>>({});
+  // STORY 22.1b: each card's tool sign-in, as VIEW STATE — never a record. The
+  // handle is what a press, a code send and a stop reach; the view is what the
+  // card draws. The phrase above sessionSignIn says the code never lands here.
+  const sessionSignInRef = useRef<Record<string, SessionSignIn>>({});
+  const sessionSignInHandlesRef = useRef<Record<string, SetupChildHandle>>({});
   // STORY 22.1: each tool row's per-machine fact, from the config file. It is
   // NOT map data — no write below touches it except a passing row test — and
   // the shipped rows stay immutable; this is what is laid over them by id.
@@ -4563,6 +4603,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     orphanSessionTranscripts: orphanSessionTranscriptsRef.current,
     sessionRunning: sessionRunningRef.current,
     sessionPermission: sessionPermissionRef.current,
+    sessionSignIn: sessionSignInRef.current,
     // STORY 22.1: the config's per-machine row facts, laid over the shipped
     // rows by the reading that draws them. VIEW ONLY; no map file holds one.
     toolRowFacts: toolRowFactsRef.current,
@@ -4756,6 +4797,19 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     sessionRunsRef.current = {};
     sessionRunningRef.current = [];
     sessionPermissionRef.current = {};
+    // STORY 22.1b: a sign-in belongs to the card it opened from, and the card
+    // belongs to the workspace it was made in. Leaving CANCELS every live setup
+    // child (its own stop, then the child dies) and drops the view; nothing is
+    // written and the pasted code was never held here in the first place.
+    for (const handle of Object.values(sessionSignInHandlesRef.current)) {
+      try {
+        handle.cancel();
+      } catch {
+        // A child already settled has nothing to cancel.
+      }
+    }
+    sessionSignInHandlesRef.current = {};
+    sessionSignInRef.current = {};
     // Story 16.13: a restore belongs to the workspace its bytes came from
     // (story 17.8's ask-card restore rides the same one).
     restorableRef.current = null;
@@ -4776,6 +4830,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       sessionRunningRef.current = [];
       sessionRunsRef.current = {};
       sessionPermissionRef.current = {};
+      sessionSignInHandlesRef.current = {};
+      sessionSignInRef.current = {};
       readingsRef.current = [];
       mediaRef.current = [];
       malformedMediaRef.current = [];
@@ -6471,6 +6527,120 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     },
     [workspacePath],
   );
+
+  /**
+   * STORY 22.1b — START THE CARD'S TOOL SIGN-IN (PROVISIONAL). The row's own
+   * sign-in argv becomes a SETUP CHILD through the sidecar's setup lane: no
+   * prompt, no transcript, no map write, no history event and no PRISM. The
+   * view says the child is alive, follows its newest line, and settles on the
+   * ending the sidecar states; NOTHING about the row's state changes — only a
+   * passing "test this row" writes that.
+   *
+   * ONE CHILD PER CARD: a press while a child is alive starts nothing and says
+   * nothing, because the card's verb is already disabled; a row that declares
+   * no sign-in answers one sentence and spawns nothing.
+   */
+  const startSessionSignIn = useCallback(
+    (slug: string): Promise<GroundAddResult> => {
+      const session = sessionsRef.current.find((entry) => entry.on === slug);
+      if (session === undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      // One sign-in per card at a time: a second press while one is alive is
+      // not a second child (the card's own verb is disabled anyway).
+      if (sessionSignInHandlesRef.current[slug] !== undefined) {
+        return Promise.resolve({ ok: true });
+      }
+      const shipped = shippedAcpSpec(session.tool);
+      if (shipped === null) {
+        return Promise.resolve({
+          ok: false,
+          message: SESSION_NO_TOOL_REFUSAL,
+        });
+      }
+      // The merged row is the row the status line reads, so the sign-in argv is
+      // exactly the data's — a per-machine fact never changes it.
+      const row = rowWithFacts(shipped, toolRowFactsRef.current);
+      if (signInToolOf(row) === null) {
+        return Promise.resolve({
+          ok: false,
+          message: SETUP_SENTENCES.noSignIn,
+        });
+      }
+      // THE VIEW EXISTS BEFORE THE CHILD DOES, so the very first line the
+      // child prints has somewhere to land. It holds no code and no record.
+      sessionSignInRef.current = {
+        ...sessionSignInRef.current,
+        [slug]: { running: true, line: null, ended: null },
+      };
+      setState(snapshot());
+      const handle = startSetupChild(row, {
+        // The child's own lines, in arrival order. They are VIEW STATE only:
+        // the sidecar wrote them nowhere and this app keeps them nowhere.
+        onLine: (part) => {
+          const view = sessionSignInRef.current[slug];
+          if (view === undefined) return;
+          sessionSignInRef.current = {
+            ...sessionSignInRef.current,
+            [slug]: { ...view, line: part.line },
+          };
+          setState(snapshot());
+        },
+      });
+      if (handle === null) {
+        // Nothing was spawned, so nothing is shown as running.
+        const views = { ...sessionSignInRef.current };
+        delete views[slug];
+        sessionSignInRef.current = views;
+        setState(snapshot());
+        return Promise.resolve({
+          ok: false,
+          message: SETUP_SENTENCES.noSignIn,
+        });
+      }
+      sessionSignInHandlesRef.current = {
+        ...sessionSignInHandlesRef.current,
+        [slug]: handle,
+      };
+      void handle.ended.then((end) => {
+        const handles = { ...sessionSignInHandlesRef.current };
+        delete handles[slug];
+        sessionSignInHandlesRef.current = handles;
+        sessionSignInRef.current = {
+          ...sessionSignInRef.current,
+          [slug]: {
+            running: false,
+            line: end.line,
+            ended: {
+              ending: end.ending,
+              line: end.line,
+              sentence: end.sentence,
+            },
+          },
+        };
+        setState(snapshot());
+      });
+      return Promise.resolve({ ok: true });
+    },
+    [],
+  );
+
+  /**
+   * STORY 22.1b — HAND THE CODE TO THE CHILD. The code crosses the pipe as ONE
+   * line and is kept nowhere: not in a ref, not in the view, not in a file. The
+   * card's own field clears the moment this returns.
+   */
+  const sendSessionSignInCode = useCallback(
+    (slug: string, code: string): void => {
+      sessionSignInHandlesRef.current[slug]?.sendCode(code);
+    },
+    [],
+  );
+
+  /** STORY 22.1b — STOP the card's live sign-in (its own cancel). */
+  const stopSessionSignIn = useCallback((slug: string): void => {
+    sessionSignInHandlesRef.current[slug]?.cancel();
+  }, []);
 
   /**
    * STORY 19.3 — RUN one session card with the person's task: the packet is the
@@ -8235,6 +8405,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     orphanSessionTranscripts: state.orphanSessionTranscripts,
     sessionRunning: state.sessionRunning,
     sessionPermission: state.sessionPermission,
+    sessionSignIn: state.sessionSignIn,
     toolRowFacts: state.toolRowFacts,
     readings: state.readings,
     media: state.media,
@@ -8281,6 +8452,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     answerSessionPermission,
     makeCardFromRun,
     testSessionRow,
+    startSessionSignIn,
+    sendSessionSignInCode,
+    stopSessionSignIn,
     distilRunResult,
     create,
     createFolder,

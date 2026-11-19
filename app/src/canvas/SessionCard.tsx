@@ -46,6 +46,16 @@ import {
   acpStatusSentence,
   type AcpRowStatus,
 } from "../turn/acpSpecs";
+import {
+  SETUP_CODE_LABEL,
+  SETUP_CODE_PLACEHOLDER,
+  SETUP_SENTENCES,
+  SETUP_VERBS,
+  setupEndSentence,
+  setupLineCrop,
+  setupUrlIn,
+  type SessionSignIn,
+} from "../turn/acpSetup";
 
 /**
  * STORY 16.22 — THE SESSION CARD'S RULES FOR THE SHARED NAME PILL. A session
@@ -153,6 +163,18 @@ export function sessionDisclosureVerb(
  * avoid. A row that does not continue sessions says so in ONE quiet sentence
  * and offers no verb (nothing to press, and nothing refused after the fact);
  * the layer refuses the same way if such a press ever reaches it.
+ *
+ * STORY 22.1b — THE CARD HOSTS THE TOOL'S OWN SIGN-IN (PROVISIONAL). When the
+ * bound row declares a sign-in argv, the expanded face offers ONE more verb
+ * beside "test this row". While the setup child is alive the card says the
+ * running line, shows the child's newest line cropped (and, when that line
+ * holds an http(s) address, the "open the page" verb — the person finishes the
+ * sign-in in their own browser), and offers one small field for the code the
+ * page shows with "send the code" and "stop" beside it. The code is EPHEMERAL:
+ * it goes to the child's stdin and nowhere else, and the field clears the
+ * moment it is sent. On an exit the card says ONE sentence, and it never claims
+ * the sign-in worked: the person's own press of "test this row" is still the
+ * proof. A row that declares no sign-in shows no verb and no line.
  *
  * STORY 18.5 MAKES IT REMOVABLE: the expanded card offers remove, the same
  * immediate delete + Restore toast every other card uses. A live run is never
@@ -289,6 +311,7 @@ export function SessionCard({
   declaration,
   toolStatus = null,
   onTestRow,
+  signIn = null,
   tools = [],
   entries,
   contextCards = [],
@@ -348,6 +371,14 @@ export function SessionCard({
    * row stays untested. Absent in a render test.
    */
   onTestRow?: () => Promise<GroundAddResult>;
+  /**
+   * STORY 22.1b — THE TOOL'S OWN SIGN-IN, as view state (PROVISIONAL). It is
+   * passed ONLY when the card's bound row declares a sign-in argv, so its
+   * presence is the declaration: a row without one shows no verb and no line.
+   * The child's newest line and its ending live here; the CODE never does — it
+   * is this card's own local field and is cleared the moment it is sent.
+   */
+  signIn?: SessionSignIn | null;
   /** The rows a picker may offer (the build's shipped rows). */
   tools?: readonly SessionToolChoice[];
   /** The transcript, in file order (append-only: file order is arrival order). */
@@ -483,6 +514,11 @@ export function SessionCard({
   // holds the words for the NEXT turn of the recorded session, and is cleared
   // once they are sent, so a second press cannot silently repeat them.
   const [followUp, setFollowUp] = useState("");
+  // STORY 22.1b — THE CODE FIELD IS THE CARD'S OWN STATE AND NOTHING ELSE. It
+  // is never a record field, never view state the layer holds, and it is
+  // cleared the moment the press sends it: the lane writes it to the child's
+  // stdin and keeps nothing.
+  const [code, setCode] = useState("");
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // STORY 16.23 — THE CARD IS MOVABLE BY THE SAME ONE RULE as a reference.
@@ -643,6 +679,13 @@ export function SessionCard({
     settleFrame();
   }, [session.x, session.y]);
 
+  // STORY 22.1b — THE CODE LIVES ONLY AS LONG AS THE CHILD. When a sign-in
+  // starts or ends, the field is cleared: a code typed while the child was
+  // exiting is never shown again, and a new child starts from an empty field.
+  useEffect(() => {
+    setCode("");
+  }, [signIn?.running]);
+
   // Opening starts AT THE NEWEST ENTRY again.
   useEffect(() => {
     if (open) pinnedRef.current = true;
@@ -768,6 +811,23 @@ export function SessionCard({
   }
 
   /**
+   * STORY 22.1b — SEND THE CODE. A blank field is ONE sentence and nothing
+   * leaves: no line crosses the pipe and the child keeps waiting. Otherwise the
+   * typed code goes to the child's stdin through the lane's one road, and the
+   * field is CLEARED at once — the app keeps no copy of it anywhere.
+   */
+  function sendSignInCode(): void {
+    if (signIn === null || !signIn.running) return;
+    if (code.trim() === "") {
+      setProblem(SETUP_SENTENCES.emptyCode);
+      return;
+    }
+    signIn.sendCode?.(code);
+    setProblem(null);
+    setCode("");
+  }
+
+  /**
    * STORY 19.4 — the distil press. One curator call, then a card (or one
    * sentence): the busy flag holds the verb while the model works, and a
    * refusal — a decline, an unusable or over-long card, a failed call, no task
@@ -828,6 +888,14 @@ export function SessionCard({
   const scopeDeclaration =
     projectFolder !== null && session.boundary !== undefined
       ? acpScopeDeclaration(projectFolder, session.boundary)
+      : null;
+
+  // STORY 22.1b — THE ADDRESS THE CHILD WANTS OPEN, if its newest line holds
+  // one. Only a live child's line is read: an ended sign-in's line belongs to
+  // its one sentence, never to a second verb. Only http(s) counts.
+  const signInUrl =
+    signIn !== null && signIn.running && signIn.line !== null
+      ? setupUrlIn(signIn.line)
       : null;
 
   // STORY 21.1 — THE SESSION THIS CARD COULD CONTINUE. Only a recorded pair
@@ -926,6 +994,75 @@ export function SessionCard({
       {open && toolStatus !== null && (
         <div className="session-card-tool-state">
           {acpStatusSentence(toolStatus)}
+        </div>
+      )}
+      {/* STORY 22.1b — THE TOOL'S OWN SIGN-IN, beside the row's state line on
+          the EXPANDED face only. While the child is alive: the running line,
+          its newest line cropped, the "open the page" verb when that line holds
+          an address, and the one small field the person's code goes into. Once
+          it ends: ONE sentence, never a claim that the sign-in worked. A row
+          that declares no sign-in passes no signIn, so nothing is drawn. */}
+      {open && signIn !== null && (
+        <div className="session-card-sign-in">
+          {signIn.running ? (
+            <>
+              <div className="session-card-sign-in-line" role="status">
+                {SETUP_SENTENCES.running}
+              </div>
+              {signIn.line !== null && setupLineCrop(signIn.line) !== "" && (
+                <div className="session-card-sign-in-child">
+                  {setupLineCrop(signIn.line)}
+                </div>
+              )}
+              {signInUrl !== null && (
+                <button
+                  type="button"
+                  className="session-card-sign-in-page"
+                  disabled={signIn.openPage === undefined}
+                  onClick={() => signIn.openPage?.(signInUrl)}
+                >
+                  {SETUP_VERBS.openPage}
+                </button>
+              )}
+              <div className="session-card-sign-in-code">
+                <input
+                  type="text"
+                  className="session-card-sign-in-field"
+                  aria-label={SETUP_CODE_LABEL}
+                  placeholder={SETUP_CODE_PLACEHOLDER}
+                  value={code}
+                  onChange={(e) => {
+                    setCode(e.target.value);
+                    if (problem !== null) setProblem(null);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="session-card-sign-in-send"
+                  disabled={signIn.sendCode === undefined}
+                  onClick={() => sendSignInCode()}
+                >
+                  {SETUP_VERBS.sendCode}
+                </button>
+                <button
+                  type="button"
+                  className="session-card-sign-in-stop"
+                  disabled={signIn.stop === undefined}
+                  onClick={() => signIn.stop?.()}
+                >
+                  {SETUP_VERBS.stop}
+                </button>
+              </div>
+            </>
+          ) : signIn.ended !== null ? (
+            <div className="session-card-sign-in-line" role="status">
+              {setupEndSentence(
+                signIn.ended.ending,
+                signIn.ended.line,
+                signIn.ended.sentence,
+              )}
+            </div>
+          ) : null}
         </div>
       )}
       {/* STORY 19.2 — THE BINDING, QUIETLY: the bound project card's NAME and
@@ -1259,6 +1396,21 @@ export function SessionCard({
                 onClick={() => void testRow()}
               >
                 test this row
+              </button>
+            )}
+            {/* STORY 22.1b — THE SIGN-IN VERB, beside "test this row". It is
+                shown whenever the card was handed a sign-in view (the row
+                declares one) and is disabled while the child is alive, so one
+                card never hosts two sign-ins. Starting it changes NO state
+                fact: the row's state line is written by tests alone. */}
+            {signIn !== null && (
+              <button
+                type="button"
+                className="session-card-sign-in-verb"
+                disabled={busy || signIn.running}
+                onClick={() => signIn.start?.()}
+              >
+                {SETUP_VERBS.signIn}
               </button>
             )}
             {/* STORY 18.4 — A FINISHED RUN'S RESULT BECOMES A COPY. Offered

@@ -47,7 +47,7 @@ import { askCardOf } from "../turn/context";
 import { sessionDistilWords, type AskCallsFacts, type AskWorkPhase } from "./contactRules";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
-import { openFolderOutward } from "./outward";
+import { openFolderOutward, openPageOutward } from "./outward";
 import { attachGroundCardDrag } from "./groundDrag";
 import {
   frameGroundCard,
@@ -82,6 +82,7 @@ import {
   rowFactOf,
   type AcpRowFact,
 } from "../turn/acpRowStore";
+import type { SessionSignIn } from "../turn/acpSetup";
 import { PROVIDER_SENTENCES } from "../turn/providers";
 import type {
   AcpPermissionAsk,
@@ -678,6 +679,19 @@ interface GroundLayerProps {
    */
   onTestSessionRow?: (slug: string) => Promise<GroundAddResult>;
   /**
+   * STORY 22.1b — each session card's TOOL SIGN-IN as view state (PROVISIONAL):
+   * whether its setup child is alive, the child's newest line and how it ended.
+   * Absent means no sign-in is open on that card, so nothing is drawn.
+   */
+  sessionSignIn?: Readonly<Record<string, SessionSignIn>>;
+  /**
+   * STORY 22.1b — START, FEED and STOP one card's tool sign-in: the hook owns
+   * the child and its view; the layer forwards the presses.
+   */
+  onStartSessionSignIn?: (slug: string) => Promise<GroundAddResult>;
+  onSendSessionSignInCode?: (slug: string, code: string) => void;
+  onStopSessionSignIn?: (slug: string) => void;
+  /**
    * STORY 19.4 — DISTIL the last completed run's result into an artifact card:
    * one curator call, the same writer the ask card's artifact uses.
    */
@@ -809,6 +823,7 @@ export function GroundLayer({
   sessionEntries = {},
   sessionRunning = [],
   sessionPermission = {},
+  sessionSignIn = {},
   toolRowFacts = [],
   onCreateAsk,
   onAskFromSelection,
@@ -828,6 +843,9 @@ export function GroundLayer({
   onAnswerSessionPermission,
   onMakeSessionResult,
   onTestSessionRow,
+  onStartSessionSignIn,
+  onSendSessionSignInCode,
+  onStopSessionSignIn,
   onDistilSessionResult,
   onRemoveSession,
   onRenameSession,
@@ -1565,6 +1583,39 @@ export function GroundLayer({
               onTestSessionRow === undefined
                 ? undefined
                 : () => onTestSessionRow(session.on)
+            }
+            /* STORY 22.1b — THE ROW'S OWN SIGN-IN. Passed ONLY when the merged
+               row declares a sign-in argv, so its presence IS the declaration:
+               a row without one gives the card nothing to draw. The pasted code
+               never rides this view — it is the card's own field for one send,
+               and the page opener is this layer's one outward call site. */
+            signIn={
+              row === null || row.signIn === undefined
+                ? null
+                : {
+                    running: sessionSignIn[session.on]?.running ?? false,
+                    line: sessionSignIn[session.on]?.line ?? null,
+                    ended: sessionSignIn[session.on]?.ended ?? null,
+                    ...(onStartSessionSignIn === undefined
+                      ? {}
+                      : {
+                          start: () => {
+                            void onStartSessionSignIn(session.on);
+                          },
+                        }),
+                    ...(onSendSessionSignInCode === undefined
+                      ? {}
+                      : {
+                          sendCode: (code: string) =>
+                            onSendSessionSignInCode(session.on, code),
+                        }),
+                    ...(onStopSessionSignIn === undefined
+                      ? {}
+                      : { stop: () => onStopSessionSignIn(session.on) }),
+                    openPage: (url: string) => {
+                      void openPageOutward(url);
+                    },
+                  }
             }
             // STORY 19.4 — the artifact path, beside the rule's copy.
             onDistilResult={

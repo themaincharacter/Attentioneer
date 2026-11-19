@@ -28,6 +28,17 @@
  * holding, so an "always" option can never be selected on the wire. A request
  * left unanswered settles as the run's own timeout.
  *
+ * STORY 22.1b ADDS THE SETUP CHILD'S FIVE KINDS (names PROVISIONAL), and they
+ * are deliberately NOT the run lane's: `setup` asks the sidecar to start a
+ * tool's own sign-in as a SETUP CHILD (a process class of its own), `setup-part`
+ * carries ONE line the child printed DOWN with the stream it came from,
+ * `setup-stdin` carries ONE string UP that is written to the child's stdin with
+ * a newline, `setup-cancel` stops a live child (its own `setup-end` answers),
+ * and `setup-end` states the exit code and the last line. No prompt, no
+ * transcript entry, no permission and no key grant of its own ride any of them.
+ * A setup child is never a run: the run lane's lifecycle and its kill-on-every-
+ * exit rule are untouched by these lines.
+ *
  * Newline-delimited JSON travels in BOTH directions over stdio, so every
  * builder here answers exactly one line (JSON.stringify never emits a raw
  * newline) and every reader REFUSES rather than guesses: a malformed line is
@@ -323,6 +334,91 @@ export interface RunCancelRequest {
   run: number;
 }
 
+/* ------------------------------------------------------------------ *
+ * STORY 22.1b — THE SETUP CHILD'S FIVE KINDS (PROVISIONAL).
+ *
+ * A setup child is the tool's OWN sign-in: the row's command with its sign-in
+ * argv, its stdout and stderr relayed one line at a time, and its stdin fed by
+ * the person's pasted code. It is NOT a run — no prompt, no transcript, no map,
+ * no key grant of its own — so it has its own kinds rather than a run with a
+ * flag. A `setup` request's env is a RESOLVED map, exactly as a run's is.
+ * ------------------------------------------------------------------ */
+
+/** The tool a setup child starts: the row's command, and the sign-in argv. */
+export interface SetupTool {
+  /** The server executable, exactly as the row declares it. */
+  command: string;
+  /** The argv that opens the tool's own sign-in, one entry each. */
+  args: string[];
+}
+
+/**
+ * Ask the sidecar to start ONE setup child. It is a fresh temp directory, the
+ * RESOLVED env map plus PATH/HOME, and nothing else; the child lives until it
+ * exits or the person stops it.
+ */
+export interface SetupRequest {
+  id: number;
+  kind: "setup";
+  /** The setup number in the sidecar's own table; the other kinds echo it. */
+  setup: number;
+  tool: SetupTool;
+  /** The resolved env map, NAME to VALUE, exactly as a run's payload carries it. */
+  env: Record<string, string>;
+}
+
+/**
+ * ONE string UP, written to the child's stdin followed by a newline. This is
+ * the road the person's pasted code takes, and the ONLY one: the value is not
+ * stored, logged, transcripted or recorded anywhere, on either side.
+ */
+export interface SetupStdinRequest {
+  id: number;
+  kind: "setup-stdin";
+  setup: number;
+  /** The exact line to write; the sidecar adds the newline and nothing else. */
+  text: string;
+}
+
+/** Ask the sidecar to stop a live setup child. Its OWN `setup-end` answers. */
+export interface SetupCancelRequest {
+  id: number;
+  kind: "setup-cancel";
+  setup: number;
+}
+
+/** Which pipe a setup line came from. The card never merges the two. */
+export type SetupStream = "stdout" | "stderr";
+
+/** ONE line the setup child printed, in arrival order, with its stream. */
+export interface SetupPartLine {
+  id: number;
+  kind: "setup-part";
+  setup: number;
+  stream: SetupStream;
+  line: string;
+}
+
+/**
+ * How a setup child ended: it exited by itself with code 0 ("completed"), it
+ * was stopped by the person ("stopped"), or it exited some other way
+ * ("failed"). `line` is the child's last line when it printed one; a child
+ * that never started is answered by an `error` line, not by this one.
+ */
+export type SetupEnding = "completed" | "failed" | "stopped";
+
+/** The setup child's ending: its exit code and the last line it printed. */
+export interface SetupEndLine {
+  id: number;
+  kind: "setup-end";
+  setup: number;
+  ending: SetupEnding;
+  /** The child's exit code, or null when no code could be read. */
+  exitCode: number | null;
+  /** The last line the child printed, or null when it printed none. */
+  line: string | null;
+}
+
 /** ONE progress entry, in arrival order. The transcript's order is this one. */
 export interface RunPartLine {
   id: number;
@@ -357,7 +453,9 @@ export type SidecarLine =
   | ThumbLine
   | RunPartLine
   | RunPermissionLine
-  | RunEndLine;
+  | RunEndLine
+  | SetupPartLine
+  | SetupEndLine;
 
 /** One turn's request. The messages are ALL that leaves the app. */
 export interface TurnRequest {
@@ -394,6 +492,9 @@ export type SidecarRequest =
   | RunRequest
   | RunCancelRequest
   | RunPermissionReplyRequest
+  | SetupRequest
+  | SetupStdinRequest
+  | SetupCancelRequest
   | StopRequest;
 
 /* ------------------------------------------------------------------ *
@@ -588,6 +689,69 @@ export function runEndLine(
   return JSON.stringify({ id, kind: "run-end", run, ending, sentence });
 }
 
+/**
+ * STORY 22.1b — THE SETUP CHILD'S LINES (PROVISIONAL).
+ *
+ * The longest string the wire will carry to a child's stdin. A code is short;
+ * a paste that is longer than this is REFUSED rather than truncated, because a
+ * silently cut code is a wrong code.
+ */
+export const SETUP_STDIN_MAX = 4096;
+
+/** The setup child's request line: one tool, one resolved env map. */
+export function setupRequestLine(
+  id: number,
+  setup: number,
+  tool: SetupTool,
+  env: Readonly<Record<string, string>>,
+): string {
+  return JSON.stringify({
+    id,
+    kind: "setup",
+    setup,
+    tool: { command: tool.command, args: [...tool.args] },
+    env: { ...env },
+  });
+}
+
+/** ONE string up to the child's stdin; the sidecar writes it and a newline. */
+export function setupStdinLine(id: number, setup: number, text: string): string {
+  return JSON.stringify({ id, kind: "setup-stdin", setup, text });
+}
+
+/** The cancel's request line: a setup number, and the cancel's own request id. */
+export function setupCancelLine(id: number, setup: number): string {
+  return JSON.stringify({ id, kind: "setup-cancel", setup });
+}
+
+/** ONE line the setup child printed, down, marked with its stream. */
+export function setupPartLine(
+  id: number,
+  setup: number,
+  stream: SetupStream,
+  line: string,
+): string {
+  return JSON.stringify({ id, kind: "setup-part", setup, stream, line });
+}
+
+/** The setup child's ending: the exit code and the last line it printed. */
+export function setupEndLine(
+  id: number,
+  setup: number,
+  ending: SetupEnding,
+  exitCode: number | null,
+  line: string | null,
+): string {
+  return JSON.stringify({
+    id,
+    kind: "setup-end",
+    setup,
+    ending,
+    exitCode,
+    line,
+  });
+}
+
 /** The fetch's request line: one endpoint, one key, no model. */
 export function modelsRequestLine(
   id: number,
@@ -697,6 +861,13 @@ function isEnvName(value: unknown): value is string {
   );
 }
 
+/** How a setup child ended; anything else is not this wire's ending. */
+function isSetupEnding(value: unknown): value is SetupEnding {
+  return (
+    value === "completed" || value === "failed" || value === "stopped"
+  );
+}
+
 /** How a run ended; anything else is not this wire's ending. */
 function isEnding(value: unknown): value is AcpEnding {
   return (
@@ -705,6 +876,14 @@ function isEnding(value: unknown): value is AcpEnding {
     value === "failed" ||
     value === "timed-out"
   );
+}
+
+/** The tool a setup child starts: the row's command and its sign-in argv. */
+function isSetupTool(value: unknown): value is SetupTool {
+  if (!isRecord(value)) return false;
+  if (!isNonEmptyString(value.command)) return false;
+  if (!Array.isArray(value.args)) return false;
+  return value.args.every((arg) => typeof arg === "string");
 }
 
 /** The tool a run starts: argv only, an absolute-ish command and a budget. */
@@ -988,6 +1167,32 @@ export function parseSidecarLine(raw: string): SidecarLine | null {
       options,
     };
   }
+  if (value.kind === "setup-part") {
+    if (!isId(value.setup)) return null;
+    if (value.stream !== "stdout" && value.stream !== "stderr") return null;
+    if (typeof value.line !== "string") return null;
+    return {
+      id: value.id,
+      kind: "setup-part",
+      setup: value.setup,
+      stream: value.stream,
+      line: value.line,
+    };
+  }
+  if (value.kind === "setup-end") {
+    if (!isId(value.setup)) return null;
+    if (!isSetupEnding(value.ending)) return null;
+    if (value.exitCode !== null && !Number.isInteger(value.exitCode)) return null;
+    if (value.line !== null && typeof value.line !== "string") return null;
+    return {
+      id: value.id,
+      kind: "setup-end",
+      setup: value.setup,
+      ending: value.ending,
+      exitCode: value.exitCode as number | null,
+      line: value.line as string | null,
+    };
+  }
   if (value.kind === "run-end") {
     if (!isId(value.run)) return null;
     if (!isEnding(value.ending)) return null;
@@ -1048,6 +1253,47 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
   if (value.kind === "run-cancel") {
     if (!isId(value.run)) return null;
     return { id: value.id, kind: "run-cancel", run: value.run };
+  }
+  // STORY 22.1b — THE SETUP CHILD'S THREE REQUESTS (PROVISIONAL). Its tool is
+  // the row's command and argv and nothing else; its env map is a resolved map
+  // whose names a process can carry (the run payload's rule, one class over).
+  if (value.kind === "setup") {
+    if (!isId(value.setup)) return null;
+    if (!isSetupTool(value.tool)) return null;
+    if (!isRecord(value.env)) return null;
+    const env: Record<string, string> = {};
+    for (const [name, secret] of Object.entries(value.env)) {
+      if (!isEnvName(name)) return null;
+      if (typeof secret !== "string" || secret === "") return null;
+      env[name] = secret;
+    }
+    return {
+      id: value.id,
+      kind: "setup",
+      setup: value.setup,
+      tool: {
+        command: value.tool.command,
+        args: [...value.tool.args],
+      },
+      env,
+    };
+  }
+  if (value.kind === "setup-stdin") {
+    if (!isId(value.setup)) return null;
+    // A blank line is not a code; a paste over the cap is refused rather than
+    // cut. Both are the wire refusing, never a silent write.
+    if (!isNonEmptyString(value.text)) return null;
+    if (value.text.length > SETUP_STDIN_MAX) return null;
+    return {
+      id: value.id,
+      kind: "setup-stdin",
+      setup: value.setup,
+      text: value.text,
+    };
+  }
+  if (value.kind === "setup-cancel") {
+    if (!isId(value.setup)) return null;
+    return { id: value.id, kind: "setup-cancel", setup: value.setup };
   }
   if (value.kind === "run-permission-reply") {
     if (!isId(value.run)) return null;

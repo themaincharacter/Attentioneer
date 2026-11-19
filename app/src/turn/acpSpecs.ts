@@ -38,9 +38,18 @@
  * row carries the mark because the spike's server advertised session/resume and
  * answered it live, and the second row does not.
  *
+ * STORY 22.1b — A ROW MAY CARRY THE ARGV THAT OPENS ITS OWN SIGN-IN
+ * (PROVISIONAL). The optional `signIn: { args }` is that argv and nothing else:
+ * the row's COMMAND with these args, run as a SETUP CHILD (a process class of
+ * its own, never a run — turn/acpSetup.ts and sidecar/setups.ts say what it is
+ * and what it never does). Absent is a complete answer: the app has no sign-in
+ * it can open for this row, so the card offers no verb and says no line. The
+ * argv is never a shell string, exactly like `args`, and no key, code or token
+ * ever lives here.
+ *
  * PROVISIONAL: the field names, the env entry shape, the `verified` mark, the
- * default budget, the label suffix, the continuation mark and every sentence in
- * ACP_SENTENCES.
+ * default budget, the label suffix, the continuation mark, the sign-in argv and
+ * every sentence in ACP_SENTENCES.
  */
 
 import { uniqueProviderId, type Refusal, type RowRead } from "./providers";
@@ -100,8 +109,25 @@ export interface AcpSpec {
    * and the card branches on this field alone.
    */
   resume?: "protocol";
+  /**
+   * STORY 22.1b — THE ARGV THAT OPENS THIS ROW'S OWN SIGN-IN (PROVISIONAL).
+   * The row's command plus these args is run as a SETUP CHILD: not a run, no
+   * transcript, no prompt, no map. Absent means this app has no sign-in it can
+   * open for the row, which is a complete answer rather than a hole.
+   */
+  signIn?: AcpSignIn;
   /** What this row claims, and how sure it is. */
   notes: string;
+}
+
+/**
+ * STORY 22.1b — ONE ROW'S SIGN-IN ARGV (PROVISIONAL). Only the arguments: the
+ * command is the row's own, so a sign-in is never a second program to trust.
+ * Never joined into a shell string, and it carries no credential of any kind.
+ */
+export interface AcpSignIn {
+  /** The argv that starts the tool's own sign-in, one entry each. */
+  args: string[];
 }
 
 /** One ACP row being added or edited, as the form holds it (not yet a row). */
@@ -121,6 +147,11 @@ export interface AcpSpecDraft {
    * session; anything but `"protocol"` is refused.
    */
   resume?: string;
+  /**
+   * STORY 22.1b — the row's sign-in argv as the form holds it (PROVISIONAL).
+   * Absent is valid and means "no sign-in this app can run".
+   */
+  signIn?: { args: readonly string[] };
   notes?: string;
 }
 
@@ -146,6 +177,13 @@ export const ACP_SENTENCES = {
    * a session; anything else is refused rather than stored as a hope.
    */
   resume: "an ACP row either continues a session over the protocol or it does not; the only value is protocol",
+  /**
+   * STORY 22.1b — a declared sign-in needs at least one argument (PROVISIONAL).
+   * The command on its own is the tool's own server, so an empty sign-in would
+   * start the wrong thing while claiming to open a way in.
+   */
+  signInArgs:
+    "a sign-in needs at least one argument: the command on its own is the tool's own server",
 } as const;
 
 /** The sentence for an env entry naming a provider row that is not there. */
@@ -255,6 +293,19 @@ export function validateAcpSpec(
     resume = "protocol";
   }
 
+  // STORY 22.1b — THE SIGN-IN ARGV IS OPTIONAL AND SMALL (PROVISIONAL). Its
+  // entries are trimmed and empty ones dropped exactly as `args` are, and a
+  // declared sign-in that ends up with no entry is REFUSED rather than stored:
+  // the command alone starts the tool's own server, not its sign-in.
+  let signIn: AcpSignIn | undefined;
+  if (draft.signIn !== undefined) {
+    const args = (draft.signIn.args ?? [])
+      .map((arg) => arg.trim())
+      .filter((arg) => arg !== "");
+    if (args.length === 0) return refused(ACP_SENTENCES.signInArgs);
+    signIn = { args };
+  }
+
   return {
     kind: "row",
     row: {
@@ -269,6 +320,7 @@ export function validateAcpSpec(
       env,
       timeoutMinutes: Math.floor(stated),
       ...(resume === undefined ? {} : { resume }),
+      ...(signIn === undefined ? {} : { signIn }),
       notes: (draft.notes ?? "").trim(),
     },
   };
