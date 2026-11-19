@@ -346,7 +346,7 @@ export const ACP_SPECS: readonly AcpSpec[] = [
     name: "DeepSeek Harness (ACP)",
     verified: false,
     command:
-      "C:\\Users\\thema\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+      "/home/kickapookid/bin/dsh-acp.sh",
     args: ["--profile", "acp"],
     cwdPolicy: ACP_CWD_POLICY,
     env: [],
@@ -355,7 +355,7 @@ export const ACP_SPECS: readonly AcpSpec[] = [
     // (spike, 2026-11-19), so this row can continue a session.
     resume: "protocol",
     notes:
-      "UNVERIFIED — the spike (18.1) reached this absolute dsh.cmd with --profile acp and created a session; no env entry is declared, so a prompt is refused for a missing DEEPSEEK_API_KEY until you add one for your provider row. The server also advertises session/resume and answered it live (spike, 2026-11-19), so a card using this row can continue its last session. Edit the command for another install.",
+      "UNVERIFIED — the spike (18.1) reached this absolute dsh.cmd with --profile acp and created a session; no env entry is declared, so a prompt is refused for a missing DEEPSEEK_API_KEY until you add one for your provider row. The server also advertises session/resume and answered it live (spike, 2026-11-19), so a card using this row can continue its last session. On this machine the command names a small wrapper (the tool’s own launcher is a Windows shim and the app runs in WSL) that sets the launcher’s own runtime flag and runs the same entry. Edit the command for another install.",
   },
   {
     kind: "acp",
