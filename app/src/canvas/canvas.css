@@ -8227,6 +8227,16 @@ body {
   color: var(--ink-marker);
 }
 
+/* STORY 22.1 — THE ROW'S STATE, one quiet line on the expanded face: what this
+   machine knows about the card's tool row. Small, italic and faint, exactly like
+   the binding line below it; it is the data's sentence, never a badge. */
+.session-card-tool-state {
+  font-size: 10.5px;
+  line-height: 1.4;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
 /* STORY 19.2 — THE BINDING, QUIETLY: the bound PROJECT CARD's name, never its
    folder path. What the run may do there is declared in the expanded face. */
 .session-card-bound {

@@ -41,7 +41,11 @@ import {
   refuseOption,
   type AcpPermissionAsk,
 } from "../turn/acpEntries";
-import { acpScopeDeclaration } from "../turn/acpSpecs";
+import {
+  acpScopeDeclaration,
+  acpStatusSentence,
+  type AcpRowStatus,
+} from "../turn/acpSpecs";
 
 /**
  * STORY 16.22 — THE SESSION CARD'S RULES FOR THE SHARED NAME PILL. A session
@@ -283,6 +287,8 @@ export function SessionCard({
   session,
   toolName,
   declaration,
+  toolStatus = null,
+  onTestRow,
   tools = [],
   entries,
   contextCards = [],
@@ -326,6 +332,22 @@ export function SessionCard({
    * null when there is no row to declare.
    */
   declaration: string | null;
+  /**
+   * STORY 22.1 — WHAT THIS CARD'S TOOL ROW KNOWS ABOUT THIS MACHINE
+   * (PROVISIONAL), as one of three states: the command is not here, the row has
+   * never been tested here, or a test passed and this is the date and the words
+   * it answered. It is read from DATA (the row and the config's per-machine
+   * fact), never from a product's name. Absent for a card whose row this build
+   * does not ship, and rendered on the EXPANDED face only.
+   */
+  toolStatus?: AcpRowStatus | null;
+  /**
+   * STORY 22.1 — TEST this card's row: ONE tiny task through the same run lane
+   * an ordinary run uses, no transcript and no record. A completed turn with
+   * words records the fact; every other ending answers its sentence and the
+   * row stays untested. Absent in a render test.
+   */
+  onTestRow?: () => Promise<GroundAddResult>;
   /** The rows a picker may offer (the build's shipped rows). */
   tools?: readonly SessionToolChoice[];
   /** The transcript, in file order (append-only: file order is arrival order). */
@@ -730,6 +752,22 @@ export function SessionCard({
   }
 
   /**
+   * STORY 22.1 — THE ROW'S ONE PRESS. The layer runs ONE tiny task through the
+   * existing lane and its gates decide what may happen: a live card run answers
+   * the existing busy sentence, a row this build does not ship says so, and
+   * only a completed answer records a fact. A failed test keeps its own
+   * sentence and leaves the row's state exactly as it was.
+   */
+  async function testRow(): Promise<void> {
+    if (busy || onTestRow === undefined) return;
+    setBusy(true);
+    setProblem(null);
+    const result = await onTestRow();
+    setBusy(false);
+    if (!result.ok) setProblem(result.message);
+  }
+
+  /**
    * STORY 19.4 — the distil press. One curator call, then a card (or one
    * sentence): the busy flag holds the verb while the model works, and a
    * refusal — a decline, an unusable or over-long card, a failed call, no task
@@ -880,6 +918,16 @@ export function SessionCard({
         }
       />
       <div className="session-card-kind">{sessionKindLine(toolName)}</div>
+      {/* STORY 22.1 — THE ROW'S STATE, in one quiet line right under the kind
+          line, and on the EXPANDED face only: a closed card would wear it as an
+          ambient nudge, which this app does not do. The sentence comes from the
+          data (the row and the stored fact): the command's absence, the honest
+          never-tested line, or the date and the words a test answered. */}
+      {open && toolStatus !== null && (
+        <div className="session-card-tool-state">
+          {acpStatusSentence(toolStatus)}
+        </div>
+      )}
       {/* STORY 19.2 — THE BINDING, QUIETLY: the bound project card's NAME and
           never its folder path. What the run may do there is declared in the
           expanded face, where the person can see and change it. */}
@@ -1197,6 +1245,20 @@ export function SessionCard({
                 onClick={() => void startRun()}
               >
                 run
+              </button>
+            )}
+            {/* STORY 22.1 — THE ROW'S ONE VERB, beside run/stop and shown only
+                when a row is bound. It is NOT gated on the card's live run: a
+                press then answers the existing busy sentence, and the test's
+                own ending never touches that run or its transcript. */}
+            {toolName !== null && onTestRow !== undefined && (
+              <button
+                type="button"
+                className="session-card-test"
+                disabled={busy}
+                onClick={() => void testRow()}
+              >
+                test this row
               </button>
             )}
             {/* STORY 18.4 — A FINISHED RUN'S RESULT BECOMES A COPY. Offered

@@ -6,6 +6,7 @@ import {
   proposeSessionName,
 } from "../map/sessions";
 import { ACP_SPECS, acpRowLabel } from "../turn/acpSpecs";
+import { rowWithFacts, type AcpRowFact } from "../turn/acpRowStore";
 import { pickFolder, pickReadingFile } from "../workspace/dialogs";
 import { usePlane } from "./CanvasPlane";
 import type { GroundAddResult } from "./useGround";
@@ -111,6 +112,13 @@ interface GroundBubbleProps {
    * an older caller) needs no run.
    */
   onAddSession?: (name: string, tool: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 22.1 — each tool row's per-machine fact (PROVISIONAL), laid over the
+   * shipped rows here so this picker's "unverified" mark matches the session
+   * card's: it disappears only when a test on this machine passed. Absent (a
+   * render test) means every row reads untested here.
+   */
+  toolRowFacts?: readonly AcpRowFact[];
   /** Drop the draft (Esc, cancel or a press outside). */
   onClose: () => void;
 }
@@ -124,6 +132,7 @@ export function GroundBubble({
   onAddPage,
   onAddVideo,
   onAddSession,
+  toolRowFacts = [],
   onClose,
 }: GroundBubbleProps) {
   const { camera } = usePlane();
@@ -357,6 +366,10 @@ export function GroundBubble({
         : url.trim() !== "";
   const canAdd = !busy && name.trim() !== "" && hasSource;
   const addressIntent = intent === "page" || intent === "video";
+  // STORY 22.1 — THE ROWS THIS PICKER OFFERS ARE THE ROWS THIS MACHINE KNOWS:
+  // the shipped data with the per-machine fact laid over it, so a row tested
+  // here loses its "unverified" mark exactly as it does on a session card.
+  const rowChoices = ACP_SPECS.map((spec) => rowWithFacts(spec, toolRowFacts));
 
   return (
     <div
@@ -456,7 +469,7 @@ export function GroundBubble({
               if (problem !== null) setProblem(null);
             }}
           >
-            {ACP_SPECS.map((spec) => (
+            {rowChoices.map((spec) => (
               <option key={spec.id} value={spec.id}>
                 {acpRowLabel(spec)}
               </option>

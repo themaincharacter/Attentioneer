@@ -332,6 +332,104 @@ export function acpRowLabel(spec: AcpSpec): string {
   return spec.verified ? spec.name : spec.name + " (unverified)";
 }
 
+/* ------------------------------------------------------------------ *
+ * STORY 22.1 — WHAT THIS ROW KNOWS ABOUT THIS MACHINE (PROVISIONAL).
+ *
+ * The shipped rows are data and stay immutable; whether a row has been TESTED
+ * HERE is a per-machine fact that the config file keeps (turn/acpRowStore.ts
+ * lays it over the shipped rows by id). This module holds the pure half: the
+ * two facts, the three states they make, and the one sentence each state says.
+ *
+ * THE HOUSE VOICE: lowercase, present tense, and it says what is ABSENT as
+ * well as what is NOT CLAIMED. "it answered" is the only success claim there
+ * is — a test shows that one tiny task came back with words, never that the
+ * row "works", and the word "verified" appears in no sentence at all.
+ *
+ * WHY IT LIVES HERE AND NOT IN THE CARD: the sentence is computed from DATA
+ * (the row and the stored facts), never from a product's name, and the card
+ * must be able to say it without importing anything that runs a process.
+ * ------------------------------------------------------------------ */
+
+/** How much of the test's answer the row keeps (PROVISIONAL, characters). */
+export const ACP_SEEN_LINE_MAX = 80;
+
+/**
+ * WHAT A PASSING TEST SAW, as the row keeps it: the ISO date of the press and
+ * the FIRST LINE of what came back, clipped. It is a record, not a transcript:
+ * the row never keeps the whole answer, and nothing from a run enters the map.
+ */
+export interface AcpRowSeen {
+  /** The ISO date (YYYY-MM-DD) the test was run. */
+  date: string;
+  /** The first line of the answer, clipped; never the whole answer. */
+  line: string;
+}
+
+/**
+ * THE FIRST LINE, CLIPPED (PURE). The row keeps one short line of what the
+ * test answered: everything before the first line break, trimmed, cut at
+ * `max` characters with an ellipsis when it is longer. An answer with no
+ * words answers the empty string, which is not a result.
+ */
+export function acpSeenLine(text: string, max: number = ACP_SEEN_LINE_MAX): string {
+  const first = text.split(/\r?\n/)[0] ?? "";
+  const trimmed = first.trim();
+  const room = Math.max(1, Math.floor(max));
+  if (trimmed.length <= room) return trimmed;
+  return trimmed.slice(0, Math.max(1, room - 1)).trimEnd() + "…";
+}
+
+/**
+ * ONE ROW'S STATE ON THIS MACHINE. "missing" is the command not being there at
+ * all; "untested" is the honest default (the shipped rows are unverified);
+ * "tested" is only ever reached from a fact the person's own press recorded.
+ */
+export type AcpRowStatus =
+  | { kind: "missing" }
+  | { kind: "untested" }
+  | { kind: "tested"; seen: AcpRowSeen };
+
+/**
+ * THE THREE STATES, from the facts alone (PURE). `found` is whether the row's
+ * command was seen on this machine; `verified` and `seen` are the stored
+ * fact. A fact claiming a test with nothing seen is NOT a test: the state says
+ * untested rather than dress an empty answer up as a result.
+ */
+export function acpRowStatus(
+  found: boolean,
+  verified: boolean,
+  seen: AcpRowSeen | null,
+): AcpRowStatus {
+  if (!found) return { kind: "missing" };
+  if (verified && seen !== null && acpSeenLine(seen.line) !== "") {
+    return { kind: "tested", seen };
+  }
+  return { kind: "untested" };
+}
+
+/**
+ * THE ONE SENTENCE A ROW'S STATE SAYS (PURE, PROVISIONAL wording). One sentence,
+ * in the house voice: the command's absence, the honest never-tested line, or
+ * the date and the words that came back. It never says "verified" and never
+ * says "working" — a test proves an answer arrived once, not that the row is
+ * good.
+ */
+export function acpStatusSentence(status: AcpRowStatus): string {
+  if (status.kind === "missing") {
+    return "this tool is not on this machine.";
+  }
+  if (status.kind === "untested") {
+    return "this row has never been tested here.";
+  }
+  return (
+    "tested here on " +
+    status.seen.date +
+    "; it answered: “" +
+    acpSeenLine(status.seen.line) +
+    "”"
+  );
+}
+
 /**
  * THE ENV RULE MADE AUDIBLE (18.2, moved here by 18.3b): one sentence naming
  * which provider rows' keys a run will receive — never a value. It is computed

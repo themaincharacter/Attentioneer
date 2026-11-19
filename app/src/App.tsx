@@ -4675,6 +4675,11 @@ function App() {
             onStopSession={ground.stopSession}
             onAnswerSessionPermission={ground.answerSessionPermission}
             onMakeSessionResult={ground.makeCardFromRun}
+            /* STORY 22.1 — a tool row's per-machine fact and its one verb: a
+               tiny task through the existing run lane, and (only when it
+               answers) the fact the face and the picker's label both read. */
+            toolRowFacts={ground.toolRowFacts}
+            onTestSessionRow={ground.testSessionRow}
             /* STORY 19.4 — the artifact path: one curator call distils the
                completed run's result into a card, wired back to the card. */
             onDistilSessionResult={ground.distilRunResult}
@@ -5086,6 +5091,9 @@ function App() {
             /* STORY 18.3 — the fourth door: a SESSION CARD bound to one tool
                row. It is its own record family, not a reference's source. */
             onAddSession={addGroundSessionAt}
+            /* STORY 22.1 — the creation picker marks a row from the same
+               per-machine facts the session card's state line reads. */
+            toolRowFacts={ground.toolRowFacts}
             onClose={closeGroundBubble}
           />
         )}

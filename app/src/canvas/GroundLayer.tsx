@@ -71,7 +71,17 @@ import {
   type SessionCard as SessionCardRecord,
   type SessionEntry,
 } from "../map/sessions";
-import { ACP_SPECS, acpDeclaration, acpRowLabel } from "../turn/acpSpecs";
+import {
+  ACP_SPECS,
+  acpDeclaration,
+  acpRowLabel,
+  acpRowStatus,
+} from "../turn/acpSpecs";
+import {
+  rowWithFacts,
+  rowFactOf,
+  type AcpRowFact,
+} from "../turn/acpRowStore";
 import { PROVIDER_SENTENCES } from "../turn/providers";
 import type {
   AcpPermissionAsk,
@@ -656,6 +666,18 @@ interface GroundLayerProps {
   /** Make the last completed run's text into a copy card. */
   onMakeSessionResult?: (slug: string) => Promise<GroundAddResult>;
   /**
+   * STORY 22.1 — each tool row's PER-MACHINE fact, from the app config
+   * (PROVISIONAL). The layer lays them over the shipped rows by id, so the
+   * picker's label and the card's status sentence both read one merged row.
+   * Absent (a render test) means every row is untested here.
+   */
+  toolRowFacts?: readonly AcpRowFact[];
+  /**
+   * STORY 22.1 — TEST one session card's tool row: the hook owns the two
+   * gates, the tiny run and the one config fact; the layer only forwards.
+   */
+  onTestSessionRow?: (slug: string) => Promise<GroundAddResult>;
+  /**
    * STORY 19.4 — DISTIL the last completed run's result into an artifact card:
    * one curator call, the same writer the ask card's artifact uses.
    */
@@ -787,6 +809,7 @@ export function GroundLayer({
   sessionEntries = {},
   sessionRunning = [],
   sessionPermission = {},
+  toolRowFacts = [],
   onCreateAsk,
   onAskFromSelection,
   onForkAsk,
@@ -804,6 +827,7 @@ export function GroundLayer({
   onSetSessionBoundary,
   onAnswerSessionPermission,
   onMakeSessionResult,
+  onTestSessionRow,
   onDistilSessionResult,
   onRemoveSession,
   onRenameSession,
@@ -974,7 +998,13 @@ export function GroundLayer({
    * them. A tool row is DATA (`turn/acpSpecs.ts`): a second tool is an entry
    * there, never code here, and the picker only ever offers what ships.
    */
-  const sessionTools = ACP_SPECS.map((spec) => ({
+  // STORY 22.1 — THE ROW A CARD SEES IS THE ROW THIS MACHINE KNOWS: the shipped
+  // row with the ONE field a test may change (verified) laid over it by id, and
+  // nothing else. The picker's label and the card's status sentence both read
+  // this merged row, so "unverified" disappears exactly when the fact says a
+  // test passed here — never before.
+  const sessionRows = ACP_SPECS.map((spec) => rowWithFacts(spec, toolRowFacts));
+  const sessionTools = sessionRows.map((spec) => ({
     id: spec.id,
     // The label says which rows are unverified; it comes from the row, so a
     // third tool marks itself and this file never learns a product's name.
@@ -1403,8 +1433,20 @@ export function GroundLayer({
         // The row is resolved HERE, from the rows this build ships: a record
         // that names a row this build no longer has is a stated hole, never a
         // repaired record (the card offers the choice again).
-        const row =
+        const shipped =
           ACP_SPECS.find((spec) => spec.id === session.tool) ?? null;
+        const row =
+          shipped === null ? null : rowWithFacts(shipped, toolRowFacts);
+        // STORY 22.1 — WHAT THIS ROW KNOWS ABOUT THIS MACHINE, said in one
+        // sentence on the card's expanded face: the command is not here, the
+        // row has never been tested here, or a test passed and this is the date
+        // and the words it answered. A row this build does not ship has no
+        // status line: the card's own missing-tool sentence already says it.
+        const rowFact = row === null ? null : rowFactOf(toolRowFacts, row.id);
+        const toolStatus =
+          row === null
+            ? null
+            : acpRowStatus(true, row.verified, rowFact?.seen ?? null);
         // STORY 19.2 — the bound project card's NAME (never a path on the face)
         // and, when the reading really is a folder, the full path the scope
         // declaration says aloud once the person has declared a boundary.
@@ -1515,6 +1557,14 @@ export function GroundLayer({
               onMakeSessionResult === undefined
                 ? undefined
                 : () => onMakeSessionResult(session.on)
+            }
+            // STORY 22.1 — the row's state line and its one verb, both on the
+            // expanded face the person is looking at (never a closed-card line).
+            toolStatus={toolStatus}
+            onTestRow={
+              onTestSessionRow === undefined
+                ? undefined
+                : () => onTestSessionRow(session.on)
             }
             // STORY 19.4 — the artifact path, beside the rule's copy.
             onDistilResult={

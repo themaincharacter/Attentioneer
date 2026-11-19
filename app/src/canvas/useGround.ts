@@ -131,6 +131,17 @@ import { artifactPlacement, besidePlacement, type Point } from "./geometry";
 import { utf8ByteLength } from "../lib/textBytes";
 import type { SidecarStart } from "../turn/sidecar";
 import { shippedAcpSpec, type AcpSpec } from "../turn/acpSpecs";
+// STORY 22.1 — a tool row's per-machine state and the "test this row" verb. The
+// facts live in the app config (laid over the shipped rows by id); the test is
+// ONE tiny task through the SAME run wire and lane a card's run uses, and it
+// writes nothing except the fact a passing test produces.
+import {
+  loadToolRowFacts,
+  rowWithFacts,
+  patchToolRowFact,
+  type AcpRowFact,
+} from "../turn/acpRowStore";
+import { ROW_TEST_SENTENCES, runRowTest } from "../turn/acpRowTest";
 import {
   GROUND_LINK_IO,
   addGroundLink,
@@ -535,6 +546,13 @@ export interface GroundView {
    * map folder holds a pending request.
    */
   sessionPermission: Readonly<Record<string, AcpPermissionAsk>>;
+  /**
+   * STORY 22.1 — each tool row's PER-MACHINE fact, read from the app config's
+   * `toolRows` key and laid over the shipped rows by id (PROVISIONAL). It is
+   * the only place the app keeps what a "test this row" press saw; the shipped
+   * row data itself is never changed at run time.
+   */
+  toolRowFacts: readonly AcpRowFact[];
   readings: readonly Reading[];
   /**
    * Each media-bearing card's line (story 16.14): the page's title and its
@@ -874,6 +892,18 @@ export interface GroundView {
    */
   makeCardFromRun: (slug: string) => Promise<GroundAddResult>;
   /**
+   * STORY 22.1 — TEST this card's tool row (PROVISIONAL): ONE tiny task through
+   * the SAME run wire and lane the card's run uses, with NO cwd (a fresh
+   * session directory), one minute, and the row's normal env resolution. It is
+   * NOT a card run: no transcript line, no `sent`, no history, no mirror, no
+   * record. A completed turn with words records the fact — verified, the date
+   * and the first line — and the row's state says it; every other ending keeps
+   * its own sentence and leaves the state untested, with the config untouched.
+   * The card's busy gate holds: a test while its run is live answers the busy
+   * sentence and spawns nothing.
+   */
+  testSessionRow: (slug: string) => Promise<GroundAddResult>;
+  /**
    * STORY 19.4 — DISTIL THE LAST COMPLETED RUN'S RESULT into an artifact card:
    * ONE curator model call (the reused module, the manager row, the same turn
    * port), its own PRISM when the request actually left, and the same writer an
@@ -1011,6 +1041,7 @@ type GroundLoaded = Omit<
   | "stopSession"
   | "answerSessionPermission"
   | "makeCardFromRun"
+  | "testSessionRow"
   | "distilRunResult"
   | "create"
   | "createFolder"
@@ -1043,6 +1074,7 @@ const EMPTY: GroundLoaded = {
   orphanSessionTranscripts: [],
   sessionRunning: [],
   sessionPermission: {},
+  toolRowFacts: [],
   readings: [],
   media: [],
   orphanMedia: [],
@@ -3523,6 +3555,35 @@ export function startGatedSessionRun(
 }
 
 /**
+ * STORY 22.1 — WHAT A "TEST THIS ROW" PRESS ANSWERS BEFORE ANYTHING STARTS
+ * (PURE, PROVISIONAL). Two gates, in this order, and the first that answers
+ * ends the press:
+ *
+ *   1. THE CARD'S RUN IS LIVE — the existing busy sentence. The card's run is
+ *      the one that owns its transcript, so a test waits like any other verb
+ *      on a busy card; nothing is spawned and the test's own ending never
+ *      touches that run.
+ *   2. NO TOOL ROW — the card's row is not one this build ships, so there is
+ *      nothing whose state could be tested.
+ *
+ * Otherwise the press may run: one tiny task, through the same lane.
+ */
+export type RowTestGate =
+  | { kind: "ready" }
+  | { kind: "refused"; message: string };
+
+export function rowTestGate(input: {
+  liveRun: boolean;
+  row: AcpSpec | null;
+}): RowTestGate {
+  if (input.liveRun) return { kind: "refused", message: SESSION_BUSY_SENTENCE };
+  if (input.row === null) {
+    return { kind: "refused", message: SESSION_NO_TOOL_REFUSAL };
+  }
+  return { kind: "ready" };
+}
+
+/**
  * STORY 21.1 — WHAT A "CONTINUE THIS SESSION" PRESS ANSWERS BEFORE ANYTHING
  * STARTS (PROVISIONAL, PURE apart from the folder check it is handed).
  *
@@ -4326,6 +4387,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   // STORY 18.4: a pending permission ask per card. VIEW STATE — the run WAITS
   // in the sidecar; this map is only what the card draws and answers.
   const sessionPermissionRef = useRef<Record<string, AcpPermissionAsk>>({});
+  // STORY 22.1: each tool row's per-machine fact, from the config file. It is
+  // NOT map data — no write below touches it except a passing row test — and
+  // the shipped rows stay immutable; this is what is laid over them by id.
+  const toolRowFactsRef = useRef<readonly AcpRowFact[]>([]);
   const readingsRef = useRef<Reading[]>([]);
   // Story 16.14: the media lines and their READ thumbnail sources. Both are
   // view mirrors of the map folder — the thumb's bytes live in map/media/.
@@ -4498,6 +4563,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     orphanSessionTranscripts: orphanSessionTranscriptsRef.current,
     sessionRunning: sessionRunningRef.current,
     sessionPermission: sessionPermissionRef.current,
+    // STORY 22.1: the config's per-machine row facts, laid over the shipped
+    // rows by the reading that draws them. VIEW ONLY; no map file holds one.
+    toolRowFacts: toolRowFactsRef.current,
     readings: readingsRef.current,
     media: mediaRef.current,
     thumbs: thumbsRef.current,
@@ -4643,6 +4711,28 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       }),
     );
   };
+
+  /**
+   * STORY 22.1 — THE TOOL ROWS' PER-MACHINE FACTS, read once from the app
+   * config. They are not map data, so a workspace change does not clear them,
+   * and a refused read leaves the honest default: every row reads as never
+   * tested here.
+   */
+  useEffect(() => {
+    let live = true;
+    void loadToolRowFacts()
+      .then((facts) => {
+        if (!live) return;
+        toolRowFactsRef.current = facts;
+        setState(snapshot());
+      })
+      .catch(() => {
+        // An unreadable config is the same nothing the rest of the app shows.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     // A different workspace starts from its own map folder, never the last
@@ -6310,6 +6400,73 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         .catch(() => ({
           ok: false,
           message: SESSION_TRANSCRIPT_REFUSAL,
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 22.1 — TEST THIS CARD'S ROW (PROVISIONAL). ONE tiny task through the
+   * same run wire and lane an ordinary run uses, with NO cwd, one minute and
+   * the row's normal env resolution — and NOTHING that belongs to the card:
+   * no transcript entry, no `sent`, no history event, no mirror rewrite, no
+   * record write. The run settles in memory with its ending and the first line
+   * of its answer.
+   *
+   * A completed turn with words records the ONE fact the config keeps (the row
+   * id, verified, and what it saw): the face updates from the same facts the
+   * picker's label reads. Every other ending — the lane's own refusal (a
+   * missing command, a missing key) included — keeps its sentence, leaves the
+   * state untested and writes NOTHING to the config.
+   *
+   * THE CARD'S BUSY GATE HOLDS: a test while the card's run is live answers the
+   * existing busy sentence and spawns nothing, and the test's own completion
+   * never touches that run.
+   */
+  const testSessionRow = useCallback(
+    (slug: string): Promise<GroundAddResult> => {
+      const session = sessionsRef.current.find((entry) => entry.on === slug);
+      if (session === undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      const shipped = shippedAcpSpec(session.tool);
+      const gate = rowTestGate({
+        liveRun: sessionRunsRef.current[slug] !== undefined,
+        row: shipped,
+      });
+      if (gate.kind === "refused" || shipped === null) {
+        return Promise.resolve({
+          ok: false,
+          message: gate.kind === "refused" ? gate.message : SESSION_NO_TOOL_REFUSAL,
+        });
+      }
+      // The stored fact's verified mark is laid over the shipped row, so the
+      // tested row is the same row with one field changed — never a second row.
+      const row = rowWithFacts(shipped, toolRowFactsRef.current);
+      return runRowTest(row)
+        .then(async (outcome): Promise<GroundAddResult> => {
+          if (outcome.kind === "untested") {
+            // THE STATE STAYS UNTESTED and the config is untouched: the face
+            // says the ending's own sentence instead of claiming anything.
+            return { ok: false, message: outcome.sentence };
+          }
+          let facts: readonly AcpRowFact[];
+          try {
+            facts = await patchToolRowFact({
+              id: row.id,
+              verified: true,
+              seen: outcome.seen,
+            });
+          } catch {
+            return { ok: false, message: ROW_TEST_SENTENCES.notStored };
+          }
+          toolRowFactsRef.current = facts;
+          setState(snapshot());
+          return { ok: true };
+        })
+        .catch(() => ({
+          ok: false,
+          message: ROW_TEST_SENTENCES.noAnswer,
         }));
     },
     [workspacePath],
@@ -8078,6 +8235,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     orphanSessionTranscripts: state.orphanSessionTranscripts,
     sessionRunning: state.sessionRunning,
     sessionPermission: state.sessionPermission,
+    toolRowFacts: state.toolRowFacts,
     readings: state.readings,
     media: state.media,
     thumbs: state.thumbs,
@@ -8122,6 +8280,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     stopSession,
     answerSessionPermission,
     makeCardFromRun,
+    testSessionRow,
     distilRunResult,
     create,
     createFolder,
