@@ -16,7 +16,14 @@ import {
   type SessionEntry,
 } from "../map/sessions";
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
-import type { GroundAddResult } from "./useGround";
+import { SESSION_TASK_REFUSAL, type GroundAddResult } from "./useGround";
+import { PacketSurface } from "./PacketSurface";
+import {
+  ASK_DECLARATION_VERB,
+  ASK_DECLARATION_VERB_SENT,
+} from "./contactRules";
+import { assembleSessionPacket, type AskPacketCard } from "../turn/packet";
+import type { TurnMessage } from "../turn/protocol";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
 import { attachGroundCardDrag } from "./groundDrag";
@@ -45,6 +52,37 @@ const SESSION_PILL_RULES: PillNameRules = {
   displayName: sessionDisplayName,
   nameForWrite: sessionNameForWrite,
 };
+
+/**
+ * STORY 19.3 — THE TASK'S QUIET FIELD (PROVISIONAL wording). The task is
+ * EPHEMERAL: it is not a record field, so a reopened card has an empty field
+ * and only the send itself survives (the transcript's `sent` line). The
+ * placeholder says what the field is for; the label names it for a reader.
+ */
+export const SESSION_TASK_LABEL = "the task";
+export const SESSION_TASK_PLACEHOLDER = "write the task";
+
+/**
+ * STORY 19.3 — THE ONE QUIET LINE A DANGLING WIRE SAYS (PROVISIONAL wording).
+ * A wire whose source card is gone is SAID and never repaired: the wire stays
+ * in the file, and the run simply has one fewer card wired into it.
+ */
+export const SESSION_CONTEXT_DANGLING =
+  "a card wired into this run is gone; the wire is not repaired.";
+
+/**
+ * STORY 19.3 — WHICH DISCLOSURE THE CARD OFFERS (PURE). One verb, two
+ * truths: with nothing sent yet, or with a task being written, these are the
+ * bytes that WILL go; once a send is recorded and the field has not been
+ * touched since, they are the bytes that DID. The words are the ask card's
+ * own (contactRules.ts), never a second wording path.
+ */
+export function sessionDisclosureVerb(
+  hasSent: boolean,
+  typed: boolean,
+): string {
+  return hasSent && !typed ? ASK_DECLARATION_VERB_SENT : ASK_DECLARATION_VERB;
+}
 
 /**
  * THE SESSION CARD (Epic 18 story 3).
@@ -81,6 +119,16 @@ const SESSION_PILL_RULES: PillNameRules = {
  * row is there declares the next run before it starts — the key sentence
  * included, with no key in it: the ROW is named, never the value.
  *
+ * STORY 19.3 — THE TASK RIDES THE PACKET. The expanded card gains ONE field:
+ * the task, which is EPHEMERAL view state (no record field, so it is not on
+ * the line and does not survive a reopen). Beside the run verb sits ONE quiet
+ * disclosure, the ask card's own: before the press it opens "what will be
+ * sent" — the declaration (each wired card with its size and the total) and
+ * the exact bytes; after the run it opens "what was sent", read from the
+ * transcript's recorded `sent` entry, so the same card after a reopen shows
+ * the same string. The run verb refuses an empty task with one sentence and
+ * nothing starts: no fallback prompt exists any more.
+ *
  * STORY 18.5 MAKES IT REMOVABLE: the expanded card offers remove, the same
  * immediate delete + Restore toast every other card uses. A live run is never
  * cut by it — the verb waits until the transcript has stopped being written.
@@ -98,7 +146,9 @@ const SESSION_PILL_RULES: PillNameRules = {
  * the plane: the scrollbox stops the event where it starts.
  *
  * PROVISIONAL (ADR-0003's rendering seam): the card's size, the crop, the
- * scrollbox's slack, the sentence placements and the picker's look.
+ * scrollbox's slack, the sentence placements, the picker's look, and — STORY
+ * 19.3 — the task field's look, its placeholder, the dangling-wire sentence and
+ * where the disclosure sits.
  */
 
 /** How close to the bottom still counts as "at the bottom" (px, PROVISIONAL). */
@@ -214,6 +264,8 @@ export function SessionCard({
   declaration,
   tools = [],
   entries,
+  contextCards = [],
+  contextMissing = false,
   running,
   zoom = 1,
   open,
@@ -253,6 +305,15 @@ export function SessionCard({
   tools?: readonly SessionToolChoice[];
   /** The transcript, in file order (append-only: file order is arrival order). */
   entries: readonly SessionEntry[];
+  /**
+   * STORY 19.3 — THE CARDS WIRED INTO THIS SESSION CARD, as the packet reads
+   * them (whole cards, wire order). The card assembles its pre-send readback
+   * from these with the same pure assembler the send uses, so the declaration
+   * and the bytes cannot drift. Empty in a render test.
+   */
+  contextCards?: readonly AskPacketCard[];
+  /** STORY 19.3 — whether a wire whose source card is gone is on this card. */
+  contextMissing?: boolean;
   /** View state: this card has a LIVE run right now. */
   running: boolean;
   /**
@@ -273,8 +334,11 @@ export function SessionCard({
   previewLines: number;
   onOpen: () => void;
   onClose: () => void;
-  /** Start the run (the layer's writer). Optional in a render test. */
-  onRun?: () => Promise<GroundAddResult>;
+  /**
+   * STORY 19.3 — start the run with the person's task, VERBATIM (the layer's
+   * writer owns the packet, the gate and the record). Optional in a render test.
+   */
+  onRun?: (task: string) => Promise<GroundAddResult>;
   /** Stop the live run (the run's own cancel). */
   onStop?: () => Promise<void>;
   /** Bind the card to another row (one field's change). */
@@ -337,6 +401,12 @@ export function SessionCard({
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
+  // STORY 19.3 — THE TASK IS EPHEMERAL VIEW STATE (never a record field), and
+  // `typed` remembers whether the person has written in the field since the
+  // last press: it is what decides whether the disclosure opens on "what will
+  // be sent" or on the recorded "what was sent".
+  const [task, setTask] = useState("");
+  const [typed, setTyped] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // STORY 16.23 — THE CARD IS MOVABLE BY THE SAME ONE RULE as a reference.
@@ -522,11 +592,21 @@ export function SessionCard({
 
   async function startRun(): Promise<void> {
     if (busy || running || onRun === undefined) return;
+    // STORY 19.3 — AN EMPTY TASK IS ONE SENTENCE AND NOTHING ELSE. No request
+    // is sent and no transcript line is written; the layer refuses the same
+    // way, so no caller can start a run with a packet nobody wrote.
+    if (task.trim() === "") {
+      setProblem(SESSION_TASK_REFUSAL);
+      return;
+    }
     setBusy(true);
     setProblem(null);
+    // The press makes the task the recorded send: the disclosure flips to
+    // "what was sent" the moment the `sent` line arrives through the prop.
+    setTyped(false);
     // The run's own promise settles when the run does; awaiting it only holds
     // THIS handler, never the card. The entries arrive through the prop.
-    const result = await onRun();
+    const result = await onRun(task);
     setBusy(false);
     // The ENDING is the transcript's line; only a record that could not keep
     // up answers a sentence here.
@@ -617,6 +697,37 @@ export function SessionCard({
     projectFolder !== null && session.boundary !== undefined
       ? acpScopeDeclaration(projectFolder, session.boundary)
       : null;
+
+  // STORY 19.3 — WHAT THE CARD WOULD SEND, and WHAT IT DID SEND. The packet is
+  // assembled from the typed task and the wired cards by the SAME pure seam the
+  // run uses; the recorded `sent` entry is the transcript's own bytes. The
+  // disclosure below renders one or the other — never a re-composition of them.
+  const sentEntry = (() => {
+    for (let at = entries.length - 1; at >= 0; at -= 1) {
+      const entry = entries[at]!;
+      if (entry.kind === "sent") return entry;
+    }
+    return null;
+  })();
+  const packet =
+    open && task.trim() !== ""
+      ? assembleSessionPacket(task, contextCards)
+      : null;
+  const showingSent = sentEntry !== null && !typed;
+  const readbackMessages: readonly TurnMessage[] | null = showingSent
+    ? [{ role: "user", content: sentEntry.text }]
+    : packet === null
+      ? null
+      : packet.messages;
+  // The declaration is the packet's own sizes. After the send it is shown only
+  // when the packet still describes exactly those bytes; a changed task or a
+  // changed wire set means the sizes no longer belong to what left, and the
+  // recorded bytes stand alone rather than wear a wrong declaration.
+  const readbackDeclaration = showingSent
+    ? packet !== null && packet.text === sentEntry.text
+      ? packet.declaration
+      : null
+    : (packet?.declaration ?? null);
 
   const newest = sessionNewestEntry(entries);
   const smallFolded =
@@ -840,6 +951,27 @@ export function SessionCard({
               )}
             </div>
           )}
+          {/* STORY 19.3 — THE TASK. The person writes what this run should do.
+              It is EPHEMERAL (no record field): the only thing that survives a
+              reopen is the send itself, recorded in the transcript. Empty means
+              the run verb answers one sentence and nothing starts. */}
+          <textarea
+            className="session-card-task"
+            aria-label={SESSION_TASK_LABEL}
+            placeholder={SESSION_TASK_PLACEHOLDER}
+            value={task}
+            disabled={busy || running}
+            onChange={(e) => {
+              setTask(e.target.value);
+              setTyped(true);
+              if (problem !== null) setProblem(null);
+            }}
+          />
+          {contextMissing && (
+            <div className="session-card-wired-missing">
+              {SESSION_CONTEXT_DANGLING}
+            </div>
+          )}
           {/* THE DECLARATION FOR THE NEXT RUN: 18.2's one sentence, computed
               from the row alone. It names a provider ROW, never a key. */}
           {declaration !== null && (
@@ -853,6 +985,26 @@ export function SessionCard({
             <div className="session-card-declaration session-card-scope">
               {scopeDeclaration}
             </div>
+          )}
+          {/* STORY 19.3 — ONE QUIET DISCLOSURE, the ask card's own shape: the
+              declaration line (every block with its exact size and the total)
+              and the exact bytes, one press away. Before the press it is "what
+              will be sent"; after the run it is "what was sent", read from the
+              transcript's recorded `sent` entry, so a reopen is the same
+              bytes. The bytes are NEVER normalized: the pre-send packet's text,
+              the wire's prompt and the recorded entry are one string. */}
+          {readbackMessages !== null && (
+            <details className="ask-card-declaration session-card-sent">
+              <summary className="ask-card-declaration-verb">
+                {sessionDisclosureVerb(sentEntry !== null, typed)}
+              </summary>
+              <div className="ask-card-declaration-body">
+                <PacketSurface
+                  declaration={readbackDeclaration}
+                  messages={readbackMessages}
+                />
+              </div>
+            </details>
           )}
           <div className="session-card-actions">
             {running ? (

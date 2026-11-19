@@ -51,6 +51,9 @@ import {
 
 const ROOT = mkdtempSync(join(tmpdir(), "attentioneer-dead-sidecar-"));
 
+/** The task every direct run in this suite hands the seam (story 19.3). */
+const TASK = "say what this folder is for";
+
 /** Every sidecar this suite opened, killed at the end whatever happens. */
 const PIPES: SidecarPipe[] = [];
 
@@ -150,6 +153,7 @@ describe("a sidecar killed mid-run", () => {
     let sawWords = false;
 
     const started = beginSessionRun(base, row("hang-mid-turn", reportPath), "one", {
+      task: TASK,
       readKey: async () => "",
       transport: pipe.transport,
       start: async () => STARTED,
@@ -245,6 +249,7 @@ describe("a sidecar killed mid-run", () => {
     const deadReport = join(base, "dead.json");
     let sawWords = false;
     const first = beginSessionRun(base, row("hang-mid-turn", deadReport), "one", {
+      task: TASK,
       readKey: async () => "",
       transport: lane.transport,
       start: () => lane.start(),
@@ -271,6 +276,7 @@ describe("a sidecar killed mid-run", () => {
       row("tools", join(base, "alive.json")),
       "one",
       {
+        task: TASK,
         readKey: async () => "",
         transport: lane.transport,
         start: () => lane.start(),
@@ -325,6 +331,7 @@ describe("a close racing the run's own ending", () => {
     };
 
     const started = beginSessionRun(base, row("tools", join(base, "unused.json")), "one", {
+      task: TASK,
       readKey: async () => "",
       transport,
       start: async () => STARTED,
@@ -383,6 +390,7 @@ describe("a close racing the run's own ending", () => {
       },
     };
     const started = beginSessionRun(base, row("tools", join(base, "unused.json")), "one", {
+      task: TASK,
       readKey: async () => "",
       transport,
       start: async () => STARTED,

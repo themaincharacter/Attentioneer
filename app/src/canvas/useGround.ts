@@ -226,6 +226,7 @@ import {
 import {
   ASK_CONTEXT_BOUND,
   assembleAskCardPacket,
+  assembleSessionPacket,
   selectAskContextCards,
   type AskPacket,
   type AskPacketCard,
@@ -817,12 +818,14 @@ export interface GroundView {
     boundary: "read" | "write" | null,
   ) => Promise<GroundAddResult>;
   /**
-   * STORY 18.3 — RUN one session card: the row's 18.2 lifecycle, with every
-   * progress entry appended to the transcript as it arrives. ONE RUN PER CARD:
-   * a second press answers one sentence. A card whose row is gone answers one
-   * sentence and starts nothing (the card offers the choice again).
+   * STORY 18.3 — RUN one session card with the person's task (story 19.3: the
+   * task is what the packet's first block carries, so a run cannot start
+   * without one): the row's 18.2 lifecycle, with every progress entry appended
+   * to the transcript as it arrives. ONE RUN PER CARD: a second press answers
+   * one sentence. An empty task, or a card whose row is gone, answers one
+   * sentence and starts nothing.
    */
-  runSession: (slug: string) => Promise<GroundAddResult>;
+  runSession: (slug: string, task: string) => Promise<GroundAddResult>;
   /**
    * STORY 18.3 — STOP the live run: the run's own cancel (session/cancel, then
    * the child), so what arrived stays and the ending is the run's own. A press
@@ -2479,8 +2482,13 @@ export interface AskContextWires {
   dangling: string[];
 }
 
-export function askContextSources(
-  ask: string,
+/**
+ * THE WIRE WALK (PURE), one rule for both card families: the links whose
+ * TARGET is this card, in FILE ORDER, deduped; a source the map does not carry
+ * is DANGLING — reported, never repaired.
+ */
+function wiredContextSources(
+  target: string,
   links: readonly GroundLink[],
   known: Iterable<string>,
 ): AskContextWires {
@@ -2489,13 +2497,39 @@ export function askContextSources(
   const dangling: string[] = [];
   const seen = new Set<string>();
   for (const link of links) {
-    if (link.to !== ask) continue;
+    if (link.to !== target) continue;
     if (seen.has(link.from)) continue;
     seen.add(link.from);
     if (knownSet.has(link.from)) sources.push(link.from);
     else dangling.push(link.from);
   }
   return { sources, dangling };
+}
+
+/** THE ASK CARD'S WIRES (Epic 17 story 9, PURE): the wire walk, on the ask. */
+export function askContextSources(
+  ask: string,
+  links: readonly GroundLink[],
+  known: Iterable<string>,
+): AskContextWires {
+  return wiredContextSources(ask, links, known);
+}
+
+/**
+ * STORY 19.3 — THE RUN'S WIRES (PURE): the cards whose link TARGETS this
+ * SESSION card, in file order, deduped. The user's rule is the same one the
+ * ask card obeys — a card's context is what is wired INTO it, not a field on
+ * its record — so this is the ask's rule, one family over: the same walk, the
+ * same dedupe, the same one wire-file order. A wire whose source card is gone
+ * is DANGLING: reported here so the card can say it, never repaired by
+ * inventing a card or deleting the line.
+ */
+export function sessionContextSources(
+  session: string,
+  links: readonly GroundLink[],
+  known: Iterable<string>,
+): AskContextWires {
+  return wiredContextSources(session, links, known);
 }
 
 /**
@@ -2513,9 +2547,13 @@ export const ASK_CONTEXT_RUN_UNFINISHED =
 export const ASK_CONTEXT_RUN_EMPTY =
   "the last run in this card finished without words, so nothing rides with it.";
 
-/** What the resolver is handed: the loaded map, never a reader. */
-export interface AskContextFactsInput {
-  ask: string;
+/**
+ * What a wired-card resolver is handed: the loaded map, never a reader. The
+ * ask card and the session card resolve the SAME sources (a reference's crop,
+ * an ask's last completed answer, a session's last completed run), so the map
+ * they read is one shape and the two entry points below cannot drift.
+ */
+export interface WiredContextInput {
   links: readonly GroundLink[];
   references: readonly GroundReference[];
   asks: readonly AskCard[];
@@ -2526,6 +2564,16 @@ export interface AskContextFactsInput {
   texts: Readonly<Record<string, string>>;
   notes: Readonly<Record<string, string>>;
   states: Readonly<Record<string, ReadingState>>;
+}
+
+/** What the ask card's resolver is handed: the wired cards, anchored on it. */
+export interface AskContextFactsInput extends WiredContextInput {
+  ask: string;
+}
+
+/** STORY 19.3 — what a SESSION card's resolver is handed, anchored on it. */
+export interface SessionContextFactsInput extends WiredContextInput {
+  session: string;
 }
 
 /** The wired cards' facts and the wires that dangle. */
@@ -2556,14 +2604,7 @@ export interface AskContextFacts {
 export function askContextFactsOf(
   input: AskContextFactsInput,
 ): AskContextFacts {
-  const sessions = input.sessions ?? [];
-  const sessionEntries = input.sessionEntries ?? {};
-  const known = [
-    ...input.references.map((reference) => reference.on),
-    ...input.asks.map((ask) => ask.on),
-    ...sessions.map((session) => session.on),
-  ];
-  const wired = askContextSources(input.ask, input.links, known);
+  const wired = askContextSources(input.ask, input.links, knownCardSlugsOf(input));
   const facts: AskCardFacts[] = [];
   // STORY 16.19 — THE CHOSEN WORDS ARE ONE MORE SOURCE KIND, and they ride
   // FIRST: the question this card was made from was asked about exactly these
@@ -2579,7 +2620,7 @@ export function askContextFactsOf(
         ? null
         : (input.references.find((reference) => reference.on === from)?.name ??
           input.asks.find((entry) => entry.on === from)?.name ??
-          sessions.find((entry) => entry.on === from)?.name ??
+          (input.sessions ?? []).find((entry) => entry.on === from)?.name ??
           null);
     facts.push({
       name: chosenWordsName(sourceName),
@@ -2590,6 +2631,29 @@ export function askContextFactsOf(
       chosen: chooser.chosen,
     });
   }
+  return wiredContextFacts(wired, input, facts);
+}
+
+/**
+ * THE WIRED CARDS' FACTS, from the wires outward (PURE): one block per source,
+ * resolved by what its own family HAS — a reference's state and crops, an ask's
+ * most recent completed answer, a session's most recent completed run — and the
+ * one quiet line when a wired ask or session card has no finished words to
+ * lend. A wire that dangles is returned with the facts, never repaired.
+ *
+ * STORY 19.3 — ONE RESOLVER FOR BOTH ENTRY POINTS. The ask card passes its
+ * chosen-words fact first; the session card passes none (a run has no chosen
+ * words), and the two cannot drift because the sources, their order and their
+ * one-line fallbacks live here once.
+ */
+function wiredContextFacts(
+  wired: AskContextWires,
+  input: WiredContextInput,
+  initial: readonly AskCardFacts[],
+): AskContextFacts {
+  const sessions = input.sessions ?? [];
+  const sessionEntries = input.sessionEntries ?? {};
+  const facts: AskCardFacts[] = [...initial];
   for (const source of wired.sources) {
     const reference = input.references.find((entry) => entry.on === source);
     if (reference !== undefined) {
@@ -2659,6 +2723,38 @@ export function askContextFactsOf(
     });
   }
   return { facts, dangling: wired.dangling };
+}
+
+/**
+ * STORY 19.3 — WHAT IS WIRED INTO A SESSION CARD, resolved from the LOADED map:
+ * the cards whose link TARGETS this session card, in file order, each as the
+ * block a run's packet sends. The same pipeline the ask card uses — the wires
+ * choose the cards, the resolver reads what each one has, a dangling wire is
+ * reported and not repaired — so the packet the card declares and the packet
+ * the run sends are composed from one description of the same records.
+ *
+ * A wired session card lends its last COMPLETED run's text whole; a run that
+ * never completed lends nothing (its one quiet line says so), never a partial
+ * dressed as a result.
+ */
+export function sessionContextFactsOf(
+  input: SessionContextFactsInput,
+): AskContextFacts {
+  const wired = sessionContextSources(
+    input.session,
+    input.links,
+    knownCardSlugsOf(input),
+  );
+  return wiredContextFacts(wired, input, []);
+}
+
+/** Every slug the three card families carry, as the wire's resolvable set. */
+function knownCardSlugsOf(input: WiredContextInput): string[] {
+  return [
+    ...input.references.map((reference) => reference.on),
+    ...input.asks.map((ask) => ask.on),
+    ...(input.sessions ?? []).map((session) => session.on),
+  ];
 }
 
 /**
@@ -2956,19 +3052,26 @@ export async function writeAskTurn(
  * a record): a second press answers ONE sentence, and the handle is dropped
  * when the run settles, so no spinner can outlive its run.
  *
- * PROVISIONAL: the prompt below, the permission policy (refuse — 18.4 owns
- * "who decides"), and the mapping from a run report to a transcript kind.
+ *   - THE TASK (story 19.3): the prompt is no longer a module constant. The
+ *     person writes the task on the card, the cards wired INTO the card ride as
+ *     bounded context, and the packet assembled from them is what the request
+ *     carries (turn/packet.ts). The exact bytes are recorded as the
+ *     transcript's `sent` entry BEFORE the request goes out, so the pre-send
+ *     readback, the wire and a reopened card's "what was sent" are one string.
+ *     An empty task never starts anything: the run verb answers one sentence.
+ *
+ * PROVISIONAL: the task's one refusal sentence, the packet's title and block
+ * order, the permission policy (refuse — 18.4 owns "who decides"), and the
+ * mapping from a run report to a transcript kind.
  * ------------------------------------------------------------------------- */
 
 /**
- * THE ONE PROMPT a card's run sends (PROVISIONAL). 18.3's card has no prompt
- * field: the run is the row, the session directory and this small read-only
- * ask, and handing MAP CONTEXT over is 18.4's work. It asks for words and
- * changes nothing, so the shipped row's failure is about the key and not about
- * what it was asked to do.
+ * STORY 19.3 — THE ONE SENTENCE AN EMPTY TASK ANSWERS (PROVISIONAL wording).
+ * No run starts, no request leaves and no transcript line is written: a run
+ * with no task would send a packet the person did not write, which is exactly
+ * the module constant this story deletes.
  */
-export const SESSION_PROMPT =
-  "list the files in this directory and say in one sentence what this folder is for. change nothing.";
+export const SESSION_TASK_REFUSAL = "write the task first.";
 
 /**
  * STORY 18.5 — the one sentence a run's PRISM that could not be written answers.
@@ -3029,9 +3132,10 @@ function permissionReplyOf(entry: {
 
 /**
  * ONE RUN REPORT AS ONE TRANSCRIPT ENTRY (PURE), or `null` when the report is
- * not one of the six kinds the card can state. A thought, a plan and a transport
- * diagnostic are not dressed as the agent's words: the ending carries the run's
- * one sentence, and the transcript holds what the person watched.
+ * not one of the kinds a report becomes (the send itself is written by the run
+ * seam, never reported). A thought, a plan and a transport diagnostic are not
+ * dressed as the agent's words: the ending carries the run's one sentence, and
+ * the transcript holds what the person watched.
  *
  * The timestamp is handed in, so a test can pin it and the record carries the
  * writer's clock rather than this function's.
@@ -3081,8 +3185,8 @@ export function sessionEntryOf(
         reply: permissionReplyOf(entry),
       };
     case "problem":
-      // A transport diagnostic is not one of the six kinds; a run that cannot
-      // go on ends, and the ending's one sentence is what the card states.
+      // A transport diagnostic is not a kind a report becomes; a run that
+      // cannot go on ends, and the ending's one sentence is what the card states.
       return null;
     case "ended": {
       const ended: SessionEntry = { kind: "ended", ending: entry.ending, t };
@@ -3110,8 +3214,8 @@ export interface SessionRunStart {
   done: Promise<SessionRunDone>;
 }
 
-/** What a run needs from the app, all injectable for a test. */
-export interface SessionRunOptions {
+/** What a run needs from the app's seams, all injectable for a test. */
+export interface SessionRunPlumbing {
   /** The key for ONE provider row, read at request time and never logged. */
   readKey?: (providerId: string) => Promise<string>;
   /** The sidecar pipe a test drives; the app's own by default. */
@@ -3130,6 +3234,24 @@ export interface SessionRunOptions {
   onPermission?: (ask: AcpPermissionAsk) => void;
   /** The transcript bridges (a test's fake, or the map's own files). */
   transcriptIo?: SessionIo;
+}
+
+/**
+ * WHAT ONE RUN SENDS (story 19.3), beside the plumbing above. THE TASK IS
+ * REQUIRED: there is no module constant and no fallback prompt any more, so a
+ * caller that has no task has no run to start. The card's verb refuses an empty
+ * one before this seam is reached, and the packet the task and context make is
+ * the exact string the request carries and the transcript records.
+ */
+export interface SessionRunOptions extends SessionRunPlumbing {
+  /** The person's task, VERBATIM — the packet's first block. */
+  task: string;
+  /**
+   * The cards wired INTO this session card, as the packet reads them. The
+   * stated bound is applied inside the assembler, so this is every wired card
+   * in wire order, never a pre-cut list.
+   */
+  context?: readonly AskPacketCard[];
   /**
    * STORY 19.2 — WHERE THE RUN STARTS, when the card is bound to a project and
    * a boundary was declared (PROVISIONAL). An absolute folder path; absent
@@ -3158,12 +3280,17 @@ export function beginSessionRun(
   workspacePath: string,
   row: AcpSpec,
   slug: string,
-  options: SessionRunOptions = {},
+  options: SessionRunOptions,
 ): SessionRunStart {
   const now = options.now ?? (() => new Date().toISOString());
   const written: SessionEntry[] = [];
   let chain: Promise<void> = Promise.resolve();
   let notice: string | null = null;
+  // STORY 19.3 — THE PACKET IS THE PROMPT. The task and the wired context are
+  // assembled by the pure seam (turn/packet.ts), so the bytes recorded below,
+  // the bytes the card declared before the press and the bytes on the wire are
+  // ONE string. Nothing is trimmed, normalized or re-composed here.
+  const packet = assembleSessionPacket(options.task, options.context ?? []);
 
   const record = (line: SessionEntry | null): void => {
     if (line === null) return;
@@ -3185,7 +3312,13 @@ export function beginSessionRun(
     options.onEntry?.(line);
   };
 
-  const handle = startSessionRun(row, SESSION_PROMPT, {
+  // THE SEND IS THE RECORD, and it is written FIRST: the sent line is
+  // pushed onto the one append chain before the request is asked of the
+  // sidecar, so the transcript always holds what left before anything the run
+  // reports about itself. A reopened card opens "what was sent" from this line.
+  record({ kind: "sent", text: packet.text, t: now() });
+
+  const handle = startSessionRun(row, packet.text, {
     // The key is read HERE, from the rows the tool declares, and handed to the
     // sidecar inside the request's payload — never an argv, never state.
     ...(options.readKey === undefined
@@ -3220,6 +3353,68 @@ export function beginSessionRun(
   );
 
   return { handle, done };
+}
+
+/**
+ * STORY 19.3 — WHAT ONE PRESS OF THE RUN VERB DOES BEFORE ANYTHING SPAWNS
+ * (PURE except for the seam it is handed). Three gates, in this order, and the
+ * first that answers ends the press:
+ *
+ *   1. NO TASK — one sentence and nothing else. A run with no task would send a
+ *      packet the person never wrote, so it is refused before a key is read,
+ *      before a folder is resolved and before the sidecar is asked.
+ *   2. NO TOOL ROW — the card's row is gone, so there is nothing to run.
+ *   3. A BINDING THAT DOES NOT RESOLVE — its own sentence (story 19.2), still
+ *      before any spawn.
+ *
+ * Otherwise the run starts with the person's task and the wired context; the
+ * packet is assembled inside `beginSessionRun`, so a refused press writes no
+ * transcript line and sends no request.
+ */
+export type GatedSessionRun =
+  | { kind: "refused"; message: string }
+  | { kind: "started"; start: SessionRunStart };
+
+export function startGatedSessionRun(
+  workspacePath: string,
+  input: {
+    /** The card, or undefined when the slug is not on the map. */
+    session: SessionCard | undefined;
+    /** The person's task, VERBATIM. */
+    task: string;
+    /** The cards wired into the card, in wire order. */
+    context?: readonly AskPacketCard[];
+    /** The row this build ships for the card's tool id, or null. */
+    row: AcpSpec | null;
+    /** The loaded readings, for resolving a bound project. */
+    readings: readonly Reading[];
+  },
+  options: SessionRunPlumbing = {},
+): GatedSessionRun {
+  if (input.session === undefined) {
+    return { kind: "refused", message: SESSION_MISSING_REFUSAL };
+  }
+  if (input.task.trim() === "") {
+    return { kind: "refused", message: SESSION_TASK_REFUSAL };
+  }
+  if (input.row === null) {
+    return { kind: "refused", message: SESSION_NO_TOOL_REFUSAL };
+  }
+  const bound = sessionBoundScope(input.session, input.readings);
+  if (bound.kind === "refused") {
+    return { kind: "refused", message: bound.sentence };
+  }
+  return {
+    kind: "started",
+    start: beginSessionRun(workspacePath, input.row, input.session.on, {
+      ...options,
+      task: input.task,
+      ...(input.context === undefined ? {} : { context: input.context }),
+      ...(bound.kind === "bound"
+        ? { cwd: bound.cwd, scope: bound.scope }
+        : {}),
+    }),
+  };
 }
 
 /**
@@ -5826,12 +6021,18 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * leaves the running list the instant the run settles — a stopped or failed
    * run can never leave its stop verb (or a spinner) standing.
    *
+   * STORY 19.3 — THE TASK RIDES THE PACKET. The person's typed task and the
+   * cards WIRED INTO this card are collected HERE, from the loaded map, and
+   * handed to the one gated start; the packet they make is what the request
+   * carries and what the transcript's `sent` line records. An empty task is
+   * refused before a key, a folder or a child is touched.
+   *
    * The result says only whether the RECORD could keep up: the ENDING is the
    * transcript's own `ended` line, which the card reads back from the file, so
    * the view and a reopen show the same bytes.
    */
   const runSession = useCallback(
-    (slug: string): Promise<GroundAddResult> => {
+    (slug: string, task: string): Promise<GroundAddResult> => {
       const session = sessionsRef.current.find((entry) => entry.on === slug);
       if (session === undefined) {
         return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
@@ -5839,51 +6040,67 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       if (sessionRunsRef.current[slug] !== undefined) {
         return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
       }
-      const row = shippedAcpSpec(session.tool);
-      if (row === null) {
-        return Promise.resolve({ ok: false, message: SESSION_NO_TOOL_REFUSAL });
-      }
-      // STORY 19.2 — A BOUND, DECLARED CARD RUNS IN ITS PROJECT'S FOLDER. The
-      // binding is resolved against the LOADED readings, never the record
-      // alone; an unbound card (or one with no declared boundary) is exactly
-      // today's run, and a declared binding that does not resolve refuses with
-      // one sentence before the sidecar is ever asked.
-      const bound = sessionBoundScope(session, readingsRef.current);
-      if (bound.kind === "refused") {
-        return Promise.resolve({ ok: false, message: bound.sentence });
-      }
-      const started = beginSessionRun(workspacePath, row, slug, {
-        ...(bound.kind === "bound"
-          ? { cwd: bound.cwd, scope: bound.scope }
-          : {}),
-        // The view follows each entry as the run reports it. The file is the
-        // record; this is the same arrival order, one render behind the write.
-        onEntry: (entry) => {
-          const current = sessionEntriesRef.current[slug] ?? [];
-          sessionEntriesRef.current = {
-            ...sessionEntriesRef.current,
-            [slug]: [...current, entry],
-          };
-          setState(snapshot());
-        },
-        // STORY 18.4 — THE PERSON'S SURFACE. The ask is held as view state so
-        // the card can say what the tool wants and offer allow-once/refuse; the
-        // run itself is WAITING in the sidecar until this card answers.
-        onPermission: (ask) => {
-          sessionPermissionRef.current = {
-            ...sessionPermissionRef.current,
-            [slug]: ask,
-          };
-          setState(snapshot());
-        },
+      // STORY 19.3 — WHAT THE WIRES LEND THIS RUN: the same pure pipeline the
+      // card's pre-send declaration uses, read from the loaded refs at the
+      // moment of the press, so the declared bytes and the sent bytes are
+      // composed from one description of the same records.
+      const wired = sessionContextFactsOf({
+        session: slug,
+        links: linksRef.current,
+        references: referencesRef.current,
+        asks: asksRef.current,
+        askTurns: askTurnsRef.current,
+        sessions: sessionsRef.current,
+        sessionEntries: sessionEntriesRef.current,
+        readings: readingsRef.current,
+        texts: textsRef.current,
+        notes: notesRef.current,
+        states: statesRef.current,
       });
+      const started = startGatedSessionRun(
+        workspacePath,
+        {
+          session,
+          task,
+          context: askCardsContext(wired.facts).cards,
+          row: shippedAcpSpec(session.tool),
+          readings: readingsRef.current,
+        },
+        {
+          // The view follows each entry as the run reports it. The file is the
+          // record; this is the same arrival order, one render behind the write.
+          onEntry: (entry) => {
+            const current = sessionEntriesRef.current[slug] ?? [];
+            sessionEntriesRef.current = {
+              ...sessionEntriesRef.current,
+              [slug]: [...current, entry],
+            };
+            setState(snapshot());
+          },
+          // STORY 18.4 — THE PERSON'S SURFACE. The ask is held as view state so
+          // the card can say what the tool wants and offer allow-once/refuse;
+          // the run itself is WAITING in the sidecar until this card answers.
+          onPermission: (ask) => {
+            sessionPermissionRef.current = {
+              ...sessionPermissionRef.current,
+              [slug]: ask,
+            };
+            setState(snapshot());
+          },
+        },
+      );
+      if (started.kind === "refused") {
+        // NOTHING SPAWNED AND NOTHING WRITTEN: one sentence, and the card's
+        // problem line is the whole of the press.
+        return Promise.resolve({ ok: false, message: started.message });
+      }
       sessionRunsRef.current = {
         ...sessionRunsRef.current,
-        [slug]: started.handle,
+        [slug]: started.start.handle,
       };
       sessionRunningRef.current = [...sessionRunningRef.current, slug];
       setState(snapshot());
-      return started.done
+      return started.start.done
         .then(async (done): Promise<GroundAddResult> => {
           const runs = { ...sessionRunsRef.current };
           delete runs[slug];

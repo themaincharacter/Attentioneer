@@ -50,7 +50,6 @@ import {
 import { addAsk, sharedSlugs, type AskCard } from "../src/map/asks";
 import { addGroundReference, type GroundReference } from "../src/map/ground";
 import {
-  SESSION_PROMPT,
   beginSessionRun,
   bindSessionCard,
   sessionEntryOf,
@@ -72,6 +71,7 @@ import {
   sessionAtBottom,
 } from "../src/canvas/SessionCard";
 import { ACP_SPECS, type AcpSpec } from "../src/turn/acpSpecs";
+import { assembleSessionPacket } from "../src/turn/packet";
 import { acpDeclaration } from "../src/turn/acpSpecs";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
 import { CONTENT_CLASSES } from "../src/canvas/gates";
@@ -105,6 +105,9 @@ const THAT = fileURLToPath(new URL(".", import.meta.url));
 const BUN = process.execPath;
 const FAKE = join(THAT, "fixtures", "acp-fake-server.ts");
 const ROOT = mkdtempSync(join(tmpdir(), "attentioneer-session-card-"));
+
+/** The task every direct run in this suite hands the seam (story 19.3). */
+const TASK = "say what this folder is for";
 
 afterAll(() => {
   rmSync(ROOT, { recursive: true, force: true });
@@ -528,6 +531,7 @@ describe("a run's transcript, appended as it arrives", () => {
     const fx = fixture("tools");
     const base = workspace();
     const started = beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -539,7 +543,10 @@ describe("a run's transcript, appended as it arrives", () => {
     expect(done.ending).toBe("completed");
     expect(done.sentence).toBeNull();
     expect(done.notice).toBeNull();
+    // STORY 19.3 — the run's FIRST entry is the send itself: the exact prompt
+    // bytes are recorded before the request goes out, then the run's own beats.
     expect(done.entries.map((entry) => entry.kind)).toEqual([
+      "sent",
       "started",
       "session",
       "tool",
@@ -548,22 +555,27 @@ describe("a run's transcript, appended as it arrives", () => {
       "text",
       "ended",
     ]);
+    expect(done.entries[0]).toEqual({
+      kind: "sent",
+      text: assembleSessionPacket(TASK, []).text,
+      t: "2026-11-18T00:00:00.000Z",
+    });
     // The tool call is recorded with the name the server gave it and the
     // status it reported, twice: pending, then completed.
-    expect(done.entries[2]).toEqual({
+    expect(done.entries[3]).toEqual({
       kind: "tool",
       name: "Read the working directory",
       status: "pending",
     });
-    expect(done.entries[4]).toEqual({
+    expect(done.entries[5]).toEqual({
       kind: "tool",
       name: "a tool call",
       status: "completed",
     });
     // The words are VERBATIM, in the order they arrived.
-    expect(done.entries[3]).toEqual({ kind: "text", text: "one " });
-    expect(done.entries[5]).toEqual({ kind: "text", text: "two" });
-    expect(done.entries[6]).toEqual({
+    expect(done.entries[4]).toEqual({ kind: "text", text: "one " });
+    expect(done.entries[6]).toEqual({ kind: "text", text: "two" });
+    expect(done.entries[7]).toEqual({
       kind: "ended",
       ending: "completed",
       t: "2026-11-18T00:00:00.000Z",
@@ -588,6 +600,7 @@ describe("a run's transcript, appended as it arrives", () => {
     // rejection that crossed.
     let started: ReturnType<typeof beginSessionRun> | null = null;
     started = beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -611,6 +624,7 @@ describe("a run's transcript, appended as it arrives", () => {
     const base = workspace();
     let started: ReturnType<typeof beginSessionRun> | null = null;
     started = beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -648,6 +662,7 @@ describe("a run's transcript, appended as it arrives", () => {
     const base = workspace();
     const asks: string[] = [];
     const started = beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -684,6 +699,7 @@ describe("a run's transcript, appended as it arrives", () => {
     const base = workspace();
     const arrived: SessionEntry[] = [];
     const started = beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -713,6 +729,7 @@ describe("a run's transcript, appended as it arrives", () => {
     const fx = fixture("die-mid-turn");
     const base = workspace();
     const started = beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -736,6 +753,7 @@ describe("a run's transcript, appended as it arrives", () => {
     const fx = fixture("silent", { timeoutMinutes: 0.003 });
     const base = workspace();
     const started = beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -763,6 +781,7 @@ describe("a run's transcript, appended as it arrives", () => {
     const fx = fixture("no-key");
     const base = workspace();
     const started = beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       // No readKey needed: a row with no env entry reads nothing.
       readKey: async () => {
         throw new Error("a row with no env entry must read no key");
@@ -792,6 +811,7 @@ describe("a run's transcript, appended as it arrives", () => {
     const fx = fixture("tools");
     const base = workspace();
     const first = await beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -800,6 +820,7 @@ describe("a run's transcript, appended as it arrives", () => {
     const afterFirst = readFileSync(sessionTranscriptPath(base, "one"), "utf8");
 
     const second = await beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -830,6 +851,7 @@ describe("a run's transcript, appended as it arrives", () => {
     });
     const base = workspace();
     const started = beginSessionRun(base, fx.row, "one", {
+      task: TASK,
       readKey: async (providerId: string) => {
         expect(providerId).toBe("row-1");
         return SENTINEL;
@@ -888,6 +910,7 @@ describe("a run's transcript, appended as it arrives", () => {
     );
     const fx = fixture("tools");
     await beginSessionRun(base, fx.row, "a-run", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -1069,6 +1092,7 @@ describe("the session card", () => {
     );
     const fx = fixture("tools");
     await beginSessionRun(base, fx.row, "rain-gauge-session", {
+      task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
@@ -1609,11 +1633,16 @@ describe("the session card's boundaries", () => {
     }
   });
 
-  test("a session card's record is the row, never the prompt's wording or a value", () => {
-    // The prompt is a constant of the run seam (18.4 hands map context later),
-    // and it asks for words only.
-    expect(SESSION_PROMPT.length).toBeGreaterThan(0);
-    expect(SESSION_PROMPT).toContain("change nothing");
+  test("a session card's record is the row, never a prompt constant or a value", () => {
+    // STORY 19.3 — the prompt is the person's task, assembled per run, so the
+    // run seam carries NO module prompt any more: the hook has no such
+    // constant, and the record still names only the row.
+    const hook = readFileSync(
+      join(THAT, "..", "src", "canvas", "useGround.ts"),
+      "utf8",
+    );
+    expect(hook).not.toContain("SESSION_PROMPT");
+    expect(hook).toContain("assembleSessionPacket");
     expect(serializeSessionLine(SESSION)).not.toContain("DEEPSEEK");
     expect(serializeSessionLine(SESSION)).not.toMatch(/sk-/);
   });

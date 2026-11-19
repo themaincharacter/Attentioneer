@@ -20,7 +20,7 @@ import {
   validateAcpSpec,
   type AcpSpec,
 } from "../src/turn/acpSpecs";
-import { SESSION_PROMPT, beginSessionRun } from "../src/canvas/useGround";
+import { beginSessionRun } from "../src/canvas/useGround";
 import {
   runOutcomeOf,
   serializeSessionTranscript,
@@ -73,6 +73,9 @@ import {
 
 const APP = fileURLToPath(new URL("..", import.meta.url)).replace(/[\\/]$/, "");
 const ROOT = mkdtempSync(join(tmpdir(), "attentioneer-second-row-"));
+
+/** The task every direct run in this suite hands the seam (story 19.3). */
+const TASK = "say what this folder is for";
 
 const PIPES: SidecarPipe[] = [];
 
@@ -304,7 +307,7 @@ describe("a row whose command is not there refuses, naming it, before spawning",
     const second = ACP_SPECS[1]!;
     const handle = startSessionRun(
       { ...second, command: "/definitely/not/here/attentioneer-tool", args: [] },
-      SESSION_PROMPT,
+      "say one sentence and change nothing",
       { transport: pipe.transport, start: async () => RUNNING },
     );
     const ended = await handle.ended;
@@ -325,7 +328,7 @@ describe("a second row id rides the whole lane unchanged", () => {
     expect(row.id).toBe(ACP_SPECS[1]!.id);
     const { transport } = await lane();
     const entries: AcpProgressEntry[] = [];
-    const handle = startSessionRun(row, SESSION_PROMPT, {
+    const handle = startSessionRun(row, "say one sentence and change nothing", {
       transport,
       start: async () => RUNNING,
       onEntry: (entry) => entries.push(entry),
@@ -370,6 +373,7 @@ describe("a second row id rides the whole lane unchanged", () => {
     const { transport } = await lane();
     const slug = "a-second-run";
     const done = await beginSessionRun(base, row, slug, {
+      task: TASK,
       readKey: async () => {
         throw new Error("a row with no env entry reads no key");
       },
@@ -381,7 +385,9 @@ describe("a second row id rides the whole lane unchanged", () => {
 
     expect(done.ending).toBe("completed");
     expect(done.notice).toBeNull();
+    // STORY 19.3 — the first line is the send itself; the run's beats follow.
     expect(done.entries.map((entry) => entry.kind)).toEqual([
+      "sent",
       "started",
       "session",
       "tool",
@@ -403,6 +409,7 @@ describe("a second row id rides the whole lane unchanged", () => {
     const { transport } = await lane();
     const slug = "a-second-run";
     const done = await beginSessionRun(base, row, slug, {
+      task: TASK,
       transport,
       start: async () => RUNNING,
       transcriptIo: nodeIo(),

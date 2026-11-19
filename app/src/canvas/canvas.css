@@ -8497,3 +8497,45 @@ body {
   display: flex;
   justify-content: flex-end;
 }
+
+/* STORY 19.3 — THE TASK: one quiet field, the ask card's field one family
+   over. It is ephemeral view state, so it wears no label of its own on the
+   face; the placeholder says what it is for. */
+.session-card-task {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 42px;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-strong);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 4px 6px;
+  outline: none;
+}
+
+.session-card-task:focus {
+  border-color: rgba(141, 136, 124, 0.55);
+}
+
+.session-card-task:disabled {
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+/* STORY 19.3 — a wired card whose source is gone is SAID, never repaired. */
+.session-card-wired-missing {
+  font-size: 10.5px;
+  line-height: 1.4;
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
+/* STORY 19.3 — the disclosure is the ask card's own (the quiet verb, the
+   declaration, the exact bytes); the session card only says where it sits. */
+.session-card-sent {
+  padding-top: 2px;
+}

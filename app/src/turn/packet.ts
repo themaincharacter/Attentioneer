@@ -642,8 +642,14 @@ function packetOf(
   blocks: readonly AskPacketBlock[],
   asked: readonly string[] | undefined,
   readable: ReadonlySet<string>,
+  /**
+   * STORY 19.3 — THE FIRST LINE, when a caller's packet is not an ask's. The
+   * ask entry points keep the ask title, so their bytes are unchanged; a run's
+   * packet names what it is in its own first line. PROVISIONAL wording.
+   */
+  title: string = ASK_PACKET_TITLE,
 ): AskPacket {
-  const text = [ASK_PACKET_TITLE, ...blocks.map((block) => block.text)].join(
+  const text = [title, ...blocks.map((block) => block.text)].join(
     "\n\n",
   );
   const declaration: AskPacketDeclaration = {
@@ -803,6 +809,76 @@ export function assembleAskCardPacket(
         .map((card) => card.name),
     ),
   );
+}
+
+/* ------------------------------------------------------------------------- *
+ * STORY 19.3 — THE TASK RIDES THE PACKET.
+ *
+ * A session card's run used to send a module constant. Now the person writes
+ * the task on the card, and the run sends THIS packet: the task verbatim, the
+ * cards WIRED INTO the session card (whole, under the ask context's own stated
+ * bound), and the one qualitative bound sentence. The exact bytes are shown
+ * before the press and recorded as the transcript's `sent` entry, so the
+ * readback and the wire are the same string.
+ *
+ * WHY THE ASK CONTEXT'S BOUND, REUSED VERBATIM: a wire is context, and the
+ * bound that keeps a wire context is the one the person already met on the ask
+ * card. WHOLE CARDS ONLY, from the start of the wire order; a card that does
+ * not fit is never cut and never followed by a later one, so what rides is
+ * always a prefix of the wires. The bound's numbers never ride in the bytes —
+ * the person's declaration carries every included block with its exact size and
+ * the total, and an omitted card is simply absent from that declaration.
+ *
+ * NO RETRIEVAL INSTRUCTION. The ask packet offers ONE `READ:` because its
+ * delegate is a model behind an HTTP row with no files of its own. A run's
+ * delegate is a coding session with its own file access and its declared
+ * folder: telling it to ask the app for a block would spend a meaning it does
+ * not need, so this packet has no instruction block and no READ form at all.
+ *
+ * PROVISIONAL: the title line, the task block sharing the ask packet's one
+ * question block (so the declaration's wording stays one path), the order of
+ * the blocks, and reusing ASK_CONTEXT_BOUND's numbers for a run.
+ * ------------------------------------------------------------------------- */
+
+/** A run's packet title (PROVISIONAL, and part of the bytes). */
+export const SESSION_PACKET_TITLE =
+  "# a task for one session card on an attention map";
+
+/**
+ * ASSEMBLE a session card's packet: the task (the person's prose, VERBATIM),
+ * the cards wired into the card that fit the stated bound, each WHOLE, then the
+ * one bound sentence. Pure and total: same input, same bytes, no reader and no
+ * writer anywhere.
+ *
+ * The task rides in the packet's one existing question block: the heading and
+ * the declaration line are the ones the ask packet already uses, so the person's
+ * pre-send readback needs no second wording path and cannot drift from the
+ * bytes. The bound sentence is the ask packet's own ("This view; the map is
+ * larger."), reused verbatim.
+ */
+export function assembleSessionPacket(
+  task: string,
+  contextCards: readonly AskPacketCard[],
+  bound: AskContextBound = ASK_CONTEXT_BOUND,
+): AskPacket {
+  const context = selectAskContextCards(contextCards, bound);
+  const blocks: AskPacketBlock[] = [
+    {
+      kind: "question",
+      name: "the question",
+      text: ASK_PACKET_QUESTION_HEADING + "\n\n" + task,
+    },
+  ];
+  for (const card of context.cards) {
+    // WHOLE cards only, one block each: the same renderer the ask packet uses,
+    // so a wired session card's last completed run reads exactly as it does
+    // there. A page's live read is NOT here: this assembler reads nothing, and
+    // a run's delegate opens the page itself with its own file access.
+    blocks.push({ kind: "card", name: card.name, text: cardText(card) });
+  }
+  blocks.push({ kind: "bound", name: "the bound", text: boundText() });
+  // No READ set: the packet offers no retrieval, so nothing here can be named.
+  return packetOf(blocks, undefined, new Set<string>(), SESSION_PACKET_TITLE);
 }
 
 /**

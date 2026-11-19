@@ -87,6 +87,7 @@ import {
   askAnchorOf,
   askContextFactsOf,
   askThreadOf,
+  sessionContextFactsOf,
   type GroundAddResult,
 } from "./useGround";
 
@@ -597,8 +598,12 @@ interface GroundLayerProps {
     x: number,
     y: number,
   ) => Promise<GroundAddResult>;
-  /** Start one session card's run (the 18.2 lifecycle, transcript included). */
-  onRunSession?: (slug: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 19.3 — start one session card's run with the person's task, VERBATIM:
+   * the hook assembles the packet from that task and the wired context, records
+   * the exact bytes and sends them (the 18.2 lifecycle, transcript included).
+   */
+  onRunSession?: (slug: string, task: string) => Promise<GroundAddResult>;
   /** Stop one session card's live run (the run's own cancel). */
   onStopSession?: (slug: string) => Promise<void>;
   /** Bind a card whose row is gone to another shipped row (one field). */
@@ -968,6 +973,32 @@ export function GroundLayer({
   const askContextOf = (ask: AskCardRecord) => {
     const resolved = askContextFactsOf({
       ask: ask.on,
+      links,
+      references,
+      asks,
+      askTurns,
+      sessions,
+      sessionEntries,
+      readings,
+      texts,
+      notes,
+      states,
+    });
+    return {
+      cards: resolved.facts.map(askCardOf),
+      dangling: resolved.dangling.length > 0,
+    };
+  };
+  /**
+   * STORY 19.3 — WHAT IS WIRED INTO ONE SESSION CARD, resolved once per render
+   * from the loaded map by the same pure pipeline the ask card uses, against
+   * the session card as the anchor. The card assembles its pre-send packet from
+   * these blocks; the hook re-collects them at the press from the same records,
+   * so the declared bytes and the sent bytes cannot drift.
+   */
+  const sessionContextOf = (session: SessionCardRecord) => {
+    const resolved = sessionContextFactsOf({
+      session: session.on,
       links,
       references,
       asks,
@@ -1355,6 +1386,10 @@ export function GroundLayer({
           projectReading !== null && projectReading.form === "folder"
             ? projectReading.from
             : null;
+        // STORY 19.3 — the wired cards the run would carry, and whether a
+        // wire's source is gone. Resolved ONCE here; the card assembles its
+        // pre-send readback from these with the send's own pure assembler.
+        const contextView = sessionContextOf(session);
         return (
           <SessionCardView
             key={session.on}
@@ -1368,6 +1403,8 @@ export function GroundLayer({
             declaration={row === null ? null : acpDeclaration(row)}
             tools={sessionTools}
             entries={sessionEntries[session.on] ?? []}
+            contextCards={contextView.cards}
+            contextMissing={contextView.dangling}
             running={sessionRunning.includes(session.on)}
             zoom={zoom}
             open={openSessionOn === session.on}
@@ -1381,7 +1418,7 @@ export function GroundLayer({
             onRun={
               onRunSession === undefined
                 ? undefined
-                : () => onRunSession(session.on)
+                : (task) => onRunSession(session.on, task)
             }
             onStop={
               onStopSession === undefined

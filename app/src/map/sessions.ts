@@ -51,14 +51,24 @@ import { SESSION_RECORD_FILE, SESSION_TRANSCRIPTS_DIR, mapDir } from "./records"
  *   {"kind":"text","text":"<the agent's words, verbatim>"}
  *   {"kind":"tool","name":"<what the tool call was>","status":"<its status>"}
  *   {"kind":"permission","name":"<what was asked>","reply":"allowed-once"|"refused"|"cancelled"|"unanswered"}
+ *   {"kind":"sent","text":"<the exact prompt string>","t":"<ISO>"}
  *   {"kind":"ended","ending":"stopped","t":"<ISO>","sentence":"<why, when failed>"}
+ *
+ * STORY 19.3 — THE SEVENTH KIND IS THE SEND ITSELF (PROVISIONAL). The run's
+ * prompt is no longer a module constant: the person writes a task on the card,
+ * the wired cards ride as bounded context, and the exact bytes that left are
+ * recorded here BEFORE the request goes out. The entry is APPEND-ONLY like
+ * every other, and its text is the prompt string VERBATIM — a reopened card
+ * opens "what was sent" from this line alone, so the readback can never be a
+ * second summary of the send. It is not a thought, a plan or a diagnostic:
+ * those stay outside the vocabulary (below).
  *
  * WHAT IS NOT ONE OF THESE: a thought (the agent's private reasoning), a plan
  * and a transport diagnostic are progress the card cannot state honestly as
  * words, a tool call or an ending, so they are not dressed as one. The run's
  * ending carries its ONE sentence, which is why a failed run still says why
  * after a reopen. PROVISIONAL: if a later story wants to show a thought, that
- * is a seventh kind and an ADR's decision — not a quiet promotion here.
+ * is an eighth kind and an ADR's decision — not a quiet promotion here.
  *
  * A SECOND RUN APPENDS AFTER THE PREVIOUS ONE'S `ended` LINE — the transcript
  * is a conversation with the tool, like the ask card's thread, not a snapshot
@@ -86,9 +96,11 @@ import { SESSION_RECORD_FILE, SESSION_TRANSCRIPTS_DIR, mapDir } from "./records"
  *
  * PROVISIONAL (the story's record shapes, before an ADR settles them): the
  * `sessions.txt` name, the line shape and its key order, the coordinates as
- * ints, the `sessions/` folder name, the six entry kinds and their fields, the
- * optional `sentence` on an ending (the run's one-sentence reason, kept so a
- * failed run still says why after a reopen), the TWO OPTIONAL BINDING FIELDS
+ * ints, the `sessions/` folder name, the seven entry kinds and their fields
+ * (story 19.3 adds `sent`: the exact prompt string and its time, PROVISIONAL
+ * until the ADR settles what a send records), the optional `sentence` on an
+ * ending (the run's one-sentence reason, kept so a failed run still says why
+ * after a reopen), the TWO OPTIONAL BINDING FIELDS
  * (story 19.2: `project` and `boundary`, and their position at the line's
  * tail), the orphan/restore shapes and every sentence below.
  */
@@ -164,11 +176,12 @@ export const SESSION_PERMISSION_REPLIES: readonly SessionPermissionReply[] = [
 ];
 
 /**
- * ONE PROGRESS ENTRY, with its kind. The six kinds are exactly what the card
+ * ONE PROGRESS ENTRY, with its kind. The seven kinds are exactly what the card
  * can state: the run starting, the session it made, the agent's words, a tool
- * call with its status, a permission with the reply, and the ending. Anything
- * the run reports that is not one of these is not dressed as one (see the
- * module header's provisional note on thoughts, plans and diagnostics).
+ * call with its status, a permission with the reply, the bytes that were sent
+ * (story 19.3), and the ending. Anything the run reports that is not one of
+ * these is not dressed as one (see the module header's provisional note on
+ * thoughts, plans and diagnostics).
  */
 export type SessionEntry =
   | { kind: "started"; t: string }
@@ -179,6 +192,14 @@ export type SessionEntry =
   | { kind: "tool"; name: string; status: string }
   /** A permission request and the reply that crossed the wire. */
   | { kind: "permission"; name: string; reply: SessionPermissionReply }
+  /**
+   * STORY 19.3 — THE BYTES THIS CARD SENT (PROVISIONAL shape: `kind`, `text`
+   * and `t`, and nothing else). `text` is the exact prompt string the run's
+   * request carried — never trimmed, re-wrapped or normalized — and `t` is the
+   * moment it was written. The line exists so a reopened card can open "what
+   * was sent" without recomposing it; it is written before the request leaves.
+   */
+  | { kind: "sent"; text: string; t: string }
   /**
    * The ending, with the run's ONE sentence when it has one (a failed or
    * timed-out run). PROVISIONAL: the field, so a reopen can still say WHY the
@@ -327,13 +348,14 @@ export async function saveSessions(
  * are a prefix.
  * ------------------------------------------------------------------------- */
 
-/** The six kinds a transcript line may carry. */
+/** The seven kinds a transcript line may carry (story 19.3 adds `sent`). */
 export const SESSION_ENTRY_KINDS = [
   "started",
   "session",
   "text",
   "tool",
   "permission",
+  "sent",
   "ended",
 ] as const;
 
@@ -365,6 +387,13 @@ export function parseSessionEntryLine(line: string): SessionEntry | null {
   if (kind === "tool") {
     return typeof value.name === "string" && typeof value.status === "string"
       ? { kind, name: value.name, status: value.status }
+      : null;
+  }
+  if (kind === "sent") {
+    // STORY 19.3 — the send's own record (PROVISIONAL): the exact prompt
+    // string, verbatim, and its time. Nothing else is a `sent` line.
+    return typeof value.text === "string" && typeof value.t === "string"
+      ? { kind, text: value.text, t: value.t }
       : null;
   }
   if (kind === "permission") {
@@ -416,6 +445,14 @@ export function serializeSessionEntryLine(entry: SessionEntry): string {
         kind: "tool",
         name: entry.name,
         status: entry.status,
+      });
+    case "sent":
+      // STORY 19.3 — the exact bytes of the send, serialized by the house JSONL
+      // seam (keys sorted) so the recorded text is one lossless line.
+      return canonicalJsonlLine({
+        kind: "sent",
+        text: entry.text,
+        t: entry.t,
       });
     case "permission":
       return canonicalJsonlLine({
@@ -991,6 +1028,10 @@ export function sessionEntryLine(entry: SessionEntry): string {
       return entry.status.trim() === ""
         ? entry.name
         : entry.name + " — " + entry.status;
+    case "sent":
+      // STORY 19.3 — the quiet line the transcript shows for a send. The exact
+      // bytes are the card's "what was sent" disclosure, never dumped here.
+      return "the prompt was sent";
     case "permission":
       return entry.name + " — " + permissionReplyWord(entry.reply);
     case "ended":
