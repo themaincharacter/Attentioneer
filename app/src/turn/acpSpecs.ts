@@ -31,8 +31,16 @@
  * first prompt until the person adds one. The second row is a documented entry
  * point nobody here has run (story 18.6), and says so.
  *
+ * STORY 21.1 — A ROW MAY SAY IT CONTINUES SESSIONS (PROVISIONAL). The optional
+ * `resume: "protocol"` is a fact about the SERVER's advertised capability, and
+ * absent means the row cannot continue one: every run makes a fresh session
+ * exactly as before. Nothing branches on a product's name; the shipped first
+ * row carries the mark because the spike's server advertised session/resume and
+ * answered it live, and the second row does not.
+ *
  * PROVISIONAL: the field names, the env entry shape, the `verified` mark, the
- * default budget, the label suffix and every sentence in ACP_SENTENCES.
+ * default budget, the label suffix, the continuation mark and every sentence in
+ * ACP_SENTENCES.
  */
 
 import { uniqueProviderId, type Refusal, type RowRead } from "./providers";
@@ -83,6 +91,15 @@ export interface AcpSpec {
   env: AcpEnvEntry[];
   /** How long one run may live, in minutes. */
   timeoutMinutes: number;
+  /**
+   * STORY 21.1 — WHETHER THIS ROW CONTINUES SESSIONS OVER THE PROTOCOL
+   * (PROVISIONAL). Absent means "cannot continue a session": every run of the
+   * row makes a fresh one, exactly as before. The only value today is
+   * `"protocol"`, and it is a fact about the SERVER (the capability it
+   * advertises in `initialize`), never about a product's name: a row is data,
+   * and the card branches on this field alone.
+   */
+  resume?: "protocol";
   /** What this row claims, and how sure it is. */
   notes: string;
 }
@@ -98,6 +115,12 @@ export interface AcpSpecDraft {
   cwdPolicy?: string;
   env?: readonly AcpEnvEntry[];
   timeoutMinutes?: number;
+  /**
+   * STORY 21.1 — the row's continuation capability as the form holds it
+   * (PROVISIONAL). Absent is valid and means the row cannot continue a
+   * session; anything but `"protocol"` is refused.
+   */
+  resume?: string;
   notes?: string;
 }
 
@@ -117,6 +140,12 @@ export const ACP_SENTENCES = {
   duplicateName: "two environment entries fill the same variable",
   timeout: "an ACP row's budget must be at least one minute",
   duplicateId: "an ACP row with that id already exists",
+  /**
+   * STORY 21.1 — the row's continuation capability has ONE recognised value
+   * (PROVISIONAL). An absent field is valid and means the row cannot continue
+   * a session; anything else is refused rather than stored as a hope.
+   */
+  resume: "an ACP row either continues a session over the protocol or it does not; the only value is protocol",
 } as const;
 
 /** The sentence for an env entry naming a provider row that is not there. */
@@ -216,6 +245,16 @@ export function validateAcpSpec(
     return refused(ACP_SENTENCES.timeout);
   }
 
+  // STORY 21.1 — THE CONTINUATION CAPABILITY IS OPTIONAL AND NARROW
+  // (PROVISIONAL). Absent is valid and means the row cannot continue a session;
+  // the one understood value is the protocol capability. Nothing else is
+  // stored as if it were a yes.
+  let resume: "protocol" | undefined;
+  if (draft.resume !== undefined) {
+    if (draft.resume !== "protocol") return refused(ACP_SENTENCES.resume);
+    resume = "protocol";
+  }
+
   return {
     kind: "row",
     row: {
@@ -229,6 +268,7 @@ export function validateAcpSpec(
       cwdPolicy: ACP_CWD_POLICY,
       env,
       timeoutMinutes: Math.floor(stated),
+      ...(resume === undefined ? {} : { resume }),
       notes: (draft.notes ?? "").trim(),
     },
   };
@@ -259,8 +299,11 @@ export const ACP_SPECS: readonly AcpSpec[] = [
     cwdPolicy: ACP_CWD_POLICY,
     env: [],
     timeoutMinutes: DEFAULT_ACP_TIMEOUT_MINUTES,
+    // STORY 21.1 — the server advertises session/resume and answered it live
+    // (spike, 2026-11-19), so this row can continue a session.
+    resume: "protocol",
     notes:
-      "UNVERIFIED — the spike (18.1) reached this absolute dsh.cmd with --profile acp and created a session; no env entry is declared, so a prompt is refused for a missing DEEPSEEK_API_KEY until you add one for your provider row. Edit the command for another install.",
+      "UNVERIFIED — the spike (18.1) reached this absolute dsh.cmd with --profile acp and created a session; no env entry is declared, so a prompt is refused for a missing DEEPSEEK_API_KEY until you add one for your provider row. The server also advertises session/resume and answered it live (spike, 2026-11-19), so a card using this row can continue its last session. Edit the command for another install.",
   },
   {
     kind: "acp",

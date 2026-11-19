@@ -4669,6 +4669,9 @@ function App() {
             sessionRunning={ground.sessionRunning}
             sessionPermission={ground.sessionPermission}
             onRunSession={ground.runSession}
+            /* STORY 21.1 — a follow-up into the card's last delegate session:
+               the same hook, a fresh spawn, killed on every exit path. */
+            onFollowUpSession={ground.followUpSession}
             onStopSession={ground.stopSession}
             onAnswerSessionPermission={ground.answerSessionPermission}
             onMakeSessionResult={ground.makeCardFromRun}

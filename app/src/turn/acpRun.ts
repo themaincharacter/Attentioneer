@@ -33,6 +33,14 @@
  * `finish`, so there is no path that leaves an orphan. The run writes nothing
  * to its session directory and nothing to the map.
  *
+ * STORY 21.1 — A RUN MAY CONTINUE A SESSION THE SERVER ALREADY HAS
+ * (PROVISIONAL). When the caller hands `resume` (the server's session id and
+ * the EXACT folder it was recorded in), the session step asks the server to
+ * resume that pair instead of making a new session; the prompt, the update
+ * stream, the permission path and the kill are the SAME code, so a follow-up
+ * is one ordinary spawn that happens to reach an existing memory. A resume
+ * whose cwd is absent or is another folder is refused BEFORE any spawn.
+ *
  * 18.3b: WHERE THIS FILE RUNS NOW. Story 18.3 proved the card under Bun and
  * then could not run it in the shipped app: this module needs `node:fs` and a
  * spawner, and the window is a WebView with neither, so pressing RUN there was
@@ -119,6 +127,14 @@ export const ACP_RUN_SENTENCES = {
   noDirectory: "the run's session directory could not be made",
   noSession:
     "the server did not create a session, so the run is not a finished run",
+  /**
+   * STORY 21.1 — A CONTINUATION NAMED ONE FOLDER AND THE RUN STARTED IN
+   * ANOTHER (PROVISIONAL). The tool refuses a mismatched directory, so this is
+   * refused here too, BEFORE the spawn: nothing is started, and the sentence
+   * is the whole of the answer.
+   */
+  resumeOtherFolder:
+    "the session was recorded in another folder, so the run was not started",
 } as const;
 
 /**
@@ -209,6 +225,17 @@ export interface AcpRunOptions {
    * the lane's decision (sidecar/runs.ts), not this lifecycle's.
    */
   scope?: { boundary: "read" | "write" };
+  /**
+   * STORY 21.1 — CONTINUE THIS SESSION INSTEAD OF MAKING ONE (PROVISIONAL).
+   * The pair is the delegate's own: its session id and the EXACT folder it was
+   * recorded in. A resume REQUIRES `cwd` to be that same folder; anything else
+   * is refused before any spawn, because the tool refuses mismatched
+   * directories and a follow-up must never land in a folder whose delegate has
+   * none of the earlier turns. The run is still ONE spawn, killed on every
+   * exit path: a continuation changes which session the prompt reaches, not how
+   * the child lives and dies.
+   */
+  resume?: { sessionId: string; cwd: string };
   /** Shorten the row's budget (a caller's own deadline; tests use it too). */
   timeoutMs?: number;
   /** Every progress entry as it happens, in order. */
@@ -574,6 +601,18 @@ export function startAcpRun(
   }, budgetMs);
 
   void (async () => {
+    // STORY 21.1 — A CONTINUATION STARTS IN THE FOLDER IT WAS RECORDED IN, OR
+    // NOT AT ALL. This is the one shape check before the key, the directory or
+    // the child: a resume whose cwd is absent or different would hand the tool
+    // a folder it refuses, so it is refused here in one sentence and nothing is
+    // started.
+    if (
+      options.resume !== undefined &&
+      (options.cwd === undefined || options.cwd !== options.resume.cwd)
+    ) {
+      await finish("failed", ACP_RUN_SENTENCES.resumeOtherFolder);
+      return;
+    }
     const environment = options.environment ?? runtimeEnvironment();
     // TWO ROADS, NEVER BOTH (18.3b): a resolved map came over a wire and is
     // used as given — no store is read, no row is named. Otherwise the row's
@@ -674,11 +713,24 @@ export function startAcpRun(
 
     let createdSession: string;
     try {
+      // The handshake is still the first word, resumed or not: the server
+      // advertises its capabilities (session/resume among them) there.
       await transport.initialize(
         options.clientName ?? "attentioneer",
         options.clientVersion ?? "0.0.0",
       );
-      const session = await transport.newSession(made);
+      // STORY 21.1 — ONE BRANCH, AND ONLY ONE: a continuation asks the server
+      // for the session it already recorded (the id and folder it named), and
+      // a fresh run makes a new one. Everything after this line — the prompt
+      // call, the update stream, the permission path and the kill — is the
+      // same code, so a follow-up cannot drift from an ordinary run.
+      const session =
+        options.resume === undefined
+          ? await transport.newSession(made)
+          : await transport.resumeSession(
+              options.resume.sessionId,
+              made,
+            );
       createdSession = session.sessionId;
     } catch (error) {
       await finishFromFailure(error);
@@ -686,7 +738,10 @@ export function startAcpRun(
     }
     if (settled) return;
     sessionId = createdSession;
-    emit({ kind: "session", sessionId });
+    // STORY 21.1 — THE FOLDER RIDES WITH THE SESSION, so the card's record
+    // keeps the pair a later continuation needs. Same entry kind, same place in
+    // the stream; the folder is what makes it resumable.
+    emit({ kind: "session", sessionId, cwd: made });
 
     try {
       const turned = await transport.prompt(sessionId, prompt);

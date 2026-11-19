@@ -619,6 +619,12 @@ interface GroundLayerProps {
    * the exact bytes and sends them (the 18.2 lifecycle, transcript included).
    */
   onRunSession?: (slug: string, task: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 21.1 — CONTINUE one session card's last delegate session with a
+   * follow-up task (PROVISIONAL): the hook owns the gate, the packet and the
+   * record; the layer only forwards the press.
+   */
+  onFollowUpSession?: (slug: string, task: string) => Promise<GroundAddResult>;
   /** Stop one session card's live run (the run's own cancel). */
   onStopSession?: (slug: string) => Promise<void>;
   /** Bind a card whose row is gone to another shipped row (one field). */
@@ -791,6 +797,7 @@ export function GroundLayer({
   onStopAskTurn,
   onSetAskEffort,
   onRunSession,
+  onFollowUpSession,
   onStopSession,
   onChooseSessionTool,
   onBindSessionProject,
@@ -1459,6 +1466,15 @@ export function GroundLayer({
               onRunSession === undefined
                 ? undefined
                 : (task) => onRunSession(session.on, task)
+            }
+            // STORY 21.1 — the continuation composer, and whether the row this
+            // build ships for the card says it can continue a session. The
+            // fact is the row's, never a product's.
+            canResume={row?.resume === "protocol"}
+            onFollowUp={
+              onFollowUpSession === undefined
+                ? undefined
+                : (task) => onFollowUpSession(session.on, task)
             }
             onStop={
               onStopSession === undefined

@@ -47,7 +47,9 @@ import { SESSION_RECORD_FILE, SESSION_TRANSCRIPTS_DIR, mapDir } from "./records"
  * whatever the run reported with its kind:
  *
  *   {"kind":"started","t":"<ISO>"}
- *   {"kind":"session","id":"<session id>"}
+ *   {"kind":"session","id":"<session id>","cwd":"<the folder it was recorded in>"}
+ *     (story 21.1 makes `cwd` an OPTIONAL tail: an older id-only line parses
+ *     and reads exactly as it always did, and a line without it cannot continue)
  *   {"kind":"text","text":"<the agent's words, verbatim>"}
  *   {"kind":"tool","name":"<what the tool call was>","status":"<its status>"}
  *   {"kind":"permission","name":"<what was asked>","reply":"allowed-once"|"refused"|"cancelled"|"unanswered"}
@@ -62,6 +64,12 @@ import { SESSION_RECORD_FILE, SESSION_TRANSCRIPTS_DIR, mapDir } from "./records"
  * opens "what was sent" from this line alone, so the readback can never be a
  * second summary of the send. It is not a thought, a plan or a diagnostic:
  * those stay outside the vocabulary (below).
+ *
+ * STORY 21.1 — THE SESSION ENTRY MAY CARRY THE FOLDER IT WAS RECORDED IN
+ * (PROVISIONAL). A continuation needs the delegate's session id AND the exact
+ * directory it was recorded in; the tool refuses any other one. The folder is
+ * an OPTIONAL tail on the same entry, so an older id-only line parses and
+ * reads exactly as it did — and says plainly that it cannot be continued.
  *
  * WHAT IS NOT ONE OF THESE: a thought (the agent's private reasoning), a plan
  * and a transport diagnostic are progress the card cannot state honestly as
@@ -185,7 +193,16 @@ export const SESSION_PERMISSION_REPLIES: readonly SessionPermissionReply[] = [
  */
 export type SessionEntry =
   | { kind: "started"; t: string }
-  | { kind: "session"; id: string }
+  /**
+   * STORY 21.1 — THE SESSION AND THE EXACT FOLDER IT WAS RECORDED IN
+   * (PROVISIONAL). `cwd` is OPTIONAL so every id-only line written before this
+   * story still parses and reads as it did; a line that carries it names the
+   * directory the delegate recorded the session in, which is what a resume
+   * needs beside the id (the tool refuses any other folder). A session entry
+   * with no folder is a stated hole: it cannot be continued, and the card says
+   * so in one sentence rather than guessing a directory.
+   */
+  | { kind: "session"; id: string; cwd?: string }
   /** The agent's words VERBATIM — never trimmed, re-wrapped or normalized. */
   | { kind: "text"; text: string }
   /** A tool call: what it was, plus the status the server reported for it. */
@@ -377,8 +394,15 @@ export function parseSessionEntryLine(line: string): SessionEntry | null {
     return typeof value.t === "string" ? { kind, t: value.t } : null;
   }
   if (kind === "session") {
-    return typeof value.id === "string" && value.id !== ""
-      ? { kind, id: value.id }
+    if (typeof value.id !== "string" || value.id === "") return null;
+    // STORY 21.1 — BOTH SHAPES ARE VALID (PROVISIONAL): an old line carries the
+    // id alone and keeps parsing exactly as it did; a line written since this
+    // story may add the folder, and only a non-empty string can be one. Any
+    // other cwd is not a session entry at all — the record is never repaired
+    // into a directory it did not say.
+    if (value.cwd === undefined) return { kind, id: value.id };
+    return typeof value.cwd === "string" && value.cwd !== ""
+      ? { kind, id: value.id, cwd: value.cwd }
       : null;
   }
   if (kind === "text") {
@@ -437,7 +461,13 @@ export function serializeSessionEntryLine(entry: SessionEntry): string {
     case "started":
       return canonicalJsonlLine({ kind: "started", t: entry.t });
     case "session":
-      return canonicalJsonlLine({ kind: "session", id: entry.id });
+      // STORY 21.1 — the folder is written only when the record carries it, so
+      // an id-only entry's line is byte-for-byte what it always was.
+      return canonicalJsonlLine({
+        kind: "session",
+        id: entry.id,
+        ...(entry.cwd === undefined ? {} : { cwd: entry.cwd }),
+      });
     case "text":
       return canonicalJsonlLine({ kind: "text", text: entry.text });
     case "tool":
@@ -1172,6 +1202,63 @@ export function sessionLastEnding(
   }
   return null;
 }
+
+/** STORY 21.1 — WHAT A FOLLOW-UP NEEDS: the delegate's id and its folder. */
+export interface SessionResume {
+  sessionId: string;
+  /** The EXACT folder the session was recorded in; a resume refuses another. */
+  cwd: string;
+}
+
+/**
+ * STORY 21.1 — THE SESSION THIS CARD COULD CONTINUE (PURE, PROVISIONAL), or
+ * null when it cannot. Only the LAST session entry counts: the newest run's
+ * session is the delegate's memory, and an older one is a conversation the
+ * card has already moved past. The entry must carry BOTH its id and the exact
+ * folder it was recorded in, because the tool refuses a resume without them;
+ * an id-only entry (written before this story) is a stated hole and answers
+ * null rather than a guessed directory.
+ */
+export function sessionResumeOf(
+  entries: readonly SessionEntry[],
+): SessionResume | null {
+  for (let at = entries.length - 1; at >= 0; at -= 1) {
+    const entry = entries[at]!;
+    if (entry.kind !== "session") continue;
+    if (typeof entry.cwd !== "string" || entry.cwd === "") return null;
+    return { sessionId: entry.id, cwd: entry.cwd };
+  }
+  return null;
+}
+
+/**
+ * STORY 21.1 — THE THREE ONE-SENTENCE REFUSALS A CONTINUATION CAN ANSWER
+ * (PROVISIONAL wording). Each says what is absent and claims nothing more: no
+ * follow-up is sent, no transcript line is written and no session is invented.
+ * The card shows the row's own sentence instead of offering the verb, and the
+ * press answers the same sentence if it ever reaches the layer.
+ */
+export const SESSION_RESUME_REFUSALS = {
+  /** No session recorded for this card at all (or only an id-only entry). */
+  noSession:
+    "this session cannot be continued: no session was recorded for it.",
+  /** A session is recorded, but the folder it was recorded in is gone. */
+  folderGone:
+    "this session cannot be continued: the folder it was recorded in is not there.",
+  /** The row this card names does not continue sessions over the protocol. */
+  rowCannot:
+    "this tool cannot continue a session.",
+} as const;
+
+/**
+ * STORY 21.1 — THE FOLDER THIS CARD IS BOUND TO IS NOT THE ONE THE SESSION WAS
+ * RECORDED IN (PROVISIONAL). One sentence, said before anything is spawned: a
+ * session's memory belongs to one directory, and re-binding the card somewhere
+ * else does not move it — so the press refuses rather than quietly running the
+ * follow-up in a folder whose delegate has none of the earlier turns.
+ */
+export const SESSION_RESUME_OTHER_FOLDER =
+  "this session cannot be continued: this card is now bound to a different folder.";
 
 /**
  * The one sentence a result that is not there answers (PROVISIONAL). Nothing is

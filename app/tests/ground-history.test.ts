@@ -392,7 +392,10 @@ describe("authored moves only: the look leaves no line", () => {
       // STORY 18.5: the session cards' authored moves.
       "createSession",
       "removeSession",
-      "runSession",
+      // STORY 21.1: the run's post-run history line now lives in the one
+      // shared start both run verbs use, so the verb checked here is that seam
+      // rather than either caller.
+      "beginCardSessionRun",
       // STORY 16.19: the ask a selection makes — the card's add and its wire.
       "askFromSelection",
       // STORY 16.22: the three committed renames (one per family) are authored

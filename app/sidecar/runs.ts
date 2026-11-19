@@ -51,9 +51,16 @@
  * directory and every ask reaching the person. There is no default allow on any
  * path here, and only the allow_ONCE option is ever selected.
  *
+ * STORY 21.1 — A RUN MAY CONTINUE A SESSION THE SERVER RECORDED
+ * (PROVISIONAL). The request's `resume` names the session id and the EXACT
+ * folder it was recorded in; the lane refuses a resume whose folder is not the
+ * run's `cwd` in one sentence, BEFORE any spawn, and otherwise hands the pair
+ * to the same lifecycle — one spawn, killed on every exit path.
+ *
  * PROVISIONAL: the run numbers, the refusals below (including the missing
- * folder's one sentence), the auto-answer rule and the choice to route the
- * ending through `run-end` rather than a final `run-part`.
+ * folder's one sentence and the continuation's mismatch), the auto-answer rule
+ * and the choice to route the ending through `run-end` rather than a final
+ * `run-part`.
  */
 
 import {
@@ -104,6 +111,16 @@ export function runMissingCommandSentence(command: string): string {
 export function runMissingFolderSentence(folder: string): string {
   return "the folder " + folder + " is not there, so nothing was started.";
 }
+
+/**
+ * STORY 21.1 — A CONTINUATION NAMED ONE FOLDER AND THE RUN ANOTHER
+ * (PROVISIONAL). One sentence, said BEFORE anything is spawned: a session's
+ * memory belongs to the directory it was recorded in, so a resume that would
+ * start elsewhere is refused rather than run in the wrong place. No child, no
+ * transcript and no budget clock are made.
+ */
+export const RUN_RESUME_OTHER_FOLDER =
+  "the session was recorded in another folder, so nothing was started.";
 
 /**
  * STORY 19.2 — DOES A RUN'S FOLDER EXIST? A directory only: a file, a link
@@ -259,6 +276,17 @@ export function createRunLane(options: RunLaneOptions): RunLane {
       options.say(errorLine(request.id, runMissingFolderSentence(request.cwd)));
       return;
     }
+    // STORY 21.1 — A CONTINUATION RUNS IN THE FOLDER IT WAS RECORDED IN, OR
+    // NOT AT ALL. A resume with no cwd, or one naming a different directory,
+    // answers one sentence and starts nothing: the tool would refuse the
+    // mismatch anyway, and no half-started run belongs in a transcript.
+    if (
+      request.resume !== undefined &&
+      (request.cwd === undefined || request.cwd !== request.resume.cwd)
+    ) {
+      options.say(errorLine(request.id, RUN_RESUME_OTHER_FOLDER));
+      return;
+    }
     // ONE WAIT PER RUN. It is filled when the server asks and resolved by the
     // person's reply (or, after the run has ended, with null so nothing leaks).
     const waitFor: { current: PendingPermission | null } = { current: null };
@@ -295,6 +323,9 @@ export function createRunLane(options: RunLaneOptions): RunLane {
       // only shapes the declaration (the auto-answer happened above).
       ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
       ...(request.scope === undefined ? {} : { scope: request.scope }),
+      // STORY 21.1 — the run continues the session the request named, in the
+      // folder just checked; the lifecycle is otherwise the same one process.
+      ...(request.resume === undefined ? {} : { resume: request.resume }),
     });
     const entry: LiveRun = {
       id: request.id,

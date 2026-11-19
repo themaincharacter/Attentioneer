@@ -87,7 +87,10 @@ import {
   saveSessions,
   SESSION_RESULT_EMPTY_SENTENCE,
   SESSION_RESULT_UNFINISHED_SENTENCE,
+  SESSION_RESUME_OTHER_FOLDER,
+  SESSION_RESUME_REFUSALS,
   sessionLastEnding,
+  sessionResumeOf,
   sessionNameForWrite,
   sessionRefusal,
   sessionResultName,
@@ -123,6 +126,7 @@ import type {
   AcpProgressEntry,
   RunScope,
 } from "../turn/acpEntries";
+import type { RunResume } from "../turn/protocol";
 import { artifactPlacement, besidePlacement, type Point } from "./geometry";
 import { utf8ByteLength } from "../lib/textBytes";
 import type { SidecarStart } from "../turn/sidecar";
@@ -839,6 +843,15 @@ export interface GroundView {
    */
   runSession: (slug: string, task: string) => Promise<GroundAddResult>;
   /**
+   * STORY 21.1 — CONTINUE this card's last delegate session with a follow-up
+   * task (PROVISIONAL): the session's own id and exact folder ride the request,
+   * and the run is a fresh spawn killed on every exit path like any other. The
+   * same busy gate holds. No recorded session, a row that cannot continue, or a
+   * recorded folder that is gone each answer one sentence, send nothing and
+   * write nothing.
+   */
+  followUpSession: (slug: string, task: string) => Promise<GroundAddResult>;
+  /**
    * STORY 18.3 — STOP the live run: the run's own cancel (session/cancel, then
    * the child), so what arrived stays and the ending is the run's own. A press
    * with nothing running does nothing at all.
@@ -994,6 +1007,7 @@ type GroundLoaded = Omit<
   | "bindSessionProject"
   | "setSessionBoundary"
   | "runSession"
+  | "followUpSession"
   | "stopSession"
   | "answerSessionPermission"
   | "makeCardFromRun"
@@ -3179,7 +3193,12 @@ export function sessionEntryOf(
       // CARD's, computed from the row; the record keeps only that it began.
       return { kind: "started", t };
     case "session":
-      return { kind: "session", id: entry.sessionId };
+      // STORY 21.1 — THE FOLDER RIDES THROUGH (PROVISIONAL): a report that
+      // carried one gives the card's record the pair a later continuation
+      // needs; an older report with none keeps the id-only entry it always had.
+      return entry.cwd === undefined
+        ? { kind: "session", id: entry.sessionId }
+        : { kind: "session", id: entry.sessionId, cwd: entry.cwd };
     case "update": {
       if (entry.updateKind === "agent_message_chunk") {
         return entry.text === ""
@@ -3289,6 +3308,13 @@ export interface SessionRunOptions extends SessionRunPlumbing {
   cwd?: string;
   /** STORY 19.2 — the declared boundary that rides beside that cwd. */
   scope?: RunScope;
+  /**
+   * STORY 21.1 — CONTINUE THIS SESSION IN THE SAME FOLDER (PROVISIONAL). The
+   * pair the card's transcript recorded; absent means a fresh session. The gate
+   * has already checked that the run's cwd IS that folder, so a continuation
+   * never lands somewhere else.
+   */
+  resume?: RunResume;
 }
 
 /**
@@ -3365,6 +3391,9 @@ export function beginSessionRun(
     // Absent on every other card, so the wire keeps its old shape.
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     ...(options.scope === undefined ? {} : { scope: options.scope }),
+    // STORY 21.1 — a continuation's id and folder ride the same way; a fresh
+    // run's request keeps its old bytes.
+    ...(options.resume === undefined ? {} : { resume: options.resume }),
   });
 
   const done: Promise<SessionRunDone> = handle.ended.then(
@@ -3417,6 +3446,13 @@ export function startGatedSessionRun(
     row: AcpSpec | null;
     /** The loaded readings, for resolving a bound project. */
     readings: readonly Reading[];
+    /**
+     * STORY 21.1 — CONTINUE THIS SESSION (PROVISIONAL), when the card's
+     * transcript holds one. Absent is an ordinary run, unchanged; present, the
+     * gate checks the row's capability and the folder before anything starts,
+     * and the run's cwd becomes the session's own.
+     */
+    resume?: RunResume;
   },
   options: SessionRunPlumbing = {},
 ): GatedSessionRun {
@@ -3429,21 +3465,124 @@ export function startGatedSessionRun(
   if (input.row === null) {
     return { kind: "refused", message: SESSION_NO_TOOL_REFUSAL };
   }
+  // STORY 21.1 — A CONTINUATION IS NEVER FAKED. The row must say it continues
+  // sessions over the protocol, and a recorded pair must be there: otherwise
+  // one sentence answers and nothing is spawned, written or recorded.
+  if (input.resume !== undefined) {
+    if (input.row.resume !== "protocol") {
+      return { kind: "refused", message: SESSION_RESUME_REFUSALS.rowCannot };
+    }
+    if (
+      typeof input.resume.sessionId !== "string" ||
+      input.resume.sessionId === "" ||
+      typeof input.resume.cwd !== "string" ||
+      input.resume.cwd === ""
+    ) {
+      return {
+        kind: "refused",
+        message: SESSION_RESUME_REFUSALS.noSession,
+      };
+    }
+  }
   const bound = sessionBoundScope(input.session, input.readings);
   if (bound.kind === "refused") {
     return { kind: "refused", message: bound.sentence };
   }
+  // STORY 21.1 — THE SESSION'S FOLDER WINS, AND A DIFFERENT BINDING REFUSES.
+  // A continuation can only run where its delegate recorded it; if the card is
+  // now bound to another folder, the two cannot both be true, so the press
+  // answers one sentence instead of moving the follow-up somewhere it has no
+  // memory.
+  if (
+    input.resume !== undefined &&
+    bound.kind === "bound" &&
+    bound.cwd !== input.resume.cwd
+  ) {
+    return { kind: "refused", message: SESSION_RESUME_OTHER_FOLDER };
+  }
+  const cwd =
+    input.resume !== undefined
+      ? input.resume.cwd
+      : bound.kind === "bound"
+        ? bound.cwd
+        : undefined;
+  // The declaration stays the person's own only when it is about THIS folder.
+  const scope =
+    bound.kind === "bound" && cwd === bound.cwd ? bound.scope : undefined;
   return {
     kind: "started",
     start: beginSessionRun(workspacePath, input.row, input.session.on, {
       ...options,
       task: input.task,
       ...(input.context === undefined ? {} : { context: input.context }),
-      ...(bound.kind === "bound"
-        ? { cwd: bound.cwd, scope: bound.scope }
-        : {}),
+      ...(cwd === undefined ? {} : { cwd }),
+      ...(scope === undefined ? {} : { scope }),
+      ...(input.resume === undefined ? {} : { resume: input.resume }),
     }),
   };
+}
+
+/**
+ * STORY 21.1 — WHAT A "CONTINUE THIS SESSION" PRESS ANSWERS BEFORE ANYTHING
+ * STARTS (PROVISIONAL, PURE apart from the folder check it is handed).
+ *
+ * Three refusals, in this order, each one sentence:
+ *
+ *   1. NO RECORDED SESSION — the transcript holds no session entry carrying
+ *      both its id and the exact folder it was recorded in.
+ *   2. THE ROW CANNOT CONTINUE — the card's row does not declare the protocol
+ *      capability, so no resume is ever asked of it.
+ *   3. THE FOLDER IS GONE — the session was recorded in a directory that is no
+ *      longer there (an unbound card's temp folder is the usual case).
+ *
+ * Otherwise the pair is returned and the caller may start a run. The folder
+ * check is a seam so a test can stand behind it without a disk.
+ */
+export type SessionFollowUpRead =
+  | { kind: "ready"; resume: RunResume }
+  | { kind: "refused"; message: string };
+
+/**
+ * IS THE FOLDER THERE? A DIRECTORY only: a missing path, a file standing where
+ * the folder was, and an unanswerable stat all answer false. The check reads
+ * one stat through the existing read-only bridge; nothing is opened.
+ */
+async function sessionFolderIsThere(path: string): Promise<boolean> {
+  const meta = await fsFileMeta(path);
+  return meta.kind === "facts" && meta.exists && !meta.is_file;
+}
+
+export async function sessionFollowUpRefusal(
+  input: {
+    session: SessionCard | undefined;
+    row: AcpSpec | null;
+    entries: readonly SessionEntry[];
+  },
+  folderThere: (path: string) => Promise<boolean> = sessionFolderIsThere,
+): Promise<SessionFollowUpRead> {
+  if (input.session === undefined) {
+    return { kind: "refused", message: SESSION_MISSING_REFUSAL };
+  }
+  const resume = sessionResumeOf(input.entries);
+  if (resume === null) {
+    return { kind: "refused", message: SESSION_RESUME_REFUSALS.noSession };
+  }
+  if (input.row === null) {
+    return { kind: "refused", message: SESSION_NO_TOOL_REFUSAL };
+  }
+  if (input.row.resume !== "protocol") {
+    return { kind: "refused", message: SESSION_RESUME_REFUSALS.rowCannot };
+  }
+  let there = false;
+  try {
+    there = await folderThere(resume.cwd);
+  } catch {
+    there = false;
+  }
+  if (!there) {
+    return { kind: "refused", message: SESSION_RESUME_REFUSALS.folderGone };
+  }
+  return { kind: "ready", resume };
 }
 
 /**
@@ -6042,60 +6181,47 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
-   * STORY 18.3 — RUN one session card. The row's 18.2 lifecycle starts here,
-   * and EVERY progress entry is appended to the transcript the moment it
+   * STORY 18.3 — START one session card's run: the row's 18.2 lifecycle starts
+   * here, and EVERY progress entry is appended to the transcript the moment it
    * arrives (whole lines, in arrival order), so the card watches the run from
-   * the file it is writing.
+   * the file it is writing. STORY 21.1 — an ordinary run and a continuation
+   * share this one path; only the request's continuation pair differs, so a
+   * follow-up cannot drift from the run it follows.
    *
    * ONE RUN PER CARD AT A TIME: the live handles are view state, and a second
    * press answers one sentence rather than starting a second child. The slug
    * leaves the running list the instant the run settles — a stopped or failed
    * run can never leave its stop verb (or a spinner) standing.
    *
-   * STORY 19.3 — THE TASK RIDES THE PACKET. The person's typed task and the
-   * cards WIRED INTO this card are collected HERE, from the loaded map, and
-   * handed to the one gated start; the packet they make is what the request
-   * carries and what the transcript's `sent` line records. An empty task is
-   * refused before a key, a folder or a child is touched.
+   * THE PACKET IS WHAT LEAVES. The caller hands the task and the cards that
+   * ride with it (a run's wires, or none for a follow-up); the packet they make
+   * is what the request carries and what the transcript's `sent` line records.
+   * An empty task is refused before a key, a folder or a child is touched.
    *
    * The result says only whether the RECORD could keep up: the ENDING is the
    * transcript's own `ended` line, which the card reads back from the file, so
    * the view and a reopen show the same bytes.
    */
-  const runSession = useCallback(
-    (slug: string, task: string): Promise<GroundAddResult> => {
-      const session = sessionsRef.current.find((entry) => entry.on === slug);
-      if (session === undefined) {
-        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
-      }
+  const beginCardSessionRun = useCallback(
+    (
+      session: SessionCard,
+      task: string,
+      context: readonly AskPacketCard[],
+      resume?: RunResume,
+    ): Promise<GroundAddResult> => {
+      const slug = session.on;
       if (sessionRunsRef.current[slug] !== undefined) {
         return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
       }
-      // STORY 19.3 — WHAT THE WIRES LEND THIS RUN: the same pure pipeline the
-      // card's pre-send declaration uses, read from the loaded refs at the
-      // moment of the press, so the declared bytes and the sent bytes are
-      // composed from one description of the same records.
-      const wired = sessionContextFactsOf({
-        session: slug,
-        links: linksRef.current,
-        references: referencesRef.current,
-        asks: asksRef.current,
-        askTurns: askTurnsRef.current,
-        sessions: sessionsRef.current,
-        sessionEntries: sessionEntriesRef.current,
-        readings: readingsRef.current,
-        texts: textsRef.current,
-        notes: notesRef.current,
-        states: statesRef.current,
-      });
       const started = startGatedSessionRun(
         workspacePath,
         {
           session,
           task,
-          context: askCardsContext(wired.facts).cards,
+          context,
           row: shippedAcpSpec(session.tool),
           readings: readingsRef.current,
+          ...(resume === undefined ? {} : { resume }),
         },
         {
           // The view follows each entry as the run reports it. The file is the
@@ -6187,6 +6313,97 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         }));
     },
     [workspacePath],
+  );
+
+  /**
+   * STORY 19.3 — RUN one session card with the person's task: the packet is the
+   * task plus the cards WIRED INTO this card, collected HERE from the loaded
+   * map at the moment of the press (the same pure pipeline the card's pre-send
+   * declaration uses, so the declared bytes and the sent bytes are composed
+   * from one description of the same records). The start itself is the shared
+   * one: a refusal answers one sentence and writes nothing.
+   */
+  const runSession = useCallback(
+    (slug: string, task: string): Promise<GroundAddResult> => {
+      const session = sessionsRef.current.find((entry) => entry.on === slug);
+      if (session === undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      if (sessionRunsRef.current[slug] !== undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
+      }
+      // STORY 19.3 — WHAT THE WIRES LEND THIS RUN.
+      const wired = sessionContextFactsOf({
+        session: slug,
+        links: linksRef.current,
+        references: referencesRef.current,
+        asks: asksRef.current,
+        askTurns: askTurnsRef.current,
+        sessions: sessionsRef.current,
+        sessionEntries: sessionEntriesRef.current,
+        readings: readingsRef.current,
+        texts: textsRef.current,
+        notes: notesRef.current,
+        states: statesRef.current,
+      });
+      return beginCardSessionRun(
+        session,
+        task,
+        askCardsContext(wired.facts).cards,
+      );
+    },
+    [beginCardSessionRun],
+  );
+
+  /**
+   * STORY 21.1 — CONTINUE THIS CARD'S LAST DELEGATE SESSION (PROVISIONAL): a
+   * follow-up task into the same memory, through a FRESH spawn that is killed
+   * on every exit path exactly like an ordinary run. The transcript records it
+   * like any run (started, a session entry carrying the SAME id and its
+   * folder, the entries, ended), because a follow-up IS another run.
+   *
+   * ONE RUN PER CARD AT A TIME, and the tool refuses a prompt while a turn is
+   * in flight, so the same busy gate holds here: the delegate is still working,
+   * and this app does not send into a refusal.
+   *
+   * THE PACKET IS THE TASK AND THE BOUND, AND NO CARD BLOCKS. The session's own
+   * memory already holds the wired context; re-sending it would be the token
+   * waste a follow-up exists to avoid. The exact bytes are shown before the
+   * press and recorded as the sent line, exactly as a run's are.
+   *
+   * THREE REFUSALS SEND NOTHING AND WRITE NOTHING: no recorded session, a row
+   * that cannot continue, and a recorded folder that is gone.
+   */
+  const followUpSession = useCallback(
+    async (slug: string, task: string): Promise<GroundAddResult> => {
+      const session = sessionsRef.current.find((entry) => entry.on === slug);
+      if (session === undefined) {
+        return { ok: false, message: SESSION_MISSING_REFUSAL };
+      }
+      if (sessionRunsRef.current[slug] !== undefined) {
+        return { ok: false, message: SESSION_BUSY_SENTENCE };
+      }
+      if (task.trim() === "") {
+        return { ok: false, message: SESSION_TASK_REFUSAL };
+      }
+      const ready = await sessionFollowUpRefusal({
+        session,
+        row: shippedAcpSpec(session.tool),
+        entries: sessionEntriesRef.current[slug] ?? [],
+      });
+      if (ready.kind === "refused") {
+        // NOTHING IS SENT, NOTHING IS WRITTEN: the sentence is the whole of
+        // the press, and continuity is never faked.
+        return { ok: false, message: ready.message };
+      }
+      // The folder check was awaited; a run may have started since. The lane's
+      // own gate answers the same sentence, this just avoids the wait.
+      if (sessionRunsRef.current[slug] !== undefined) {
+        return { ok: false, message: SESSION_BUSY_SENTENCE };
+      }
+      return beginCardSessionRun(session, task, [], ready.resume);
+    },
+    [beginCardSessionRun],
   );
 
   /**
@@ -7901,6 +8118,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     bindSessionProject,
     setSessionBoundary,
     runSession,
+    followUpSession,
     stopSession,
     answerSessionPermission,
     makeCardFromRun,

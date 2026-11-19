@@ -265,6 +265,24 @@ export interface RunRequest {
    * (PROVISIONAL). Absent means "not declared": every ask reaches the person.
    */
   scope?: RunScope;
+  /**
+   * STORY 21.1 — CONTINUE THIS SESSION INSTEAD OF MAKING ONE (PROVISIONAL).
+   * The pair is the delegate's own: the id it recorded, and the EXACT folder it
+   * recorded the session in (a resume refuses any other directory, so the two
+   * always ride together). Absent means a fresh session, exactly as before. The
+   * lane refuses a resume whose folder is not the run's `cwd`.
+   */
+  resume?: RunResume;
+}
+
+/**
+ * STORY 21.1 — THE TWO FACTS A CONTINUATION NEEDS (PROVISIONAL). The id is the
+ * server's own; the folder is the directory it was recorded in. Neither is
+ * ever invented: a session entry that lacks one simply cannot be continued.
+ */
+export interface RunResume {
+  sessionId: string;
+  cwd: string;
 }
 
 /**
@@ -467,6 +485,10 @@ export function thumbLine(
  * STORY 19.2 — THE BOUND RUN'S TWO OPTIONAL FIELDS (PROVISIONAL). `extra.cwd`
  * and `extra.scope` ride the line ONLY when they are given, so an unbound card's
  * request is byte-for-byte what it always was.
+ *
+ * STORY 21.1 — `extra.resume` is the THIRD optional field (PROVISIONAL), and it
+ * rides the same way: a fresh run's line is unchanged to the byte, and a
+ * continuation speaks the pair the delegate recorded.
  */
 export function runRequestLine(
   id: number,
@@ -474,7 +496,7 @@ export function runRequestLine(
   tool: RunTool,
   env: Readonly<Record<string, string>>,
   prompt: string,
-  extra: { cwd?: string; scope?: RunScope } = {},
+  extra: { cwd?: string; scope?: RunScope; resume?: RunResume } = {},
 ): string {
   return JSON.stringify({
     id,
@@ -491,6 +513,14 @@ export function runRequestLine(
     ...(extra.scope === undefined
       ? {}
       : { scope: { boundary: extra.scope.boundary } }),
+    ...(extra.resume === undefined
+      ? {}
+      : {
+          resume: {
+            sessionId: extra.resume.sessionId,
+            cwd: extra.resume.cwd,
+          },
+        }),
   });
 }
 
@@ -742,7 +772,14 @@ function readProgressEntry(value: unknown): AcpProgressEntry | null {
   }
   if (value.kind === "session") {
     if (!isNonEmptyString(value.sessionId)) return null;
-    return { kind: "session", sessionId: value.sessionId };
+    // STORY 21.1 — the folder rides when the run stated one; an older entry
+    // with none is still this vocabulary's session, just not a continuable one.
+    if (value.cwd !== undefined && !isNonEmptyString(value.cwd)) return null;
+    return {
+      kind: "session",
+      sessionId: value.sessionId,
+      ...(value.cwd === undefined ? {} : { cwd: value.cwd }),
+    };
   }
   if (value.kind === "update") {
     if (typeof value.updateKind !== "string") return null;
@@ -1049,6 +1086,18 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
       if (value.cwd === undefined) return null;
       scope = { boundary };
     }
+    // STORY 21.1 — A CONTINUATION CARRIES ITS ID AND ITS EXACT FOLDER, AND A
+    // RESUME WITHOUT A FOLDER IS REFUSED (the scope-without-cwd precedent one
+    // field over): an id alone would make the lane guess a directory, and the
+    // tool refuses every guess. An empty id or a relative folder is not a
+    // continuation this wire can state.
+    let resume: RunResume | undefined;
+    if (value.resume !== undefined) {
+      if (!isRecord(value.resume)) return null;
+      if (!isNonEmptyString(value.resume.sessionId)) return null;
+      if (!isAbsoluteFolder(value.resume.cwd)) return null;
+      resume = { sessionId: value.resume.sessionId, cwd: value.resume.cwd };
+    }
     // The payload's map is the WHOLE grant: every name is a name a process can
     // carry, every value is a string, and a name with no value is refused here
     // rather than silently dropped.
@@ -1072,6 +1121,7 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
       prompt: value.prompt,
       ...(value.cwd === undefined ? {} : { cwd: value.cwd }),
       ...(scope === undefined ? {} : { scope }),
+      ...(resume === undefined ? {} : { resume }),
     };
   }
   if (value.kind !== "turn") return null;

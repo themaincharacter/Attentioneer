@@ -28,6 +28,12 @@
  * pending requests are answered with one sentence rather than a hang. This
  * module writes no file and reads no key: the only I/O is the child's pipes.
  *
+ * STORY 21.1 — session/resume IS ONE MORE TYPED CALL (PROVISIONAL). It is an
+ * optional capability a server advertises in initialize, so the handshake is
+ * still spoken first; the call names the server's own session id and the EXACT
+ * folder it was recorded in, and the answer is read strictly — an id the server
+ * did not state is an honest failure, never an invented continuation.
+ *
  * PROVISIONAL: the helper names, the capability object sent in \`initialize\`
  * and the sentence wording. The wire shapes are ACP v1's (as the spike's
  * server answered them); every observed shape is recorded in
@@ -41,6 +47,13 @@ export const ACP_PROTOCOL_VERSION = 1;
 export const ACP_METHODS = {
   initialize: "initialize",
   sessionNew: "session/new",
+  /**
+   * STORY 21.1 — CONTINUE A SESSION THE SERVER ALREADY HAS (PROVISIONAL). It is
+   * an OPTIONAL capability, advertised by the server in `initialize`; a row
+   * that does not declare it is never asked, and a run of such a row makes a
+   * new session exactly as before.
+   */
+  sessionResume: "session/resume",
   sessionPrompt: "session/prompt",
   sessionCancel: "session/cancel",
   sessionUpdate: "session/update",
@@ -486,6 +499,29 @@ export class AcpTransport {
   }
 
   /**
+   * STORY 21.1 — CONTINUE ONE SESSION THE SERVER ALREADY RECORDED (PROVISIONAL).
+   * The pair is the caller's: the server's own session id and the EXACT folder
+   * it was recorded in (a server refuses any other directory). After this, the
+   * prompt and the update stream are the same two calls a new session uses, so
+   * nothing downstream can tell the two apart except the id they already had.
+   * `initialize` is still the first word spoken: the server advertises
+   * `session/resume` in that answer, and the row's capability is what decides
+   * whether this is ever called.
+   */
+  async resumeSession(
+    sessionId: string,
+    cwd: string,
+    mcpServers: readonly unknown[] = [],
+  ): Promise<AcpSessionNewResult> {
+    const result = await this.request(ACP_METHODS.sessionResume, {
+      sessionId,
+      cwd,
+      mcpServers,
+    });
+    return readResumeResult(result, sessionId);
+  }
+
+  /**
    * Send ONE prompt and wait for the turn to settle. Streamed chunks arrive
    * through \`onNotification\` while this promise is pending; the answer is the
    * server's stop reason.
@@ -751,6 +787,50 @@ function readSessionResult(value: unknown): AcpSessionNewResult {
   if (Array.isArray(value.configOptions)) result.configOptions = value.configOptions;
   else if (value.configOptions !== undefined) result.configOptions = null;
   return result;
+}
+
+/**
+ * STORY 21.1 — READ THE ANSWER TO A CONTINUATION WITHOUT INVENTING AN ID
+ * (PROVISIONAL). The server either echoes the session the caller named (a bare
+ * id, or a session object carrying it) or this fails with one sentence: there is
+ * no fallback to the caller's id, because a server that did not name the session
+ * has not said it continued it. A server that names a DIFFERENT session is
+ * refused too — that would be a different conversation, not this one's memory.
+ */
+function readResumeResult(
+  value: unknown,
+  sessionId: string,
+): AcpSessionNewResult {
+  if (!isRecord(value)) {
+    throw new AcpFailure("the server's session/resume answer was not an object");
+  }
+  const named = resumeSessionIdOf(value);
+  if (named === null) {
+    throw new AcpFailure("the server's session/resume answer named no session");
+  }
+  if (named !== sessionId) {
+    throw new AcpFailure(
+      "the server's session/resume answer named another session",
+    );
+  }
+  const result: AcpSessionNewResult = { sessionId: named };
+  if (Array.isArray(value.configOptions)) result.configOptions = value.configOptions;
+  else if (value.configOptions !== undefined) result.configOptions = null;
+  return result;
+}
+
+/** The session a resume answer named, or null when it named none. */
+function resumeSessionIdOf(value: Record<string, unknown>): string | null {
+  if (typeof value.sessionId === "string" && value.sessionId !== "") {
+    return value.sessionId;
+  }
+  const session = value.session;
+  if (!isRecord(session)) return null;
+  if (typeof session.sessionId === "string" && session.sessionId !== "") {
+    return session.sessionId;
+  }
+  if (typeof session.id === "string" && session.id !== "") return session.id;
+  return null;
 }
 
 function readPromptResult(value: unknown): AcpPromptResult {

@@ -33,6 +33,12 @@
  *   drip          handshake and session, then one update every 100 ms until
  *                 cancelled — the shape a run has when the sidecar's stdout
  *                 closes underneath it (18.3b's closed-pipe kill probe).
+ *   resume        STORY 21.1: a session family with a STORE that outlives the
+ *                 process (a small JSON file beside the report). session/new
+ *                 makes a numbered id and records the exact cwd; session/resume
+ *                 finds it by that pair or refuses in one sentence; a prompt
+ *                 answers with the earlier prompts named back, so a follow-up
+ *                 that reached another session cannot pretend to remember.
  *
  * --report <path> writes {pid, argv, env} once at startup, before the protocol
  * starts. It is how the run tests prove what environment reached the child and
@@ -44,7 +50,7 @@
  * Run it as \`bun tests/fixtures/acp-fake-server.ts [mode] [--framing <kind>]\`.
  */
 
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const argv = process.argv.slice(2);
 const mode = argv[0] ?? "normal";
@@ -63,6 +69,57 @@ if (reportPath !== null) {
     reportPath,
     JSON.stringify({ pid: process.pid, argv: process.argv, env: { ...process.env } }),
   );
+}
+
+/**
+ * STORY 21.1 — THE RESUME FAMILY'S IN-MEMORY STORE, ON DISK. A resumed session
+ * must be found by a FRESH process, so the fixture keeps its model of memory in
+ * one small JSON file beside the report: a session id, the exact cwd it was
+ * recorded in, and the prompts it has been asked. That is the whole model —
+ * enough to prove the id survives a spawn, the folder is enforced, and the
+ * follow-up reads the earlier turns back.
+ */
+interface StoredSession {
+  cwd: string;
+  prompts: string[];
+}
+
+interface StoredSessions {
+  next: number;
+  sessions: Record<string, StoredSession>;
+}
+
+const storeIndex = argv.indexOf("--store");
+const storePath =
+  storeIndex >= 0
+    ? argv[storeIndex + 1]
+    : reportPath === null
+      ? null
+      : reportPath + ".store";
+
+function loadSessions(): StoredSessions {
+  if (storePath === null) return { next: 1, sessions: {} };
+  try {
+    const parsed = JSON.parse(readFileSync(storePath, "utf8")) as StoredSessions;
+    if (typeof parsed.next === "number" && typeof parsed.sessions === "object") {
+      return parsed;
+    }
+  } catch {
+    // No store yet: this is the first spawn of the family.
+  }
+  return { next: 1, sessions: {} };
+}
+
+const stored = loadSessions();
+
+function saveSessions(): void {
+  if (storePath === null) return;
+  try {
+    writeFileSync(storePath, JSON.stringify(stored));
+  } catch {
+    // A store that cannot be written makes the NEXT spawn look memoryless;
+    // the test that needs memory says so rather than pretending.
+  }
 }
 
 const encoder = new TextEncoder();
@@ -94,6 +151,10 @@ function fail(id: number, code: number, message: string): void {
 
 function notify(sessionId: string, update: Record<string, unknown>): void {
   say(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update } }));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 let nextServerId = 100;
@@ -155,6 +216,33 @@ function settlePrompt(stopReason: string): void {
   active.settled = true;
   respond(active.id, { stopReason });
   active = null;
+}
+
+/**
+ * STORY 21.1 — ONE PROMPT INTO A RECORDED SESSION. The fixture's memory is the
+ * prompt list it keeps in the store; the answer NAMES those turns back, so a
+ * follow-up that reached a different session could not answer as if it had
+ * remembered them.
+ */
+async function runResumePrompt(id: number, text: string): Promise<void> {
+  promptCount += 1;
+  active = { id, cancelled: false, settled: false, cancelWaiters: [] };
+  const record = stored.sessions[sessionId];
+  if (record === undefined) {
+    fail(id, -32602, "session " + sessionId + " is not recorded");
+    active = null;
+    return;
+  }
+  record.prompts.push(text);
+  saveSessions();
+  update(
+    "this session remembers " +
+      record.prompts.length +
+      " prompt(s): " +
+      record.prompts.join(" | "),
+  );
+  update("answer: " + text);
+  settlePrompt("end_turn");
 }
 
 async function runPrompt(id: number): Promise<void> {
@@ -280,8 +368,47 @@ function handle(message: Record<string, unknown>): void {
     return;
   }
   if (message.method === "session/new") {
+    if (mode === "resume") {
+      // A fresh session in the family's store: a numbered id and the folder it
+      // was recorded in. The next spawn finds it by exactly that pair.
+      const params = isRecord(message.params) ? message.params : {};
+      const cwd = typeof params.cwd === "string" ? params.cwd : "";
+      const created = "fake-session-" + stored.next;
+      stored.next += 1;
+      stored.sessions[created] = { cwd, prompts: [] };
+      saveSessions();
+      sessionId = created;
+      respond(message.id as number, { sessionId: created, configOptions: [] });
+      return;
+    }
     sessionId = "fake-session";
     respond(message.id as number, { sessionId, configOptions: [] });
+    return;
+  }
+  if (message.method === "session/resume") {
+    // The family's refusal is the tool's own shape: one sentence, no session.
+    const params = isRecord(message.params) ? message.params : {};
+    const wanted = typeof params.sessionId === "string" ? params.sessionId : "";
+    const cwd = typeof params.cwd === "string" ? params.cwd : "";
+    const record = stored.sessions[wanted];
+    if (record === undefined) {
+      fail(
+        message.id as number,
+        -32602,
+        "session " + wanted + " is not recorded",
+      );
+      return;
+    }
+    if (record.cwd !== cwd) {
+      fail(
+        message.id as number,
+        -32602,
+        "session " + wanted + " was recorded in " + record.cwd + ", not " + cwd,
+      );
+      return;
+    }
+    sessionId = wanted;
+    respond(message.id as number, { sessionId: wanted });
     return;
   }
   if (message.method === "session/prompt") {
@@ -295,6 +422,15 @@ function handle(message: Record<string, unknown>): void {
         -32603,
         'Internal error: turn failed: llm-deepseek: no API key for provider route "deepseek-official"; store DEEPSEEK_API_KEY through the credentials service (the web Models page writes it), or export DEEPSEEK_API_KEY in the launching environment',
       );
+      return;
+    }
+    if (mode === "resume") {
+      const params = isRecord(message.params) ? message.params : {};
+      const prompt = Array.isArray(params.prompt) ? params.prompt : [];
+      const first = prompt[0];
+      const text =
+        isRecord(first) && typeof first.text === "string" ? first.text : "";
+      void runResumePrompt(message.id as number, text);
       return;
     }
     void runPrompt(message.id as number);

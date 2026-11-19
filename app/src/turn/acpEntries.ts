@@ -168,7 +168,14 @@ export type AcpProgressEntry =
       /** The variable names the run filled, if any. Never their values. */
       envNames: string[];
     }
-  | { kind: "session"; sessionId: string }
+  /**
+   * STORY 21.1 — THE SESSION, AND THE EXACT FOLDER IT WAS RECORDED IN
+   * (PROVISIONAL). `cwd` rides beside the id so the card's record can keep the
+   * pair a later resume needs; it is OPTIONAL on the wire so a sidecar built
+   * before this story keeps speaking, and a session with no folder simply
+   * cannot be continued.
+   */
+  | { kind: "session"; sessionId: string; cwd?: string }
   | {
       kind: "update";
       /** `sessionUpdate`'s kind: agent_message_chunk, tool_call, plan, … */

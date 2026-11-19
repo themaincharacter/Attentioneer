@@ -12,6 +12,8 @@ import {
   sessionKindLine,
   sessionNameForWrite,
   sessionNewestEntry,
+  sessionResumeOf,
+  SESSION_RESUME_REFUSALS,
   type SessionCard as SessionCardRecord,
   type SessionEntry,
 } from "../map/sessions";
@@ -61,6 +63,15 @@ const SESSION_PILL_RULES: PillNameRules = {
  */
 export const SESSION_TASK_LABEL = "the task";
 export const SESSION_TASK_PLACEHOLDER = "write the task";
+
+/**
+ * STORY 21.1 — THE FOLLOW-UP'S QUIET FIELD (PROVISIONAL wording). The second
+ * composer continues the card's last delegate session; like the task it is
+ * EPHEMERAL (no record field), and only the send line it writes survives a
+ * reopen. The placeholder says what the field is for.
+ */
+export const SESSION_FOLLOW_UP_LABEL = "continue this session";
+export const SESSION_FOLLOW_UP_PLACEHOLDER = "write the follow-up";
 
 /**
  * STORY 19.3 — THE ONE QUIET LINE A DANGLING WIRE SAYS (PROVISIONAL wording).
@@ -128,6 +139,16 @@ export function sessionDisclosureVerb(
  * transcript's recorded `sent` entry, so the same card after a reopen shows
  * the same string. The run verb refuses an empty task with one sentence and
  * nothing starts: no fallback prompt exists any more.
+ *
+ * STORY 21.1 — A SECOND COMPOSER CONTINUES THE SESSION (PROVISIONAL). When the
+ * transcript records a session AND the exact folder it was recorded in, the
+ * expanded card shows "continue this session" below the task: the follow-up
+ * task, the same one quiet disclosure ("what will be sent"), and one verb. The
+ * follow-up's packet is the task and the bound ALONE — the session already owns
+ * the wired context, and re-sending it is the token waste a follow-up exists to
+ * avoid. A row that does not continue sessions says so in ONE quiet sentence
+ * and offers no verb (nothing to press, and nothing refused after the fact);
+ * the layer refuses the same way if such a press ever reaches it.
  *
  * STORY 18.5 MAKES IT REMOVABLE: the expanded card offers remove, the same
  * immediate delete + Restore toast every other card uses. A live run is never
@@ -273,6 +294,8 @@ export function SessionCard({
   onOpen,
   onClose,
   onRun,
+  onFollowUp,
+  canResume = false,
   onStop,
   onChooseTool,
   projectName = null,
@@ -341,6 +364,18 @@ export function SessionCard({
    * writer owns the packet, the gate and the record). Optional in a render test.
    */
   onRun?: (task: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 21.1 — CONTINUE this card's last delegate session with a follow-up
+   * task, VERBATIM (PROVISIONAL). The layer owns the gate, the packet and the
+   * record; the card only forwards the press. Optional in a render test.
+   */
+  onFollowUp?: (task: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 21.1 — WHETHER THE CARD'S ROW CONTINUES SESSIONS (PROVISIONAL). True
+   * only when the row declares the protocol capability; a false row shows the
+   * honest line instead of a verb, and the layer refuses the same way.
+   */
+  canResume?: boolean;
   /** Stop the live run (the run's own cancel). */
   onStop?: () => Promise<void>;
   /** Bind the card to another row (one field's change). */
@@ -422,6 +457,10 @@ export function SessionCard({
   // be sent" or on the recorded "what was sent".
   const [task, setTask] = useState("");
   const [typed, setTyped] = useState(false);
+  // STORY 21.1 — the follow-up composer's field, EPHEMERAL like the task. It
+  // holds the words for the NEXT turn of the recorded session, and is cleared
+  // once they are sent, so a second press cannot silently repeat them.
+  const [followUp, setFollowUp] = useState("");
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // STORY 16.23 — THE CARD IS MOVABLE BY THE SAME ONE RULE as a reference.
@@ -628,6 +667,30 @@ export function SessionCard({
     if (!result.ok) setProblem(result.message);
   }
 
+  /**
+   * STORY 21.1 — CONTINUE THE SESSION. The press sends the follow-up task into
+   * the card's last delegate session through the layer's one gated path; the
+   * transcript records the send and every entry exactly as a run's. A refusal
+   * (no recorded session, a row that cannot continue, a folder that is gone)
+   * is one sentence in the problem line, and the layer has sent nothing.
+   */
+  async function continueSession(): Promise<void> {
+    if (busy || running || onFollowUp === undefined) return;
+    if (followUp.trim() === "") {
+      setProblem(SESSION_TASK_REFUSAL);
+      return;
+    }
+    setBusy(true);
+    setProblem(null);
+    const result = await onFollowUp(followUp);
+    setBusy(false);
+    if (!result.ok) {
+      setProblem(result.message);
+      return;
+    }
+    setFollowUp("");
+  }
+
   async function stopRun(): Promise<void> {
     if (onStop === undefined) return;
     setProblem(null);
@@ -727,6 +790,19 @@ export function SessionCard({
   const scopeDeclaration =
     projectFolder !== null && session.boundary !== undefined
       ? acpScopeDeclaration(projectFolder, session.boundary)
+      : null;
+
+  // STORY 21.1 — THE SESSION THIS CARD COULD CONTINUE. Only a recorded pair
+  // (its id AND the exact folder it was recorded in) opens the second composer;
+  // an id-only entry, or no session at all, leaves the card exactly as it was.
+  const resume = sessionResumeOf(entries);
+  // THE FOLLOW-UP'S PACKET IS THE TASK AND THE BOUND, AND NO CARD BLOCKS. The
+  // session's own memory already holds the wired context; re-sending it would
+  // be the token waste a follow-up exists to avoid. The same pure assembler the
+  // send uses composes these bytes, so the readback cannot drift from them.
+  const followUpPacket =
+    open && followUp.trim() !== ""
+      ? assembleSessionPacket(followUp, [])
       : null;
 
   // STORY 19.3 — WHAT THE CARD WOULD SEND, and WHAT IT DID SEND. The packet is
@@ -1001,6 +1077,67 @@ export function SessionCard({
           {contextMissing && (
             <div className="session-card-wired-missing">
               {SESSION_CONTEXT_DANGLING}
+            </div>
+          )}
+          {/* STORY 21.1 — THE SECOND COMPOSER, BELOW THE TASK: continue the
+              card's last delegate session. It appears only when the transcript
+              records a session AND the exact folder it was recorded in; when
+              the row does not continue sessions the block says so in one quiet
+              sentence and offers NO verb (nothing to press, nothing refused
+              after the fact). The follow-up's packet is the task and the bound
+              alone: the session already owns the context. */}
+          {resume !== null && (
+            <div className="session-card-follow-up">
+              <div className="session-card-follow-up-label">
+                {SESSION_FOLLOW_UP_LABEL}
+              </div>
+              {canResume ? (
+                <>
+                  <textarea
+                    className="session-card-task session-card-follow-up-task"
+                    aria-label={SESSION_FOLLOW_UP_LABEL}
+                    placeholder={SESSION_FOLLOW_UP_PLACEHOLDER}
+                    value={followUp}
+                    disabled={busy || running}
+                    onChange={(e) => {
+                      setFollowUp(e.target.value);
+                      if (problem !== null) setProblem(null);
+                    }}
+                  />
+                  {/* THE SAME ONE QUIET DISCLOSURE the task has: these are the
+                      bytes that WILL go, composed by the send's own assembler. */}
+                  {followUpPacket !== null && (
+                    <details className="ask-card-declaration session-card-sent session-card-follow-up-sent">
+                      <summary className="ask-card-declaration-verb">
+                        {ASK_DECLARATION_VERB}
+                      </summary>
+                      <div className="ask-card-declaration-body">
+                        <PacketSurface
+                          declaration={followUpPacket.declaration}
+                          messages={followUpPacket.messages}
+                        />
+                      </div>
+                    </details>
+                  )}
+                  <button
+                    type="button"
+                    className="session-card-follow-up-verb"
+                    disabled={
+                      busy ||
+                      running ||
+                      onFollowUp === undefined ||
+                      followUp.trim() === ""
+                    }
+                    onClick={() => void continueSession()}
+                  >
+                    continue
+                  </button>
+                </>
+              ) : (
+                <div className="session-card-follow-up-refusal">
+                  {SESSION_RESUME_REFUSALS.rowCannot}
+                </div>
+              )}
             </div>
           )}
           {/* THE DECLARATION FOR THE NEXT RUN: 18.2's one sentence, computed

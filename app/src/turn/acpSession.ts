@@ -2,6 +2,7 @@ import {
   runCancelLine,
   runPermissionReplyLine,
   runRequestLine,
+  type RunResume,
   type RunTool,
 } from "./protocol";
 import { createSidecarTransport, startSidecar } from "./sidecar";
@@ -116,6 +117,13 @@ export interface SessionRunWiring {
    * (PROVISIONAL). Absent means not declared, so every ask reaches the person.
    */
   scope?: RunScope;
+  /**
+   * STORY 21.1 — CONTINUE THIS SESSION INSTEAD OF MAKING ONE (PROVISIONAL).
+   * The delegate's id and the exact folder it was recorded in; absent means the
+   * lane makes a fresh session, exactly as before. The request then carries the
+   * pair, and the lane refuses it unless the run's cwd IS that folder.
+   */
+  resume?: RunResume;
 }
 
 /** One counter for the window's runs and their cancels: ids never collide. */
@@ -263,6 +271,9 @@ export function startSessionRun(
         runRequestLine(id, id, runToolOf(row), env, prompt, {
           ...(wiring.cwd === undefined ? {} : { cwd: wiring.cwd }),
           ...(wiring.scope === undefined ? {} : { scope: wiring.scope }),
+          // STORY 21.1 — the continuation's pair rides ONLY when the card asked
+          // for one, so a fresh run's line is the bytes it always was.
+          ...(wiring.resume === undefined ? {} : { resume: wiring.resume }),
         }),
       );
     } catch {
