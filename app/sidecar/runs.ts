@@ -38,8 +38,22 @@
  * a request nobody answers is the run's own timeout, and the run records it as
  * unanswered. No default allow exists on any path here.
  *
- * PROVISIONAL: the run numbers, the three refusals below and the choice to
- * route the ending through `run-end` rather than a final `run-part`.
+ * STORY 19.2 — A BOUND RUN STARTS IN THE PERSON'S FOLDER, AND THE DELEGATION IS
+ * THE CONSENT. When the request carries an absolute `cwd` (the card is bound to
+ * a project card) and a `scope` (the person declared a boundary) — the wire
+ * carries neither without the other — the folder is checked BEFORE any spawn
+ * and becomes the run's working directory. In that
+ * same case, an ask INSIDE the declared scope is answered allow-once by the lane
+ * itself — no `run-permission` line goes down, and the transcript still shows
+ * the ask and its "allowed-once" reply, because the run records it — while an
+ * ask OUTSIDE the scope flows to the person exactly as before. A run with no
+ * cwd, no scope, or both absent is byte-for-byte the old lane: a fresh session
+ * directory and every ask reaching the person. There is no default allow on any
+ * path here, and only the allow_ONCE option is ever selected.
+ *
+ * PROVISIONAL: the run numbers, the refusals below (including the missing
+ * folder's one sentence), the auto-answer rule and the choice to route the
+ * ending through `run-end` rather than a final `run-part`.
  */
 
 import {
@@ -56,9 +70,12 @@ import {
   type AcpPermissionReply,
   type AcpRunHandle,
 } from "../src/turn/acpRun.ts";
-import { optionIdForChoice } from "../src/turn/acpEntries.ts";
+import {
+  optionIdForChoice,
+  permissionInScope,
+} from "../src/turn/acpEntries.ts";
 import type { AcpSpec } from "../src/turn/acpSpecs.ts";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 
 /** The lane's own refusals, in the sidecar's one-sentence voice. */
 export const RUN_LANE_SENTENCES = {
@@ -75,6 +92,43 @@ export const RUN_LANE_SENTENCES = {
  */
 export function runMissingCommandSentence(command: string): string {
   return "the command " + command + " was not found, so nothing was started.";
+}
+
+/**
+ * STORY 19.2 — THE BOUND RUN'S FOLDER IS NOT THERE (PROVISIONAL). One sentence,
+ * naming the folder, said BEFORE anything is spawned: binding a project is a
+ * consent to run IN that folder, so a folder that has gone must not become a
+ * run somewhere else, an empty transcript or a timeout dressed up as a failure.
+ * No child, no transcript and no budget clock are made.
+ */
+export function runMissingFolderSentence(folder: string): string {
+  return "the folder " + folder + " is not there, so nothing was started.";
+}
+
+/**
+ * STORY 19.2 — DOES A RUN'S FOLDER EXIST? A directory only: a file, a link
+ * into nothing and an unset cwd all answer false. PURE apart from the two facts
+ * it reads, so a test can stand behind either.
+ */
+export function folderFound(
+  folder: string,
+  isDirectory: (path: string) => boolean = existsDirectory,
+): boolean {
+  if (folder.trim() === "") return false;
+  try {
+    return isDirectory(folder);
+  } catch {
+    return false;
+  }
+}
+
+/** The default check: an existing directory and nothing else. */
+function existsDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -197,6 +251,14 @@ export function createRunLane(options: RunLaneOptions): RunLane {
       );
       return;
     }
+    // STORY 19.2 — A BOUND RUN'S FOLDER IS CHECKED BEFORE ANY SPAWN. The person
+    // bound a project and declared a boundary, so the folder is where this run
+    // was consented to work; a folder that is gone answers one sentence and no
+    // child, transcript or budget clock is ever made.
+    if (request.cwd !== undefined && !folderFound(request.cwd)) {
+      options.say(errorLine(request.id, runMissingFolderSentence(request.cwd)));
+      return;
+    }
     // ONE WAIT PER RUN. It is filled when the server asks and resolved by the
     // person's reply (or, after the run has ended, with null so nothing leaks).
     const waitFor: { current: PendingPermission | null } = { current: null };
@@ -207,16 +269,32 @@ export function createRunLane(options: RunLaneOptions): RunLane {
       // STORY 18.4 — THE RUN WAITS FOR A PERSON. The ask goes DOWN the wire;
       // the promise settles only when an answer comes UP, and the run's own
       // budget is the only other way out. There is no default allow.
-      replyToPermission: (ask: AcpPermissionAsk) =>
-        new Promise<AcpPermissionReply>((resolve) => {
+      replyToPermission: (ask: AcpPermissionAsk) => {
+        // STORY 19.2 — THE DELEGATION IS THE CONSENT. When the person declared a
+        // boundary and this ask is INSIDE it, the run answers allow-once itself
+        // and NO run-permission line goes down: the card is not interrupted.
+        // The run still records the ask and its reply in its own progress entry,
+        // so the transcript shows "allowed-once" without a person pressing it.
+        // An ask OUTSIDE the declaration (or any ask on a run with no scope)
+        // takes exactly the old path and waits for the person.
+        if (permissionInScope(request.scope, ask)) {
+          return { optionId: optionIdForChoice("allow-once", ask.options) };
+        }
+        return new Promise<AcpPermissionReply>((resolve) => {
           waitFor.current = { ask, resolve };
           options.say(runPermissionLine(request.id, request.run, ask));
-        }),
+        });
+      },
       onProgress: (progress) => {
         // The ending is run-end's, said ONCE — never a second run-part.
         if (progress.kind === "ended") return;
         options.say(runPartLine(request.id, request.run, progress));
       },
+      // STORY 19.2 — the bound folder and the declared scope ride through to
+      // the run: the cwd replaces the fresh session directory, and the scope
+      // only shapes the declaration (the auto-answer happened above).
+      ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+      ...(request.scope === undefined ? {} : { scope: request.scope }),
     });
     const entry: LiveRun = {
       id: request.id,

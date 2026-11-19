@@ -74,6 +74,8 @@ import {
   SESSION_TRANSCRIPT_REFUSAL,
   addSession,
   appendSessionEntries,
+  bindSessionBoundary as bindSessionBoundaryRecord,
+  bindSessionProject as bindSessionProjectRecord,
   bindSessionTool as bindSessionToolRecord,
   loadSessionTranscript,
   loadSessionTranscriptsWithOrphans,
@@ -119,6 +121,7 @@ import type {
   AcpPermissionAsk,
   AcpPermissionChoice,
   AcpProgressEntry,
+  RunScope,
 } from "../turn/acpEntries";
 import { artifactPlacement, besidePlacement, type Point } from "./geometry";
 import type { SidecarStart } from "../turn/sidecar";
@@ -793,6 +796,27 @@ export interface GroundView {
    */
   bindSessionTool: (slug: string, tool: string) => Promise<GroundAddResult>;
   /**
+   * STORY 19.2 — BIND one session card to a PROJECT CARD, or unbind it with
+   * `null` (PROVISIONAL): ONE field's change ("project"), one queued write. A
+   * binding is only a pointer: it does nothing until a boundary is declared. A
+   * card already running refuses, and a slug that is not one of the map's
+   * folder cards is not bound.
+   */
+  bindSessionProject: (
+    slug: string,
+    project: string | null,
+  ) => Promise<GroundAddResult>;
+  /**
+   * STORY 19.2 — DECLARE (or withdraw with `null`) what a run of this card may
+   * do in its bound folder: ONE field's change ("boundary"), one queued write.
+   * Declaring is what makes the delegation the consent; withdrawing returns the
+   * card to exactly today's behaviour.
+   */
+  setSessionBoundary: (
+    slug: string,
+    boundary: "read" | "write" | null,
+  ) => Promise<GroundAddResult>;
+  /**
    * STORY 18.3 — RUN one session card: the row's 18.2 lifecycle, with every
    * progress entry appended to the transcript as it arrives. ONE RUN PER CARD:
    * a second press answers one sentence. A card whose row is gone answers one
@@ -937,6 +961,8 @@ type GroundLoaded = Omit<
   | "removeSession"
   | "createSession"
   | "bindSessionTool"
+  | "bindSessionProject"
+  | "setSessionBoundary"
   | "runSession"
   | "stopSession"
   | "answerSessionPermission"
@@ -3104,6 +3130,14 @@ export interface SessionRunOptions {
   onPermission?: (ask: AcpPermissionAsk) => void;
   /** The transcript bridges (a test's fake, or the map's own files). */
   transcriptIo?: SessionIo;
+  /**
+   * STORY 19.2 — WHERE THE RUN STARTS, when the card is bound to a project and
+   * a boundary was declared (PROVISIONAL). An absolute folder path; absent
+   * keeps the fresh session directory, exactly as before.
+   */
+  cwd?: string;
+  /** STORY 19.2 — the declared boundary that rides beside that cwd. */
+  scope?: RunScope;
 }
 
 /**
@@ -3165,6 +3199,10 @@ export function beginSessionRun(
     ...(options.onPermission === undefined
       ? {}
       : { onPermission: options.onPermission }),
+    // STORY 19.2 — a bound, declared card's folder and scope ride the request.
+    // Absent on every other card, so the wire keeps its old shape.
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    ...(options.scope === undefined ? {} : { scope: options.scope }),
   });
 
   const done: Promise<SessionRunDone> = handle.ended.then(
@@ -3182,6 +3220,63 @@ export function beginSessionRun(
   );
 
   return { handle, done };
+}
+
+/**
+ * STORY 19.2 — THE ONE SENTENCE A BINDING THAT NO LONGER RESOLVES ANSWERS
+ * (PROVISIONAL). It says what is absent (no folder card behind this binding)
+ * AND what is not claimed (nothing was started, read or changed): a broken
+ * binding is a stated hole, never a run moved somewhere else.
+ */
+export const SESSION_PROJECT_REFUSAL =
+  "the project this card is bound to is not a folder card here, so nothing was started and nothing was read or changed.";
+
+/**
+ * STORY 19.2 — THE ONE SENTENCE A DECLARATION WITH NO BINDING ANSWERS
+ * (PROVISIONAL). A boundary is a statement about a folder; with no project
+ * bound there is no folder to be about, and the record's line has no such shape.
+ */
+export const SESSION_BOUNDARY_NEEDS_PROJECT =
+  "bind a project card first, so the declaration has a folder to be about.";
+
+/**
+ * STORY 19.2 — WHERE A SESSION CARD'S RUN STARTS (PURE, PROVISIONAL).
+ *
+ * Three answers, and the safe one is the default:
+ *
+ *   - "unbound": the card has no project, OR it has one but no declared
+ *     boundary. Both behave EXACTLY as before the binding existed: a fresh
+ *     session directory and every ask reaching the person. A binding alone is
+ *     not a consent, so it narrows nothing and resolves nothing.
+ *   - "bound": the person bound a project AND declared what the run may do.
+ *     The project resolves against the LOADED READINGS (never the record's
+ *     word alone) and must be `form: folder`; its `from` IS the folder (the
+ *     readings' parser already requires an absolute one, and it is re-checked
+ *     here rather than trusted).
+ *   - "refused": a declared binding that does not resolve — named, and nothing
+ *     started.
+ */
+export type SessionBoundScope =
+  | { kind: "unbound" }
+  | { kind: "bound"; cwd: string; scope: RunScope }
+  | { kind: "refused"; sentence: string };
+
+export function sessionBoundScope(
+  session: SessionCard,
+  readings: readonly Reading[],
+): SessionBoundScope {
+  if (session.project === undefined || session.boundary === undefined) {
+    return { kind: "unbound" };
+  }
+  const reading = readings.find((candidate) => candidate.on === session.project);
+  if (reading === undefined || reading.form !== "folder") {
+    return { kind: "refused", sentence: SESSION_PROJECT_REFUSAL };
+  }
+  const folder = reading.from;
+  if (folder.trim() === "" || !isAbsolutePath(folder)) {
+    return { kind: "refused", sentence: SESSION_PROJECT_REFUSAL };
+  }
+  return { kind: "bound", cwd: folder, scope: { boundary: session.boundary } };
 }
 
 /** The bridges a session card's creation needs; a test passes its own fakes. */
@@ -3250,6 +3345,51 @@ export async function bindSessionCard(
   io: SessionBindIo = SESSION_BIND_IO,
 ): Promise<SessionCard[] | null> {
   const next = bindSessionToolRecord(sessions, slug, tool);
+  if (next === null) return null;
+  await io.saveSessions(workspacePath, next, malformedSessions);
+  return next;
+}
+
+/** The bridges a binding change needs; a test passes its own fakes. */
+export interface SessionBindingIo {
+  saveSessions: typeof saveSessions;
+}
+
+const SESSION_BINDING_IO: SessionBindingIo = { saveSessions };
+
+/**
+ * STORY 19.2 — BIND one session card to a PROJECT CARD (or unbind it with
+ * `null`): ONE field's change, ONE write, and the transcript, point and tool
+ * row are untouched. A slug this file does not carry answers `null`.
+ */
+export async function bindSessionProjectCard(
+  workspacePath: string,
+  sessions: readonly SessionCard[],
+  malformedSessions: readonly string[],
+  slug: string,
+  project: string | null,
+  io: SessionBindingIo = SESSION_BINDING_IO,
+): Promise<SessionCard[] | null> {
+  const next = bindSessionProjectRecord(sessions, slug, project);
+  if (next === null) return null;
+  await io.saveSessions(workspacePath, next, malformedSessions);
+  return next;
+}
+
+/**
+ * STORY 19.2 — DECLARE (or withdraw, with `null`) what a run of this card may
+ * do in its bound folder: ONE field's change, ONE write. The project field, if
+ * any, stays as it was.
+ */
+export async function setSessionBoundaryCard(
+  workspacePath: string,
+  sessions: readonly SessionCard[],
+  malformedSessions: readonly string[],
+  slug: string,
+  boundary: "read" | "write" | null,
+  io: SessionBindingIo = SESSION_BINDING_IO,
+): Promise<SessionCard[] | null> {
+  const next = bindSessionBoundaryRecord(sessions, slug, boundary);
   if (next === null) return null;
   await io.saveSessions(workspacePath, next, malformedSessions);
   return next;
@@ -4065,6 +4205,19 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         session.on,
         sessionLastEnding(sessionEntriesRef.current[session.on] ?? []),
       ]),
+    ),
+    // STORY 19.2 — the bound PROJECT CARD's NAME, never its folder path: the
+    // mirror may be shared, so the path never reaches MAP.md (ADR-0039's rule).
+    sessionProjectNames: Object.fromEntries(
+      sessionsRef.current.map((session) => {
+        const reference =
+          session.project === undefined
+            ? null
+            : (referencesRef.current.find(
+                (candidate) => candidate.on === session.project,
+              ) ?? null);
+        return [session.on, reference?.name ?? null] as const;
+      }),
     ),
     orphanSessionTranscripts: orphanSessionTranscriptsRef.current,
     readings: readingsRef.current,
@@ -5550,6 +5703,119 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
+   * STORY 19.2 — BIND this card to a project card (or unbind it). ONE field's
+   * change through the same one write queue; the transcript, the point and
+   * the tool row are untouched. A card that is running refuses (the run must
+   * not change under it), and a project that is not one of the map's folder
+   * cards is not bound.
+   */
+  const bindSessionProject = useCallback(
+    (slug: string, project: string | null): Promise<GroundAddResult> => {
+      if (!sessionsRef.current.some((session) => session.on === slug)) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      if (sessionRunsRef.current[slug] !== undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
+      }
+      // A project is a GROUND REFERENCE whose reading is a folder — resolved
+      // against the loaded readings, never against the record's word alone.
+      const projectReading =
+        project === null
+          ? null
+          : (readingsRef.current.find((candidate) => candidate.on === project) ??
+            null);
+      if (projectReading !== null && projectReading.form !== "folder") {
+        return Promise.resolve({ ok: false, message: SESSION_PROJECT_REFUSAL });
+      }
+      if (project !== null && projectReading === null) {
+        return Promise.resolve({ ok: false, message: SESSION_PROJECT_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const next = await bindSessionProjectCard(
+            workspacePath,
+            sessionsRef.current,
+            malformedSessionsRef.current,
+            slug,
+            project,
+          );
+          if (next === null) {
+            outcome = { ok: false, message: SESSION_MISSING_REFUSAL };
+            return;
+          }
+          sessionsRef.current = next;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
+   * STORY 19.2 — DECLARE (or withdraw) what a run of this card may do in its
+   * bound folder. ONE field's change, one queued write; the tool row, the
+   * point and the transcript are untouched.
+   */
+  const setSessionBoundary = useCallback(
+    (
+      slug: string,
+      boundary: "read" | "write" | null,
+    ): Promise<GroundAddResult> => {
+      if (!sessionsRef.current.some((session) => session.on === slug)) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      if (sessionRunsRef.current[slug] !== undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
+      }
+      // A declaration needs a folder to be about: the record's line has no
+      // `boundary` without a `project`, so this is refused BEFORE any write.
+      const target = sessionsRef.current.find((entry) => entry.on === slug);
+      if (boundary !== null && target?.project === undefined) {
+        return Promise.resolve({
+          ok: false,
+          message: SESSION_BOUNDARY_NEEDS_PROJECT,
+        });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const next = await setSessionBoundaryCard(
+            workspacePath,
+            sessionsRef.current,
+            malformedSessionsRef.current,
+            slug,
+            boundary,
+          );
+          if (next === null) {
+            outcome = { ok: false, message: SESSION_MISSING_REFUSAL };
+            return;
+          }
+          sessionsRef.current = next;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
    * STORY 18.3 — RUN one session card. The row's 18.2 lifecycle starts here,
    * and EVERY progress entry is appended to the transcript the moment it
    * arrives (whole lines, in arrival order), so the card watches the run from
@@ -5577,7 +5843,19 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       if (row === null) {
         return Promise.resolve({ ok: false, message: SESSION_NO_TOOL_REFUSAL });
       }
+      // STORY 19.2 — A BOUND, DECLARED CARD RUNS IN ITS PROJECT'S FOLDER. The
+      // binding is resolved against the LOADED readings, never the record
+      // alone; an unbound card (or one with no declared boundary) is exactly
+      // today's run, and a declared binding that does not resolve refuses with
+      // one sentence before the sidecar is ever asked.
+      const bound = sessionBoundScope(session, readingsRef.current);
+      if (bound.kind === "refused") {
+        return Promise.resolve({ ok: false, message: bound.sentence });
+      }
       const started = beginSessionRun(workspacePath, row, slug, {
+        ...(bound.kind === "bound"
+          ? { cwd: bound.cwd, scope: bound.scope }
+          : {}),
         // The view follows each entry as the run reports it. The file is the
         // record; this is the same arrival order, one render behind the write.
         onEntry: (entry) => {
@@ -7077,6 +7355,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     removeSession,
     createSession,
     bindSessionTool,
+    bindSessionProject,
+    setSessionBoundary,
     runSession,
     stopSession,
     answerSessionPermission,

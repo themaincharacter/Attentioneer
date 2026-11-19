@@ -15,6 +15,18 @@ import { SESSION_RECORD_FILE, SESSION_TRANSCRIPTS_DIR, mapDir } from "./records"
  * line per session card, and one transcript per card under `map/sessions/`.
  *
  *   on: <slug> | name: <the person's words> | x: <int> | y: <int> | tool: <row-id>
+ *     [| project: <project-card-slug>] [| boundary: read|write]
+ *
+ * STORY 19.2 — A CARD MAY BE BOUND TO A PROJECT AND DECLARE A BOUNDARY
+ * (PROVISIONAL). Both fields are OPTIONAL and sit at the line's tail, so an old
+ * line parses exactly as it did and the writer emits them only when the record
+ * carries them. `project` names a PROJECT CARD (a ground reference whose
+ * reading is a folder), by slug — it is NOT checked against the readings here,
+ * the same rule as `tool`: a binding that no longer resolves is a stated hole
+ * the card shows, and the run resolves it against the loaded readings. `boundary`
+ * is the person's declaration of what a run of this card may do in that folder;
+ * absent means "not declared", which behaves exactly as a card with no binding:
+ * a fresh temp folder, and every ask reaches the person.
  *
  *   map/sessions/<slug>.jsonl   one JSON line per progress entry, in ARRIVAL ORDER
  *
@@ -76,8 +88,9 @@ import { SESSION_RECORD_FILE, SESSION_TRANSCRIPTS_DIR, mapDir } from "./records"
  * `sessions.txt` name, the line shape and its key order, the coordinates as
  * ints, the `sessions/` folder name, the six entry kinds and their fields, the
  * optional `sentence` on an ending (the run's one-sentence reason, kept so a
- * failed run still says why after a reopen), the orphan/restore shapes and every
- * sentence below.
+ * failed run still says why after a reopen), the TWO OPTIONAL BINDING FIELDS
+ * (story 19.2: `project` and `boundary`, and their position at the line's
+ * tail), the orphan/restore shapes and every sentence below.
  */
 
 /** One session card: a name at a point, bound to one tool row. */
@@ -95,6 +108,21 @@ export interface SessionCard {
    * offers to fill again; it is never repaired here.
    */
   tool: string;
+  /**
+   * STORY 19.2 — THE PROJECT CARD this session may run inside (PROVISIONAL): a
+   * ground reference whose reading is `form: folder`, by slug. NOT validated
+   * here (the tool row's rule): the run resolves it against the loaded
+   * readings, and a binding that no longer resolves refuses with one sentence.
+   * Absent means unbound — exactly today's behaviour.
+   */
+  project?: string;
+  /**
+   * STORY 19.2 — WHAT THE PERSON DECLARED a run may do in that folder
+   * (PROVISIONAL): "read" (it only reads) or "write" (it may change files
+   * there). Absent means not declared: no cwd crosses the wire, a fresh temp
+   * folder is made, and every ask reaches the person.
+   */
+  boundary?: "read" | "write";
 }
 
 /** A read of `map/sessions.txt`: what parsed, and what is kept but unreadable. */
@@ -207,28 +235,42 @@ export function sessionTranscriptPath(
 /**
  * The line shape, in the order the writer emits it. `name` is greedy so the
  * person's words may contain the ` | ` separator; only the exact ` | x: N |
- * y: N | tool: <row-id>` tail is structural. PROVISIONAL with the record.
+ * y: N | tool: <row-id>` tail is structural. STORY 19.2 adds the two OPTIONAL
+ * binding fields AFTER that tail (PROVISIONAL): `project` and then `boundary`,
+ * each emitted only when the record carries it, so an old line and an unbound
+ * line are the same bytes they always were.
  */
 const SESSION_LINE =
-  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+) \| tool: (\S+)$/;
+  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+) \| tool: (\S+)(?: \| project: (\S+))?(?: \| boundary: (read|write))?$/;
 
 /**
  * Parse one line. Anything out of shape — a missing key, a decimal coordinate,
- * an empty name or tool — becomes `null`: it is kept and reported, never
- * guessed into a card. The TOOL is NOT checked against the rows this build
- * ships: a row that is no longer there is a legal record the card states.
+ * an empty name or tool, a boundary that is not one of the two words, or a
+ * `boundary` with no `project` before it — becomes `null`: it is kept and
+ * reported, never guessed into a card. The TOOL is NOT checked against the rows
+ * this build ships: a row that is no longer there is a legal record the card
+ * states. The PROJECT is not checked against the readings either (the same
+ * rule): the run resolves it, and the card states a binding that no longer
+ * resolves.
  */
 export function parseSessionLine(line: string): SessionCard | null {
   const match = SESSION_LINE.exec(line);
   if (!match) return null;
-  const [, on, name, x, y, tool] = match;
+  const [, on, name, x, y, tool, project, boundary] = match;
   if (on === "" || name.trim() === "" || tool === "") return null;
-  return { on, name, x: Number(x), y: Number(y), tool };
+  if (project === undefined && boundary !== undefined) return null;
+  const card: SessionCard = { on, name, x: Number(x), y: Number(y), tool };
+  if (project !== undefined) card.project = project;
+  if (boundary === "read" || boundary === "write") card.boundary = boundary;
+  return card;
 }
 
 /** One session card as its canonical line (no trailing newline). */
 export function serializeSessionLine(session: SessionCard): string {
-  return `on: ${session.on} | name: ${session.name} | x: ${session.x} | y: ${session.y} | tool: ${session.tool}`;
+  let line = `on: ${session.on} | name: ${session.name} | x: ${session.x} | y: ${session.y} | tool: ${session.tool}`;
+  if (session.project !== undefined) line += " | project: " + session.project;
+  if (session.boundary !== undefined) line += " | boundary: " + session.boundary;
+  return line;
 }
 
 /** Read the file's bytes: LF/BOM/CRLF tolerated, unreadable lines kept. */
@@ -815,6 +857,73 @@ export function bindSessionTool(
   );
 }
 
+/**
+ * STORY 19.2 — BIND one session card to a PROJECT CARD (PROVISIONAL): ONE
+ * field's change, or its removal when the person picks nothing. The name, the
+ * point, the tool row and the transcript are untouched. A slug this file does
+ * not carry answers `null`, never an appended card. PURE: the caller writes
+ * the file once.
+ *
+ * UNBINDING ALSO WITHDRAWS THE DECLARATION. A boundary is a statement about a
+ * folder, so without the binding it has nothing to be true of — and the line
+ * shape has no `boundary` without a `project`, so keeping it would write a line
+ * the parser would refuse on the next load.
+ */
+export function bindSessionProject(
+  sessions: readonly SessionCard[],
+  slug: string,
+  project: string | null,
+): SessionCard[] | null {
+  if (!sessions.some((session) => session.on === slug)) return null;
+  return sessions.map((session) => {
+    if (session.on !== slug) return session;
+    const next: SessionCard = {
+      on: session.on,
+      name: session.name,
+      x: session.x,
+      y: session.y,
+      tool: session.tool,
+    };
+    if (project !== null) {
+      next.project = project;
+      if (session.boundary !== undefined) next.boundary = session.boundary;
+    }
+    return next;
+  });
+}
+
+/**
+ * STORY 19.2 — DECLARE (or withdraw) WHAT A RUN MAY DO in the bound folder
+ * (PROVISIONAL): ONE field's change. `null` withdraws the declaration — the
+ * record keeps no `boundary`, and the card behaves exactly as one with no
+ * binding. The project field, if any, is untouched. PURE.
+ */
+export function bindSessionBoundary(
+  sessions: readonly SessionCard[],
+  slug: string,
+  boundary: "read" | "write" | null,
+): SessionCard[] | null {
+  const target = sessions.find((session) => session.on === slug);
+  if (target === undefined) return null;
+  // A DECLARATION NEEDS A FOLDER TO BE ABOUT. A card with no project cannot
+  // declare one (and the record's line has no such shape): the caller's own
+  // refusal names the missing binding.
+  if (boundary !== null && target.project === undefined) return null;
+  return sessions.map((session) => {
+    if (session.on !== slug) return session;
+    const next: SessionCard = {
+      on: session.on,
+      name: session.name,
+      x: session.x,
+      y: session.y,
+      tool: session.tool,
+    };
+    if (session.project !== undefined) next.project = session.project;
+    if (boundary !== null) next.boundary = boundary;
+    return next;
+  });
+}
+
 /** The ending sentences (PROVISIONAL wording): only "completed" is a result. */
 export const SESSION_ENDING_SENTENCES = {
   completed: "the run finished.",
@@ -906,6 +1015,31 @@ export function sessionNewestEntry(
 export function sessionKindLine(toolName: string | null): string {
   return "a run of " + (toolName === null ? "a tool that is not here" : toolName);
 }
+
+/**
+ * STORY 19.2 — THE CARD'S QUIET BINDING LINE (PURE, PROVISIONAL): the bound
+ * PROJECT CARD's name, never its folder path. The face of the map says which
+ * card the run belongs to; the path is said in the declaration, once, when the
+ * person has declared a boundary — the blast radius is said aloud there, not
+ * worn on every card.
+ */
+export function sessionBindingLine(projectName: string): string {
+  return "bound to " + projectName;
+}
+
+/** What the card says while no boundary is declared (PROVISIONAL). */
+export const SESSION_BOUNDARY_UNDECLARED_SENTENCE = "every ask will reach you";
+
+/**
+ * The three boundary states the card offers, in the person's own words
+ * (PROVISIONAL). The middle and last are the record's two words; "undeclared"
+ * is the absence of a declaration, which is the safe default and is not stored.
+ */
+export const SESSION_BOUNDARY_LABELS = {
+  undeclared: "undeclared",
+  read: "only reads",
+  write: "may change files there",
+} as const;
 
 /**
  * STORY 18.4 — THE RESULT OF THE LAST RUN (PURE). This is the run's TEXT

@@ -104,6 +104,54 @@ export function optionIdForChoice(
 }
 
 /**
+ * STORY 19.2 — THE BOUNDARY A BOUND RUN WAS DECLARED UNDER (PROVISIONAL).
+ *
+ * A session card may be bound to a project card (a folder elsewhere on this
+ * machine). When the person has ALSO said what the run may do there, that one
+ * word rides the run request: "read" means the run only reads, "write" means it
+ * may change files in that folder. Absent means nothing was declared, and then
+ * nothing is narrowed and nothing is auto-answered.
+ */
+export interface RunScope {
+  boundary: "read" | "write";
+}
+
+/** The boundary words a declaration may carry (PROVISIONAL, with the record). */
+export const RUN_BOUNDARIES: readonly RunScope["boundary"][] = ["read", "write"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * IS THIS ASK INSIDE THE DECLARED BOUNDARY? (PURE, STORY 19.2, PROVISIONAL)
+ *
+ * A declared boundary is the person's consent for IN-SCOPE asks only, so this
+ * decides exactly one question and answers it in the strict direction:
+ *
+ *   - "write" ⇒ in scope when the ask's tool call carries a `kind` string (any
+ *     value: the call names what it is, and the declaration covers changes);
+ *   - "read"  ⇒ in scope ONLY when that kind is exactly "read";
+ *   - anything else — no scope, a missing or non-string kind — is NOT in scope.
+ *
+ * NOTHING DEFAULTS TO ALLOW and a scope never widens: an ask outside it flows
+ * to the person exactly as every ask did before the binding existed.
+ */
+export function permissionInScope(
+  scope: RunScope | null | undefined,
+  ask: { toolCall: unknown },
+): boolean {
+  if (scope === null || scope === undefined) return false;
+  const boundary = scope.boundary;
+  if (boundary !== "read" && boundary !== "write") return false;
+  const call = isRecord(ask.toolCall) ? ask.toolCall : null;
+  if (call === null) return false;
+  const kind = call.kind;
+  if (typeof kind !== "string") return false;
+  return boundary === "write" ? true : kind === "read";
+}
+
+/**
  * One entry in the run's ordered progress sequence. The window watches this
  * and nothing else.
  */

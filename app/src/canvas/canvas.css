@@ -8227,6 +8227,31 @@ body {
   color: var(--ink-marker);
 }
 
+/* STORY 19.2 — THE BINDING, QUIETLY: the bound PROJECT CARD's name, never its
+   folder path. What the run may do there is declared in the expanded face. */
+.session-card-bound {
+  font-size: 10.5px;
+  line-height: 1.4;
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
+/* The project picker and the boundary choice sit beside the tool picker, in the
+   same small voice: two record fields, each written the moment it is chosen. */
+.session-card-binding-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.session-card-bound-hint {
+  font-size: 10.5px;
+  line-height: 1.4;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
 .session-card-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -8322,6 +8347,12 @@ body {
   color: var(--ink-faint);
   max-height: 48px;
   overflow-y: auto;
+}
+
+/* STORY 19.2 — the bound run's blast radius: the folder's full path and the
+   declared boundary, in the same quiet voice as the key sentence above it. */
+.session-card-declaration.session-card-scope {
+  color: var(--ink-marker);
 }
 
 /* A card whose row is gone STATES it and offers the choice again. */

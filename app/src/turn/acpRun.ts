@@ -72,6 +72,7 @@ import {
   acpDeclaration,
   acpMissingKeySentence,
   acpResolvedDeclaration,
+  acpScopeDeclaration,
   type AcpSpec,
 } from "./acpSpecs";
 // 18.3b: the progress vocabulary lives in its own window-safe module (`acpEntries`),
@@ -195,6 +196,19 @@ export interface AcpRunOptions {
   environment?: Record<string, string | undefined>;
   /** The temp root the session directory is made under; the OS temp by default. */
   sessionRoot?: string;
+  /**
+   * STORY 19.2 — WHERE THE RUN STARTS, when the person bound a project card and
+   * declared a boundary (PROVISIONAL). An ABSOLUTE folder path; it REPLACES the
+   * fresh session directory. Absent (or relative) keeps exactly the old rule: a
+   * fresh temp directory and nothing assumed about where a run lands.
+   */
+  cwd?: string;
+  /**
+   * STORY 19.2 — WHAT THE PERSON DECLARED the run may do there (PROVISIONAL).
+   * It only shapes the declaration sentence here: who auto-answers an ask is
+   * the lane's decision (sidecar/runs.ts), not this lifecycle's.
+   */
+  scope?: { boundary: "read" | "write" };
   /** Shorten the row's budget (a caller's own deadline; tests use it too). */
   timeoutMs?: number;
   /** Every progress entry as it happens, in order. */
@@ -271,6 +285,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * STORY 19.2 — IS THIS THE ABSOLUTE FOLDER A RUN MAY START IN? (PROVISIONAL)
+ * POSIX's leading slash, a Windows drive and a UNC all count. The WIRE's reader
+ * refuses every other spelling, so this is the second, local check a run makes
+ * before trusting a cwd it was handed.
+ */
+function isAbsoluteFolderPath(value: string): boolean {
+  if (value === "") return false;
+  return (
+    value.startsWith("/") ||
+    /^[A-Za-z]:[\\/]/.test(value) ||
+    value.startsWith("\\\\")
+  );
+}
+
 function textOf(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -337,10 +366,20 @@ export function startAcpRun(
   const entries: AcpProgressEntry[] = [];
   // 18.3b: the sidecar is handed a RESOLVED map, so the declaration it reports
   // names those variable names; a run in the window's own process names rows.
-  const declaration =
+  const keyDeclaration =
     options.resolvedEnv === undefined
       ? acpDeclaration(spec)
       : acpResolvedDeclaration(Object.keys(options.resolvedEnv));
+  // STORY 19.2 — A BOUND RUN SAYS ITS BLAST RADIUS BEFORE IT SPAWNS. The scope
+  // sentence is appended ONLY when both the folder and the declaration arrived,
+  // so an unbound (or undeclared) run's declaration is the same sentence it
+  // always was.
+  const declaration =
+    options.cwd === undefined || options.scope === undefined
+      ? keyDeclaration
+      : keyDeclaration +
+        ". " +
+        acpScopeDeclaration(options.cwd, options.scope.boundary);
   const budgetMs =
     options.timeoutMs ?? Math.max(1, Math.round(spec.timeoutMinutes * 60_000));
 
@@ -560,12 +599,20 @@ export function startAcpRun(
     if (settled) return;
 
     const env = acpRunEnvironment(spec, keys, environment, resolved);
+    // STORY 19.2 — A BOUND RUN STARTS IN THE PERSON'S FOLDER. The lane has
+    // already refused a folder that is not there; an absolute path here is used
+    // as given, and the fresh temp directory stays the fallback for every other
+    // run (a relative path is not a folder this rule accepted).
     let made: string;
-    try {
-      made = createSessionDirectory(options.sessionRoot);
-    } catch {
-      await finish("failed", ACP_RUN_SENTENCES.noDirectory);
-      return;
+    if (options.cwd !== undefined && isAbsoluteFolderPath(options.cwd)) {
+      made = options.cwd;
+    } else {
+      try {
+        made = createSessionDirectory(options.sessionRoot);
+      } catch {
+        await finish("failed", ACP_RUN_SENTENCES.noDirectory);
+        return;
+      }
     }
     directory = made;
     if (settled) return;

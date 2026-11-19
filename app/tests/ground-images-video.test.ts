@@ -855,6 +855,12 @@ describe("a video card is copied beside the map and reopens OFFLINE", () => {
   test("an image reads back after a reopen with no server and no copy", async () => {
     const workspace = freshWorkspace();
     const image = realImage();
+    // The reading's `taken` and the file's own modified stamp are two clocks:
+    // the write lands mid-millisecond, while the ISO timestamp is cut to whole
+    // milliseconds, so taking the reading in that SAME millisecond reads as
+    // "changed" even though nothing changed. Let the clock move past the write
+    // before the reading is taken; the fixture is still untouched after it.
+    await Bun.sleep(5);
     try {
       const taken = await takeReading(
         workspace,

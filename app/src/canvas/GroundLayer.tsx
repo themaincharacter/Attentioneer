@@ -606,6 +606,20 @@ interface GroundLayerProps {
     slug: string,
     tool: string,
   ) => Promise<GroundAddResult>;
+  /**
+   * STORY 19.2 — BIND one session card to a project card (or unbind it with
+   * null): ONE record field's change, through the hook's one write queue. A
+   * binding is only a pointer; declaring a boundary is what makes it a consent.
+   */
+  onBindSessionProject?: (
+    slug: string,
+    project: string | null,
+  ) => Promise<GroundAddResult>;
+  /** STORY 19.2 — DECLARE (or withdraw) what a run may do in that folder. */
+  onSetSessionBoundary?: (
+    slug: string,
+    boundary: "read" | "write" | null,
+  ) => Promise<GroundAddResult>;
   /** STORY 18.4 — each card's PENDING permission ask, as view state. */
   sessionPermission?: Readonly<Record<string, AcpPermissionAsk>>;
   /** Answer the pending ask with the person's one verb. */
@@ -748,6 +762,8 @@ export function GroundLayer({
   onRunSession,
   onStopSession,
   onChooseSessionTool,
+  onBindSessionProject,
+  onSetSessionBoundary,
   onAnswerSessionPermission,
   onMakeSessionResult,
   onRemoveSession,
@@ -924,6 +940,18 @@ export function GroundLayer({
     // third tool marks itself and this file never learns a product's name.
     name: acpRowLabel(spec),
   }));
+  /**
+   * STORY 19.2 — THE PROJECT CARDS this build may bind a run to: a ground
+   * reference whose reading is `form: folder`, offered by NAME only. A binding
+   * is a pointer to the card, never to a path typed here; the path is resolved
+   * from the reading when the run starts.
+   */
+  const sessionProjects = references.flatMap((reference) => {
+    const reading = readingsBySlug.get(reference.on) ?? null;
+    return reading !== null && reading.form === "folder"
+      ? [{ id: reference.on, name: reference.name }]
+      : [];
+  });
   /**
    * STORY 17.3 — the card's block facts, as the packet reads them. Built from
    * ALREADY-LOADED state through the same pure crop the send uses
@@ -1310,11 +1338,31 @@ export function GroundLayer({
         // repaired record (the card offers the choice again).
         const row =
           ACP_SPECS.find((spec) => spec.id === session.tool) ?? null;
+        // STORY 19.2 — the bound project card's NAME (never a path on the face)
+        // and, when the reading really is a folder, the full path the scope
+        // declaration says aloud once the person has declared a boundary.
+        const projectReference =
+          session.project === undefined
+            ? null
+            : (references.find(
+                (reference) => reference.on === session.project,
+              ) ?? null);
+        const projectReading =
+          session.project === undefined
+            ? null
+            : (readingsBySlug.get(session.project) ?? null);
+        const projectFolder =
+          projectReading !== null && projectReading.form === "folder"
+            ? projectReading.from
+            : null;
         return (
           <SessionCardView
             key={session.on}
             session={session}
             toolName={row === null ? null : row.name}
+            projectName={projectReference?.name ?? null}
+            projectFolder={projectFolder}
+            projects={sessionProjects}
             // 18.2's declaration for the NEXT run: which key it will receive,
             // by provider ROW, or that it receives none. No key, ever.
             declaration={row === null ? null : acpDeclaration(row)}
@@ -1344,6 +1392,18 @@ export function GroundLayer({
               onChooseSessionTool === undefined
                 ? undefined
                 : (tool) => onChooseSessionTool(session.on, tool)
+            }
+            // STORY 19.2 — the binding and the boundary are ONE record field
+            // each, written through the hook's queue like every other field.
+            onChooseProject={
+              onBindSessionProject === undefined
+                ? undefined
+                : (project) => onBindSessionProject(session.on, project)
+            }
+            onChooseBoundary={
+              onSetSessionBoundary === undefined
+                ? undefined
+                : (boundary) => onSetSessionBoundary(session.on, boundary)
             }
             // STORY 18.4 — the pending ask and its two verbs. The layer holds
             // no permission state: the hook does, and this only forwards.

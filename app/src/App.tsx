@@ -4673,6 +4673,12 @@ function App() {
             onAnswerSessionPermission={ground.answerSessionPermission}
             onMakeSessionResult={ground.makeCardFromRun}
             onChooseSessionTool={ground.bindSessionTool}
+            /* STORY 19.2 — a session card may be bound to a project card (a
+               folder on this machine) and told what a run may do there. The
+               binding is a pointer; the declared boundary is the consent, and
+               without one the card runs exactly as it always has. */
+            onBindSessionProject={ground.bindSessionProject}
+            onSetSessionBoundary={ground.setSessionBoundary}
             /* STORY 18.5 — a session card is removable through the same one
                toast every other card uses (immediate delete + Restore). */
             onRemoveSession={ground.removeSession}

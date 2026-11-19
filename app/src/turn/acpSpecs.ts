@@ -321,6 +321,26 @@ export function acpResolvedDeclaration(names: readonly string[]): string {
 }
 
 /**
+ * STORY 19.2 — THE SCOPE DECLARATION (PURE, PROVISIONAL): ONE sentence, in the
+ * house voice, said BEFORE a bound run starts. It names the folder's FULL PATH
+ * — the blast radius is said aloud, so the mirror's name-only rule does not
+ * apply here — and the boundary the person declared.
+ *
+ * The two words are the record's own: "write" is "may change files there" and
+ * "read" is "only reads". Nothing else is claimed: no promise about what the
+ * tool does inside the boundary, and no claim about anything outside it.
+ */
+export function acpScopeDeclaration(
+  folder: string,
+  boundary: "read" | "write",
+): string {
+  if (boundary === "read") {
+    return "this run works in " + folder + " and only reads";
+  }
+  return "this run works in " + folder + " and may change files there";
+}
+
+/**
  * The sentence for a declared key that is not in the store (18.2). The WINDOW
  * says it (it is the side that reads the key store); the sidecar only ever
  * receives values, so it never has to say this.

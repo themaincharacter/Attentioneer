@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { previewOverflows, previewText } from "../map/readings";
 import {
+  SESSION_BOUNDARY_LABELS,
+  SESSION_BOUNDARY_UNDECLARED_SENTENCE,
   SESSION_EMPTY_SENTENCE,
   SESSION_MISSING_TOOL_SENTENCE,
   SESSION_RUNNING_SENTENCE,
+  sessionBindingLine,
   sessionDisplayName,
   sessionEntryLine,
   sessionKindLine,
@@ -29,6 +32,7 @@ import {
   refuseOption,
   type AcpPermissionAsk,
 } from "../turn/acpEntries";
+import { acpScopeDeclaration } from "../turn/acpSpecs";
 
 /**
  * STORY 16.22 — THE SESSION CARD'S RULES FOR THE SHARED NAME PILL. A session
@@ -194,6 +198,16 @@ export interface SessionToolChoice {
   name: string;
 }
 
+/**
+ * STORY 19.2 — one PROJECT CARD a binding picker may offer: its slug and the
+ * card's NAME. No folder path here: a binding names a card, and the reading is
+ * resolved by the layer when the run starts.
+ */
+export interface SessionProjectChoice {
+  id: string;
+  name: string;
+}
+
 export function SessionCard({
   session,
   toolName,
@@ -209,6 +223,11 @@ export function SessionCard({
   onRun,
   onStop,
   onChooseTool,
+  projectName = null,
+  projectFolder = null,
+  projects = [],
+  onChooseProject,
+  onChooseBoundary,
   permission = null,
   onAllowOnce,
   onRefuse,
@@ -260,6 +279,21 @@ export function SessionCard({
   onStop?: () => Promise<void>;
   /** Bind the card to another row (one field's change). */
   onChooseTool?: (tool: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 19.2 — THE BOUND PROJECT CARD, by NAME only. The face never wears the
+   * folder path; the declaration says it once, when a boundary is declared.
+   */
+  projectName?: string | null;
+  /** The bound reading's folder, when it really is one (the declaration's path). */
+  projectFolder?: string | null;
+  /** The project cards a binding picker may offer (names only). */
+  projects?: readonly SessionProjectChoice[];
+  /** Bind this card to a project card, or unbind it with null (one field). */
+  onChooseProject?: (project: string | null) => Promise<GroundAddResult>;
+  /** Declare, or withdraw with null, what a run may do in that folder. */
+  onChooseBoundary?: (
+    boundary: "read" | "write" | null,
+  ) => Promise<GroundAddResult>;
   /**
    * STORY 18.4 — THE SERVER'S PENDING ASK, as view state. While this is here
    * the run is WAITING; the card offers allow-once and refuse and nothing else.
@@ -537,6 +571,32 @@ export function SessionCard({
     if (!result.ok) setProblem(result.message);
   }
 
+  /**
+   * STORY 19.2 — THE BINDING'S ONE WRITE. The value "" is the picker's "no
+   * project" / "undeclared" and becomes null, which REMOVES the field: an
+   * unbound card and an undeclared one keep exactly the bytes (and the run)
+   * they had before this story.
+   */
+  async function usePickedProject(value: string): Promise<void> {
+    if (busy || onChooseProject === undefined) return;
+    setBusy(true);
+    setProblem(null);
+    const result = await onChooseProject(value === "" ? null : value);
+    setBusy(false);
+    if (!result.ok) setProblem(result.message);
+  }
+
+  async function usePickedBoundary(value: string): Promise<void> {
+    if (busy || onChooseBoundary === undefined) return;
+    setBusy(true);
+    setProblem(null);
+    const boundary =
+      value === "read" || value === "write" ? (value as "read" | "write") : null;
+    const result = await onChooseBoundary(boundary);
+    setBusy(false);
+    if (!result.ok) setProblem(result.message);
+  }
+
   async function usePickedTool(): Promise<void> {
     if (picked === null || onChooseTool === undefined || busy) return;
     setBusy(true);
@@ -549,6 +609,14 @@ export function SessionCard({
     }
     setPicked(null);
   }
+
+  // STORY 19.2 — the declaration of the bound run, when the person has both
+  // bound a folder card and declared a boundary. The folder's FULL PATH is said
+  // here and only here: the blast radius is said aloud before the run starts.
+  const scopeDeclaration =
+    projectFolder !== null && session.boundary !== undefined
+      ? acpScopeDeclaration(projectFolder, session.boundary)
+      : null;
 
   const newest = sessionNewestEntry(entries);
   const smallFolded =
@@ -594,6 +662,12 @@ export function SessionCard({
         }
       />
       <div className="session-card-kind">{sessionKindLine(toolName)}</div>
+      {/* STORY 19.2 — THE BINDING, QUIETLY: the bound project card's NAME and
+          never its folder path. What the run may do there is declared in the
+          expanded face, where the person can see and change it. */}
+      {projectName !== null && (
+        <div className="session-card-bound">{sessionBindingLine(projectName)}</div>
+      )}
       {/* STORY 17.9 — a session card can be wired into an ask card; its last
           completed run is what it lends. */}
       {onLink !== undefined && (
@@ -723,10 +797,62 @@ export function SessionCard({
               </div>
             </div>
           )}
+          {/* STORY 19.2 — THE BINDING AND THE BOUNDARY. A project is a card, so
+              the picker offers NAMES only; the boundary is the person's
+              declaration, and its absence is the safe default: every ask
+              reaches them and the run starts in a fresh folder. Both are ONE
+              record field each, written the moment they are chosen. */}
+          {(onChooseProject !== undefined || onChooseBoundary !== undefined) && (
+            <div className="session-card-binding-choice">
+              {onChooseProject !== undefined && (
+                <select
+                  className="session-card-pick"
+                  aria-label="run this card in a project"
+                  value={session.project ?? ""}
+                  disabled={busy || running}
+                  onChange={(e) => void usePickedProject(e.target.value)}
+                >
+                  <option value="">no project</option>
+                  {projects.map((choice) => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {onChooseBoundary !== undefined && (
+                <select
+                  className="session-card-pick"
+                  aria-label="what this run may do there"
+                  value={session.boundary ?? ""}
+                  disabled={busy || running || session.project === undefined}
+                  onChange={(e) => void usePickedBoundary(e.target.value)}
+                >
+                  <option value="">{SESSION_BOUNDARY_LABELS.undeclared}</option>
+                  <option value="read">{SESSION_BOUNDARY_LABELS.read}</option>
+                  <option value="write">{SESSION_BOUNDARY_LABELS.write}</option>
+                </select>
+              )}
+              {session.boundary === undefined && (
+                <div className="session-card-bound-hint">
+                  {SESSION_BOUNDARY_UNDECLARED_SENTENCE}
+                </div>
+              )}
+            </div>
+          )}
           {/* THE DECLARATION FOR THE NEXT RUN: 18.2's one sentence, computed
               from the row alone. It names a provider ROW, never a key. */}
           {declaration !== null && (
             <div className="session-card-declaration">{declaration}</div>
+          )}
+          {/* STORY 19.2 — THE BOUND RUN'S BLAST RADIUS, in one sentence: the
+              folder's full path and what the person said the run may do there.
+              Shown only when both are true, so an unbound or undeclared card
+              says exactly what it always did. */}
+          {scopeDeclaration !== null && (
+            <div className="session-card-declaration session-card-scope">
+              {scopeDeclaration}
+            </div>
           )}
           <div className="session-card-actions">
             {running ? (

@@ -51,6 +51,7 @@ import type {
   AcpPermissionChoice,
   AcpPermissionOption,
   AcpProgressEntry,
+  RunScope,
 } from "./acpEntries";
 
 /** The envelope's version. A `hello` says which one the sidecar speaks. */
@@ -218,8 +219,13 @@ export interface ThumbLine {
 
 /**
  * THE TOOL A RUN STARTS (story 18.3b): argv only, never a shell string, and no
- * key anywhere near it. The sidecar makes the fresh session directory, so no
- * cwd crosses this wire.
+ * key anywhere near it.
+ *
+ * STORY 19.2 — A CWD CROSSES ONLY WHEN THE PERSON BOUND A PROJECT. The sidecar
+ * still makes a fresh session directory by default; a `cwd` appears on this
+ * wire ONLY when the card is bound to a project card and the person declared a
+ * boundary, and then it is one ABSOLUTE folder path. Absent means exactly the
+ * old rule: a fresh temp directory and no assumption about where a run lands.
  */
 export interface RunTool {
   /** The server executable, an absolute path the row already validated. */
@@ -247,6 +253,18 @@ export interface RunRequest {
   tool: RunTool;
   env: Record<string, string>;
   prompt: string;
+  /**
+   * STORY 19.2 — WHERE THE RUN STARTS, when the person bound a project and
+   * declared a boundary (PROVISIONAL). An ABSOLUTE folder path; absent means a
+   * fresh session directory, exactly as before. The lane refuses a folder that
+   * is not there before any child is spawned.
+   */
+  cwd?: string;
+  /**
+   * STORY 19.2 — WHAT THE PERSON DECLARED the run may do in that folder
+   * (PROVISIONAL). Absent means "not declared": every ask reaches the person.
+   */
+  scope?: RunScope;
 }
 
 /**
@@ -443,13 +461,20 @@ export function thumbLine(
   return JSON.stringify({ id, kind: "thumb", mime, data, http });
 }
 
-/** The run's request line: one tool, one resolved env map, one prompt. */
+/**
+ * The run's request line: one tool, one resolved env map, one prompt.
+ *
+ * STORY 19.2 — THE BOUND RUN'S TWO OPTIONAL FIELDS (PROVISIONAL). `extra.cwd`
+ * and `extra.scope` ride the line ONLY when they are given, so an unbound card's
+ * request is byte-for-byte what it always was.
+ */
 export function runRequestLine(
   id: number,
   run: number,
   tool: RunTool,
   env: Readonly<Record<string, string>>,
   prompt: string,
+  extra: { cwd?: string; scope?: RunScope } = {},
 ): string {
   return JSON.stringify({
     id,
@@ -462,6 +487,10 @@ export function runRequestLine(
     },
     env: { ...env },
     prompt,
+    ...(extra.cwd === undefined ? {} : { cwd: extra.cwd }),
+    ...(extra.scope === undefined
+      ? {}
+      : { scope: { boundary: extra.scope.boundary } }),
   });
 }
 
@@ -572,6 +601,20 @@ function isId(value: unknown): value is number {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
+}
+
+/**
+ * STORY 19.2 — IS THIS THE ABSOLUTE FOLDER A RUN MAY START IN? POSIX's leading
+ * slash, a Windows drive and a UNC all count, and the same three spellings the
+ * record's own path check accepts. PURE, so the reader and a test share it.
+ */
+function isAbsoluteFolder(value: unknown): value is string {
+  if (typeof value !== "string" || value === "") return false;
+  return (
+    value.startsWith("/") ||
+    /^[A-Za-z]:[\\/]/.test(value) ||
+    value.startsWith("\\\\")
+  );
 }
 
 function isMessage(value: unknown): value is TurnMessage {
@@ -990,6 +1033,22 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
     if (!isId(value.run)) return null;
     if (!isRunTool(value.tool)) return null;
     if (!isRecord(value.env)) return null;
+    // STORY 19.2 — A CWD CROSSES ONLY AS AN ABSOLUTE PATH, AND A SCOPE ONLY AS
+    // ONE OF THE TWO BOUNDARY WORDS. Anything else is refused, never repaired:
+    // a relative path would let a run land in whatever directory the sidecar
+    // happened to have, and an unknown boundary would be a quiet widening.
+    if (value.cwd !== undefined && !isAbsoluteFolder(value.cwd)) return null;
+    let scope: RunScope | undefined;
+    if (value.scope !== undefined) {
+      if (!isRecord(value.scope)) return null;
+      const boundary = value.scope.boundary;
+      if (boundary !== "read" && boundary !== "write") return null;
+      // A DECLARATION WITHOUT A FOLDER IS REFUSED: the consent is about the
+      // bound folder, so a scope that arrived without one would be an
+      // auto-answer for a run that is not in the place the person named.
+      if (value.cwd === undefined) return null;
+      scope = { boundary };
+    }
     // The payload's map is the WHOLE grant: every name is a name a process can
     // carry, every value is a string, and a name with no value is refused here
     // rather than silently dropped.
@@ -1011,6 +1070,8 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
       },
       env,
       prompt: value.prompt,
+      ...(value.cwd === undefined ? {} : { cwd: value.cwd }),
+      ...(scope === undefined ? {} : { scope }),
     };
   }
   if (value.kind !== "turn") return null;

@@ -14,6 +14,10 @@
  *                 once pair, so the client's no-always rule is proven against
  *                 a server that really offers one; the reply still WAITS for
  *                 the client's answer.
+ *   edit-ask      the same run, except its one permission prompt describes an
+ *                 "edit" tool call rather than a "read". STORY 19.2 uses it to
+ *                 prove that a read-only declaration does NOT cover a change:
+ *                 an out-of-scope ask must still reach the person.
  *   malformed     writes one non-JSON line before the initialize answer.
  *   die-mid-turn  writes one update for the first prompt, then exits 3.
  *   hang-mid-turn writes one update, then waits for session/cancel before
@@ -116,6 +120,10 @@ function update(text: string): void {
 function requestPermission(): void {
   const id = nextServerId;
   nextServerId += 1;
+  // STORY 19.2 — the ask's KIND is what a declared boundary is matched against,
+  // so the fixture can describe a change as well as a read. Nothing else about
+  // the run changes.
+  const edits = mode === "edit-ask";
   say(
     JSON.stringify({
       jsonrpc: "2.0",
@@ -125,8 +133,8 @@ function requestPermission(): void {
         sessionId,
         toolCall: {
           toolCallId: "call-1",
-          title: "Read the working directory",
-          kind: "read",
+          title: edits ? "Edit a file" : "Read the working directory",
+          kind: edits ? "edit" : "read",
           status: "pending",
         },
         // STORY 18.4: a server may offer a REMEMBERED yes. The fake offers

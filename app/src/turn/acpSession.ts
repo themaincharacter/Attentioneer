@@ -12,6 +12,7 @@ import type {
   AcpPermissionAsk,
   AcpPermissionChoice,
   AcpProgressEntry,
+  RunScope,
 } from "./acpEntries";
 import { readSecret } from "../lib/secret";
 import type { SidecarStart } from "./sidecar";
@@ -104,6 +105,17 @@ export interface SessionRunWiring {
    * answers it here: an unwatched run waits for its budget.
    */
   onPermission?: (ask: AcpPermissionAsk) => void;
+  /**
+   * STORY 19.2 — WHERE THE RUN STARTS, when the card is bound to a project and
+   * a boundary was declared (PROVISIONAL). An absolute folder path; absent
+   * means the lane's fresh session directory, exactly as before.
+   */
+  cwd?: string;
+  /**
+   * STORY 19.2 — WHAT THE PERSON DECLARED the run may do in that folder
+   * (PROVISIONAL). Absent means not declared, so every ask reaches the person.
+   */
+  scope?: RunScope;
 }
 
 /** One counter for the window's runs and their cancels: ids never collide. */
@@ -248,7 +260,10 @@ export function startSessionRun(
 
     try {
       await transport.send(
-        runRequestLine(id, id, runToolOf(row), env, prompt),
+        runRequestLine(id, id, runToolOf(row), env, prompt, {
+          ...(wiring.cwd === undefined ? {} : { cwd: wiring.cwd }),
+          ...(wiring.scope === undefined ? {} : { scope: wiring.scope }),
+        }),
       );
     } catch {
       finish("failed", SESSION_RUN_UNREACHABLE);

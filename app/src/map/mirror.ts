@@ -64,6 +64,10 @@ import {
  * A transcript whose card is gone is an UNKNOWN like the orphan notes and
  * conversations: named, kept, never adopted.
  *
+ * STORY 19.2 — A BOUND SESSION CARD NAMES ITS PROJECT CARD, and never the
+ * folder it points at: the project's NAME joins the line, because this file may
+ * be shared and a machine's absolute path is the person's own.
+ *
  * NO FULL PATHS: a mirror may be shared with another agent or pasted into a
  * message, so a card names its reading's FILE NAME only (readingFileName).
  * PROVISIONAL — a PROJECT CARD's row does the same with a FOLDER: `folder:`
@@ -139,6 +143,13 @@ export interface MirrorView {
   sessions: readonly SessionCard[];
   /** Each session card's tool name, by slug; null when this build lacks the row. */
   sessionToolNames: Readonly<Record<string, string | null>>;
+  /**
+   * STORY 19.2 — each session card's bound PROJECT CARD name, by slug; null
+   * when it is unbound or the card is gone. A NAME only, never the folder path:
+   * this derived file may be shared (ADR-0039's rule). Optional so every
+   * earlier view — and every test that builds one — keeps its exact shape.
+   */
+  sessionProjectNames?: Readonly<Record<string, string | null>>;
   /** Each session card's last run ending, by slug; null when it never ran. */
   sessionEndings: Readonly<Record<string, SessionEnding | null>>;
   /**
@@ -289,11 +300,16 @@ export function mirrorSessionLine(
   session: SessionCard,
   toolName: string | null,
   ending: SessionEnding | null,
+  projectName: string | null = null,
 ): string {
   let line =
     session.name +
     " — runs " +
     (toolName === null ? MIRROR_SESSION_TOOL_UNKNOWN : toolName);
+  // STORY 19.2 — THE BOUND PROJECT, BY NAME ONLY. A folder path never reaches
+  // this file: it may be pasted or shared, and the card's face does not wear
+  // the path either (the declaration says it once, on the card's own surface).
+  if (projectName !== null) line += "; bound to " + projectName;
   if (ending !== null) line += "; last run: " + ending;
   return flat(line);
 }
@@ -407,6 +423,7 @@ export function renderMirror(view: MirrorView): string {
         session,
         view.sessionToolNames[session.on] ?? null,
         view.sessionEndings[session.on] ?? null,
+        view.sessionProjectNames?.[session.on] ?? null,
       ),
     );
   }
