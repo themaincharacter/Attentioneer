@@ -41,7 +41,7 @@ import {
 } from "../map/readings";
 import type { Media } from "../map/media";
 import { askCardOf } from "../turn/context";
-import type { AskCallsFacts, AskWorkPhase } from "./contactRules";
+import { sessionDistilWords, type AskCallsFacts, type AskWorkPhase } from "./contactRules";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
 import { attachGroundCardDrag } from "./groundDrag";
@@ -635,6 +635,11 @@ interface GroundLayerProps {
   /** Make the last completed run's text into a copy card. */
   onMakeSessionResult?: (slug: string) => Promise<GroundAddResult>;
   /**
+   * STORY 19.4 — DISTIL the last completed run's result into an artifact card:
+   * one curator call, the same writer the ask card's artifact uses.
+   */
+  onDistilSessionResult?: (slug: string) => Promise<GroundAddResult>;
+  /**
    * STORY 17.7b — WHETHER THE ONE SETTINGS SELECTION RESOLVES. The ask card
    * says "nothing configured" BEFORE the send and offers only the settings
    * verb; the selector itself stays in Settings (story 17.7 retired it here).
@@ -771,6 +776,7 @@ export function GroundLayer({
   onSetSessionBoundary,
   onAnswerSessionPermission,
   onMakeSessionResult,
+  onDistilSessionResult,
   onRemoveSession,
   onRenameSession,
   onMoveAsk,
@@ -1390,6 +1396,17 @@ export function GroundLayer({
         // wire's source is gone. Resolved ONCE here; the card assembles its
         // pre-send readback from these with the send's own pure assembler.
         const contextView = sessionContextOf(session);
+        // STORY 19.4 — THE DISTIL EGRESS, DECLARED BEFORE THE PRESS: the row
+        // that made the run, then the model that would distil its result (or
+        // the no-manager line, when the rule's copy beside it is the only card
+        // path). Read from the same config facts the ask's calls section uses.
+        const distilWords =
+          calls === null
+            ? []
+            : sessionDistilWords({
+                task: { row: row === null ? session.tool : row.name, model: "" },
+                manager: calls.manager,
+              });
         return (
           <SessionCardView
             key={session.on}
@@ -1460,6 +1477,13 @@ export function GroundLayer({
                 ? undefined
                 : () => onMakeSessionResult(session.on)
             }
+            // STORY 19.4 — the artifact path, beside the rule's copy.
+            onDistilResult={
+              onDistilSessionResult === undefined
+                ? undefined
+                : () => onDistilSessionResult(session.on)
+            }
+            distilWords={distilWords}
             onRemove={
               onRemoveSession === undefined
                 ? undefined

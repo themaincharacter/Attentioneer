@@ -75,7 +75,8 @@ function reading(
 
 function fixtures(over: Partial<MapDigestInput> = {}): MapDigestInput {
   return {
-    askSlug: "tide-question",
+    anchorSlug: "tide-question",
+    anchorKind: "ask",
     wired: ["tide-table", "harbor-notice"],
     references: [
       reference("tide-table", "tide table"),

@@ -454,11 +454,14 @@ describe("the ending vocabulary, and the closing of the union", () => {
       const optional = CHANGE_OPTIONAL_KEYS[kind];
       for (const key of optional) expect(FORBIDDEN).not.toContain(key);
       for (const key of CHANGE_KEYS[kind]) expect(FORBIDDEN).not.toContain(key);
-      if (kind !== "ask") expect(optional).toEqual([]);
+      if (kind !== "ask" && kind !== "run") expect(optional).toEqual([]);
     }
     // STORY 17.12: the curator's second egress names its ROLE; the task call
     // stays absent, exactly like every line written before the story.
     expect(CHANGE_OPTIONAL_KEYS.ask).toEqual(["anchor", "role"]);
+    // STORY 19.4: a run's distilling egress names its role the same way; the
+    // run's own line stays absent, so every older run line keeps its bytes.
+    expect(CHANGE_OPTIONAL_KEYS.run).toEqual(["role"]);
     for (const key of PRISM_KEYS) expect(FORBIDDEN).not.toContain(key);
   });
 

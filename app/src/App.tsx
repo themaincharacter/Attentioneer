@@ -4672,6 +4672,9 @@ function App() {
             onStopSession={ground.stopSession}
             onAnswerSessionPermission={ground.answerSessionPermission}
             onMakeSessionResult={ground.makeCardFromRun}
+            /* STORY 19.4 — the artifact path: one curator call distils the
+               completed run's result into a card, wired back to the card. */
+            onDistilSessionResult={ground.distilRunResult}
             onChooseSessionTool={ground.bindSessionTool}
             /* STORY 19.2 — a session card may be bound to a project card (a
                folder on this machine) and told what a run may do there. The

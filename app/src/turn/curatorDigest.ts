@@ -67,10 +67,21 @@ export const DIGEST_MAX_BYTES = 2048;
 export const DIGEST_OMITTED_SENTENCE =
   "some cards on this map were left out, because this digest is bounded.";
 
+/**
+ * STORY 19.4 — WHICH CARD THE DIGEST IS ANCHORED ON. An ask card's reply is
+ * distilled after the ask answered; a session card's completed run is distilled
+ * when the person presses its distil verb. The anchor's own entry, the artifacts
+ * already made from it and the relations of the cards wired into it are worded
+ * by this word, so a run's digest never calls itself an ask.
+ */
+export type DigestAnchorKind = "ask" | "session";
+
 /** What the digest's composer is handed: records and reading LINES only. */
 export interface MapDigestInput {
-  /** The ask card being distilled: its artifact and wire relations are its own. */
-  askSlug: string;
+  /** The card being distilled: its artifact and wire relations are its own. */
+  anchorSlug: string;
+  /** Whether that card is an ASK card or a SESSION card (story 19.4). */
+  anchorKind: DigestAnchorKind;
   /**
    * The cards wired INTO this ask, in wire order, as the view already resolved
    * them (askContextSources is the authority; this module never re-derives the
@@ -89,7 +100,7 @@ interface DigestEntry {
   name: string;
   kind: DigestKind;
   about: string;
-  /** "wired into this ask" / "made from this ask" / neither. */
+  /** "wired into this ask" / "made from this run" / neither. */
   relation: string | null;
 }
 
@@ -151,11 +162,12 @@ function lineOf(entry: DigestEntry): string {
 
 /**
  * THE DIGEST (story 17.14), pure and total over the loaded view. Entries ride
- * NEAREST FIRST — the ask being distilled, the artifacts already made from it,
- * the cards wired into it, then the rest of the map in record order — because
- * the budget bites from the end: the cards closest to this turn are the last
- * ones a bound should ever drop. Duplicate slugs are listed once (a card that
- * is both an artifact and a wire keeps its artifact line first).
+ * NEAREST FIRST — the anchor being distilled (an ask card, or since story 19.4
+ * a session card), the artifacts already made from it, the cards wired into it,
+ * then the rest of the map in record order — because the budget bites from the
+ * end: the cards closest to this turn are the last ones a bound should ever
+ * drop. Duplicate slugs are listed once (a card that is both an artifact and a
+ * wire keeps its artifact line first).
  *
  * An EMPTY string means there is nothing to say (no cards at all): the caller
  * omits the section rather than sending a heading with nothing under it.
@@ -186,9 +198,12 @@ export function mapDigest(input: MapDigestInput): string {
     if (!sessionBy.has(session.on)) sessionBy.set(session.on, session);
   }
 
-  // 1. THE ASK ITSELF: the card this reply will sit beside.
-  const ask = askBy.get(input.askSlug);
-  if (ask !== undefined) {
+  // 1. THE ANCHOR ITSELF: the card this reply will sit beside. An ask says it
+  // is the ask being distilled; a session says what its run is (the same line
+  // the rest of the map gets), never a second claim about itself.
+  const sessionAnchor = input.anchorKind === "session";
+  const ask = askBy.get(input.anchorSlug);
+  if (!sessionAnchor && ask !== undefined) {
     listing(
       {
         name: ask.name,
@@ -199,12 +214,26 @@ export function mapDigest(input: MapDigestInput): string {
       "ask:" + ask.on,
     );
   }
+  if (sessionAnchor) {
+    const anchorSession = sessionBy.get(input.anchorSlug);
+    if (anchorSession !== undefined) {
+      listing(
+        {
+          name: anchorSession.name,
+          kind: "session",
+          about: aboutOfSession(anchorSession),
+          relation: null,
+        },
+        "session:" + anchorSession.on,
+      );
+    }
+  }
 
-  // 2. THE ARTIFACTS ALREADY MADE FROM THIS ASK: a distilled reading whose
-  // provenance names this card. The reading IS the relation; no note is read.
+  // 2. THE ARTIFACTS ALREADY MADE FROM THIS CARD: a distilled reading whose
+  // provenance names it. The reading IS the relation; no note is read.
   for (const reading of input.readings) {
     if (reading.form !== "distilled") continue;
-    if (distilledSourceSlug(reading) !== input.askSlug) continue;
+    if (distilledSourceSlug(reading) !== input.anchorSlug) continue;
     const reference = referenceBy.get(reading.on);
     if (reference === undefined) continue;
     listing(
@@ -212,13 +241,16 @@ export function mapDigest(input: MapDigestInput): string {
         name: reference.name,
         kind: "reference",
         about: aboutOfReading(reading),
-        relation: "made from this ask",
+        relation: sessionAnchor ? "made from this run" : "made from this ask",
       },
       "reference:" + reference.on,
     );
   }
 
-  // 3. THE CARDS WIRED INTO THIS ASK, in the view's wire order.
+  // 3. THE CARDS WIRED INTO THIS CARD, in the view's wire order.
+  const wiredRelation = sessionAnchor
+    ? "wired into this run"
+    : "wired into this ask";
   for (const slug of input.wired) {
     const reference = referenceBy.get(slug);
     if (reference !== undefined) {
@@ -227,7 +259,7 @@ export function mapDigest(input: MapDigestInput): string {
           name: reference.name,
           kind: "reference",
           about: aboutOfReading(readingsBy.get(slug) ?? null),
-          relation: "wired into this ask",
+          relation: wiredRelation,
         },
         "reference:" + slug,
       );
@@ -241,7 +273,7 @@ export function mapDigest(input: MapDigestInput): string {
           name: wiredAsk.name,
           kind: "ask",
           about: question === null ? "no question yet" : "asks: " + question,
-          relation: "wired into this ask",
+          relation: wiredRelation,
         },
         "ask:" + slug,
       );
@@ -254,7 +286,7 @@ export function mapDigest(input: MapDigestInput): string {
           name: session.name,
           kind: "session",
           about: aboutOfSession(session),
-          relation: "wired into this ask",
+          relation: wiredRelation,
         },
         "session:" + slug,
       );

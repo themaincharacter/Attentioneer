@@ -124,6 +124,7 @@ import type {
   RunScope,
 } from "../turn/acpEntries";
 import { artifactPlacement, besidePlacement, type Point } from "./geometry";
+import { utf8ByteLength } from "../lib/textBytes";
 import type { SidecarStart } from "../turn/sidecar";
 import { shippedAcpSpec, type AcpSpec } from "../turn/acpSpecs";
 import {
@@ -214,7 +215,11 @@ import {
 import { readSecret } from "../lib/secret";
 import { isPointerForm, pointerKey } from "../map/pointers";
 import type { Prism } from "../map/prisms";
-import { appendAskCardMove, appendSessionRun } from "../contacts/prismLog";
+import {
+  appendAskCardMove,
+  appendSessionCurator,
+  appendSessionRun,
+} from "../contacts/prismLog";
 import { askOutcomeOf, type AskEnding } from "../contacts/ask";
 import { readAskPages } from "../turn/pageAsk";
 import {
@@ -246,6 +251,11 @@ import {
   type CuratorRead,
 } from "../turn/curator";
 import { mapDigest } from "../turn/curatorDigest";
+import {
+  SESSION_CURATOR_FAILED_SENTENCE,
+  sessionDistilBrief,
+  writeCuratedRunCard,
+} from "./sessionCurator";
 import {
   TURN_SENTENCES,
   routeOf,
@@ -848,6 +858,14 @@ export interface GroundView {
    * the session card. No text means one sentence and nothing written.
    */
   makeCardFromRun: (slug: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 19.4 — DISTIL THE LAST COMPLETED RUN'S RESULT into an artifact card:
+   * ONE curator model call (the reused module, the manager row, the same turn
+   * port), its own PRISM when the request actually left, and the same writer an
+   * ask card's artifact uses. A run with no result, or one whose task is not in
+   * the transcript, refuses in one sentence and makes no call.
+   */
+  distilRunResult: (slug: string) => Promise<GroundAddResult>;
   /** Add one reference from a picked text file (the one create write). */
   create: (
     name: string,
@@ -970,6 +988,7 @@ type GroundLoaded = Omit<
   | "stopSession"
   | "answerSessionPermission"
   | "makeCardFromRun"
+  | "distilRunResult"
   | "create"
   | "createFolder"
   | "createPage"
@@ -6278,6 +6297,204 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
+   * STORY 19.4 — DISTIL THE LAST COMPLETED RUN'S RESULT INTO AN ARTIFACT CARD
+   * (ADR-0037 §10's planned reuse).
+   *
+   * THE RULE'S COPY STAYS: `makeCardFromRun` above is untouched, and the raw
+   * result is exactly where it was, one press from the card's transcript. This
+   * path adds the SECOND card: ONE curator model call — the same module, the
+   * same turn port, the manager row resolved exactly as an ask's curator call
+   * resolves it (unset means the task row, never a refusal) — whose parsed card
+   * is written by the SAME `writeDistilledCard` an ask card uses, with the
+   * session's slug as the anchor, so its reading is a distilled form with
+   * `card://<session-slug>` provenance and a wire back to this card.
+   *
+   * THE BRIEF IS THE TASK: the run's task is ephemeral, so it is recovered from
+   * the transcript's `sent` entry (sessionCurator.ts's `sessionDistilBrief`).
+   * No task, no completed run, no text: ONE sentence, NO call, nothing written.
+   *
+   * THE MATERIAL RULE HOLDS BY CONSTRUCTION: only the task, the reply and the
+   * map digest ride (turn/curator.ts and turn/curatorDigest.ts have no text
+   * input to leak), and the digest sees the session anchor's own wires, nearest
+   * first. Its own Move is appended ONLY when the request actually left, with
+   * role "curator" — the ask's pattern, one card family over.
+   *
+   * FAILURE IS ASYMMETRIC (ADR-0037 decision 8): the result stands. A decline
+   * keeps the curator's own first sentence; an unusable or over-long card keeps
+   * the curator module's stated sentence; a failed call says the curator did not
+   * answer. The transcript's entries are never written by this path at all.
+   */
+  const distilRunResult = useCallback(
+    (slug: string): Promise<GroundAddResult> => {
+      const session = sessionsRef.current.find((entry) => entry.on === slug);
+      if (session === undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      if (sessionRunsRef.current[slug] !== undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
+      }
+      const entries = sessionEntriesRef.current[slug] ?? [];
+      const brief = sessionDistilBrief(entries);
+      if (brief.kind === "refused") {
+        return Promise.resolve({ ok: false, message: brief.message });
+      }
+      // THE DIGEST (story 17.14's shape, story 19.4's anchor): the session card
+      // being distilled, the artifacts already made from it, the cards wired
+      // into it, then the rest of the map — labels and kinds only. Composed
+      // from the loaded view at the press and used for ONE prompt.
+      const wired = sessionContextFactsOf({
+        session: slug,
+        links: linksRef.current,
+        references: referencesRef.current,
+        asks: asksRef.current,
+        askTurns: askTurnsRef.current,
+        sessions: sessionsRef.current,
+        sessionEntries: sessionEntriesRef.current,
+        readings: readingsRef.current,
+        texts: textsRef.current,
+        notes: notesRef.current,
+        states: statesRef.current,
+      });
+      const digest = mapDigest({
+        anchorSlug: slug,
+        anchorKind: "session",
+        wired: wired.facts.flatMap((facts) =>
+          facts.on === undefined ? [] : [facts.on],
+        ),
+        references: referencesRef.current,
+        asks: asksRef.current,
+        askTurns: askTurnsRef.current,
+        sessions: sessionsRef.current,
+        readings: readingsRef.current,
+      });
+      return (async (): Promise<GroundAddResult> => {
+        // THE MANAGER ROW, resolved AFTER the run completed (never before it):
+        // a manager misconfiguration cannot cost the person the result. An
+        // unresolved row or no turn port means NO request leaves, so there is
+        // no Move and the asymmetry's one sentence stands.
+        const current = await loadTurnSettings();
+        const manager = resolveManager(current);
+        if (turn === undefined || manager.kind !== "resolved") {
+          return { ok: false, message: SESSION_CURATOR_FAILED_SENTENCE };
+        }
+        let managerKey = "";
+        try {
+          managerKey =
+            manager.provider.kind === "http"
+              ? await readSecret(manager.provider.id)
+              : "";
+        } catch {
+          return { ok: false, message: SESSION_CURATOR_FAILED_SENTENCE };
+        }
+        const managerRoute = routeOf(
+          manager.provider,
+          manager.model,
+          managerKey,
+        );
+        // THE PACKET IS PURE AND CARRIES NO MATERIAL: the run's task, its reply
+        // VERBATIM and the digest — the same three inputs an ask's curator call
+        // sends, through the same turn port. Nothing new crosses the wire.
+        const messages = buildCuratorMessages({
+          question: brief.task,
+          reply: brief.reply,
+          digest,
+        });
+        let curated: TurnResult;
+        try {
+          curated = await turn.sendMessages(managerRoute, messages);
+        } catch {
+          curated = { kind: "error", sentence: SESSION_CURATOR_FAILED_SENTENCE };
+        }
+        const raw = curated.kind === "answer" ? curated.text : null;
+        const left = raw !== null && raw !== "";
+        const read = left ? readCuratorAnswer(raw, brief.reply) : null;
+        let outcome: GroundAddResult = {
+          ok: false,
+          message: "nothing was written.",
+        };
+        return queueRef.current
+          .push(async () => {
+            // STORY 19.4 — THE CURATOR IS ITS OWN MOVE (ADR-0037 decision 9).
+            // It left the machine, so it is recorded even when it declined or
+            // failed; role "curator" says which of the two egresses about this
+            // card this line is, and NO inclusion set and NO pointer ride.
+            await appendSessionCurator({
+              workspacePath,
+              on: slug,
+              tool: session.tool,
+              outcome: askOutcomeOf(askEndingOf(curated)),
+              resultSize: raw === null ? null : utf8ByteLength(raw),
+            });
+            const written = await writeCuratedRunCard(
+              {
+                workspacePath,
+                references: referencesRef.current,
+                readings: readingsRef.current,
+                links: linksRef.current,
+                malformedGround: malformedGroundRef.current,
+                malformedReadings: malformedReadingsRef.current,
+                malformedLinks: malformedLinksRef.current,
+                session,
+                taken: new Date().toISOString(),
+                slugs: sharedSlugs(
+                  referencesRef.current,
+                  asksRef.current,
+                  sessionsRef.current,
+                ),
+                read,
+                sentence: left ? null : SESSION_CURATOR_FAILED_SENTENCE,
+                authors: {
+                  manager: modelAuthorName(
+                    manager.model.name,
+                    manager.model.id,
+                  ),
+                  task:
+                    shippedAcpSpec(session.tool)?.name ?? session.tool,
+                },
+              },
+              { writeCard: writeDistilledCard },
+            );
+            if (written.kind === "none") {
+              outcome = { ok: false, message: written.sentence };
+              return;
+            }
+            const card = written.card;
+            referencesRef.current = card.records.references;
+            readingsRef.current = card.records.readings;
+            linksRef.current = card.links;
+            textsRef.current = {
+              ...textsRef.current,
+              [card.records.reading.on]: card.text,
+            };
+            statesRef.current = {
+              ...statesRef.current,
+              [card.records.reading.on]: "current" as ReadingState,
+            };
+            setState(snapshot());
+            const made = card.records.reading.on;
+            outcome = { ok: true, created: made };
+            // The artifact is an ordinary card: its appearance is an authored
+            // move, and the session's own line names the card it made.
+            queueHistory(() => {
+              const at = Date.now();
+              return [
+                cardAddEvent(at, made, card.reference.x, card.reference.y),
+                sessionResultEvent(at, made, slug),
+              ];
+            });
+            queueMirror();
+          })
+          .then(() => outcome)
+          .catch(() => ({
+            ok: false,
+            message: "cannot write the map folder.",
+          }));
+      })();
+    },
+    [workspacePath, turn],
+  );
+
+  /**
    * STORY 17.1 — ASK ONE QUESTION inside an ask card. STORY 17.3 makes the
    * question a packet; STORY 17.9 corrects whose facts ride in it: the cards
    * WIRED INTO this one, never the legacy anchor field, PLUS this card's
@@ -6424,7 +6641,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           // reading-shaped thing it does not receive is a reading's text: no
           // texts or notes map is handed to the builder, so none can ride.
           mapDigest({
-            askSlug: slug,
+            anchorSlug: slug,
+            anchorKind: "ask",
             wired: contextFacts.facts.flatMap((facts) =>
               facts.on === undefined ? [] : [facts.on],
             ),
@@ -7578,6 +7796,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     stopSession,
     answerSessionPermission,
     makeCardFromRun,
+    distilRunResult,
     create,
     createFolder,
     createPage,

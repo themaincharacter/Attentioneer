@@ -1,5 +1,6 @@
 import {
   appendPrismLine,
+  type AskRole,
   type Prism,
   type RunOutcome,
 } from "../map/prisms";
@@ -44,8 +45,16 @@ export interface RunContactRequest {
   /** The tool ROW's id — never the command, never a path. */
   tool: string;
   outcome: RunOutcome;
-  /** The result's byte size when the run completed, else null. */
+  /** The response's byte size when one came back, else null. */
   resultSize: number | null;
+  /**
+   * STORY 19.4 — WHICH EGRESS THIS IS (PROVISIONAL): absent for the run itself
+   * (the only line this flow wrote before this story), "curator" for the
+   * manager model's distilling call about that run's completed result. The
+   * curator's call is the SAME record family — one more run-shaped Move in the
+   * same card — never a second family for one model call.
+   */
+  role?: AskRole;
 }
 
 /** What the Move produced: its one PRISM. */
@@ -73,6 +82,7 @@ export async function runRunContact(
       {
         kind: "run",
         tool: request.tool,
+        ...(request.role === undefined ? {} : { role: request.role }),
         outcome: request.outcome,
         resultSize: request.resultSize,
       },

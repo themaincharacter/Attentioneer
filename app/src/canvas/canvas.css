@@ -8420,6 +8420,22 @@ body {
   cursor: default;
 }
 
+/* STORY 19.4 — THE DISTIL EGRESS, SAID QUIETLY. Before the press the card names
+   the row that made the run and the model that would distil its result, in the
+   same small italic the ask card's calls section uses. It sits beside the two
+   card verbs and wraps under them when the row is full; nothing here is a
+   promise the press cannot keep. */
+.session-distil-declaration {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 240px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
 /* While a run is live the card says so in ONE sentence and offers its stop.
    It is read from the live-run list, so it disappears with the run — there is
    no spinner here to outlive anything. */

@@ -284,6 +284,8 @@ export function SessionCard({
   onAllowOnce,
   onRefuse,
   onMakeResult,
+  onDistilResult,
+  distilWords = [],
   onRemove,
   onRename,
   onMove,
@@ -368,6 +370,19 @@ export function SessionCard({
   onRefuse?: () => void;
   /** Make the last completed run's text into a card (a copy, never a link). */
   onMakeResult?: () => Promise<GroundAddResult>;
+  /**
+   * STORY 19.4 — DISTIL the last completed run's result into an artifact card:
+   * ONE curator model call, the reused module, the same writer. Absent in a
+   * render test; a press with no task in the transcript refuses in one sentence
+   * and makes no call.
+   */
+  onDistilResult?: () => Promise<GroundAddResult>;
+  /**
+   * STORY 19.4 — THE EGRESS, DECLARED BEFORE THE PRESS: the run's row, then the
+   * model that would distil its result (or the honest no-manager line). One
+   * quiet line per fact, from the pure rules; [] says nothing.
+   */
+  distilWords?: readonly string[];
   /**
    * STORY 16.22 — RENAME this card: the shared name pill IS the rename field.
    * The name is the person's and the slug is identity (the transcript's file
@@ -648,6 +663,22 @@ export function SessionCard({
     setBusy(false);
     // A run with no text (or one that did not finish) writes NOTHING and says
     // one sentence; a made card leaves this card at once.
+    if (!result.ok) setProblem(result.message);
+  }
+
+  /**
+   * STORY 19.4 — the distil press. One curator call, then a card (or one
+   * sentence): the busy flag holds the verb while the model works, and a
+   * refusal — a decline, an unusable or over-long card, a failed call, no task
+   * in the transcript — lands in the problem line with NOTHING written and the
+   * transcript untouched.
+   */
+  async function distilResult(): Promise<void> {
+    if (busy || onDistilResult === undefined) return;
+    setBusy(true);
+    setProblem(null);
+    const result = await onDistilResult();
+    setBusy(false);
     if (!result.ok) setProblem(result.message);
   }
 
@@ -1044,6 +1075,34 @@ export function SessionCard({
                 make a card from this
               </button>
             )}
+            {/* STORY 19.4 — THE ARTIFACT PATH, beside the rule's copy: one
+                curator call turns the completed run's result into a card with
+                a claim and its caveats, wired back to this card. The raw result
+                stays in the transcript and the rule's copy stays one press
+                away; a decline is a legal answer and says so in one sentence. */}
+            {entries.some((entry) => entry.kind === "ended") && (
+              <button
+                type="button"
+                className="session-card-distil"
+                disabled={busy || onDistilResult === undefined}
+                onClick={() => void distilResult()}
+              >
+                distil this into a card
+              </button>
+            )}
+            {/* The egress, declared before the press: the run's row, then the
+                model that would distil it — or that no manager is configured,
+                in which case the rule's copy beside it is the card path. */}
+            {entries.some((entry) => entry.kind === "ended") &&
+              distilWords.length > 0 && (
+                <div className="session-distil-declaration">
+                  {distilWords.map((line, index) => (
+                    <div className="session-distil-line" key={index}>
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              )}
             {/* STORY 18.5 — the card's remove, beside close: immediate,
                 reversible through the one toast. A live run is never cut by a
                 delete — the verb waits. */}

@@ -228,6 +228,36 @@ export function askCardInstruction(options: {
 export const ASK_PACKET_QUESTION_HEADING = "## the question";
 
 /**
+ * STORY 19.4 — THE TASK OUT OF A SENT PACKET (PURE). A session card's task is
+ * EPHEMERAL: the card holds no task field, so the person's words survive only
+ * in the transcript's `sent` entry — the packet's own bytes. This recovers the
+ * task block from them so the curator can be briefed with what the run was
+ * actually asked, and nothing else: the reply and the map digest ride beside it
+ * from their own records.
+ *
+ * The block is the one under {@link ASK_PACKET_QUESTION_HEADING}; blocks are
+ * joined by one blank line (packetOf), so the task runs to the next block
+ * boundary. A task that itself carries a blank line followed by a "## " line
+ * is cut there — a stated limit, not a guess: the packet has no second marker
+ * to tell the person's own heading from a wired card's. A string with no task
+ * block answers null, and the press that needed it refuses rather than call the
+ * curator with an empty brief.
+ */
+export function taskOfSent(text: string): string | null {
+  const marker = ASK_PACKET_QUESTION_HEADING + "\n\n";
+  const at = text.indexOf(marker);
+  if (at < 0) return null;
+  // The heading is a BLOCK heading: it opens the bytes or follows a blank line.
+  if (at !== 0 && text.slice(at - 2, at) !== "\n\n") return null;
+  const bodyStart = at + marker.length;
+  const next = text.indexOf("\n\n## ", bodyStart);
+  const body = (
+    next < 0 ? text.slice(bodyStart) : text.slice(bodyStart, next)
+  ).trim();
+  return body === "" ? null : body;
+}
+
+/**
  * STORY 16.26 — A PAGE BLOCK'S NAME: the address, verbatim. The person's card
  * shows the host only, but the block is where a read goes and a read is named
  * by what it reads; the address is already the record's, so nothing new is

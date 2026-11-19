@@ -369,9 +369,22 @@ export interface RunChange {
   kind: "run";
   /** The tool ROW's id — never the command, never a path. */
   tool: string;
+  /**
+   * STORY 19.4 — WHICH EGRESS THIS LINE IS (PROVISIONAL). Absent on the run
+   * itself — every line written before this story, and every new run line, so
+   * old bytes are unchanged — and "curator" on the manager model's distilling
+   * call about that run's completed result. The same closed pair an ask card's
+   * egresses use ({@link AskRole}), because they are the same two roles: a ROLE
+   * is structure, and the model's name stays in the settings row.
+   */
+  role?: AskRole;
   /** `answered` only for a completed run; everything else is `no-response`. */
   outcome: RunOutcome;
-  /** The result's byte size when the run completed, else null. */
+  /**
+   * THE RESPONSE'S BYTE SIZE — the run's result for the run's own egress, the
+   * curator's answer for the distilling one (story 19.4) — else null when
+   * nothing came back.
+   */
   resultSize: number | null;
 }
 
@@ -471,7 +484,7 @@ export const CHANGE_OPTIONAL_KEYS: Readonly<
   "write-text": [],
   "open-os": [],
   ask: ["anchor", "role"],
-  run: [],
+  run: ["role"],
 };
 
 /** The key's pointer-less suffix (an Ask may ride no pointer at all). */
@@ -639,6 +652,10 @@ export function parsePrismChange(value: unknown): Change | null {
       // the result's size. `answered` carries a size; every other ending
       // carries null — the same shape rule the Ask's response facts follow.
       if (!isNonEmptyString(value.tool)) return null;
+      // STORY 19.4 — the optional role, one of the two words; absent is the
+      // run itself, exactly as every line written before this story.
+      const role = value.role;
+      if (role !== undefined && !isAskRole(role)) return null;
       if (!isIn(RUN_OUTCOMES, value.outcome)) return null;
       const resultSize = value.resultSize;
       if (resultSize !== null && !isCount(resultSize)) return null;
@@ -652,6 +669,7 @@ export function parsePrismChange(value: unknown): Change | null {
       return {
         kind,
         tool: value.tool,
+        ...(role === undefined ? {} : { role }),
         outcome: value.outcome,
         resultSize,
       };
@@ -817,6 +835,9 @@ function changeFields(change: Change): Record<string, unknown> {
       return {
         kind: change.kind,
         tool: change.tool,
+        // STORY 19.4: only the curator's distilling egress writes its role; a
+        // run's own line (old and new) stays absent, so its bytes are unchanged.
+        ...(change.role === undefined ? {} : { role: change.role }),
         outcome: change.outcome,
         resultSize: change.resultSize,
       };

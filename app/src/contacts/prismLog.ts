@@ -404,6 +404,26 @@ export function appendSessionRun(
 }
 
 /**
+ * STORY 19.4 — THE CURATOR'S EGRESS ABOUT A RUN IS ONE MOVE TOO (ADR-0037
+ * decision 9, one family down): the manager model's distilling call is recorded
+ * through the SAME run contact flow as the run it reads, with role "curator" —
+ * no new family, no new Change shape and no word of anything. The caller forms
+ * the outcome and the size from the curator call the way it forms the run's,
+ * and only calls here when the request actually left the machine.
+ */
+export function appendSessionCurator(
+  request: RunContactRequest,
+): Promise<Prism> {
+  return enqueue(async () => {
+    const moved = await runRunContact(
+      { ...request, role: "curator" },
+      runContactDeps(request.workspacePath),
+    );
+    return moved.prism;
+  });
+}
+
+/**
  * INTAKE one pasted response (Epic 12 story 3): wrap the text, append the ONE
  * PRISM with the answered Change, and hand the response back as CONTENT. It is
  * queued, so its append cannot interleave with another Move's.
