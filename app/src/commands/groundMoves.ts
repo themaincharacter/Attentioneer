@@ -27,6 +27,16 @@ import {
   withAskMoved,
   renameAsk,
 } from "../map/asks";
+// STORY 21.11 — the session card's own record family and its OWN pure writers
+// (addSession, bindSessionTool), so an accepted ghost writes exactly the bytes
+// the card's own creation and binding verbs write.
+import {
+  addSession,
+  bindSessionTool,
+  parseSessionLine,
+  parseSessions,
+  serializeSessionLine,
+} from "../map/sessions";
 import { noteByteLength, NOTE_MAX_BYTES } from "../map/notes";
 
 /**
@@ -53,10 +63,17 @@ import { noteByteLength, NOTE_MAX_BYTES } from "../map/notes";
  * as a DRAFT and never a record (STORY 21.7: an unsent question is a draft;
  * only the person's send writes a conversation line).
  *
- * THE NEVER-LIST IS ABSENT BY CONSTRUCTION: there is no row here for deleting,
- * renaming, keys, provider rows, runs, turns or anything outside the map
- * folder. The table cannot say what it does not carry, and the vocabulary is
- * the whole of what a command can name (ADR-0038 §7).
+ * THE NEVER-LIST IS ABSENT BY CONSTRUCTION: there is no row here for a key, a
+ * provider row, a run, a turn or anything outside the map folder. The table
+ * cannot say what it does not carry, and the vocabulary is the whole of what a
+ * command can name (ADR-0038 §7). Removal and a proposed name are NOT on that
+ * list — a person can take a card back and name one by hand (STORY 21.6, STORY
+ * 21.8, and STORY 21.11 for the session card), so the acts may propose them too.
+ *
+ * STORY 21.11 — THE SESSION CARD'S ROWS. The third family joins the table with
+ * its own ghost KIND (`session`, in envelope.ts) and four rows: add, bind, and
+ * the two steps of the app's own delete shape. A RUN IS STILL NOT A ROW: a run
+ * is an egress and stays the person's press on the card.
  */
 
 /** The ground map's card records file (PROVISIONAL with the act names). */
@@ -67,6 +84,21 @@ export const GROUND_WIRE_FILE = "map/ground-links.txt";
 
 /** The ask cards' file. */
 export const GROUND_ASK_FILE = "map/asks.txt";
+
+/**
+ * STORY 21.11 — the session cards' record file: one line per card, the shape
+ * map/sessions.ts reads and writes. PROVISIONAL with the act names.
+ */
+export const GROUND_SESSION_FILE = "map/sessions.txt";
+
+/**
+ * STORY 21.11 — ONE SESSION CARD'S TRANSCRIPT FILE. A session card's removal
+ * takes its transcript with it (the app's own delete shape), so the second ghost
+ * names this file the way a note's removal names map/notes/.
+ */
+export function groundSessionTranscriptFile(slug: string): string {
+  return "map/sessions/" + slug + ".jsonl";
+}
 
 /** One note's file, named by the card it is about. */
 export function groundNoteFile(slug: string): string {
@@ -906,16 +938,245 @@ function closureRenameAsk(
   return [];
 }
 
+
+/*
+ * STORY 21.11 — THE SESSION CARD JOINS THE VOCABULARY (ADR-0038 Amendment 2:
+ * the card proposes and the person accepts; undo is the second net AFTER the
+ * accept, never a way to start something). Three changes, each through the
+ * family's OWN pure writer, so an accepted ghost writes exactly the bytes the
+ * card's own verbs write:
+ *
+ *   - SESSION/ADD appends one sessions.txt line, its slug minted the map's own
+ *     way against the cards already in that file (the adapter has already
+ *     refused a name the whole shared slug space holds, exactly as the ask row
+ *     relies on its adapter to);
+ *   - SESSION/BIND rewrites ONE line, and only its row field: bindSessionTool is
+ *     the same writer the card's own rebind verb uses, so the name, the point,
+ *     the project, the boundary, the model and the transcript are untouched;
+ *   - SESSION/REMOVE drops the one sessions.txt line, and SESSION/REMOVE-
+ *     TRANSCRIPT takes the transcript file after it — the app's own delete
+ *     shape, two ghosts because a ghost is one file, one change (ADR-0025
+ *     decision 3).
+ *
+ * NO ROW HERE STARTS A RUN (ADR-0038 §7's never-list, Amendment 2's spirit): a
+ * run is an egress, the task leaves the machine, and that press is the person's.
+ * There is no row for a run, a task, a prompt or a message in this table, and
+ * there is no key for one.
+ */
+
+/** The exact segment a session card's line occupies, or null (raw, CR included). */
+function sessionCardLine(before: string | null, slug: string): string | null {
+  return rawLineWhere(before, (raw) => {
+    const session = parseSessionLine(raw);
+    return session !== null && session.on === slug;
+  });
+}
+
+/** A session card's tool row, when the adapter handed a non-empty row id. */
+function toolRowOf(params: Record<string, unknown>): string | null {
+  const tool = params.tool;
+  return typeof tool === "string" && tool !== "" ? tool : null;
+}
+
+/** SESSION/ADD — one session card's line, minted against the file's own slugs. */
+function deriveAddSessionSteps(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  const label = params.label;
+  const tool = toolRowOf(params);
+  if (target.kind !== "spot" || typeof label !== "string" || tool === null) {
+    return [];
+  }
+  const base = parseSessions(before ?? "");
+  const taken = new Set(base.sessions.map((session) => session.on));
+  const addition = addSession(base.sessions, taken, label, target.x, target.y, tool);
+  return [
+    {
+      op: "append",
+      file: GROUND_SESSION_FILE,
+      line: serializeSessionLine(addition.session),
+    },
+  ];
+}
+
+function closureAddSession(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (after === null) {
+    return [issue("append-only", "adding a session card cannot remove the file")];
+  }
+  const label = params.label;
+  const tool = toolRowOf(params);
+  if (target.kind !== "spot" || typeof label !== "string" || tool === null) {
+    return [issue("params", "the session proposal has no point, no label or no row")];
+  }
+  const base = parseSessions(before ?? "");
+  const taken = new Set(base.sessions.map((session) => session.on));
+  const addition = addSession(base.sessions, taken, label, target.x, target.y, tool);
+  const expected = serializeSessionLine(addition.session);
+  const result = parseSessions(after);
+  const issues = prefixIssues(
+    base.sessions.map(serializeSessionLine),
+    result.sessions.map(serializeSessionLine),
+  );
+  if (issues.length > 0) return issues;
+  const last = result.sessions[result.sessions.length - 1];
+  if (last === undefined || serializeSessionLine(last) !== expected) {
+    return [issue("append-only", "the dry run's last record is not this session card")];
+  }
+  if (result.malformed.length !== base.malformed.length) {
+    return [issue("append-only", "the dry run would change the file's preserved lines")];
+  }
+  return [];
+}
+
+/** SESSION/BIND — one line's ROW field, through the card's own binder. */
+function deriveBindSessionSteps(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  if (target.kind !== "session") return [];
+  const tool = toolRowOf(params);
+  if (tool === null) return [];
+  const line = sessionCardLine(before, target.slug);
+  if (line === null) return [];
+  const was = parseSessionLine(line.replace(/\r$/, ""));
+  if (was === null) return [];
+  const bound = bindSessionTool([was], target.slug, tool)?.[0];
+  if (bound === undefined) return [];
+  return [
+    replaceStep(
+      GROUND_SESSION_FILE,
+      line,
+      serializeSessionLine(bound) + carriageOf(line),
+    ),
+  ];
+}
+
+function closureBindSession(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (target.kind !== "session") {
+    return [issue("params", "the rebind has no session card")];
+  }
+  if (after === null) {
+    return [issue("append-only", "rebinding a card cannot remove the file")];
+  }
+  const tool = toolRowOf(params);
+  if (tool === null) {
+    return [issue("params", "the rebind has no tool row")];
+  }
+  const base = parseSessions(before ?? "");
+  if (!base.sessions.some((session) => session.on === target.slug)) {
+    return [issue("append-only", "the map does not carry that session card")];
+  }
+  const bound = bindSessionTool(base.sessions, target.slug, tool);
+  if (bound === null) {
+    return [issue("append-only", "the map does not carry that session card")];
+  }
+  const expected = bound.map(serializeSessionLine);
+  const result = parseSessions(after);
+  if (result.sessions.map(serializeSessionLine).join("\n") !== expected.join("\n")) {
+    return [issue("append-only", "the dry run did not rebind exactly this one card")];
+  }
+  if (result.malformed.join("\n") !== base.malformed.join("\n")) {
+    return [issue("append-only", "the dry run would change the file's preserved lines")];
+  }
+  return [];
+}
+
+/** SESSION/REMOVE — drop the one sessions.txt line naming this card. */
+function deriveRemoveSessionSteps(
+  target: GhostTarget,
+  _params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  if (target.kind !== "session") return [];
+  const line = sessionCardLine(before, target.slug);
+  if (line === null) return [];
+  return [{ op: "remove", file: GROUND_SESSION_FILE, line }];
+}
+
+function closureRemoveSession(
+  target: GhostTarget,
+  _params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (target.kind !== "session") {
+    return [issue("params", "the session removal has no session card")];
+  }
+  if (after === null) {
+    return [issue("append-only", "removing one session card cannot leave no file")];
+  }
+  const base = parseSessions(before ?? "");
+  const at = base.sessions.findIndex((session) => session.on === target.slug);
+  if (at === -1) {
+    return [issue("append-only", "the map does not carry that session card")];
+  }
+  const expected = base.sessions
+    .filter((_session, index) => index !== at)
+    .map(serializeSessionLine);
+  const result = parseSessions(after);
+  if (result.sessions.map(serializeSessionLine).join("\n") !== expected.join("\n")) {
+    return [issue("append-only", "the dry run did not drop exactly this one session card")];
+  }
+  if (result.malformed.join("\n") !== base.malformed.join("\n")) {
+    return [issue("append-only", "the dry run would change the file's preserved lines")];
+  }
+  return [];
+}
+
+/** SESSION/REMOVE-TRANSCRIPT — the transcript file, after its line. */
+function deriveRemoveSessionTranscriptSteps(
+  target: GhostTarget,
+  _params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  if (target.kind !== "session" || before === null) return [];
+  return [{ op: "remove", file: groundSessionTranscriptFile(target.slug) }];
+}
+
+function closureRemoveSessionTranscript(
+  target: GhostTarget,
+  _params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (target.kind !== "session") {
+    return [issue("params", "the transcript removal has no session card")];
+  }
+  if (before === null) {
+    return [issue("append-only", "there is no transcript file for that session card")];
+  }
+  if (after !== null) {
+    return [issue("append-only", "removing a transcript must remove its one file")];
+  }
+  return [];
+}
+
 /** The target rules every ground move shares: one kind, the rest refused. */
 function only(
-  allowed: "spot" | "link" | "card" | "ask",
+  allowed: "spot" | "link" | "card" | "ask" | "session",
   refusals: ReadonlyArray<{
-    kind: "word" | "loop" | "spot" | "link" | "card" | "ask";
+    kind: "word" | "loop" | "spot" | "link" | "card" | "ask" | "session";
     why: string;
   }>,
 ): MoveDefinition["targets"] {
   const rows: Array<MoveDefinition["targets"][number]> = [];
-  for (const kind of ["word", "loop", "spot", "link", "card", "ask"] as const) {
+  // STORY 21.11 adds the session card to the kinds a move may be about: the
+  // third family gets its own kind for the same reason the ask did — it is not a
+  // ground reference, and a rebind or a removal names exactly it.
+  for (const kind of ["word", "loop", "spot", "link", "card", "ask", "session"] as const) {
     if (kind === allowed) {
       rows.push({ kind, allowed: true });
     } else {
@@ -1209,12 +1470,119 @@ const ASK_RENAME_ROW: MoveDefinition = {
     "Propose a new name for one ask card. Accepting it is the person's coining; refusing it leaves the name as it was. Nothing else changes: its slug, point, anchor and conversation stay exactly as they are.",
 };
 
+
+/* ------------------------------------------------------------------------ *
+ * STORY 21.11 — THE SESSION CARD'S ROWS
+ *
+ * Each row is one ghost and one change, and each uses the family's OWN writer.
+ * NO ROW STARTS A RUN: a run is an egress, so the create row names a row and a
+ * name and there is no key here for a task, a prompt or a message.
+ * ------------------------------------------------------------------------ */
+
+const SESSION_ROW: MoveDefinition = {
+  move: { family: "session", verb: "add" },
+  game: "ground",
+  files: [GROUND_SESSION_FILE],
+  // THE NAME RIDES A PROPOSAL, exactly as a card's does: "label" is the words
+  // the person accepts, and the accept is the coining (AGENTS.md's guardrail).
+  // The ROW is the tool row's ID as the record stores it; the adapter resolved
+  // the name the person or model used against the rows this build ships, and
+  // refused an unknown one by name before this ghost existed.
+  params: [
+    { key: "label", kind: "text" },
+    { key: "tool", kind: "text" },
+  ],
+  targetCount: 1,
+  targets: only("spot", [
+    { kind: "word", why: "a session card is placed at a point; the point is the target" },
+    { kind: "card", why: "a session card is placed at a point; the point is the target" },
+    { kind: "ask", why: "a session card is placed at a point; the point is the target" },
+    { kind: "link", why: "a session card is placed at a point; the point is the target" },
+  ]),
+  steps: deriveAddSessionSteps,
+  closure: closureAddSession,
+  boundary:
+    "Add one session card at one point, bound to a tool row this build ships. Nothing is started: no task leaves the machine, no permission is answered, and no other card, wire, note or transcript is touched.",
+};
+
+const SESSION_BIND_ROW: MoveDefinition = {
+  move: { family: "session", verb: "bind" },
+  game: "ground",
+  files: [GROUND_SESSION_FILE],
+  params: [{ key: "tool", kind: "text" }],
+  targetCount: 1,
+  targets: only("session", [
+    { kind: "word", why: "a rebind is about one session card on this map" },
+    { kind: "loop", why: "a rebind is about one session card on this map" },
+    { kind: "spot", why: "a rebind is about one session card on this map" },
+    { kind: "link", why: "a rebind names one card, never a pair" },
+    { kind: "card", why: "a session card is its own family; a reference card is not one" },
+    { kind: "ask", why: "a session card is its own family; an ask card is not one" },
+  ]),
+  steps: deriveBindSessionSteps,
+  closure: closureBindSession,
+  // ONE FIELD, THE ROW'S: the name, the point, the project, the boundary, the
+  // model and the transcript are not this move's business, and the writer it
+  // uses (bindSessionTool) cannot touch them.
+  boundary:
+    "Change which tool row one session card runs on. Nothing else changes: its name, its point, its project, its boundary, its model and its transcript stay exactly as they are.",
+};
+
+const SESSION_REMOVE_ROW: MoveDefinition = {
+  move: { family: "session", verb: "remove" },
+  game: "ground",
+  files: [GROUND_SESSION_FILE],
+  params: [],
+  targetCount: 1,
+  targets: only("session", [
+    { kind: "word", why: "a session removal names one session card on this map" },
+    { kind: "loop", why: "a session removal names one session card on this map" },
+    { kind: "spot", why: "a session removal names one session card on this map" },
+    { kind: "link", why: "a session removal names one session card on this map" },
+    { kind: "card", why: "a session card is its own family; a reference card is not one" },
+    { kind: "ask", why: "a session card is its own family; an ask card is not one" },
+  ]),
+  steps: deriveRemoveSessionSteps,
+  closure: closureRemoveSession,
+  // THE APP'S OWN DELETE SHAPE, STEP ONE: the record line goes first (the record
+  // is the truth), and the transcript is its own ghost because a ghost is one
+  // file, one change. No cascade is invented here.
+  boundary:
+    "Remove one session card's record line, the way the card's own removal does first. Nothing else changes here: the transcript is taken by its own step of the same shape.",
+};
+
+const SESSION_TRANSCRIPT_REMOVE_ROW: MoveDefinition = {
+  move: { family: "session", verb: "remove-transcript" },
+  game: "ground",
+  files: [],
+  filesFor: (target) =>
+    target.kind === "session" ? [groundSessionTranscriptFile(target.slug)] : [],
+  params: [],
+  targetCount: 1,
+  targets: only("session", [
+    { kind: "word", why: "a transcript belongs to one session card on this map" },
+    { kind: "loop", why: "a transcript belongs to one session card on this map" },
+    { kind: "spot", why: "a transcript belongs to one session card on this map" },
+    { kind: "link", why: "a transcript belongs to one session card on this map" },
+    { kind: "card", why: "a reference card has a note and a reading, not a transcript" },
+    { kind: "ask", why: "an ask card has a conversation, not a transcript" },
+  ]),
+  steps: deriveRemoveSessionTranscriptSteps,
+  closure: closureRemoveSessionTranscript,
+  // THE APP'S OWN DELETE SHAPE, STEP TWO: the transcript file goes, whole and
+  // only after its line. The bytes a Restore needs were the app's to read before
+  // the unlink; this step removes exactly the file that read named.
+  boundary:
+    "Remove one session card's transcript, the way the card's own removal does after its record line. Nothing else changes: no other card, wire, note or record is touched.",
+};
+
 /**
  * The command card's ground rows, in the vocabulary's order. Handed to the
  * ghost session's `moves` option by `attentioneerHost.ts`; NEVER appended to
  * the live `MOVES` table (the app's expansion gate is ADR-0025's). STORY 21.6
  * appends the three removal rows — each one ghost, each one change. STORY 21.8
- * appends the place and the name (one row per card family).
+ * appends the place and the name (one row per card family). STORY 21.11 appends
+ * the session card's three changes and its transcript's own step.
  */
 export const GROUND_MOVES: readonly MoveDefinition[] = [
   CARD_ROW,
@@ -1232,4 +1600,10 @@ export const GROUND_MOVES: readonly MoveDefinition[] = [
   ASK_MOVE_ROW,
   CARD_RENAME_ROW,
   ASK_RENAME_ROW,
+  // STORY 21.11 — the session card's three changes, and its transcript's own
+  // step of the app's delete shape. None of them starts a run.
+  SESSION_ROW,
+  SESSION_BIND_ROW,
+  SESSION_REMOVE_ROW,
+  SESSION_TRANSCRIPT_REMOVE_ROW,
 ];

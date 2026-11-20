@@ -71,7 +71,7 @@ describe("the portable half imports nothing app specific (ADR-0038 §3)", () => 
 });
 
 describe("the vocabulary is declared data (ADR-0038 §3)", () => {
-  test("fourteen acts: five reads and nine proposals (STORY 21.9 reads every map)", () => {
+  test("seventeen acts: five reads and twelve proposals (STORY 21.11 adds the session card's three)", () => {
     expect(ACT_NAMES).toEqual([
       "map_overview",
       "read_card",
@@ -87,9 +87,12 @@ describe("the vocabulary is declared data (ADR-0038 §3)", () => {
       "propose_remove_card",
       "propose_move",
       "propose_rename",
+      "propose_session",
+      "propose_bind_session",
+      "propose_remove_session",
     ]);
     expect(ACT_SPECS.filter((spec) => spec.family === "read")).toHaveLength(5);
-    expect(ACT_SPECS.filter((spec) => spec.family === "propose")).toHaveLength(9);
+    expect(ACT_SPECS.filter((spec) => spec.family === "propose")).toHaveLength(12);
   });
 
   test("a READ may name any map; a CHANGE names the ground map alone (STORY 21.9)", () => {
@@ -152,6 +155,8 @@ describe("the vocabulary is declared data (ADR-0038 §3)", () => {
       "propose_unwire",
       "propose_remove_note",
       "propose_remove_card",
+      // STORY 21.11 — the session card's own removal, one family over.
+      "propose_remove_session",
     ]);
     // The absence is stated in the code, not left to a reader's guess.
     expect(source("src/commands/acts.ts")).toContain(
@@ -305,6 +310,20 @@ describe("executeScript: whole-script validation, then order", () => {
       async proposeRename() {
         state.calls.push("proposeRename");
         return answer("name proposal", "ghost-9");
+      },
+      // STORY 21.11 — the session card's three acts. The fake answers, and
+      // nothing here starts a run: the host interface has no method for one.
+      async proposeSession() {
+        state.calls.push("proposeSession");
+        return answer("session proposal", "ghost-10");
+      },
+      async proposeBindSession() {
+        state.calls.push("proposeBindSession");
+        return answer("session rebind proposal", "ghost-11");
+      },
+      async proposeRemoveSession() {
+        state.calls.push("proposeRemoveSession");
+        return answer("session removal", "ghost-12");
       },
     };
     return {

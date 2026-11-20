@@ -896,6 +896,19 @@ export function actLine(act: CommandAct): string {
         " for " +
         text("card")
       );
+    // STORY 21.11 — the session card in plain words. None of these lines
+    // promises a run: a run is an egress and stays the person's press.
+    case "propose_session":
+      return (
+        "add a session card " +
+        JSON.stringify(text("name")) +
+        " on " +
+        text("tool")
+      );
+    case "propose_bind_session":
+      return "bind the session card " + text("card") + " to " + text("tool");
+    case "propose_remove_session":
+      return "remove the session card " + JSON.stringify(text("card"));
     default:
       // Unreachable through the validated vocabulary; the act's own name is
       // the honest fallback rather than an invented sentence.

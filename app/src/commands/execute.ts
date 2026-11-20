@@ -89,6 +89,19 @@ export interface CommandHost {
    */
   proposeMove(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
   proposeRename(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
+  /**
+   * STORY 21.11 — the session card's three proposals, through the SAME intake as
+   * everything else: a card made on a tool row this build ships, one card bound
+   * to another row, one card removed with its transcript. NONE STARTS A RUN: a
+   * run is an egress and stays the person's press (ADR-0038 §7's never-list).
+   */
+  proposeSession(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
+  proposeBindSession(
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<CommandOutcome>;
+  proposeRemoveSession(
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<CommandOutcome>;
 }
 
 /** What running a script left behind. */
@@ -159,6 +172,14 @@ async function runOne(act: CommandAct, host: CommandHost): Promise<CommandOutcom
       return host.proposeMove(payload);
     case "propose_rename":
       return host.proposeRename(payload);
+    // STORY 21.11 — the session card's three acts. Each also files a ghost; none
+    // starts a run, because a run is an egress and stays the person's press.
+    case "propose_session":
+      return host.proposeSession(payload);
+    case "propose_bind_session":
+      return host.proposeBindSession(payload);
+    case "propose_remove_session":
+      return host.proposeRemoveSession(payload);
     default:
       // Unreachable: validateAct registered the name. Kept explicit so a new
       // act added to the vocabulary without a dispatch fails loudly in a test.

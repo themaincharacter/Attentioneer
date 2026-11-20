@@ -1,4 +1,4 @@
-import type { GhostMove, GhostTarget } from "./envelope";
+import { GHOST_TARGET_KINDS, type GhostMove, type GhostTarget } from "./envelope";
 import type { GhostIssue, GhostIssueCode } from "./issues";
 
 /**
@@ -147,6 +147,9 @@ export interface RunState {
   discard(): void;
 }
 
+/** A target whose identity is a slug (every kind but a spot and a link). */
+type SlugTarget = Extract<GhostTarget, { slug: string }>;
+
 /** The run's parts as a reply spells them, when it spells readable ones. */
 export interface RunParts {
   readonly move: GhostMove;
@@ -163,23 +166,16 @@ function part(value: string): string {
 
 /** A target's run-key share: its kind and its own identity, nothing else. */
 function targetKeyOf(target: GhostTarget): string {
-  switch (target.kind) {
-    case "word":
-      return part("word") + part(target.slug);
-    case "loop":
-      return part("loop") + part(target.slug);
-    case "spot":
-      return part("spot") + part(String(target.x)) + part(String(target.y));
-    case "link":
-      return part("link") + part(target.from) + part(target.to);
-    // STORY 21.1: a card target's identity is its slug, exactly as a word's.
-    case "card":
-      return part("card") + part(target.slug);
-    // STORY 21.7: an ask card's identity is the same kind of fact, one family
-    // over — the run's key must not merge two cards' refusals into one.
-    case "ask":
-      return part("ask") + part(target.slug);
+  // STORY 21.11 — A SLUG-BEARING TARGET'S IDENTITY IS ITS KIND PLUS ITS SLUG:
+  // true for a word, a loop and every card family, and it stays true when a
+  // family joins (a new kind must never merge two refusals into one key). The
+  // run state stays free of record and session modules: it reads the KIND'S
+  // NAME from the envelope, never a family's own code.
+  if ("slug" in target) return part(target.kind) + part(target.slug);
+  if (target.kind === "spot") {
+    return part("spot") + part(String(target.x)) + part(String(target.y));
   }
+  return part("link") + part(target.from) + part(target.to);
 }
 
 /** A move's run-key share: its family and verb (the registry's identity). */
@@ -228,18 +224,20 @@ function moveOf(value: unknown): GhostMove | null {
 function targetOf(value: unknown): GhostTarget | null {
   const record = objectOf(value);
   if (record === null) return null;
+  // STORY 21.11 — every slug-bearing kind is read the same way, from the
+  // envelope's OWN list of kinds: a family that joins later is one more name
+  // there, never another branch here.
   if (
-    record.kind === "word" ||
-    record.kind === "loop" ||
-    record.kind === "card" ||
-    record.kind === "ask"
+    typeof record.kind === "string" &&
+    (GHOST_TARGET_KINDS as readonly string[]).includes(record.kind) &&
+    record.kind !== "spot" &&
+    record.kind !== "link"
   ) {
     const slug = textOf(record.slug);
     if (slug === null) return null;
     // STORY 21.1: a card target counts in the run state like the others, so a
     // repeated refusal about one card is one key (the counter is unchanged).
-    // STORY 21.7: an ask card is the same kind of key, one family over.
-    return { kind: record.kind, slug };
+    return { kind: record.kind as SlugTarget["kind"], slug };
   }
   if (record.kind === "spot") {
     const x = record.x;

@@ -583,6 +583,11 @@ describe("an undo-shaped instruction is the last applied act's inverse, or one h
       // previous value the host attaches to the applied act.
       propose_move: "propose_move",
       propose_rename: "propose_rename",
+      // STORY 21.11 — the session card's pair, and a rebind that is its own
+      // inverse with the row the card ran before.
+      propose_session: "propose_remove_session",
+      propose_remove_session: "propose_session",
+      propose_bind_session: "propose_bind_session",
     });
     for (const name of ACT_NAMES) {
       if (!(name in INVERSE_ACT_OF)) continue;

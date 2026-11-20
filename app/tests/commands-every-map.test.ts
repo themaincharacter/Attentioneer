@@ -413,8 +413,8 @@ describe("the other maps have no change act at all (not even a proposal)", () =>
     }
   });
 
-  test("the vocabulary carries exactly nine proposals, all of them ground's", () => {
-    expect(ACT_SPECS.filter((spec) => spec.family === "propose")).toHaveLength(9);
+  test("the vocabulary carries exactly twelve proposals, all of them ground's (STORY 21.11 adds three)", () => {
+    expect(ACT_SPECS.filter((spec) => spec.family === "propose")).toHaveLength(12);
     expect(ACT_SPECS.filter((spec) => spec.family === "read")).toHaveLength(5);
     expect(CHANGE_MAP).toBe("ground");
   });

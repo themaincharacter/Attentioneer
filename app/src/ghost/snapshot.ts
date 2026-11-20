@@ -3,6 +3,13 @@ import { groundPath, parseGround } from "../map/ground";
 import { loopSlug, loopsPath, parseLoops } from "../map/loops";
 import { modelPath, parseModel } from "../map/model";
 import { recordsDirOf, recordsRelDirOf } from "../map/records";
+// STORY 21.11 — the session cards' line file and their transcripts' folder, read
+// through the same port as everything else.
+import {
+  parseSessions,
+  sessionTranscriptsDir,
+  sessionsPath,
+} from "../map/sessions";
 import { referencesDir } from "../map/refs";
 import type { GhostGame } from "./envelope";
 import type { GhostFs } from "./port";
@@ -60,6 +67,16 @@ export interface GhostSnapshot {
    * than guess.
    */
   asks?: ReadonlySet<string>;
+  /**
+   * STORY 21.11 — every SESSION CARD's slug: its line, and the slug of any
+   * transcript under `map/sessions/` whose line is gone. The second half is not
+   * a guess for the same reason the ask's is not: the app's own delete shape
+   * takes the record line first and the transcript after it, so the shape's
+   * second step must still resolve the card it is about. Absent on a snapshot
+   * built for the concept or dynamics games; a session target then refuses
+   * rather than guess.
+   */
+  sessions?: ReadonlySet<string>;
   /** Workspace-relative path → the file's bytes (null = absent). */
   files: Readonly<Record<string, string | null>>;
 }
@@ -98,6 +115,10 @@ export async function readGhostSnapshot(
   // delete shape's two steps, in its own order).
   const asksText = await fs.readText(asksPath(workspacePath));
   const askConversations = await fs.list(askTurnsDir(workspacePath));
+  // STORY 21.11: the session cards and their transcripts, read the same way —
+  // the record for the line, the listing for a transcript whose line is gone.
+  const sessionsText = await fs.readText(sessionsPath(workspacePath));
+  const sessionTranscripts = await fs.list(sessionTranscriptsDir(workspacePath));
   // The accepted playing set is the records folder's own `model.json` (ADR-0013):
   // read through the same port as the rest, so the accept sees the set on disk
   // at the write moment, not a memory that may have moved.
@@ -129,6 +150,14 @@ export async function readGhostSnapshot(
       asks.add(name.slice(0, -".jsonl".length));
     }
   }
+  const sessions = new Set<string>(
+    parseSessions(sessionsText ?? "").sessions.map((entry) => entry.on),
+  );
+  for (const name of sessionTranscripts) {
+    if (name.endsWith(".jsonl") && name.length > ".jsonl".length) {
+      sessions.add(name.slice(0, -".jsonl".length));
+    }
+  }
   return {
     level: request.level,
     scenario: request.scenario,
@@ -138,6 +167,7 @@ export async function readGhostSnapshot(
     loops,
     cards: new Set(parseGround(groundText ?? "").references.map((entry) => entry.on)),
     asks,
+    sessions,
     files,
   };
 }

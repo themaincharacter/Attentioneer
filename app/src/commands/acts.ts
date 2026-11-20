@@ -67,11 +67,31 @@
  * other maps' acts need their own design. That rule lives HERE, in the one door
  * a model's reply passes, so it is a schema refusal and not a prompt wish.
  *
+ * STORY 21.11 — THE SESSION CARDS JOIN THE VOCABULARY, AND NONE OF THEIR ACTS
+ * STARTS A RUN (ADR-0038 Amendment 2: the command card proposes, and the person
+ * accepts; a vague instruction must be visible as a proposal first, and undo is
+ * the second net AFTER the accept). The session card already shares the card
+ * grammar, the name pill, a task field with disclosure, a tool picker, a model
+ * that must be one the tool named, a permission lane, a stop, a curator-made
+ * result card, a continue-session composer and sign-in hosting — what it lacked
+ * was a place in THIS TABLE. So three proposals join it:
+ *
+ *   - `propose_session` names a NAME PROPOSAL and a TOOL ROW this build ships;
+ *   - `propose_bind_session` names one existing session card and another row;
+ *   - `propose_remove_session` names one existing session card.
+ *
+ * NO ACT STARTS A RUN. A run is an EGRESS — a task leaves the machine — and it
+ * stays the person's own press, exactly as a send does (the never-list, ADR-0038
+ * §7). There is no act whose payload carries a task, a prompt or a message, and
+ * none of these names one: creating a card, binding it to a row and removing it
+ * are map changes, and the test beside this table asserts the whole of it.
+ *
  * PROVISIONAL (ADR-0038's consequences): the act names, the payload keys and
  * their types (STORY 21.7 adds the `texts` list type for the cards to wire),
  * the two read acts' names and descriptions (STORY 21.9), the map argument's
- * shape, and the script's line shape (one act object per line, read by the
- * driver beside this file).
+ * shape, the session acts' names and payload keys (STORY 21.11), and the
+ * script's line shape (one act object per line, read by the driver beside this
+ * file).
  */
 
 /**
@@ -314,6 +334,55 @@ export const ACT_SPECS: readonly ActSpec[] = [
       { key: "card", type: "text" },
       { key: "name", type: "text" },
     ],
+    optional: [{ key: "why", type: "text" }],
+  },
+  // STORY 21.11 — THE SESSION CARD JOINS THE VOCABULARY (ADR-0038 Amendment 2:
+  // the card PROPOSES and the person accepts, and undo is the second net after
+  // an accept). Three acts, each a ghost: a session card made on a tool row this
+  // build ships, one card bound to another row, and one card removed.
+  //
+  // NONE OF THEM STARTS A RUN. A run is an EGRESS — the task leaves the machine —
+  // and it stays the person's press, exactly as a send does (ADR-0038 §7's
+  // never-list). So the create act names a NAME and a ROW and nothing a run
+  // would carry: there is no task, no prompt and no message in this schema, and
+  // the person writes the task on the card after they have it.
+  {
+    name: "propose_session",
+    family: "propose",
+    writes: false,
+    description:
+      "Propose one session card on a tool row this build ships, with a name for the person to accept; nothing is started and no task leaves the machine.",
+    required: [
+      { key: "name", type: "text" },
+      { key: "tool", type: "text" },
+    ],
+    optional: [{ key: "why", type: "text" }],
+  },
+  // STORY 21.11 — REBINDING CHANGES ONE FIELD. The act names the card and the
+  // row it should run; the card's transcript, its task and its result are not in
+  // this schema, so a model cannot reach them.
+  {
+    name: "propose_bind_session",
+    family: "propose",
+    writes: false,
+    description:
+      "Propose a different tool row for one existing session card; its transcript and its task stay as they are.",
+    required: [
+      { key: "card", type: "text" },
+      { key: "tool", type: "text" },
+    ],
+    optional: [{ key: "why", type: "text" }],
+  },
+  // STORY 21.11 — REMOVAL IS THE APP'S OWN DELETE SHAPE: the record line, then
+  // the transcript file that goes with it, each its own ghost. The person's
+  // Restore remains the undo of the undo (Amendment 2's second net).
+  {
+    name: "propose_remove_session",
+    family: "propose",
+    writes: false,
+    description:
+      "Propose removing one existing session card, with its transcript, the way the card's own removal does.",
+    required: [{ key: "card", type: "text" }],
     optional: [{ key: "why", type: "text" }],
   },
 ];
@@ -573,6 +642,12 @@ export const INVERSE_ACT_OF: Readonly<Record<string, string>> = {
   propose_remove_card: "propose_card",
   propose_move: "propose_move",
   propose_rename: "propose_rename",
+  // STORY 21.11 — a session card's pair: making it and taking it away. A
+  // rebind's inverse is ITSELF with the row the card ran before, which the host
+  // remembers at proposal time (app-minted view state, never a model's word).
+  propose_session: "propose_remove_session",
+  propose_remove_session: "propose_session",
+  propose_bind_session: "propose_bind_session",
 };
 
 /** The payload an inverse act needs from the act it takes back, or null. */
@@ -599,6 +674,19 @@ function inversePayloadOf(
     const card = text("card") ?? text("name");
     return card === null ? null : { card };
   }
+  if (inverse === "propose_remove_session") {
+    // A session card is named by its name at creation and by its slug in the
+    // digest; either is a card the adapter re-checks against the records.
+    const card = text("card") ?? text("name");
+    return card === null ? null : { card };
+  }
+  if (inverse === "propose_bind_session") {
+    // STORY 21.11 — the row the card ran before, which the host read at
+    // proposal time. No previous row means no inverse (never an invented row).
+    const card = text("card");
+    const previous = text("previousTool");
+    return card === null || previous === null ? null : { card, tool: previous };
+  }
   if (inverse === "propose_rename") {
     // STORY 21.8 — the name the card had, which the host read at proposal time.
     // No previous name means no inverse (never an invented one).
@@ -617,8 +705,9 @@ function inversePayloadOf(
     if (typeof y !== "number" || !Number.isFinite(y)) return null;
     return { card, x, y };
   }
-  // propose_note needs the words and propose_card needs the point: neither is
-  // in the applied act, so neither is offered (never invented).
+  // propose_note needs the words, propose_card needs the point and a removed
+  // session card's name and row live only in the file the removal took: none of
+  // them is in the applied act, so none is offered (never invented).
   return null;
 }
 

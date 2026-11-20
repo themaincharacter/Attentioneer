@@ -81,7 +81,16 @@ export type GhostTarget =
    * addition — the removal of an ask names that ask and nothing else.
    * PROVISIONAL with the act names.
    */
-  | { kind: "ask"; slug: string };
+  | { kind: "ask"; slug: string }
+  /**
+   * STORY 21.11 — ONE SESSION CARD BY ITS SLUG. The third family is not a ground
+   * reference and not an ask: it binds a tool row and holds a run's transcript,
+   * so a rebind or a removal that names it needs its own kind for the same
+   * reason the ask got one. Adding the kind is the smallest honest addition —
+   * teaching the card kind that a session is a reference would be a lie the
+   * grammar then has to maintain. PROVISIONAL with the act names.
+   */
+  | { kind: "session"; slug: string };
 
 /** The known target kinds, for shape checks. */
 export const GHOST_TARGET_KINDS: readonly GhostTarget["kind"][] = [
@@ -91,6 +100,8 @@ export const GHOST_TARGET_KINDS: readonly GhostTarget["kind"][] = [
   "link",
   "card",
   "ask",
+  // STORY 21.11 — the session card's own kind.
+  "session",
 ];
 
 /**
@@ -316,7 +327,11 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
  */
 export function targetFromValue(value: unknown): GhostTarget | null {
   if (!isPlainObject(value)) return null;
-  if (value.kind === "card" || value.kind === "ask") {
+  if (
+    value.kind === "card" ||
+    value.kind === "ask" ||
+    value.kind === "session"
+  ) {
     const slug = value.slug;
     return typeof slug === "string" && slug !== ""
       ? { kind: value.kind, slug }

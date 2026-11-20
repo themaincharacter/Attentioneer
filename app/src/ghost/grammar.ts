@@ -100,6 +100,9 @@ const TARGET_KEYS: Record<GhostTarget["kind"], readonly string[]> = {
   // about. An ask is its own family, so it gets its own kind rather than
   // teaching the card kind that an ask is a reference.
   ask: ["kind", "slug"],
+  // STORY 21.11: one existing session card, by slug — the kind a rebind and a
+  // removal are about. The third family is its own kind, exactly as the ask is.
+  session: ["kind", "slug"],
 };
 
 /** A digest's shape: 64 lower-case hex chars. */
@@ -202,7 +205,8 @@ function readTarget(
     kind === "word" ||
     kind === "loop" ||
     kind === "card" ||
-    kind === "ask"
+    kind === "ask" ||
+    kind === "session"
   ) {
     if (typeof value.slug !== "string" || value.slug === "") {
       return {
@@ -391,6 +395,14 @@ function targetExists(target: GhostTarget, snapshot: GhostSnapshot): boolean {
   // still be able to name the card whose line just left. The orphan
   // conversation IS that card's remains, which the app already reports as one.
   if (target.kind === "ask") return snapshot.asks?.has(target.slug) === true;
+  // STORY 21.11 — A SESSION CARD IS ON THE MAP when its line is, and ALSO while
+  // only its transcript is: the app's own delete shape takes the record line
+  // first and the transcript after it, so the shape's second step must still be
+  // able to name the card whose line just left. The orphan transcript IS that
+  // card's remains, which the app already reports as an orphan.
+  if (target.kind === "session") {
+    return snapshot.sessions?.has(target.slug) === true;
+  }
   return true;
 }
 

@@ -39,7 +39,17 @@ import {
 import { loadGroundLinks, type GroundLink } from "../map/groundLinks";
 import { loadNotes, noteByteLength, NOTE_MAX_BYTES } from "../map/notes";
 import { readingTextPath, previewText } from "../map/readings";
-import { loadSessions, type SessionCard } from "../map/sessions";
+import {
+  loadSessions,
+  sessionTranscriptPath,
+  type SessionCard,
+} from "../map/sessions";
+// STORY 21.11 — THE TOOL ROWS THIS BUILD SHIPS, as data. The session card may
+// only be bound to a row the tool picker offers, and the picker's label is the
+// row's own (`acpRowLabel`), so the acts are resolved against the same rows the
+// person sees. This import adds no process, no key and no egress: acpSpecs is
+// shipped data and a pure label function.
+import { ACP_SPECS, acpRowLabel } from "../turn/acpSpecs";
 import {
   executeScript,
   type CommandHost,
@@ -79,9 +89,20 @@ import {
  * composer. Nothing below ever writes it: the record writer is the person's
  * send, and an unsent question is a draft. NO ACT SENDS A TURN.
  *
+ * STORY 21.11 — THE SESSION CARD'S HALF (ADR-0038 Amendment 2: the card
+ * proposes, the person accepts, and undo is the second net AFTER the accept).
+ * Three acts answer here: a card made on a tool row this build ships (the rows
+ * come from acpSpecs as DATA, the picker's own labels included), one card bound
+ * to another row through the SAME writer its own rebind verb uses
+ * (map/sessions.ts's bindSessionTool), and one card removed in the app's OWN
+ * delete shape — the record line first, the transcript second, each its own
+ * ghost. NONE OF THEM STARTS A RUN: a run is an egress and stays the person's
+ * press, exactly as a send stays the ask card's.
+ *
  * PROVISIONAL (ADR-0038's consequences): the act payload keys, the sentences
- * this file speaks, the draft hint's shape, and the note that an unsent
- * question is not a record.
+ * this file speaks, the draft hint's shape, the point a new session card lands
+ * on, the note that an unsent question is not a record, and the session acts'
+ * names and sentences.
  */
 
 /** The bridges the host needs: the map's loaders' reads and the ghost port. */
@@ -152,6 +173,19 @@ type PendingAudit =
       family: CardRenameKind;
       from: string;
       to: string;
+    }
+  | {
+      /**
+       * STORY 21.11 — A SESSION CARD'S REBIND. The row it ran before is what the
+       * inverse act needs, and it is not derivable once the record moved: the
+       * host reads it at PROPOSAL time and keeps it here. A rebind is not an
+       * authored history line (the card's own rebind verb logs none), so this
+       * row is used for the inverse offer only.
+       */
+      kind: "bind";
+      slug: string;
+      from: string;
+      to: string;
     };
 
 /** What the loaded view carries, read fresh for each act. */
@@ -176,6 +210,80 @@ function flat(text: string): string {
 type FoundCard =
   | { kind: "reference"; slug: string; name: string; x: number; y: number }
   | { kind: "ask"; slug: string; name: string; x: number; y: number };
+
+/**
+ * STORY 21.11 — A SESSION CARD BY SLUG, THEN BY THE PERSON'S EXACT NAME, then
+ * case-insensitively — the same resolution `findCard` uses, over the third
+ * family. A session card is not a reference and not an ask, so this reader is
+ * its own: giving it the card kind would teach every other act that a session
+ * carries a reading or a conversation.
+ */
+function findSessionCard(view: GroundView, wanted: string): SessionCard | null {
+  const exact = view.sessions.find(
+    (session) => session.on === wanted || session.name === wanted,
+  );
+  if (exact !== undefined) return exact;
+  const lower = wanted.toLowerCase();
+  return (
+    view.sessions.find(
+      (session) =>
+        session.on.toLowerCase() === lower ||
+        session.name.toLowerCase() === lower,
+    ) ?? null
+  );
+}
+
+/**
+ * STORY 21.11 — THE ROW A NAME MEANS, or null. A session card may only be bound
+ * to a tool row THIS BUILD SHIPS: the row's id (what the record holds and the
+ * digest names) or the picker's own label (`acpRowLabel`, what the person
+ * reads) — exactly, then case-insensitively, like a card's name. A row this
+ * build does not ship answers null, and the caller refuses BY NAME before any
+ * ghost exists. A row a person typed in Settings is NOT one of these, which is
+ * the card's own rule too: `createSession` accepts only shipped rows.
+ */
+function shippedToolRowOf(wanted: string): string | null {
+  const exact = ACP_SPECS.find(
+    (spec) => spec.id === wanted || acpRowLabel(spec) === wanted,
+  );
+  if (exact !== undefined) return exact.id;
+  const lower = wanted.toLowerCase();
+  const loose = ACP_SPECS.find(
+    (spec) =>
+      spec.id.toLowerCase() === lower ||
+      acpRowLabel(spec).toLowerCase() === lower,
+  );
+  return loose === undefined ? null : loose.id;
+}
+
+/** The one sentence an unknown tool row answers (PROVISIONAL wording). */
+function unknownToolRowSentence(wanted: string): string {
+  const shipped = ACP_SPECS.map((spec) => '"' + spec.id + '"').join(", ");
+  return `"${wanted}" is not a tool row this build ships; ${shipped} are the ones it offers.`;
+}
+
+/** The label a person reads for a row id, or the id when this build lacks it. */
+function toolRowLabel(id: string): string {
+  const spec = ACP_SPECS.find((candidate) => candidate.id === id);
+  return spec === undefined ? id : acpRowLabel(spec);
+}
+
+/**
+ * STORY 21.11 — WHERE A NEW SESSION CARD GOES, computed by the APP. The act
+ * carries no coordinate at all (the move act's own rule, one story older): the
+ * host puts the card BELOW the last card on the map, by the one placement offset
+ * the plane already uses, and at the origin when the map holds no card.
+ * PROVISIONAL: the rule, not only the offset — a later story may let the person
+ * place it.
+ */
+function sessionPointOf(view: GroundView): { x: number; y: number } {
+  const last =
+    view.sessions[view.sessions.length - 1] ??
+    view.asks[view.asks.length - 1] ??
+    view.references[view.references.length - 1];
+  if (last === undefined) return { x: 0, y: 0 };
+  return placedFrom({ x: last.x, y: last.y }, "below");
+}
 
 /** Find a card by slug, then by the person's exact name, then case-insensitively. */
 function findCard(view: GroundView, wanted: string): FoundCard | null {
@@ -681,6 +789,190 @@ export function createAttentioneerHost(options: CommandHostOptions) {
   }
 
   /*
+   * STORY 21.11 — THE SESSION CARD'S THREE ACTS (ADR-0038 Amendment 2: propose,
+   * then undo after the accept). Each is a GHOST through the same intake as
+   * everything else, and each re-checks its names against the records it just
+   * loaded, so a card or a row that is not there is refused BY NAME before any
+   * ghost is filed.
+   *
+   * NO ACT HERE STARTS A RUN. A run is an EGRESS — a task leaves the machine —
+   * and it stays the person's press on the card, exactly as a send stays the ask
+   * card's own. There is no task in these payloads, no call to the run lane, and
+   * nothing in this module can start one.
+   */
+
+  /**
+   * ONE SESSION CARD ON A TOOL ROW THIS BUILD SHIPS. The name is the person's
+   * (a proposal they accept, the card's own coining rule); the row is resolved
+   * against the shipped rows and refused by name otherwise; the point is the
+   * app's (the act carries no coordinate). The ghost appends the one
+   * `sessions.txt` line the card's own creation writes, and nothing else — a
+   * card that has never run has no transcript to invent.
+   */
+  async function proposeSession(
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<CommandOutcome> {
+    const view = await loadView();
+    const name = String(payload.name).trim();
+    const wantedTool = String(payload.tool);
+    const tool = shippedToolRowOf(wantedTool);
+    if (tool === null) {
+      return { ok: false, sentence: unknownToolRowSentence(wantedTool) };
+    }
+    // The three card families share ONE slug space (the map's own rule), so a
+    // proposal may not coin a twin of a card that already stands. The record
+    // writer re-checks with the same set; this refusal comes first and by name.
+    const taken = sharedSlugs(view.references, view.asks, view.sessions);
+    const base = name
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{Nd}]+/gu, "-")
+      .replace(/^-+|-+$/g, "");
+    if (taken.has(base === "" ? "untitled" : base)) {
+      return {
+        ok: false,
+        sentence: `a card named "${name}" is already on the map.`,
+      };
+    }
+    const point = sessionPointOf(view);
+    const label = toolRowLabel(tool);
+    const body = {
+      move: { family: "session", verb: "add" },
+      target: { kind: "spot", x: point.x, y: point.y },
+      params: { label: name, tool },
+      rationale: whyOf(payload, `a session card named "${name}" on ${label}`),
+    };
+    return propose(
+      body,
+      (id) =>
+        `proposed a session card "${name}" on ${label}; ghost ${id}`,
+    );
+  }
+
+  /**
+   * ONE CARD'S ROW FIELD, AND ONLY THAT. The card is found among the session
+   * cards; the row is resolved against the shipped rows; the ghost rewrites the
+   * one `sessions.txt` line through `bindSessionTool` — the SAME writer the
+   * card's own rebind verb uses — so the transcript, the task and the result are
+   * untouched by construction. A row the card already runs is refused: a
+   * proposal that changes nothing is not worth a press.
+   */
+  async function proposeBindSession(
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<CommandOutcome> {
+    const view = await loadView();
+    const wanted = String(payload.card);
+    const card = findSessionCard(view, wanted);
+    if (card === null) {
+      return {
+        ok: false,
+        sentence: `"${wanted}" is not a session card on this map.`,
+      };
+    }
+    const wantedTool = String(payload.tool);
+    const tool = shippedToolRowOf(wantedTool);
+    if (tool === null) {
+      return { ok: false, sentence: unknownToolRowSentence(wantedTool) };
+    }
+    if (card.tool === tool) {
+      return {
+        ok: false,
+        sentence: `"${card.name}" already runs on ${toolRowLabel(tool)}.`,
+      };
+    }
+    const label = toolRowLabel(tool);
+    const filed = await propose(
+      {
+        move: { family: "session", verb: "bind" },
+        target: { kind: "session", slug: card.on },
+        params: { tool },
+        rationale: whyOf(
+          payload,
+          `binding the session card "${card.name}" to ${label}`,
+        ),
+      },
+      (id) =>
+        `proposed binding the session card "${card.name}" to ${label}; ghost ${id}`,
+    );
+    if (filed.ok && filed.id !== undefined) {
+      // The row the card ran before, for the inverse act ("undo that" binds it
+      // back) — app-minted view state, never a model's word.
+      audits.set(filed.id, {
+        kind: "bind",
+        slug: card.on,
+        from: card.tool,
+        to: tool,
+      });
+    }
+    return filed;
+  }
+
+  /**
+   * ONE SESSION CARD'S REMOVAL, IN THE APP'S OWN DELETE SHAPE: the record line
+   * first (the record is the truth), then the transcript file that goes with it
+   * — TWO ghosts, because a ghost is one file, one change (ADR-0025 decision 3).
+   * The transcript's bytes are the app's to read before its unlink, and the
+   * app's Restore puts them back verbatim, so this act only proposes the
+   * removals the person could have made by hand.
+   *
+   * A card with no transcript (never run) has no second step, and this act does
+   * not invent an empty file to delete.
+   */
+  async function proposeRemoveSession(
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<CommandOutcome> {
+    const view = await loadView();
+    const wanted = String(payload.card);
+    const card = findSessionCard(view, wanted);
+    if (card === null) {
+      return {
+        ok: false,
+        sentence: `"${wanted}" is not a session card on this map.`,
+      };
+    }
+    const transcript = await io.readTextFile(
+      sessionTranscriptPath(workspacePath, card.on),
+    );
+    const recordLine = await propose(
+      {
+        move: { family: "session", verb: "remove" },
+        target: { kind: "session", slug: card.on },
+        params: {},
+        rationale: whyOf(
+          payload,
+          `removing the session card "${card.name}"`,
+        ),
+      },
+      (id) => `proposed removing the session card "${card.name}"; ghost ${id}`,
+    );
+    if (!recordLine.ok || recordLine.id === undefined) return recordLine;
+    const ids: string[] = [recordLine.id];
+    if (transcript !== null) {
+      const taken = await propose(
+        {
+          move: { family: "session", verb: "remove-transcript" },
+          target: { kind: "session", slug: card.on },
+          params: {},
+          rationale: whyOf(
+            payload,
+            `removing the transcript of the session card "${card.name}"`,
+          ),
+        },
+        (id) => `with its transcript; ghost ${id}`,
+      );
+      if (!taken.ok || taken.id === undefined) return taken;
+      ids.push(taken.id);
+    }
+    return {
+      ok: true,
+      line:
+        `proposed removing the session card "${card.name}"` +
+        (transcript === null ? "" : ", with its transcript"),
+      ids,
+    };
+  }
+
+  /*
    * STORY 21.6 — THE REMOVALS THROUGH THE SAME INTAKE (ADR-0038's 2026-11-20
    * amendment). Each one re-checks the digest's names against the records it
    * just loaded: a card that is not there is refused BY NAME, in one sentence,
@@ -1109,6 +1401,9 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     const audit = audits.get(id);
     if (audit === undefined) return;
     try {
+      // STORY 21.11 — a rebind is not an authored history line (the card's own
+      // rebind verb logs none), so there is nothing for the audit to append.
+      if (audit.kind === "bind") return;
       if (audit.kind === "move") {
         if (audit.fromX === audit.toX && audit.fromY === audit.toY) return;
         await appendEvents(
@@ -1157,6 +1452,13 @@ export function createAttentioneerHost(options: CommandHostOptions) {
         return {
           ...act,
           payload: { ...act.payload, previousName: audit.from },
+        };
+      }
+      if (audit.kind === "bind") {
+        // STORY 21.11 — the row the card ran, for "undo that" after a rebind.
+        return {
+          ...act,
+          payload: { ...act.payload, previousTool: audit.from },
         };
       }
       return {
@@ -1210,6 +1512,10 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     proposeRemoveCard,
     proposeMove,
     proposeRename,
+    // STORY 21.11 — the session card's three acts.
+    proposeSession,
+    proposeBindSession,
+    proposeRemoveSession,
     askDraftsFor,
     enrichedActsOf,
     accept,
