@@ -1,10 +1,11 @@
-import { PICK_UNKNOWN, pickKindFor } from "../map/extract";
+import { pickKindFor } from "../map/extract";
 import {
   BESIDE_OFFSET_X,
   clientToWorld,
   type Point,
 } from "./geometry";
 import type { GestureNarration } from "./gestureWord";
+import { NOT_A_FILE_OR_LINK, webLinkName, webLinkOf } from "./webLink";
 
 /**
  * STORY 16.20 — A FILE DROPPED FROM THE OS LANDS WHERE THE PERSON IS POINTING.
@@ -23,12 +24,20 @@ import type { GestureNarration } from "./gestureWord";
  *   - the SAME intent rules decide what each file is (`extract.ts`'s
  *     `pickKindFor`), the same refusals answer, and the same creation path
  *     writes the card — this module owns no writer and no record shape;
- *   - ONE sentence per drop: a mixed drop creates the files it can and says how
+ *   - ONE sentence per drop: a mixed drop creates the items it can and says how
  *     many were skipped, and a refused drop writes NOTHING.
  *
+ * STORY 16.34 adds the LINK: a dropped web address is not a file, so it is
+ * planned as its own item and routed to the page card's EXISTING creator
+ * (`useGround`'s `createPage` — same fetch, same guards, same local
+ * thumbnail, same refusals). The validator is the map's own `isWebUrl`, read
+ * through `webLink.ts`, so the two doors and the bubble cannot disagree about
+ * what a page is.
+ *
  * The card's name is the file's own stem (the map is the person's; a drop names
- * the reference the way the file names itself). PROVISIONAL: that naming rule,
- * the cascade offset's reuse, and the sentences below.
+ * the reference the way the file names itself), and a link's name is its host
+ * (the name the creator must have). PROVISIONAL: that naming rule, the cascade
+ * offset's reuse, and the sentences below.
  */
 
 /**
@@ -131,25 +140,33 @@ export function dropPoint(origin: Point, index: number): Point {
   return { x: origin.x + BESIDE_OFFSET_X * index, y: origin.y };
 }
 
-/** One file the drop will try to create, at its cascaded point. */
+/** One item the drop will try to create, at its cascaded point. */
 export interface DropItem {
+  /** What the OS handed: a path, or (for a link) the address itself. */
   readonly path: string;
   readonly name: string;
   readonly at: Point;
+  /**
+   * A web address, when this item is a LINK rather than a file. Absent on a
+   * file, which keeps every file item's shape exactly as 16.20 wrote it.
+   */
+  readonly url?: string;
 }
 
-/** What a drop planned: the files whose TYPE is known, and how many were not. */
+/** What a drop planned: the items this app can make, and how many it cannot. */
 export interface DropPlan {
   readonly items: readonly DropItem[];
-  /** Paths whose name names no kind this app reads (refused before any read). */
+  /** Items that are neither a file kind this app reads nor a web address. */
   readonly unknown: number;
 }
 
 /**
- * Read the drop's paths through the SAME intent rules the bubble uses. A path
- * whose name names no kind is never opened: it is counted here and refused with
- * `PICK_UNKNOWN`. Everything else is planned at its cascaded point, in the OS's
- * order. PURE — nothing is read or written.
+ * Read the drop's items through the SAME intent rules the bubble uses. A
+ * dropped web address is a LINK, validated by the map's one `isWebUrl` and
+ * planned for the page card's creator; anything else is a path, and a path
+ * whose name names no file kind is never opened — it is counted here and
+ * refused with the drop's one sentence. Everything else is planned at its
+ * cascaded point, in the OS's order. PURE — nothing is read or written.
  */
 export function planDrop(
   paths: readonly string[],
@@ -159,6 +176,18 @@ export function planDrop(
   let unknown = 0;
   for (const path of paths) {
     if (path === "") continue;
+    // A LINK first: a browser's drop may hand the URI in the same list as
+    // paths, and it is not a file even when it has no extension.
+    const url = webLinkOf(path);
+    if (url !== null) {
+      items.push({
+        path,
+        name: webLinkName(url),
+        at: dropPoint(origin, items.length),
+        url,
+      });
+      continue;
+    }
     if (pickKindFor(path) === null) {
       unknown += 1;
       continue;
@@ -187,17 +216,25 @@ export function dropSentence(
   if (skipped === 0) return null;
   if (added === 0 && skipped === 1 && firstReason !== null) return firstReason;
   if (added === 0) {
-    return `nothing was added: ${skipped} files could not be added.`;
+    return `nothing was added: ${skipped} items could not be added.`;
   }
   const references = added === 1 ? "reference" : "references";
-  const files = skipped === 1 ? "file" : "files";
-  return `added ${added} ${references}; skipped ${skipped} ${files}.`;
+  const items = skipped === 1 ? "item" : "items";
+  return `added ${added} ${references}; skipped ${skipped} ${items}.`;
 }
 
 /** What one creation path answers; the hook's own result satisfies this. */
 export type DropWriteResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly message: string };
+
+/** The page card's creator, in the same shape: name, point, address. */
+export type DropPageWriter = (
+  name: string,
+  x: number,
+  y: number,
+  url: string,
+) => Promise<DropWriteResult>;
 
 /** The same creation path the bubble uses: name, point, file. No new writer. */
 export interface DropWriter {
@@ -209,7 +246,7 @@ export interface DropWriter {
   ): Promise<DropWriteResult>;
 }
 
-/** What a drop did: how many cards were made, how many files were skipped, and
+/** What a drop did: how many cards were made, how many items were skipped, and
  * the ONE sentence (or null). */
 export interface DropOutcome {
   readonly added: number;
@@ -228,13 +265,23 @@ export async function runOsDrop(
   paths: readonly string[],
   origin: Point,
   create: DropWriter,
+  createPage?: DropPageWriter,
 ): Promise<DropOutcome> {
   const plan = planDrop(paths, origin);
   let added = 0;
   let skipped = plan.unknown;
-  let firstReason: string | null = plan.unknown > 0 ? PICK_UNKNOWN : null;
+  let firstReason: string | null =
+    plan.unknown > 0 ? NOT_A_FILE_OR_LINK : null;
   for (const item of plan.items) {
-    const result = await create(item.name, item.at.x, item.at.y, item.path);
+    // A LINK goes to the page card's EXISTING creator — the same call the
+    // bubble makes — and never to the file writer. A window that hands no page
+    // door says so instead of inventing a path.
+    const result =
+      item.url !== undefined
+        ? createPage === undefined
+          ? { ok: false as const, message: NOT_A_FILE_OR_LINK }
+          : await createPage(item.name, item.at.x, item.at.y, item.url)
+        : await create(item.name, item.at.x, item.at.y, item.path);
     if (result.ok) {
       added += 1;
       continue;

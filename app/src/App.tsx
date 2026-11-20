@@ -122,8 +122,17 @@ import {
   dropLandsOnCard,
   dropWorldPoint,
   runOsDrop,
+  type DropClientPoint,
 } from "./canvas/osDrop";
 import { listenOsDrop, type OsDrop } from "./canvas/osDropWindow";
+import { NOT_A_FILE_OR_LINK } from "./canvas/webLink";
+import {
+  pasteBelongsToField,
+  pasteClientPoint,
+  pasteName,
+  pasteUrl,
+  pasteWorldPoint,
+} from "./canvas/linkPaste";
 import { ASK_UNTITLED_NAME } from "./map/asks";
 import { useGround, type GroundAddResult } from "./canvas/useGround";
 import {
@@ -4768,10 +4777,13 @@ function App() {
    *
    * NOTHING HERE WRITES: each file goes through `ground.create`, the same
    * creation path the bubble uses, so a record's shape cannot drift between a
-   * picked file and a dropped one. A drop during a card drag or a wire drag is
-   * IGNORED, and a drop ONTO a card creates nothing (a card is not a place to
-   * put a card); neither says anything, because the gesture was never about a
-   * drop. A transform that cannot say where the pointer is writes nothing.
+   * picked file and a dropped one; a dropped or pasted LINK goes through
+   * `ground.createPage`, the bubble's page card creator, so the fetch, the
+   * guards, the local thumbnail and the refusals are the same one path (story
+   * 16.34). A drop during a card drag or a wire drag is IGNORED, and a drop ONTO
+   * a card creates nothing (a card is not a place to put a card); neither says
+   * anything, because the gesture was never about a drop. A transform that
+   * cannot say where the pointer is writes nothing.
    */
   const handleOsDrop = useCallback(
     async (drop: OsDrop) => {
@@ -4793,11 +4805,29 @@ function App() {
         camera,
       );
       if (origin === null) return;
-      const outcome = await runOsDrop(drop.paths, origin, ground.create);
+      const items = [...drop.paths, ...drop.links];
+      // A native drop that carried nothing usable is still a drop the person
+      // made: one sentence, not silence. A browser link the platform would not
+      // hand over lands here (osDropWindow.ts says why), so the person learns
+      // the link did not arrive instead of watching nothing happen.
+      if (items.length === 0) {
+        setDropNotice({
+          at: origin,
+          text: NOT_A_FILE_OR_LINK,
+          taken: Date.now(),
+        });
+        return;
+      }
+      const outcome = await runOsDrop(
+        items,
+        origin,
+        ground.create,
+        ground.createPage,
+      );
       if (outcome.notice === null) return;
       setDropNotice({ at: origin, text: outcome.notice, taken: Date.now() });
     },
-    [camera, gesture, gestureMode, ground.create, level],
+    [camera, gesture, gestureMode, ground.create, ground.createPage, level],
   );
 
   // The window's drop listener is attached ONCE; the ref lets it always read
@@ -4821,6 +4851,87 @@ function App() {
       gone = true;
       stop?.();
     };
+  }, []);
+
+  // The last place the pointer rested over the plane, in viewport pixels. A
+  // paste has no cursor of its own; this is its stand-in (PROVISIONAL).
+  const lastPlanePointRef = useRef<DropClientPoint | null>(null);
+
+  /**
+   * STORY 16.34 — PASTE A LINK, AND IT LANDS WHERE YOU LAST POINTED.
+   *
+   * A paste has no canvas cursor, so the point is the last place the pointer
+   * rested over the plane (linkPaste.ts's `pasteWorldPoint`), or the visible
+   * centre when it never has. The event is heard here, beside the drop, and it
+   * is NOT a hijack: `pasteBelongsToField` hands a paste inside a text field
+   * back to the field before the clipboard is read. A pasted string that is not
+   * an http(s) address creates NOTHING — plain text has no card family yet, so
+   * the paste is left alone rather than refused loudly. A paste onto a card
+   * creates nothing (16.20's rule, kept), and the card itself is made by
+   * `ground.createPage` — the bubble's page card path, never a second one.
+   */
+  const handleLinkPaste = useCallback(
+    (event: ClipboardEvent) => {
+      if (level !== "ground") return;
+      const target =
+        event.target instanceof Element ? event.target : null;
+      const active =
+        document.activeElement instanceof Element
+          ? document.activeElement
+          : null;
+      // The paste belongs to the field, not to the map.
+      if (pasteBelongsToField(target, active)) return;
+      const url = pasteUrl(event.clipboardData?.getData("text/plain") ?? "");
+      // Plain text is out of scope: there is no text-card family yet, so a
+      // non-address paste is not a refusal — it is simply not this gesture.
+      if (url === null) return;
+      if (dropBlocked(gesture, gestureMode !== "idle")) return;
+      const plane = document.querySelector(".plane");
+      if (!(plane instanceof HTMLElement)) return;
+      const rect = plane.getBoundingClientRect();
+      const last = lastPlanePointRef.current;
+      // A pasted card is not a card-on-card act: the point under it decides.
+      const client = pasteClientPoint(last, rect);
+      if (dropLandsOnCard(document.elementFromPoint(client.x, client.y))) {
+        return;
+      }
+      const origin = pasteWorldPoint(last, rect, camera);
+      if (origin === null) return;
+      void ground
+        .createPage(pasteName(url), origin.x, origin.y, url)
+        .then((result) => {
+          if (result.ok) return;
+          // The creator's own refusal, at the paste's point — one sentence.
+          setDropNotice({ at: origin, text: result.message, taken: Date.now() });
+        });
+    },
+    [camera, gesture, gestureMode, ground.createPage, level],
+  );
+
+  useEffect(() => {
+    const note = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".plane") !== null) {
+        lastPlanePointRef.current = { x: event.clientX, y: event.clientY };
+      }
+    };
+    document.addEventListener("pointermove", note, true);
+    document.addEventListener("pointerdown", note, true);
+    return () => {
+      document.removeEventListener("pointermove", note, true);
+      document.removeEventListener("pointerdown", note, true);
+    };
+  }, []);
+
+  // ONE paste listener, attached once, reading this render's handler by ref.
+  const linkPasteHandlerRef = useRef<(event: ClipboardEvent) => void>(() => {});
+  linkPasteHandlerRef.current = handleLinkPaste;
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      linkPasteHandlerRef.current(event);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
   }, []);
 
   /** The menu's word choice: close it and open the in-place coin field. */

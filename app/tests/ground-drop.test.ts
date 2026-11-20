@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PICK_UNKNOWN } from "../src/map/extract";
+import { NOT_A_FILE_OR_LINK } from "../src/canvas/webLink";
 import {
   BESIDE_OFFSET_X,
   clientToWorld,
@@ -106,7 +106,11 @@ describe("the pointer is the plane's own conversion", () => {
     const app = source("App.tsx");
     expect(app).toContain('from "./canvas/osDropWindow"');
     expect(app).toContain("listenOsDrop(");
-    expect(app).toContain("runOsDrop(drop.paths, origin, ground.create)");
+    expect(app).toContain("runOsDrop(");
+    expect(app).toContain("[...drop.paths, ...drop.links]");
+    // 16.34: a LINK goes to the page card's EXISTING creator.
+    expect(app).toContain("ground.createPage,");
+    expect(app).toMatch(/\[.+\.drop\.paths, \.\.\.drop\.links\][\s\S]{0,800}ground\.createPage,/);
     // No new writer: the drop names the SAME creation path the bubble uses.
     expect(app).not.toContain("addGroundReference(");
   });
@@ -189,7 +193,11 @@ describe("a drop creates through the existing path, or says one sentence", () =>
     const { create, calls } = logger();
     const outcome = await runOsDrop(["/tmp/archive.zip"], { x: 0, y: 0 }, create);
     expect(calls).toEqual([]);
-    expect(outcome).toEqual({ added: 0, skipped: 1, notice: PICK_UNKNOWN });
+    expect(outcome).toEqual({
+      added: 0,
+      skipped: 1,
+      notice: NOT_A_FILE_OR_LINK,
+    });
   });
 
   test("a folder's failed read makes nothing and keeps its own sentence", async () => {
@@ -224,12 +232,12 @@ describe("a drop creates through the existing path, or says one sentence", () =>
     expect(calls).toEqual(["/tmp/good.md", "/tmp/scan.pdf"]);
     expect(outcome.added).toBe(1);
     expect(outcome.skipped).toBe(2);
-    expect(outcome.notice).toBe("added 1 reference; skipped 2 files.");
+    expect(outcome.notice).toBe("added 1 reference; skipped 2 items.");
   });
 
   test("several refusals with nothing added collapse into one count", () => {
     expect(dropSentence(0, 2, null)).toBe(
-      "nothing was added: 2 files could not be added.",
+      "nothing was added: 2 items could not be added.",
     );
     expect(dropSentence(0, 1, "that PDF has no text to read.")).toBe(
       "that PDF has no text to read.",
