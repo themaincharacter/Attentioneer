@@ -61,6 +61,7 @@ import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import { besidePlacement, type Point } from "./geometry";
 import { AskCard } from "./AskCard";
 import { CardNamePill } from "./CardNamePill";
+import type { FindMark } from "./FindPill";
 import { SelectionAsk, clearTextSelection } from "./SelectionAsk";
 import {
   paintedHighlightRects,
@@ -310,6 +311,15 @@ const EXPLORER_IO: ExplorerIo = { listDirEntries };
  * predicate in `groundDrag.ts` (`pressingThisStartsADrag`), and the shared
  * wiring bails before it takes the pointer, so a press it does not own never
  * touches selection or scrolling. Nothing about 16.31's capture changed.
+ *
+ * STORY 16.33 GIVES THE MAP A FINDER, AND THIS LAYER ONLY THE MARK. The pill
+ * itself (FindPill) is screen space and lives in App, because a search field
+ * that panned with the map would be a second thing to chase; matching and
+ * stepping happen there, over records this layer already draws. What arrives
+ * here is one VIEW value — the card the pill landed on — and the layer draws a
+ * quiet ring at its resting place for as long as App keeps it. Nothing is
+ * searched here, nothing is written, and the marker's lifetime is App's: a
+ * close, a real map move or the stated timer clears it.
  *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
@@ -876,6 +886,14 @@ interface GroundLayerProps {
    * then moves its own element and no wire follows.
    */
   drag?: GroundDragChannel;
+  /**
+   * STORY 16.33 — THE CARD THE FIND PILL LANDED ON, marked briefly. VIEW STATE
+   * only: App sets it when the pill lands and clears it on close, on a real
+   * map move and on its own timer, so the layer never owns the highlight's
+   * lifetime and nothing here is written. Optional so a render test needs no
+   * finder.
+   */
+  found?: FindMark | null;
 }
 
 export function GroundLayer({
@@ -948,6 +966,7 @@ export function GroundLayer({
   noteLines = NOTE_PREVIEW_LINES,
   zoom = 1,
   drag,
+  found = null,
 }: GroundLayerProps) {
   const readingsBySlug = new Map(readings.map((reading) => [reading.on, reading]));
   const mediaBySlug = new Map(media.map((entry) => [entry.on, entry]));
@@ -1780,6 +1799,20 @@ export function GroundLayer({
         >
           {refusal.message}
         </div>
+      )}
+      {/* STORY 16.33 — THE LANDED CARD'S MARKER. A quiet ring at the card's
+          resting place, drawn in the plane's world space so it sits ON the
+          card the eye was taken to (the pill itself is screen space and never
+          moves). It is view state: App clears it on close, on a real map move,
+          and on FIND_MARK_MS's timer, so it always clears itself. A press goes
+          through it (pointer-events: none) — the card underneath keeps every
+          gesture it had. */}
+      {found !== null && (
+        <div
+          className="ground-found-mark"
+          style={{ left: found.x, top: found.y }}
+          aria-hidden="true"
+        />
       )}
     </div>
   );

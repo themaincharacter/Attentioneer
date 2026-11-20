@@ -61,6 +61,13 @@ import { LevelControl } from "./canvas/LevelControl";
 import { SketchLayer } from "./canvas/SketchLayer";
 import { GroundEmpty, GroundLayer } from "./canvas/GroundLayer";
 import {
+  FIND_MARK_MS,
+  FindPill,
+  findLandingPoint,
+  type FindMark,
+  type FindableCard,
+} from "./canvas/FindPill";
+import {
   ASK_RESTORE_SENTENCE,
   SESSION_RESTORE_SENTENCE,
   GroundToast,
@@ -825,10 +832,124 @@ function App() {
   // in screen space. `idle` is not a gesture: nothing is drawn for it, and the
   // state is forgotten on release and on window blur — it is never a record.
   const [gesture, setGesture] = useState<GestureNarration>(GESTURE_IDLE);
-  const narrate = useCallback(
-    (next: GestureNarration) => setGesture(next),
-    [],
+  // STORY 16.33 — FIND ON THE MAP. The pill is a screen-space surface with
+  // three pieces of VIEW state: whether its field is open, and the card it
+  // last landed on (the map's brief marker). Neither is ever a record; the
+  // search reads names and notes the load already carries.
+  const [findOpen, setFindOpen] = useState(false);
+  const [findMark, setFindMark] = useState<FindMark | null>(null);
+  const narrate = useCallback((next: GestureNarration) => {
+    setGesture(next);
+    // A REAL map move clears the landing's marker: the ring is tied to where
+    // the eye was taken, and once the hand moves the map it is no longer
+    // where anything is. A programmatic landing never narrates, so the mark
+    // it just set is not cleared by its own pan.
+    if (next.kind === "panning" || next.kind === "zooming") setFindMark(null);
+  }, []);
+
+  /**
+   * STORY 16.33 — WHAT THE FINDER SEES: every card on the ground map, in the
+   * map's OWN order (references, then ask cards, then session cards — the
+   * order GroundLayer draws them in), carrying only what is searched (the
+   * name, the note) and the point a landing centres. Ask and session cards
+   * have no note file, so their second searched text is simply absent.
+   */
+  const findableCards = useMemo<FindableCard[]>(
+    () => [
+      ...ground.references.map((reference) => ({
+        on: reference.on,
+        name: reference.name,
+        note: ground.notes[reference.on],
+        x: reference.x,
+        y: reference.y,
+      })),
+      ...ground.asks.map((ask) => ({
+        on: ask.on,
+        name: ask.name,
+        x: ask.x,
+        y: ask.y,
+      })),
+      ...ground.sessions.map((session) => ({
+        on: session.on,
+        name: session.name,
+        x: session.x,
+        y: session.y,
+      })),
+    ],
+    [ground.references, ground.asks, ground.sessions, ground.notes],
   );
+
+  /**
+   * STORY 16.33 — LANDING IS A PAN, NOT A FIT. The pure helper finds the
+   * centre of the card's resting box; the camera's existing centerOn intent
+   * then puts that point at the middle of the viewport at the zoom the map is
+   * ALREADY at (App's list-pick idiom, one seam over). Nothing here re-derives
+   * a camera transform, nothing changes the scale, and the card is marked for
+   * a brief moment so the eye can find it once the map has moved.
+   */
+  const landOnFoundCard = useCallback(
+    (card: FindableCard) => {
+      const target = findLandingPoint(card);
+      const el = document.querySelector<HTMLDivElement>(".plane");
+      if (!el) return;
+      intents.centerOn(
+        target.x,
+        target.y,
+        el.clientWidth / 2,
+        el.clientHeight / 2,
+        // A PAN: the camera's current zoom, never a landing zoom.
+        camera.zoom,
+      );
+      setFindMark({ on: card.on, x: card.x, y: card.y });
+    },
+    [intents, camera.zoom],
+  );
+
+  /** Closing the pill closes the search AND its brief marker — nothing else. */
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindMark(null);
+  }, []);
+
+  // The marker is BRIEF: it clears itself after its stated moment unless a
+  // newer landing replaced it. Closing and a real map move clear it sooner.
+  useEffect(() => {
+    if (findMark === null) return;
+    const mark = findMark;
+    const timer = setTimeout(() => {
+      setFindMark((current) => (current === mark ? null : current));
+    }, FIND_MARK_MS);
+    return () => clearTimeout(timer);
+  }, [findMark]);
+
+  // THE SHORTCUT (Ctrl/Cmd+F) — the field's other door beside its own verb.
+  // It declines while a text field holds focus, so it can NEVER steal a card's
+  // typing (the card's rename field or note editor keeps the keystroke), and
+  // it exists only on the ground map, where the finder's cards are.
+  useEffect(() => {
+    if (level !== "ground") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (e.key.toLowerCase() !== "f") return;
+      const active = document.activeElement;
+      const focused = focusStateOf(active instanceof HTMLElement ? active : null);
+      // A field that is NOT the pill's own keeps the keystroke.
+      if (focused === "text" && !findOpen) return;
+      e.preventDefault();
+      setFindOpen(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [level, findOpen]);
+
+  // Leaving the ground map leaves the search: the pill is that map's surface,
+  // and the marker belongs to a card that is no longer drawn.
+  useEffect(() => {
+    if (level === "ground") return;
+    setFindOpen(false);
+    setFindMark(null);
+  }, [level]);
+
   // THE SELECTION TOOL (PROVISIONAL, added 2026-11-16 per the lead's brief): a
   // concept-map arm that draws a shape and makes a LANGUAGE GAME of the words
   // inside it. Its own gate mode (`select`), its own shape mode (freeform is
@@ -5373,6 +5494,9 @@ function App() {
             previewLines={readingPreference.previewLines}
             noteLines={readingPreference.noteLines}
             zoom={camera.zoom}
+            /* STORY 16.33 — the card the find pill landed on, marked briefly.
+               View state only; App owns the marker's short life. */
+            found={findMark}
           />
         )}
 
@@ -5895,6 +6019,22 @@ function App() {
           <GhostDiamond at={ghostPoint} />
         )}
       </CanvasPlane>
+
+      {/* STORY 16.33 — FIND ON THE MAP. The pill is mounted OUTSIDE .plane,
+          with the app's other quiet surfaces, so no camera value can move it:
+          it is SCREEN space and stays put while the map pans. Its cards are
+          the ground map's own, in its own order; landing asks the camera's
+          existing centerOn intent for a PAN at the current zoom, and the map
+          marks the card briefly. Nothing here writes, counts or ranks. */}
+      {level === "ground" && (
+        <FindPill
+          cards={findableCards}
+          open={findOpen}
+          onOpen={() => setFindOpen(true)}
+          onClose={closeFind}
+          onLand={landOnFoundCard}
+        />
+      )}
 
       {/* STORY 16.16 (shortlist item 4): the CURSOR CHIP. One translucent pill
           near the pointer while a gesture is in flight, saying what the hand is

@@ -575,6 +575,19 @@ export const CONTENT_CLASSES = [
   "command-card-exchange-instruction",
   "command-card-exchange-question",
   "command-card-outcome",
+  // STORY 16.33 — THE FIND PILL. It is mounted with the app's other quiet
+  // surfaces (OUTSIDE .plane, so no camera value can move it), and it is listed
+  // here for the same belt-and-braces reason: a press on the field, its verb,
+  // its position line or its close must never fall through to a plane gesture.
+  // The landed card's marker is content inside the layer that never takes a
+  // press (pointer-events: none), named anyway so the list stays every element
+  // the map can draw over itself.
+  "find-pill",
+  "find-verb",
+  "find-field",
+  "find-position",
+  "find-close",
+  "ground-found-mark",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */
