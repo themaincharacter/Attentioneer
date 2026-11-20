@@ -4,7 +4,13 @@ import {
   type GhostSession,
 } from "../ghost/session";
 import type { GhostFs } from "../ghost/port";
-import { loadAsks, sharedSlugs, type AskCard } from "../map/asks";
+import {
+  addAsk,
+  askTurnPath,
+  loadAsks,
+  sharedSlugs,
+  type AskCard,
+} from "../map/asks";
 import { loadGround, type GroundReference } from "../map/ground";
 import { loadGroundLinks, type GroundLink } from "../map/groundLinks";
 import { loadNotes, noteByteLength, NOTE_MAX_BYTES } from "../map/notes";
@@ -38,8 +44,17 @@ import {
  * only through the session that filed it (the inbox's in-session ids): the app
  * discards the inbox at open, so a script's ghosts never become the window's.
  *
+ * STORY 21.7 — THE ASK'S QUESTION CROSSES THIS SEAM AS A DRAFT (ADR-0038's
+ * 2026-11-20 amendment: "ask rain gauge what it says about the plastic" is the
+ * most natural sentence this app should understand). The question rides the
+ * PROPOSAL (the ghost's `draft` param, which the deriver ignores) and comes
+ * back out of the accept as a VIEW HINT — {@link AskDraftHint} — for the card's
+ * composer. Nothing below ever writes it: the record writer is the person's
+ * send, and an unsent question is a draft. NO ACT SENDS A TURN.
+ *
  * PROVISIONAL (ADR-0038's consequences): the act payload keys, the sentences
- * this file speaks, and the note that an unsent question is not a record.
+ * this file speaks, the draft hint's shape, and the note that an unsent
+ * question is not a record.
  */
 
 /** The bridges the host needs: the map's loaders' reads and the ghost port. */
@@ -74,6 +89,19 @@ export interface CommandHostOptions {
   workspacePath: string;
   /** The fs bridge; the driver passes node's fs, the app would pass Tauri's. */
   io: CommandIo;
+}
+
+/**
+ * STORY 21.7 — WHAT ONE ACCEPTED ASK HANDS THE WINDOW: the card its line
+ * created and the question waiting in its composer. VIEW STATE, not a record:
+ * the conversation file never holds a question the person did not send, so the
+ * only place a draft lives after the accept is the card's own field.
+ */
+export interface AskDraftHint {
+  /** The ask card the accept created — the slug its own canonical line carries. */
+  slug: string;
+  /** The person's question, waiting unsent. */
+  question: string;
 }
 
 /** What the loaded view carries, read fresh for each act. */
@@ -147,6 +175,13 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     flow: "paste",
   });
   let opened = false;
+  /**
+   * STORY 21.7 — THE DRAFTS THIS SESSION FILED, by ghost id. A question the
+   * person has not sent is not a record, so it lives HERE (in memory, beside a
+   * proposal that was never a write) until the accept hands it to the card's
+   * composer. Nothing reads this map but {@link askDraftsFor}.
+   */
+  const askDrafts = new Map<string, AskDraftHint>();
 
   /** The app's open moment, once: the inbox is discarded before any proposal. */
   async function ensureOpen(): Promise<void> {
@@ -296,6 +331,22 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     return propose(body, (id) => `proposed a note on "${card.name}"; ghost ${id}`);
   }
 
+  /**
+   * STORY 21.7 — AN ASK CARD, ITS WIRES, AND ITS QUESTION AS A DRAFT.
+   *
+   * ONE ACT, THE DOCUMENTED SET OF GHOSTS: the ask card's own line, plus ONE
+   * wire ghost per context card — the SAME link ghost `propose_wire` files (one
+   * link shape, not two). Every context card is re-checked against the records
+   * BEFORE any ghost is filed, so a name the map does not carry refuses by name
+   * and files nothing.
+   *
+   * THE QUESTION IS A DRAFT, NEVER A RECORD: it rides the proposal as the ask
+   * move's `draft` param (the deriver ignores it, so the accepted line carries
+   * no question) and is remembered here against the ghost's id. After the
+   * accept, {@link askDraftsFor} hands it back as a view hint for the card's
+   * composer. Nothing in this module writes a conversation line, and NO ACT
+   * SENDS A TURN — sending is the person's press.
+   */
   async function proposeAsk(
     payload: Readonly<Record<string, unknown>>,
   ): Promise<CommandOutcome> {
@@ -317,13 +368,86 @@ export function createAttentioneerHost(options: CommandHostOptions) {
         sentence: `a card named "${name}" is already on the map.`,
       };
     }
+    // The slug the accepted line will carry, minted by the map's OWN function —
+    // the wire below has to name the card before it exists, and the ghost's pin
+    // makes the base it was minted against the base the accept sees.
+    const askSlug = addAsk(view.asks, taken, name, x, y).ask.on;
+    // THE QUESTION, as the field will hold it: edges trimmed (the ghost's own
+    // params rule), newlines kept because a question may be more than one line.
+    const question =
+      typeof payload.question === "string" ? payload.question.trim() : "";
+    // THE CARDS TO WIRE IN, all resolved first: nothing partial, nothing named
+    // that the map does not carry.
+    const wanted = Array.isArray(payload.context) ? payload.context : [];
+    const context: FoundCard[] = [];
+    for (const entry of wanted) {
+      const wantedName = String(entry);
+      const found = findCard(view, wantedName);
+      if (found === null) {
+        return {
+          ok: false,
+          sentence: `"${wantedName}" is not a card on this map.`,
+        };
+      }
+      if (found.slug === askSlug) {
+        return { ok: false, sentence: "a card cannot wire to itself." };
+      }
+      if (!context.some((card) => card.slug === found.slug)) context.push(found);
+    }
     const body = {
       move: { family: "ask", verb: "add" },
       target: { kind: "spot", x, y },
-      params: { label: name },
-      rationale: whyOf(payload, `an ask card named "${name}" at ${x}, ${y}`),
+      params: {
+        label: name,
+        ...(question === "" ? {} : { draft: question }),
+      },
+      rationale: whyOf(
+        payload,
+        question === ""
+          ? `an ask card named "${name}" at ${x}, ${y}`
+          : `an ask card named "${name}" at ${x}, ${y}, with the question waiting unsent`,
+      ),
     };
-    return propose(body, (id) => `proposed an ask card "${name}" at (${x}, ${y}); ghost ${id}`);
+    const filed = await propose(
+      body,
+      (id) =>
+        `proposed an ask card "${name}" at (${x}, ${y})${
+          question === "" ? "" : ", with the question waiting unsent"
+        }; ghost ${id}`,
+    );
+    if (!filed.ok || filed.id === undefined) return filed;
+    if (question !== "") {
+      askDrafts.set(filed.id, { slug: askSlug, question });
+    }
+    const waiting =
+      question === ""
+        ? ""
+        : "; the question waits unsent in its composer";
+    const wiredIn =
+      context.length === 0
+        ? ""
+        : `; wired in: ${context.map((card) => `"${card.name}"`).join(", ")}`;
+    const ids: string[] = [filed.id];
+    for (const card of context) {
+      const wired = await propose(
+        {
+          move: { family: "wire", verb: "add" },
+          target: { kind: "link", from: card.slug, to: askSlug },
+          params: {},
+          rationale: `wiring "${card.name}" into the ask card "${name}"`,
+        },
+        (id) => `wired "${card.name}" into "${name}"; ghost ${id}`,
+      );
+      // A wire that cannot be filed leaves the ask's ghost filed (a proposal is
+      // not a write); the executor still stops at this act and applies nothing.
+      if (!wired.ok || wired.id === undefined) return wired;
+      ids.push(wired.id);
+    }
+    return {
+      ok: true,
+      line: `${filed.line}${waiting}${wiredIn}`,
+      ids,
+    };
   }
 
   /*
@@ -431,13 +555,49 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     if (card === null) {
       return { ok: false, sentence: `"${wanted}" is not a card on this map.` };
     }
-    if (card.kind !== "reference") {
-      // PROVISIONAL: an ask card's own record, conversation and media make its
-      // removal a different shape (the app's delete path knows it); this act
-      // removes reference cards for now and says so by name.
+    if (card.kind === "ask") {
+      // STORY 21.7 — AN ASK CARD GOES THE APP'S OWN WAY: the record line first
+      // (the record is the truth), then the conversation file that goes with
+      // it — the same two steps the card's own x takes, each a ghost of its own
+      // because a ghost is one file, one change. The transcript's bytes are the
+      // app's to read before its unlink; this act only proposes the removals the
+      // app's Restore can put back, and never touches a conversation itself.
+      const conversation = await io.readTextFile(
+        askTurnPath(workspacePath, card.slug),
+      );
+      const recordLine = await propose(
+        {
+          move: { family: "ask", verb: "remove" },
+          target: { kind: "ask", slug: card.slug },
+          params: {},
+          rationale: whyOf(payload, `removing the ask card "${card.name}"`),
+        },
+        (id) => `proposed removing the ask card "${card.name}"; ghost ${id}`,
+      );
+      if (!recordLine.ok || recordLine.id === undefined) return recordLine;
+      const ids: string[] = [recordLine.id];
+      if (conversation !== null) {
+        const turns = await propose(
+          {
+            move: { family: "ask", verb: "remove-turns" },
+            target: { kind: "ask", slug: card.slug },
+            params: {},
+            rationale: whyOf(
+              payload,
+              `removing the conversation of the ask card "${card.name}"`,
+            ),
+          },
+          (id) => `with its conversation; ghost ${id}`,
+        );
+        if (!turns.ok || turns.id === undefined) return turns;
+        ids.push(turns.id);
+      }
       return {
-        ok: false,
-        sentence: `"${card.name}" is an ask card; this act removes reference cards.`,
+        ok: true,
+        line:
+          `proposed removing the ask card "${card.name}"` +
+          (conversation === null ? "" : ", with its conversation"),
+        ids,
       };
     }
     const body = {
@@ -528,6 +688,20 @@ export function createAttentioneerHost(options: CommandHostOptions) {
   }
 
   /**
+   * STORY 21.7 — WHAT THE ACCEPTED ASK GHOSTS LEFT WAITING, in accept order: a
+   * card's slug and the question its composer should hold. Pure read of this
+   * session's own notes; an id that carried no draft answers nothing.
+   */
+  function askDraftsFor(ids: readonly string[]): readonly AskDraftHint[] {
+    const hints: AskDraftHint[] = [];
+    for (const id of ids) {
+      const hint = askDrafts.get(id);
+      if (hint !== undefined) hints.push(hint);
+    }
+    return hints;
+  }
+
+  /**
    * Accept the ghosts this host filed, through the app's OWN accept (marker,
    * pin, apply, delete). Used by the driver's `--accept` to exercise the
    * normal path; the app's window uses the same session method.
@@ -543,6 +717,7 @@ export function createAttentioneerHost(options: CommandHostOptions) {
   }
 
   const host: CommandHost & {
+    askDraftsFor: typeof askDraftsFor;
     accept: typeof accept;
     session: GhostSession;
   } = {
@@ -556,6 +731,7 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     proposeUnwire,
     proposeRemoveNote,
     proposeRemoveCard,
+    askDraftsFor,
     accept,
     session,
   };
@@ -576,7 +752,16 @@ export function createAttentioneerHost(options: CommandHostOptions) {
  * and what did not apply are both said.
  */
 export type CommandApply =
-  | { ok: true; run: CommandRun }
+  | {
+      ok: true;
+      run: CommandRun;
+      /**
+       * STORY 21.7 — THE QUESTIONS WAITING IN THE COMPOSERS OF THE ASKS THIS
+       * PRESS CREATED. A draft, never a record: the window is handed it here so
+       * an unsent question lands in the card's field and nowhere else.
+       */
+      drafts: readonly AskDraftHint[];
+    }
   | {
       ok: false;
       phase: "execution" | "accept" | "none";
@@ -612,7 +797,7 @@ export async function applyCommandScript(
       sentence: acceptLine(refused.id, refused.outcome),
     };
   }
-  return { ok: true, run };
+  return { ok: true, run, drafts: host.askDraftsFor(run.ids) };
 }
 
 /** The one sentence an accepted ghost reports (the driver prints it). */

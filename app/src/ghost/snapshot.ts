@@ -1,3 +1,4 @@
+import { askTurnsDir, asksPath, parseAsks } from "../map/asks";
 import { groundPath, parseGround } from "../map/ground";
 import { loopSlug, loopsPath, parseLoops } from "../map/loops";
 import { modelPath, parseModel } from "../map/model";
@@ -48,6 +49,17 @@ export interface GhostSnapshot {
    * concept or dynamics games; a card target then refuses rather than guess.
    */
   cards?: ReadonlySet<string>;
+  /**
+   * STORY 21.7 — every ASK CARD's slug: its `asks.txt` line, and the slug of
+   * any conversation under `map/asks/` whose line is gone. The second half is
+   * not a guess: the app's own delete shape takes the record line first and the
+   * conversation after it, so the shape's second step must still resolve the
+   * card it is about. An orphan conversation is that card's remains — the app
+   * already reports it as an orphan and never repairs it. Absent on a snapshot
+   * built for the concept or dynamics games; an ask target then refuses rather
+   * than guess.
+   */
+  asks?: ReadonlySet<string>;
   /** Workspace-relative path → the file's bytes (null = absent). */
   files: Readonly<Record<string, string | null>>;
 }
@@ -80,6 +92,12 @@ export async function readGhostSnapshot(
   // else — a proposal about an existing card is checked against the file the
   // accept will read, never against a remembered list.
   const groundText = await fs.readText(groundPath(workspacePath));
+  // STORY 21.7: the ask cards, read through the same port — a proposal about an
+  // ask card is checked against the record the accept will read. The folder
+  // listing adds the conversations whose line is already gone (the app's own
+  // delete shape's two steps, in its own order).
+  const asksText = await fs.readText(asksPath(workspacePath));
+  const askConversations = await fs.list(askTurnsDir(workspacePath));
   // The accepted playing set is the records folder's own `model.json` (ADR-0013):
   // read through the same port as the rest, so the accept sees the set on disk
   // at the write moment, not a memory that may have moved.
@@ -103,6 +121,14 @@ export async function readGhostSnapshot(
   request.files.forEach((file, index) => {
     files[file] = fileTexts[index] ?? null;
   });
+  const asks = new Set<string>(
+    parseAsks(asksText ?? "").asks.map((entry) => entry.on),
+  );
+  for (const name of askConversations) {
+    if (name.endsWith(".jsonl") && name.length > ".jsonl".length) {
+      asks.add(name.slice(0, -".jsonl".length));
+    }
+  }
   return {
     level: request.level,
     scenario: request.scenario,
@@ -111,6 +137,7 @@ export async function readGhostSnapshot(
     words,
     loops,
     cards: new Set(parseGround(groundText ?? "").references.map((entry) => entry.on)),
+    asks,
     files,
   };
 }

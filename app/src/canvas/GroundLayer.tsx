@@ -606,6 +606,15 @@ interface GroundLayerProps {
    */
   revealAsk?: { slug: string } | null;
   /**
+   * STORY 21.7 — THE QUESTIONS A COMMAND LEFT WAITING IN ASK COMPOSERS. When
+   * the command card's accept creates an ask card with a question, the app hands
+   * the layer one entry per card: the slug its line carries, the words, and a
+   * token. The layer passes it to that card's composer; NOTHING is opened by
+   * it beyond the reveal above, nothing is written, and no turn is sent. An
+   * unsent question is a draft — this prop is how a draft crosses the seam.
+   */
+  askDrafts?: readonly { slug: string; question: string; token: number }[];
+  /**
    * STORY 17.8 — remove one ask card: the immediate delete (16.13's rule) with
    * the toast's Restore as its guard. The layer holds the bytes; this prop only
    * forwards the person's press.
@@ -892,6 +901,7 @@ export function GroundLayer({
   onForkAsk,
   onRenameAsk,
   revealAsk,
+  askDrafts = [],
   onRemoveAsk,
   onAskTurn,
   onStopAskTurn,
@@ -1466,6 +1476,9 @@ export function GroundLayer({
                 : undefined
             }
             onAutoAsked={() => setAskSeed(null)}
+            /* STORY 21.7 — a question the command card's act left waiting. It
+               reaches the composer as a DRAFT: no record, no turn, no send. */
+            draft={askDrafts.find((entry) => entry.slug === ask.on)}
             onForkTurn={
               onForkAsk === undefined
                 ? undefined

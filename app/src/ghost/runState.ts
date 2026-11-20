@@ -175,6 +175,10 @@ function targetKeyOf(target: GhostTarget): string {
     // STORY 21.1: a card target's identity is its slug, exactly as a word's.
     case "card":
       return part("card") + part(target.slug);
+    // STORY 21.7: an ask card's identity is the same kind of fact, one family
+    // over — the run's key must not merge two cards' refusals into one.
+    case "ask":
+      return part("ask") + part(target.slug);
   }
 }
 
@@ -224,16 +228,18 @@ function moveOf(value: unknown): GhostMove | null {
 function targetOf(value: unknown): GhostTarget | null {
   const record = objectOf(value);
   if (record === null) return null;
-  if (record.kind === "word" || record.kind === "loop" || record.kind === "card") {
+  if (
+    record.kind === "word" ||
+    record.kind === "loop" ||
+    record.kind === "card" ||
+    record.kind === "ask"
+  ) {
     const slug = textOf(record.slug);
     if (slug === null) return null;
     // STORY 21.1: a card target counts in the run state like the others, so a
     // repeated refusal about one card is one key (the counter is unchanged).
-    return record.kind === "word"
-      ? { kind: "word", slug }
-      : record.kind === "loop"
-        ? { kind: "loop", slug }
-        : { kind: "card", slug };
+    // STORY 21.7: an ask card is the same kind of key, one family over.
+    return { kind: record.kind, slug };
   }
   if (record.kind === "spot") {
     const x = record.x;

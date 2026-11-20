@@ -224,10 +224,16 @@ const ANSWER_HEADING = "## the answer";
 /** The conversation's heading (the section is omitted while it is empty). */
 const HISTORY_HEADING = "## the conversation so far";
 
-/** One declared payload field as the catalogue shows it. */
+/**
+ * One declared payload field as the catalogue shows it. STORY 21.7's `texts`
+ * kind is spelled out for the model: "texts" alone would not say that the ask's
+ * context wants the NAMES of cards on the map, and a catalogue the model has to
+ * guess at is not the vocabulary the executor enforces.
+ */
 function fieldText(field: ActField): string {
+  const type = field.type === "texts" ? "a list of names" : field.type;
   const multiline = field.multiline === true ? ", may carry line breaks" : "";
-  return field.key + " (" + field.type + multiline + ")";
+  return field.key + " (" + type + multiline + ")";
 }
 
 /**

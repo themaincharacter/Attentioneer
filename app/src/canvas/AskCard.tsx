@@ -517,6 +517,7 @@ export function AskCard({
   zoom = 1,
   autoAsk,
   onAutoAsked,
+  draft,
   interactionMode = "idle",
   onNarrate,
   drag,
@@ -684,6 +685,14 @@ export function AskCard({
   autoAsk?: { question: string; token: number };
   /** The token was taken: the layer forgets it, so nothing can replay it. */
   onAutoAsked?: () => void;
+  /**
+   * STORY 21.7 — THE QUESTION THE COMMAND CARD LEFT WAITING, for this card's
+   * composer. The act created the card and its wires and made this question a
+   * DRAFT: it is never a record and never a turn — the conversation file holds
+   * nothing, because only the person's press to send writes a line. The token
+   * makes it ONCE, so a re-render cannot refill a field the person edited.
+   */
+  draft?: { question: string; token: number };
   /** The gesture gate, so a wiring drag never starts under an armed tool. */
   interactionMode?: GestureMode;
   /** The one sentence a wiring drag speaks; absent in a render test. */
@@ -809,6 +818,25 @@ export function AskCard({
     void send(autoAsk.question);
     // Mount/open only: the send is the card's own ordinary path from here.
   }, [autoAsk, open, hasProvider, onAskTurn]);
+  /**
+   * STORY 21.7 — THE DRAFT LANDS IN THE FIELD, AND NOTHING ELSE HAPPENS.
+   *
+   * This is the story's crux: a question the person has not sent is a DRAFT, so
+   * it arrives as the composer's text and nowhere else. There is no write, no
+   * pending line, no conversation append and no send — the field simply holds
+   * the person's words until they press send themselves. The token makes the
+   * hand-over ONCE; without it a re-render would overwrite what they typed.
+   */
+  const draftSeenRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (draft === undefined) return;
+    if (draftSeenRef.current === draft.token) return;
+    draftSeenRef.current = draft.token;
+    setQuestion(draft.question);
+    setProblem(null);
+    // The readback described the previous question, not this one.
+    setSent(null);
+  }, [draft]);
   // STORY 17.9 — the SAME assembler the hook sends: the wired cards, the
   // thread, the question. The context bound is the assembler's; the card only
   // supplies what is wired.

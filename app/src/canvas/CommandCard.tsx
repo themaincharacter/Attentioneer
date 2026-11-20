@@ -574,8 +574,23 @@ export function actLine(act: CommandAct): string {
       return "wire " + text("from") + " → " + text("to");
     case "propose_note":
       return "add a note to " + text("card");
-    case "propose_ask":
-      return "add an ask card " + JSON.stringify(text("name"));
+    case "propose_ask": {
+      // STORY 21.7 — the plain line says the whole of what the act will do: the
+      // card, the question waiting unsent in its composer, and the cards wired
+      // into it. An unsent question is a DRAFT, so no line here promises a turn.
+      const question = payload.question;
+      const context = Array.isArray(payload.context)
+        ? payload.context.map((entry) => String(entry))
+        : [];
+      const parts = ["add an ask card " + JSON.stringify(text("name"))];
+      if (typeof question === "string" && question.trim() !== "") {
+        parts.push("put the question in it, unsent");
+      }
+      if (context.length > 0) {
+        parts.push("wire " + context.join(", ") + " into it");
+      }
+      return parts.join("; ");
+    }
     case "propose_unwire":
       return "unwire " + text("from") + " → " + text("to");
     case "propose_remove_note":

@@ -769,6 +769,17 @@ function App() {
    * the person closed.
    */
   const [revealAsk, setRevealAsk] = useState<{ slug: string } | null>(null);
+  /**
+   * STORY 21.7 — THE QUESTIONS A COMMAND LEFT WAITING, one per ask card its
+   * accept created. This is the draft mechanism's LAST leg: the accepted
+   * proposal's question (view state, never a record) is handed to the layer,
+   * which hands it to that card's composer. The token makes each hand-over
+   * ONCE, so a re-render never refills a field the person is editing.
+   */
+  const [askDrafts, setAskDrafts] = useState<
+    readonly { slug: string; question: string; token: number }[]
+  >([]);
+  const askDraftToken = useRef(0);
   // Another workspace starts with no ground draft (its map folder is another
   // map's truth; the bubbles must never write into a map not opened on).
   useEffect(() => {
@@ -776,6 +787,7 @@ function App() {
     setGroundMenuAt(null);
     setGroundIntent("file");
     setRevealAsk(null);
+    setAskDrafts([]);
   }, [workspace?.path]);
   // The playing-set selector (Epic 4 story 1, ADR-0013): its draft selection
   // and the draw tool's armed state. The gate arms while it is open.
@@ -1127,6 +1139,26 @@ function App() {
       // ghost (a pathological accept) shows exactly what DID land instead of
       // leaving the map's view stale. This read writes nothing.
       await ground.reload();
+      // STORY 21.7 — A QUESTION THE ACT LEFT WAITING REACHES ITS COMPOSER.
+      // The draft is view state handed to the card, never a written turn; the
+      // card opens so the person can read what is about to be asked and press
+      // send themselves.
+      if (result.ok && result.drafts.length > 0) {
+        askDraftToken.current += 1;
+        const token = askDraftToken.current;
+        setAskDrafts(
+          result.drafts.map((draft) => ({
+            slug: draft.slug,
+            question: draft.question,
+            token,
+          })),
+        );
+        setRevealAsk({ slug: result.drafts[0]!.slug });
+      } else {
+        // A press that left no draft forgets the last one: a later Restore of a
+        // removed card must never be handed an old question as if it were new.
+        setAskDrafts([]);
+      }
       return result;
     },
     [workspace, ground.reload],
@@ -5148,6 +5180,9 @@ function App() {
                every other card uses. */
             onMoveAsk={ground.moveAsk}
             revealAsk={revealAsk}
+            /* STORY 21.7 — the questions a command's accept left waiting in
+               ask composers: a draft, never a record and never a send. */
+            askDrafts={askDrafts}
             onAskTurn={ground.askTurn}
             onStopAskTurn={ground.askStop}
             /* STORY 18.3 — the session cards: their records, their transcripts

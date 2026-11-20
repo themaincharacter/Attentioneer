@@ -93,7 +93,8 @@ describe("the vocabulary is declared data (ADR-0038 §3)", () => {
       expect(spec.description.endsWith(".")).toBe(true);
       for (const field of [...spec.required, ...spec.optional]) {
         expect(field.key).not.toBe("");
-        expect(["text", "number"]).toContain(field.type);
+        // STORY 21.7 adds "texts": a list of named cards, for the ask's context.
+        expect(["text", "number", "texts"]).toContain(field.type);
       }
     }
   });

@@ -72,7 +72,16 @@ export type GhostTarget =
    * learning a map's record file names (ADR-0038 §3). PROVISIONAL with the
    * act names.
    */
-  | { kind: "card"; slug: string };
+  | { kind: "card"; slug: string }
+  /**
+   * STORY 21.7 — ONE ASK CARD BY ITS SLUG. An ask card is its own family, not a
+   * ground reference: it has a conversation instead of a reading and a note, so
+   * "the card this move is about" cannot be the card kind without teaching the
+   * grammar that an ask is a reference. The sixth kind is the smallest honest
+   * addition — the removal of an ask names that ask and nothing else.
+   * PROVISIONAL with the act names.
+   */
+  | { kind: "ask"; slug: string };
 
 /** The known target kinds, for shape checks. */
 export const GHOST_TARGET_KINDS: readonly GhostTarget["kind"][] = [
@@ -81,6 +90,7 @@ export const GHOST_TARGET_KINDS: readonly GhostTarget["kind"][] = [
   "spot",
   "link",
   "card",
+  "ask",
 ];
 
 /**
@@ -279,10 +289,10 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
  */
 export function targetFromValue(value: unknown): GhostTarget | null {
   if (!isPlainObject(value)) return null;
-  if (value.kind === "card") {
+  if (value.kind === "card" || value.kind === "ask") {
     const slug = value.slug;
     return typeof slug === "string" && slug !== ""
-      ? { kind: "card", slug }
+      ? { kind: value.kind, slug }
       : null;
   }
   if (value.kind === "word" || value.kind === "loop") {

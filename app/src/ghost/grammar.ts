@@ -88,6 +88,10 @@ const TARGET_KEYS: Record<GhostTarget["kind"], readonly string[]> = {
   link: ["kind", "from", "to"],
   // STORY 21.1: one existing card, by slug — the kind a note is about.
   card: ["kind", "slug"],
+  // STORY 21.7: one existing ask card, by slug — the kind an ask's removal is
+  // about. An ask is its own family, so it gets its own kind rather than
+  // teaching the card kind that an ask is a reference.
+  ask: ["kind", "slug"],
 };
 
 /** A digest's shape: 64 lower-case hex chars. */
@@ -186,7 +190,12 @@ function readTarget(
   const keys = keyIssuesOf(value, TARGET_KEYS[kind]);
   if (keys.length > 0) return { ok: false, issues: keys };
 
-  if (kind === "word" || kind === "loop" || kind === "card") {
+  if (
+    kind === "word" ||
+    kind === "loop" ||
+    kind === "card" ||
+    kind === "ask"
+  ) {
     if (typeof value.slug !== "string" || value.slug === "") {
       return {
         ok: false,
@@ -368,6 +377,12 @@ function targetExists(target: GhostTarget, snapshot: GhostSnapshot): boolean {
   // carries no card set (every concept/dynamics snapshot) refuses it: absence
   // must never read as "the card is there".
   if (target.kind === "card") return snapshot.cards?.has(target.slug) === true;
+  // STORY 21.7 — AN ASK CARD IS ON THE MAP when its line is, and ALSO while
+  // only its conversation is: the app's own delete shape takes the record line
+  // first and the conversation after it, so the second step of that shape must
+  // still be able to name the card whose line just left. The orphan
+  // conversation IS that card's remains, which the app already reports as one.
+  if (target.kind === "ask") return snapshot.asks?.has(target.slug) === true;
   return true;
 }
 

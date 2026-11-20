@@ -25,9 +25,21 @@
  * record. The person accepts or refuses; the adapter files the proposal in the
  * existing intake.
  *
+ * STORY 21.7 — THE MOST NATURAL SENTENCE JOINS THE VOCABULARY (ADR-0038's
+ * 2026-11-20 amendment: the command card is a PRIMARY way to use the app, and
+ * its ambition is coverage of what a person can do). "ask rain gauge what it
+ * says about the plastic" is one ask card, wired, with the person's question
+ * WAITING AS A DRAFT. So `propose_ask` grows two optional keys — the question
+ * and the cards to wire into it — and nothing else about the act changes: the
+ * question is never a record (an unsent question is a draft, and the adapter
+ * hands it to the card's composer after the accept), it files the SAME link
+ * ghost `propose_wire` files, and no act sends a turn. Sending is the
+ * person's press, today and until a story of its own decides otherwise.
+ *
  * PROVISIONAL (ADR-0038's consequences): the act names, the payload keys and
- * their types, the map value being only `"ground"`, and the script's line
- * shape (one act object per line, read by the driver beside this file).
+ * their types (STORY 21.7 adds the `texts` list type for the cards to wire),
+ * the map value being only `"ground"`, and the script's line shape (one act
+ * object per line, read by the driver beside this file).
  */
 
 /** The maps a command may name. PROVISIONAL: only the ground map, for now. */
@@ -43,8 +55,13 @@ export type ActFamily = "read" | "propose";
 export interface ActField {
   /** The payload key. */
   key: string;
-  /** The JSON type the key carries. */
-  type: "text" | "number";
+  /**
+   * The JSON type the key carries. STORY 21.7 adds `texts`: a LIST of non-empty
+   * text values, because wiring an ask names several cards and the portable
+   * vocabulary must be able to say "these cards" without learning a record's
+   * file names (ADR-0038 §3). PROVISIONAL with the act names.
+   */
+  type: "text" | "number" | "texts";
   /**
    * May the text carry newlines and surrounding whitespace? A note may (the
    * person's own words, kept verbatim); a name, a slug or a why may not, so a
@@ -137,17 +154,26 @@ export const ACT_SPECS: readonly ActSpec[] = [
     optional: [{ key: "why", type: "text" }],
   },
   {
+    // STORY 21.7 — AN ASK CAN CARRY ITS QUESTION AND ITS CONTEXT. The question
+    // waits as a DRAFT in the card's composer (the adapter hands it there after
+    // the accept); it is never written as a turn, because only a send writes a
+    // conversation line and no act sends. The context cards are wired in with
+    // the SAME link ghost `propose_wire` files — one link shape, not two.
     name: "propose_ask",
     family: "propose",
     writes: false,
     description:
-      "Propose one ask card at a point; nothing is sent and no question is recorded.",
+      "Propose one ask card at a point, optionally with a question waiting unsent in its composer and context cards wired into it; nothing is sent and no question is recorded.",
     required: [
       { key: "name", type: "text" },
       { key: "x", type: "number" },
       { key: "y", type: "number" },
     ],
-    optional: [{ key: "why", type: "text" }],
+    optional: [
+      { key: "question", type: "text", multiline: true },
+      { key: "context", type: "texts" },
+      { key: "why", type: "text" },
+    ],
   },
   // STORY 21.6 — THE ACTS LEARN TO REMOVE (ADR-0038's 2026-11-20 amendment: the
   // command card is a PRIMARY way to use the app, and a command surface that
@@ -263,6 +289,31 @@ export function validateAct(raw: unknown): ActRead {
   for (const field of allowed) {
     if (!(field.key in payload)) continue;
     const value = payload[field.key];
+    if (field.type === "texts") {
+      // STORY 21.7 — A LIST OF NAMES, each one non-empty and with no invisible
+      // edges: an entry the app has to guess at is not a card the person named.
+      if (!Array.isArray(value) || value.length === 0) {
+        return {
+          ok: false,
+          sentence: `the act "${name}" wants a non-empty list for "${field.key}".`,
+        };
+      }
+      for (const entry of value) {
+        if (typeof entry !== "string" || entry === "") {
+          return {
+            ok: false,
+            sentence: `the act "${name}" wants non-empty text in every "${field.key}" entry.`,
+          };
+        }
+        if (entry !== entry.trim()) {
+          return {
+            ok: false,
+            sentence: `the act "${name}" has surrounding whitespace on a "${field.key}" entry; a name is used exactly as given.`,
+          };
+        }
+      }
+      continue;
+    }
     if (field.type === "number") {
       if (typeof value !== "number" || !Number.isFinite(value)) {
         return {

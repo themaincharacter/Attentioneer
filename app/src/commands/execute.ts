@@ -22,7 +22,20 @@ import { validateAct, type CommandAct } from "./acts";
 
 /** One outcome: a line to print, or ONE sentence why the act was refused. */
 export type CommandOutcome =
-  | { ok: true; line: string; id?: string }
+  | {
+      ok: true;
+      line: string;
+      /** The ONE ghost a proposal filed (the shape every story before 21.7 used). */
+      id?: string;
+      /**
+       * STORY 21.7 — THE GHOSTS ONE ACT MAY FILE, when one act is the app's own
+       * multi-step shape: an ask card is its line, its wires are the SAME link
+       * ghost a wire proposal files, and its removal is the app's delete shape
+       * (the record line, then the conversation that goes with it). A proposal
+       * still changes no record; the person accepts this documented set.
+       */
+      ids?: readonly string[];
+    }
   | { ok: false; sentence: string };
 
 /**
@@ -138,7 +151,8 @@ export async function executeScript(
       return refused(outcome.sentence || HOST_REFUSAL, lines, ids, lines.length);
     }
     lines.push(outcome.line);
-    if (outcome.id !== undefined) ids.push(outcome.id);
+    if (outcome.ids !== undefined) ids.push(...outcome.ids);
+    else if (outcome.id !== undefined) ids.push(outcome.id);
   }
   return { ok: true, lines, ids, sentence: null, applied: lines.length };
 }
