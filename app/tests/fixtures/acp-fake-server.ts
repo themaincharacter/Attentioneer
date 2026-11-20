@@ -33,6 +33,12 @@
  *   drip          handshake and session, then one update every 100 ms until
  *                 cancelled — the shape a run has when the sidecar's stdout
  *                 closes underneath it (18.3b's closed-pipe kill probe).
+ *   die-after-handshake  STORY 22.3: handshake and session answer, then the
+ *                 child writes TWO stderr lines (the newest long enough to be
+ *                 clipped) and exits 4 on its own, without ever settling the
+ *                 prompt. It is a child that really died early, not one the
+ *                 run tore down, so its ending must say the exit AND the last
+ *                 line it wrote.
  *   slow-turn     STORY 22.2: handshake and session answer at once, then the
  *                 prompt streams four updates 120 ms apart before settling
  *                 \`end_turn\` — a turn whose ANSWER arrives long after the
@@ -258,6 +264,24 @@ function requestPermission(): void {
   );
 }
 
+/**
+ * STORY 22.3 — A CHILD THAT REALLY DIES EARLY. It answers the session, writes
+ * one ordinary diagnostic line, then a line long enough that any ending must
+ * clip it, and exits 4 without settling the prompt. The two lines prove which
+ * one the ending keeps: the newest, never the first.
+ */
+async function dieAfterHandshake(): Promise<never> {
+  process.stderr.write("woke up wrong\n");
+  process.stderr.write(
+    "the model route answered nothing for a while " + "x".repeat(600) + "\n",
+  );
+  // Let the session answer reach the client before the child goes away, so the
+  // ending is about the prompt and not about the handshake.
+  await outbox.catch(() => {});
+  await Bun.sleep(20);
+  process.exit(4);
+}
+
 function settlePrompt(stopReason: string): void {
   if (active === null || active.settled) return;
   active.settled = true;
@@ -293,6 +317,8 @@ async function runResumePrompt(id: number, text: string): Promise<void> {
 }
 
 async function runPrompt(id: number): Promise<void> {
+  // STORY 22.3 — this child never answers the prompt: it is on its way out.
+  if (mode === "die-after-handshake") return;
   promptCount += 1;
   active = { id, cancelled: false, settled: false, cancelWaiters: [] };
 
@@ -442,6 +468,7 @@ function handle(message: Record<string, unknown>): void {
     }
     sessionId = "fake-session";
     respond(message.id as number, { sessionId, configOptions: [] });
+    if (mode === "die-after-handshake") void dieAfterHandshake();
     return;
   }
   if (message.method === "session/resume") {

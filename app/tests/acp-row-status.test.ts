@@ -443,7 +443,7 @@ function row(): AcpSpec {
 }
 
 describe("the test verb is one tiny task through the existing run wire", () => {
-  test("the request is the fixed prompt, one minute, no cwd and no trace fields", async () => {
+  test("the request is the fixed prompt, three minutes, no cwd and no trace fields", async () => {
     const { transport, sent } = scriptedRun((id, run) => [
       chunk(id, run, "OK."),
       runEndLine(id, run, "completed", null),
@@ -471,7 +471,9 @@ describe("the test verb is one tiny task through the existing run wire", () => {
     expect(request.kind).toBe("run");
     expect(request.prompt).toBe(ROW_TEST_PROMPT);
     expect(request.tool.timeoutMinutes).toBe(ROW_TEST_TIMEOUT_MINUTES);
-    expect(request.tool.timeoutMinutes).toBe(1);
+    // STORY 22.3 — a cold first turn through a Windows-interop child runs
+    // 60–120 s, so the old one-minute budget was the probe failing itself.
+    expect(request.tool.timeoutMinutes).toBe(3);
     expect(request.tool.command).toBe(BUN);
     expect(request.env).toEqual({});
     // NO cwd, no declared scope and no continuation: a fresh session directory
@@ -523,9 +525,9 @@ describe("the test verb is one tiny task through the existing run wire", () => {
     );
   });
 
-  test("the spec a test runs has the row's argv and ONE minute", () => {
+  test("the spec a test runs has the row's argv and the probe's THREE minutes", () => {
     const spec = rowTestSpec(row());
-    expect(spec.timeoutMinutes).toBe(1);
+    expect(spec.timeoutMinutes).toBe(3);
     expect(spec.command).toBe(row().command);
     expect(spec.args).toEqual(row().args);
     expect(spec.env).toEqual([]);

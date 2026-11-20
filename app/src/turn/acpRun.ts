@@ -70,6 +70,7 @@ import { join } from "node:path";
 
 import {
   AcpFailure,
+  acpSentence,
   startAcp,
   type AcpNotificationMessage,
   type AcpServerRequest,
@@ -154,6 +155,49 @@ export const ACP_RUN_SENTENCES = {
   resumeOtherFolder:
     "the session was recorded in another folder, so the run was not started",
 } as const;
+
+/**
+ * STORY 22.3 — HOW MUCH OF THE CHILD'S LAST LINE AN ENDING MAY CARRY
+ * (PROVISIONAL). The tail is diagnostics, not a transcript: one line, one short
+ * sentence's worth. The ending remains the run's own sentence with an aside,
+ * never a second report.
+ */
+export const ACP_CHILD_WORDS_MAX = 200;
+
+/**
+ * STORY 22.3 — IS THIS THE TRANSPORT'S TEARDOWN SENTENCE? (PROVISIONAL)
+ *
+ * `the transport closed` is what a close says to every pending request, and
+ * `the server exited (code N)` is what the exit watcher says when the child
+ * goes away. EITHER can be TRUE and still not be the run's ending: the run's
+ * own budget, or a person's stop, is what tore the child down, and the run
+ * already knows the sentence for that. This predicate is what tells the two
+ * apart; it names no cause, only the transport's vocabulary.
+ */
+export function acpIsTransportTeardown(sentence: string): boolean {
+  return (
+    sentence === "the transport closed" ||
+    /^the server exited \(code -?\d+\)$/.test(sentence)
+  );
+}
+
+/**
+ * STORY 22.3 — A CHILD THAT REALLY DIED EARLY SAYS SO, AND ITS LAST WORDS
+ * (PURE, PROVISIONAL). The exit sentence is kept, and the child's own newest
+ * stderr line rides after it, collapsed to one line and clipped; a child that
+ * wrote nothing on stderr gets the bare sentence. This is the ONLY ending that
+ * carries the tail: the run's own endings say the run's own words.
+ */
+export function acpChildExitSentence(sentence: string, tail: string): string {
+  const words = acpSentence(tail);
+  if (words === "") return sentence;
+  const room = ACP_CHILD_WORDS_MAX;
+  const bounded =
+    words.length <= room
+      ? words
+      : words.slice(0, Math.max(1, room - 1)).trimEnd() + "…";
+  return sentence + "; its last words were: " + bounded;
+}
 
 /**
  * The caller's reply: one option id, or null for "cancelled". The policy is
@@ -537,11 +581,42 @@ export function startAcpRun(
       : "the run stopped before the turn settled";
   }
 
-  /** A failure seen through the run's flags: a stop we asked for is not a failure. */
+  /**
+   * STORY 22.3 — THE RUN'S OWN ENDING WINS OVER A TEARDOWN SENTENCE.
+   *
+   * A pending request rejects the moment the transport tears the child down:
+   * `the transport closed` from a close, `the server exited (code N)` from the
+   * exit watcher. That rejection is TRUE, but it is the run's own teardown
+   * talking, not a fact about the work. So the catch maps the transport's
+   * sentence onto the ending the run is already giving it: this flag pair is
+   * the run's own account of who ended the child, and an exit the run did not
+   * cause keeps its own sentence (with the child's last words beside it).
+   */
   function finishFromFailure(error: unknown): Promise<void> {
+    const sentence = failureSentence(error);
+    if (acpIsTransportTeardown(sentence)) {
+      // The ending is already being given; a teardown that arrives during it
+      // changes nothing.
+      if (settled) return Promise.resolve();
+      if (timedOut) {
+        return finish(
+          "timed-out",
+          pendingPermission !== null
+            ? ACP_RUN_SENTENCES.permissionUnanswered
+            : ACP_RUN_SENTENCES.timedOut,
+        );
+      }
+      if (cancelled) return finish("stopped", null, "cancelled");
+      // NO run-side ending is pending: the child really died on its own. The
+      // sentence stays honest and gains the one line the child last wrote.
+      return finish(
+        "failed",
+        acpChildExitSentence(sentence, transport?.stderrTail ?? ""),
+      );
+    }
     if (timedOut) return finish("timed-out", ACP_RUN_SENTENCES.timedOut);
     if (cancelled) return finish("stopped", null, "cancelled");
-    return finish("failed", failureSentence(error));
+    return finish("failed", sentence);
   }
 
   /** Answer one permission request with the caller's reply, then record it. */

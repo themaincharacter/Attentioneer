@@ -21,8 +21,11 @@ import {
   type AcpSpec,
 } from "../src/turn/acpSpecs";
 import {
+  ACP_CHILD_WORDS_MAX,
   ACP_RUN_SENTENCES,
+  acpChildExitSentence,
   acpInheritedEnvironment,
+  acpIsTransportTeardown,
   acpPromptTimeoutMs,
   acpRunEnvironment,
   startAcpRun,
@@ -605,6 +608,94 @@ describe("one headless run, every ending", () => {
     expect(result.partial).toBeNull();
     expect(result.stopReason).toBe("end_turn");
     expect(await gone(run.report().pid)).toBe(true);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * STORY 22.3 — WHO ENDED THE CHILD IS THE RUN'S TO SAY.
+   * ---------------------------------------------------------------- */
+
+  test("a budget that tears the child down is a timeout, never a teardown sentence", async () => {
+    // The fake streams for about half a second and the budget is 150 ms, so the
+    // turn is mid-stream when the budget ends it. The transport's exit watcher
+    // says "the server exited (code N)" at the same moment; that sentence is
+    // true of the pipe, not of the work, so the run's own ending must win.
+    const run = begin("slow-turn", { timeoutMs: 150 });
+    const result = await run.handle.result;
+
+    expect(result.ending).toBe("timed-out");
+    expect(result.sentence).toBe(ACP_RUN_SENTENCES.timedOut);
+    expect(result.sentence).not.toContain("the server exited");
+    expect(result.sentence).not.toContain("the transport closed");
+    expect(await gone(run.report().pid)).toBe(true);
+  });
+
+  test("a person's stop is stopped, not a teardown sentence", async () => {
+    const run = begin("slow-turn");
+    await waitFor(() =>
+      run.progress.some(
+        (entry) => entry.kind === "update" && entry.text === "step 1 ",
+      ),
+    );
+    run.handle.cancel();
+    const result = await run.handle.result;
+
+    expect(result.ending).toBe("stopped");
+    expect(result.sentence).toBeNull();
+    // The fake settled the turn as end_turn when it saw the cancel; the run's
+    // own stop is still the ending that is said, and its sentence is the run's
+    // silence rather than a teardown line.
+    expect(result.stopReason).toBe("end_turn");
+    expect(await gone(run.report().pid)).toBe(true);
+  });
+
+  test("a child that really died early keeps its exit sentence and its last words", async () => {
+    const run = begin("die-after-handshake");
+    const result = await run.handle.result;
+
+    expect(result.ending).toBe("failed");
+    expect(result.sentence).toContain("the server exited (code 4)");
+    expect(result.sentence).toContain(
+      "its last words were: the model route answered nothing for a while",
+    );
+    // The newest line, never the first one the child wrote.
+    expect(result.sentence).not.toContain("woke up wrong");
+    expect(await gone(run.report().pid)).toBe(true);
+  });
+
+  test("the last words are one clipped line, and only a child exit says them", () => {
+    expect(ACP_CHILD_WORDS_MAX).toBe(200);
+    // The transport's own vocabulary — and nothing a run or a server says
+    // about the work — is what the mapping recognises.
+    expect(acpIsTransportTeardown("the transport closed")).toBe(true);
+    expect(acpIsTransportTeardown("the server exited (code 0)")).toBe(true);
+    expect(acpIsTransportTeardown("the server exited (code -1)")).toBe(true);
+    expect(
+      acpIsTransportTeardown(
+        "the run ran out of its budget, so what arrived is a partial, not a result",
+      ),
+    ).toBe(false);
+    expect(
+      acpIsTransportTeardown("the server did not answer session/prompt in time"),
+    ).toBe(false);
+    // One line: the child's own line breaks become spaces.
+    expect(acpChildExitSentence("the server exited (code 7)", "a\nb\nc")).toBe(
+      "the server exited (code 7); its last words were: a b c",
+    );
+    // A child that said nothing on stderr keeps the bare sentence.
+    expect(acpChildExitSentence("the server exited (code 7)", "")).toBe(
+      "the server exited (code 7)",
+    );
+    // A long line is cut, with an ellipsis, inside the bound.
+    const prefix = "the server exited (code 7); its last words were: ";
+    const long = acpChildExitSentence(
+      "the server exited (code 7)",
+      "y".repeat(600),
+    );
+    expect(long.endsWith("…")).toBe(true);
+    expect(long.length).toBeLessThanOrEqual(prefix.length + ACP_CHILD_WORDS_MAX);
+    expect(long).not.toContain("y".repeat(250));
+    // The run's own endings never carry the tail.
+    expect(ACP_RUN_SENTENCES.timedOut).not.toContain("last words");
   });
 });
 

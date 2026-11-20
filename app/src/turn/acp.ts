@@ -458,7 +458,8 @@ export class AcpTransport {
   private nextId = 1;
   private closed = false;
   private exitCode: number | null = null;
-  private stderrTail = "";
+  private stderrRemainder = "";
+  private lastStderrLine = "";
 
   constructor(
     private readonly config: AcpTransportConfig,
@@ -480,6 +481,19 @@ export class AcpTransport {
   /** Has \`close\` run or the child gone away? */
   get closedForBusiness(): boolean {
     return this.closed;
+  }
+
+  /**
+   * STORY 22.3 — THE CHILD'S LAST DIAGNOSTIC LINE (PROVISIONAL). stderr is not
+   * protocol, so nothing here parses it; but a child that died on its own
+   * leaves one line a person already owns, and an ending that says why is
+   * better than an exit code alone. This is the newest non-empty line the child
+   * wrote (or the unfinished remainder when the stream ends mid-line), never
+   * more than one line, and the empty string when it said nothing there.
+   */
+  get stderrTail(): string {
+    const remainder = this.stderrRemainder.replace(/\r$/, "").trim();
+    return remainder !== "" ? remainder : this.lastStderrLine;
   }
 
   /**
@@ -737,17 +751,23 @@ export class AcpTransport {
         const read = await reader.read();
         if (read.done) break;
         if (read.value === undefined) continue;
-        this.stderrTail += decoder.decode(read.value, { stream: true });
-        let newline = this.stderrTail.indexOf("\n");
+        this.stderrRemainder += decoder.decode(read.value, { stream: true });
+        let newline = this.stderrRemainder.indexOf("\n");
         while (newline >= 0) {
-          const line = this.stderrTail.slice(0, newline).replace(/\r$/, "");
-          this.stderrTail = this.stderrTail.slice(newline + 1);
-          if (line.trim() !== "") this.config.onStderr?.(line);
-          newline = this.stderrTail.indexOf("\n");
+          const line = this.stderrRemainder.slice(0, newline).replace(/\r$/, "");
+          this.stderrRemainder = this.stderrRemainder.slice(newline + 1);
+          if (line.trim() !== "") {
+            this.lastStderrLine = line.trim();
+            this.config.onStderr?.(line);
+          }
+          newline = this.stderrRemainder.indexOf("\n");
         }
       }
-      const tail = this.stderrTail.replace(/\r$/, "");
-      if (tail.trim() !== "") this.config.onStderr?.(tail);
+      const tail = this.stderrRemainder.replace(/\r$/, "");
+      if (tail.trim() !== "") {
+        this.lastStderrLine = tail.trim();
+        this.config.onStderr?.(tail);
+      }
     } catch {
       // A broken stderr is diagnostics, not the conversation.
     }

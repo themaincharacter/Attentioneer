@@ -16,8 +16,16 @@
  * NO CWD. The run carries no `cwd`, so the lane makes its ordinary fresh
  * session directory under the OS temp; the row's normal env resolution (its
  * env entries, read by the window's key store) and its normal argv are used
- * unchanged. The ONLY field this file replaces is the budget: one minute,
- * because a small task that needs ten is not the test this verifies.
+ * unchanged. The ONLY field this file replaces is the budget, because a small
+ * task that needs ten minutes is not the test this verifies.
+ *
+ * STORY 22.3 — THE BUDGET IS THREE MINUTES (PROVISIONAL). One minute was the
+ * first guess and it is wrong on this machine: a first turn through a
+ * Windows-interop child was measured at 60–120 s cold, so a one-minute budget
+ * fired before a healthy tool could answer and the row stayed untested for a
+ * reason that was never the tool's. Three minutes covers a cold first turn and
+ * still ends a probe that is really stuck; the value is provisional because it
+ * is a guess about this machine, not a rule about the wire.
  *
  * A FAILED TEST WRITES NOTHING: this module returns the sentence to show and
  * never touches the config. The caller keeps the row untested and says the
@@ -30,7 +38,7 @@
  * and an unanswered ask must never sit until the budget: the run carries on (or
  * ends as the tool decides) and its ending is what the row records.
  *
- * PROVISIONAL: the prompt's wording, the one-minute budget and the three
+ * PROVISIONAL: the prompt's wording, the three-minute budget and the three
  * sentences below.
  */
 
@@ -47,8 +55,12 @@ import { rowSeenOf } from "./acpRowStore";
 export const ROW_TEST_PROMPT =
   "Reply with exactly one short sentence: the word OK.";
 
-/** A row test gets one minute, never the row's own budget (PROVISIONAL). */
-export const ROW_TEST_TIMEOUT_MINUTES = 1;
+/**
+ * A row test gets three minutes, never the row's own budget (PROVISIONAL). A
+ * cold first turn through a Windows-interop child runs 60–120 s; one minute
+ * was a false negative, not a stuck tool.
+ */
+export const ROW_TEST_TIMEOUT_MINUTES = 3;
 
 /** The sentences a test says when no answer is a result (PROVISIONAL). */
 export const ROW_TEST_SENTENCES = {
@@ -70,7 +82,7 @@ export type RowTestOutcome =
 
 /**
  * THE ROW AS THE TEST RUN SEES IT (PURE): the shipped row with one field
- * replaced — the one-minute budget. The command, argv, env entries, cwd policy
+ * replaced — the three-minute budget. The command, argv, env entries, cwd policy
  * and continuation mark are the row's own, untouched.
  */
 export function rowTestSpec(row: AcpSpec): AcpSpec {
