@@ -186,20 +186,24 @@ export const ASK_OUTCOMES = ["answered", "no-response"] as const;
 export type AskOutcome = (typeof ASK_OUTCOMES)[number];
 
 /**
- * WHICH OF THE TWO ROLES MADE AN ASK MOVE (story 17.12, ADR-0037 decisions 1
- * and 9, PROVISIONAL). An ask is answered by the TASK model and then distilled
- * by the MANAGER model: two egresses, two PRISMs, and this field is what tells
- * them apart without a new Change kind. It is a ROLE, never a model name — the
- * unions stay closed to content, and the rows live in the config.
+ * WHICH ROLE MADE AN ASK-SHAPED MOVE (story 17.12, ADR-0037 decisions 1 and 9;
+ * story 21.2, ADR-0038 decisions 2, 5 and 6 — PROVISIONAL). An ask is answered
+ * by the TASK model and then distilled by the MANAGER model; the command card's
+ * interpreter is a TURN to the same manager row. Those are three egresses, each
+ * its own PRISM, and this field is what tells them apart without a new Change
+ * kind. It is a ROLE, never a model name — the unions stay closed to content,
+ * and the rows live in the config.
  *
- * ABSENT MEANS "task": every line written before this story is a task call,
+ * ABSENT MEANS "task": every line written before story 17.12 is a task call,
  * so an old record parses untouched and needs no migration. A new task call
- * stays absent too; only the curator's second egress writes the word.
+ * stays absent too; the curator's second egress writes "curator", and the
+ * interpreter's writes "command" (21.2). The word is STRUCTURE: it names what
+ * an egress was for, never what it said.
  */
-export const ASK_ROLES = ["task", "curator"] as const;
+export const ASK_ROLES = ["task", "curator", "command"] as const;
 export type AskRole = (typeof ASK_ROLES)[number];
 
-/** Is a value one of the two roles? */
+/** Is a value one of the declared roles? */
 export function isAskRole(value: unknown): value is AskRole {
   return (
     typeof value === "string" &&
@@ -328,10 +332,12 @@ export interface AskChange {
    */
   anchor?: string;
   /**
-   * WHICH ROLE MADE THIS EGRESS (story 17.12, ADR-0037 decision 9): absent on
-   * every task call — old lines included, so they keep their bytes and need no
-   * migration — and "curator" on the second, distilling call. A ROLE is
-   * structure, never content: the model's name stays in the settings row.
+   * WHICH ROLE MADE THIS EGRESS (story 17.12, ADR-0037 decision 9; story
+   * 21.2, ADR-0038 decisions 5 and 6): absent on every task call — old lines
+   * included, so they keep their bytes and need no migration — "curator" on
+   * the second, distilling call, and "command" on the interpreter's turn. A
+   * ROLE is structure, never content: the model's name stays in the settings
+   * row, and no word of the instruction or the answer rides here.
    */
   role?: AskRole;
   outcome: AskOutcome;
@@ -374,7 +380,7 @@ export interface RunChange {
    * itself — every line written before this story, and every new run line, so
    * old bytes are unchanged — and "curator" on the manager model's distilling
    * call about that run's completed result. The same closed pair an ask card's
-   * egresses use ({@link AskRole}), because they are the same two roles: a ROLE
+   * egresses use ({@link AskRole}), because they are the same roles: a ROLE
    * is structure, and the model's name stays in the settings row.
    */
   role?: AskRole;
@@ -652,8 +658,8 @@ export function parsePrismChange(value: unknown): Change | null {
       // the result's size. `answered` carries a size; every other ending
       // carries null — the same shape rule the Ask's response facts follow.
       if (!isNonEmptyString(value.tool)) return null;
-      // STORY 19.4 — the optional role, one of the two words; absent is the
-      // run itself, exactly as every line written before this story.
+      // STORY 19.4 — the optional role, one of the declared words; absent is
+      // the run itself, exactly as every line written before this story.
       const role = value.role;
       if (role !== undefined && !isAskRole(role)) return null;
       if (!isIn(RUN_OUTCOMES, value.outcome)) return null;
@@ -680,7 +686,7 @@ export function parsePrismChange(value: unknown): Change | null {
       // The optional anchor is a SLUG when present — structure, never content.
       const anchor = value.anchor;
       if (anchor !== undefined && !isNonEmptyString(anchor)) return null;
-      // The optional role is one of the two words; absent is the task call.
+      // The optional role is one of the declared words; absent is the task call.
       const role = value.role;
       if (role !== undefined && !isAskRole(role)) return null;
       if (!isIn(ASK_OUTCOMES, value.outcome)) return null;
