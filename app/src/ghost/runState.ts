@@ -172,6 +172,9 @@ function targetKeyOf(target: GhostTarget): string {
       return part("spot") + part(String(target.x)) + part(String(target.y));
     case "link":
       return part("link") + part(target.from) + part(target.to);
+    // STORY 21.1: a card target's identity is its slug, exactly as a word's.
+    case "card":
+      return part("card") + part(target.slug);
   }
 }
 
@@ -221,12 +224,16 @@ function moveOf(value: unknown): GhostMove | null {
 function targetOf(value: unknown): GhostTarget | null {
   const record = objectOf(value);
   if (record === null) return null;
-  if (record.kind === "word" || record.kind === "loop") {
+  if (record.kind === "word" || record.kind === "loop" || record.kind === "card") {
     const slug = textOf(record.slug);
     if (slug === null) return null;
+    // STORY 21.1: a card target counts in the run state like the others, so a
+    // repeated refusal about one card is one key (the counter is unchanged).
     return record.kind === "word"
       ? { kind: "word", slug }
-      : { kind: "loop", slug };
+      : record.kind === "loop"
+        ? { kind: "loop", slug }
+        : { kind: "card", slug };
   }
   if (record.kind === "spot") {
     const x = record.x;

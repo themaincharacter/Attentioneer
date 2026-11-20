@@ -8,7 +8,7 @@ import {
   type PersonRegion,
 } from "./packet";
 import { tauriGhostFs, type GhostFs } from "./port";
-import { findMove } from "./registry";
+import { filesOf, findMove } from "./registry";
 import type { GhostContext } from "./session";
 import { readGhostSnapshot } from "./snapshot";
 
@@ -175,7 +175,9 @@ export async function askForPacket(options: AskOptions): Promise<AskResult> {
   const snapshot = await readGhostSnapshot(fs, options.workspacePath, {
     level: context.level,
     scenario: context.scenario,
-    files: entry.files,
+    // STORY 21.1: a target-dependent move (a note) names its file by the card
+    // it is about; the ask reads that file's base at this moment.
+    files: filesOf(entry, request.target),
   });
 
   const onMap =

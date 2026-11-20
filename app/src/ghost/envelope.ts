@@ -62,7 +62,17 @@ export type GhostTarget =
   | { kind: "word"; slug: string }
   | { kind: "loop"; slug: string }
   | { kind: "spot"; x: number; y: number }
-  | { kind: "link"; from: string; to: string };
+  | { kind: "link"; from: string; to: string }
+  /**
+   * STORY 21.1 — ONE CARD BY ITS SLUG. The command card's acts name the map's
+   * cards the way a person does; a proposal that is ABOUT an existing card
+   * (a note) therefore needs a target that is a card, never a "word". The
+   * envelope already spoke word/loop/spot/link; this is the fifth kind, added
+   * because the portable vocabulary must be able to say "this card" without
+   * learning a map's record file names (ADR-0038 §3). PROVISIONAL with the
+   * act names.
+   */
+  | { kind: "card"; slug: string };
 
 /** The known target kinds, for shape checks. */
 export const GHOST_TARGET_KINDS: readonly GhostTarget["kind"][] = [
@@ -70,6 +80,7 @@ export const GHOST_TARGET_KINDS: readonly GhostTarget["kind"][] = [
   "loop",
   "spot",
   "link",
+  "card",
 ];
 
 /**
@@ -228,6 +239,52 @@ export function isNameSlot(key: string): boolean {
 /** A plain JSON object (never an array, never null). */
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A target's SHAPE, read defensively from an untrusted value (STORY 21.1): the
+ * kind and its payload, never the move's rules and never its key set. The
+ * grammar still owns "may this move carry it"; this reader exists because a
+ * move's FILE LIST can depend on the target (a note's file is named by the
+ * card it is about), so the session and the request must know the target
+ * before the grammar has spoken. Null for anything out of shape, which a move
+ * with a target-dependent file list reads as "no files" — fail-closed.
+ */
+export function targetFromValue(value: unknown): GhostTarget | null {
+  if (!isPlainObject(value)) return null;
+  if (value.kind === "card") {
+    const slug = value.slug;
+    return typeof slug === "string" && slug !== ""
+      ? { kind: "card", slug }
+      : null;
+  }
+  if (value.kind === "word" || value.kind === "loop") {
+    const slug = value.slug;
+    return typeof slug === "string" && slug !== ""
+      ? { kind: value.kind, slug }
+      : null;
+  }
+  if (value.kind === "spot") {
+    const x = value.x;
+    const y = value.y;
+    return typeof x === "number" &&
+      typeof y === "number" &&
+      Number.isFinite(x) &&
+      Number.isFinite(y)
+      ? { kind: "spot", x, y }
+      : null;
+  }
+  if (value.kind === "link") {
+    const from = value.from;
+    const to = value.to;
+    return typeof from === "string" &&
+      from !== "" &&
+      typeof to === "string" &&
+      to !== ""
+      ? { kind: "link", from, to }
+      : null;
+  }
+  return null;
 }
 
 /** The result of reading an envelope's bytes: the JSON object, or why not. */

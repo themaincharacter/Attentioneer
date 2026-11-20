@@ -433,12 +433,12 @@ describe("the two-row fixture: the expansion path, without registering", () => {
 
 describe("pinOf.game: the level binds, the game documents", () => {
   test("pinOf mints the move's game and the running band separately", () => {
-    const pinned = pinOf(snapshot(), ADD_ASSUMPTION);
+    const pinned = pinOf(snapshot(), ADD_ASSUMPTION, { kind: "word", slug: "rain" });
     expect(pinned.level).toBe("dynamics");
     expect(pinned.game).toBe("dynamics");
 
     // The running band moves; the documented game does not (it is the move's).
-    const moved = pinOf(snapshot({ level: "ground", playing: null }), ADD_ASSUMPTION);
+    const moved = pinOf(snapshot({ level: "ground", playing: null }), ADD_ASSUMPTION, { kind: "word", slug: "rain" });
     expect(moved.level).toBe("ground");
     expect(moved.game).toBe("dynamics");
   });

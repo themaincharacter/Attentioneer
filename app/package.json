@@ -10,6 +10,7 @@
     "test": "bun test",
     "spike:acp": "bun scripts/acp-spike.ts",
     "catalog:refresh": "bun scripts/models-dev-catalog.ts",
+    "commands": "bun scripts/commands.ts",
     "tauri": "tauri"
   },
   "dependencies": {

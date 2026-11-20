@@ -1,3 +1,4 @@
+import { groundPath, parseGround } from "../map/ground";
 import { loopSlug, loopsPath, parseLoops } from "../map/loops";
 import { modelPath, parseModel } from "../map/model";
 import { recordsDirOf, recordsRelDirOf } from "../map/records";
@@ -41,6 +42,12 @@ export interface GhostSnapshot {
   words: ReadonlySet<string>;
   /** Every loop slug (name-derived) on the map. */
   loops: ReadonlySet<string>;
+  /**
+   * STORY 21.1 — every GROUND reference's slug, the cards a command can be
+   * about (a note) or point at (a wire). Absent on a snapshot built for the
+   * concept or dynamics games; a card target then refuses rather than guess.
+   */
+  cards?: ReadonlySet<string>;
   /** Workspace-relative path → the file's bytes (null = absent). */
   files: Readonly<Record<string, string | null>>;
 }
@@ -69,6 +76,10 @@ export async function readGhostSnapshot(
 ): Promise<GhostSnapshot> {
   const names = await fs.list(referencesDir(workspacePath));
   const loopsText = await fs.readText(loopsPath(workspacePath));
+  // STORY 21.1: the ground cards, read through the same port as everything
+  // else — a proposal about an existing card is checked against the file the
+  // accept will read, never against a remembered list.
+  const groundText = await fs.readText(groundPath(workspacePath));
   // The accepted playing set is the records folder's own `model.json` (ADR-0013):
   // read through the same port as the rest, so the accept sees the set on disk
   // at the write moment, not a memory that may have moved.
@@ -99,6 +110,7 @@ export async function readGhostSnapshot(
     playing,
     words,
     loops,
+    cards: new Set(parseGround(groundText ?? "").references.map((entry) => entry.on)),
     files,
   };
 }

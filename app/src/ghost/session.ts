@@ -7,6 +7,7 @@ import {
   isPlainObject,
   mintGhostId,
   readEnvelope,
+  targetFromValue,
   withPacketHash,
   type GhostEnvelope,
   type GhostGame,
@@ -28,7 +29,13 @@ import {
 import { issue, type GhostIssue, type GhostIssueCode } from "./issues";
 import { tauriGhostFs, type GhostFs } from "./port";
 import { refusalFor, type GhostFlow } from "./refusal";
-import { findMove, pinOf } from "./registry";
+import {
+  filesForValue,
+  findMove,
+  MOVES,
+  pinOf,
+  type MoveDefinition,
+} from "./registry";
 import { createRunState, runKeyOf, runPartsOf } from "./runState";
 import { readGhostSnapshot } from "./snapshot";
 
@@ -125,6 +132,15 @@ export interface GhostSessionOptions {
   fs?: GhostFs;
   /** The id minter; defaults to the app's UUID mint (tests inject one). */
   mintId?: () => string;
+  /**
+   * STORY 21.1 — THE MOVE TABLE this session's intake and accept read. The
+   * app leaves it out (the live registry, one move); the command card's
+   * headless host passes the ground rows its acts speak, so the SAME intake,
+   * grammar and accept run for a script. A table is DATA: it never registers a
+   * move in the app, and a session that is handed one still refuses anything
+   * the table does not carry.
+   */
+  moves?: readonly MoveDefinition[];
   /**
    * How replies reach this session (PROVISIONAL, Epic 14 story 2): `"agent"`
    * when an assistant answers through the harness, `"paste"` when the person
@@ -274,6 +290,8 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
   // THE FLOW (Epic 14 story 2, PROVISIONAL): the session's one flow, fixed at
   // construction. It scopes the refusal's sentence; it changes nothing else.
   const flow: GhostFlow = options.flow ?? "paste";
+  // STORY 21.1: the move table, fixed at construction (see the option's note).
+  const moves = options.moves ?? MOVES;
   const queue = createWriteQueue();
   const registeredIds = new Set<string>();
   // THE RUN STATE (Epic 14 story 1, ADR-0031): the session's ephemeral trace,
@@ -362,11 +380,12 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
     const bodyIssues = agentBodyIssues(extracted.body);
     if (bodyIssues.length > 0) return refused(bodyIssues, extracted.body);
 
-    const entry = findMove(extracted.body.move);
+    const entry = findMove(extracted.body.move, moves);
+    const targetShape = targetFromValue(extracted.body.target);
     const snapshot = await readGhostSnapshot(fs, workspacePath, {
       level: context.level,
       scenario: context.scenario,
-      files: entry?.files ?? [],
+      files: entry ? filesForValue(entry, extracted.body.target) : [],
     });
     const candidate: Record<string, unknown> = {
       format: GHOST_FORMAT,
@@ -374,8 +393,8 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
       move: extracted.body.move,
       target: extracted.body.target,
       params: canonicalParams(extracted.body.params),
-      expect: entry
-        ? pinOf(snapshot, entry)
+      expect: entry && targetShape
+        ? pinOf(snapshot, entry, targetShape)
         : {
             dir: snapshot.dir,
             files: {},
@@ -386,7 +405,7 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
       steps: [],
       proposals: [],
     };
-    const validation = validateGhost(candidate, snapshot);
+    const validation = validateGhost(candidate, snapshot, moves);
     if (!validation.ok || validation.envelope === null) {
       return refused(validation.issues, extracted.body);
     }
@@ -443,13 +462,13 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
       };
     }
 
-    const entry = findMove(read.value.move);
+    const entry = findMove(read.value.move, moves);
     const snapshot = await readGhostSnapshot(fs, workspacePath, {
       level: context.level,
       scenario: context.scenario,
-      files: entry?.files ?? [],
+      files: entry ? filesForValue(entry, read.value.target) : [],
     });
-    const validation = validateGhost(read.value, snapshot);
+    const validation = validateGhost(read.value, snapshot, moves);
     if (!validation.ok || validation.envelope === null) {
       await released();
       return { outcome: "refused", id, issues: validation.issues };
@@ -547,15 +566,16 @@ export function createGhostSession(options: GhostSessionOptions): GhostSession {
       };
     }
 
-    const entry = findMove(read.value.move);
+    const entry = findMove(read.value.move, moves);
     const snapshot = await readGhostSnapshot(fs, workspacePath, {
       level: context.level,
       scenario: context.scenario,
-      files: entry?.files ?? [],
+      files: entry ? filesForValue(entry, read.value.target) : [],
     });
     const validation = validateGhost(
       { ...read.value, params: canonicalParams(params) },
       snapshot,
+      moves,
     );
     if (!validation.ok || validation.envelope === null) {
       return { outcome: "refused", id, issues: validation.issues };

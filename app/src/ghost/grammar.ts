@@ -17,6 +17,7 @@ import {
 import { issue, type GhostIssue } from "./issues";
 import {
   appendLine,
+  filesOf,
   findMove,
   gamePolicyOf,
   isParamKind,
@@ -76,6 +77,8 @@ const TARGET_KEYS: Record<GhostTarget["kind"], readonly string[]> = {
   loop: ["kind", "slug"],
   spot: ["kind", "x", "y"],
   link: ["kind", "from", "to"],
+  // STORY 21.1: one existing card, by slug — the kind a note is about.
+  card: ["kind", "slug"],
 };
 
 /** A digest's shape: 64 lower-case hex chars. */
@@ -174,7 +177,7 @@ function readTarget(
   const keys = keyIssuesOf(value, TARGET_KEYS[kind]);
   if (keys.length > 0) return { ok: false, issues: keys };
 
-  if (kind === "word" || kind === "loop") {
+  if (kind === "word" || kind === "loop" || kind === "card") {
     if (typeof value.slug !== "string" || value.slug === "") {
       return {
         ok: false,
@@ -352,6 +355,10 @@ function readExpect(
 function targetExists(target: GhostTarget, snapshot: GhostSnapshot): boolean {
   if (target.kind === "word") return snapshot.words.has(target.slug);
   if (target.kind === "loop") return snapshot.loops.has(target.slug);
+  // STORY 21.1: a card target is a ground reference's slug. A snapshot that
+  // carries no card set (every concept/dynamics snapshot) refuses it: absence
+  // must never read as "the card is there".
+  if (target.kind === "card") return snapshot.cards?.has(target.slug) === true;
   return true;
 }
 
@@ -543,16 +550,24 @@ export function validateGhost(
     ]);
   }
 
-  // v1: single-file appends (crash sufficiency, ADR-0025 decision 3).
-  if (entry.files.length !== 1) {
+  // v1: single-file appends (crash sufficiency, ADR-0025 decision 3). The
+  // move's files may be TARGET-DEPENDENT (STORY 21.1: a note is named by the
+  // card it is about), so the list is read for this target, never assumed.
+  const declaredFiles = filesOf(entry, target.target);
+  if (declaredFiles.length !== 1) {
     return refused([
       issue("single-file", "v1 moves write exactly one file"),
     ]);
   }
-  const file = entry.files[0];
+  const file = declaredFiles[0];
 
-  // The derived steps are the deriver's; the stored list is never read.
-  const steps = entry.steps(target.target, params.params);
+  // The derived steps are the deriver's; the stored list is never read. The
+  // base bytes ride along for the one move that mints a slug against the file.
+  const steps = entry.steps(
+    target.target,
+    params.params,
+    snapshot.files[file] ?? null,
+  );
   if (steps.length === 0) {
     return refused([issue("params", "the move derived no step")]);
   }
@@ -568,7 +583,7 @@ export function validateGhost(
 
   // The pin names exactly the file the move writes — no extra, no missing.
   const pinKeys = Object.keys(expect.expect.files).sort();
-  const declared = [...entry.files].sort();
+  const declared = [...declaredFiles].sort();
   const extra = pinKeys.filter((path) => !declared.includes(path));
   if (extra.length > 0) {
     return refused([

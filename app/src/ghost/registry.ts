@@ -10,6 +10,7 @@ import {
 import { sha256Hex } from "./digest";
 import {
   isPlainObject,
+  targetFromValue,
   type GhostGame,
   type GhostMove,
   type GhostStep,
@@ -223,6 +224,16 @@ export interface MoveDefinition {
   game: GhostGame;
   /** The record files the move writes — v1: exactly one. */
   files: readonly string[];
+  /**
+   * STORY 21.1 — THE FILES A TARGET NAMES, when one is not enough. A note's
+   * file is named by the CARD it is about (`map/notes/<slug>.md`), so a move
+   * whose file list depends on its target declares this instead of a fixed
+   * `files` list. Absent on every shipped move: the field exists because the
+   * ground family keys a note by its card's slug, and the ghost machinery must
+   * be able to say that without a record path leaking into the vocabulary.
+   * PROVISIONAL with the act names (ADR-0038 §3).
+   */
+  filesFor?: (target: GhostTarget) => readonly string[];
   /** The params the agent may author, and nothing else (no name slot). */
   params: readonly ParamField[];
   /**
@@ -244,8 +255,17 @@ export interface MoveDefinition {
    * prompt-compliance).
    */
   boundary: string;
-  /** The ONE deriver: build the read-only steps from target + params. */
-  steps: (target: GhostTarget, params: Record<string, unknown>) => GhostStep[];
+  /**
+   * The ONE deriver: build the read-only steps from target + params (and the
+   * file's bytes BEFORE the write, when the move mints a slug against what is
+   * already on the map — a ground card's name-derived slug is the reason the
+   * base is here; a move that ignores it is exactly as pure).
+   */
+  steps: (
+    target: GhostTarget,
+    params: Record<string, unknown>,
+    before: string | null,
+  ) => GhostStep[];
   /**
    * The dry-run closure: given the base bytes and the produced bytes, does the
    * move hold its own record rule (append-only, exactly one new claim)? Pure;
@@ -298,6 +318,7 @@ export function appendLine(before: string | null, line: string): string {
 function deriveAddAssumptionSteps(
   target: GhostTarget,
   params: Record<string, unknown>,
+  _before: string | null,
 ): GhostStep[] {
   const record = assumptionRecordOf(target, params);
   if (record === null) return [];
@@ -437,6 +458,31 @@ export function moveOf(entry: MoveDefinition): GhostMove {
 }
 
 /**
+ * THE FILES A MOVE WRITES FOR THIS TARGET (STORY 21.1): a fixed list, or the
+ * target-dependent one a note needs. The ONE arithmetic, so the pin, the
+ * grammar and the apply cannot disagree about which file a move writes.
+ */
+export function filesOf(
+  entry: MoveDefinition,
+  target: GhostTarget,
+): readonly string[] {
+  return entry.filesFor === undefined ? entry.files : entry.filesFor(target);
+}
+
+/**
+ * The same file list read from an UNTRUSTED target value (the intake wraps a
+ * body before the grammar has spoken). An out-of-shape target reads as no
+ * files, which the grammar then refuses against the move's pin — fail-closed.
+ */
+export function filesForValue(
+  entry: MoveDefinition,
+  value: unknown,
+): readonly string[] {
+  const target = targetFromValue(value);
+  return target === null ? [] : filesOf(entry, target);
+}
+
+/**
  * The base pin an intake mints from a snapshot: one digest per file the move
  * writes (an absent file pins as the empty string's digest), the records
  * folder, the running level and the move's game.
@@ -453,6 +499,7 @@ export function moveOf(entry: MoveDefinition): GhostMove {
 export function pinOf(
   snapshot: GhostSnapshot,
   entry: MoveDefinition,
+  target: GhostTarget,
 ): {
   dir: string;
   files: Record<string, string>;
@@ -460,7 +507,7 @@ export function pinOf(
   game: GhostGame;
 } {
   const files: Record<string, string> = {};
-  for (const file of entry.files) {
+  for (const file of filesOf(entry, target)) {
     files[file] = sha256Hex(snapshot.files[file] ?? "");
   }
   return {

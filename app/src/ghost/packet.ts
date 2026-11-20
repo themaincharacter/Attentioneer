@@ -719,7 +719,7 @@ export function assemblePacket(input: PacketInput): Packet {
   const bytes = renderPacket(input, region);
   const freeze = freezePacket(
     bytes,
-    pinOf(input.snapshot, input.entry),
+    pinOf(input.snapshot, input.entry, input.target),
     registryHash(input.moves),
   );
   return { freeze, region };
