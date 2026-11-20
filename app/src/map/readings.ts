@@ -25,6 +25,7 @@ import {
 } from "./extract";
 import { pdfText } from "./pdf";
 import type { PointerForm } from "./pointers";
+import type { SessionEnding } from "./sessions";
 import { GROUND_READINGS_DIR, GROUND_RECORD_FILE, mapDir } from "./records";
 
 /**
@@ -282,6 +283,16 @@ export interface Reading {
    */
   manager?: string;
   task?: string;
+  /**
+   * STORY 22.4 — THE ENDING THE ARTIFACT CAME FROM (PROVISIONAL). A curator may
+   * now read a run that did NOT finish, and the card it makes says so on its
+   * face. The field appears ONLY on a distilled reading and ONLY for a partial
+   * run: absence means the run completed, which keeps every existing line and
+   * every completed card byte-identical. No new record family and no new
+   * transcript kind — one optional tail field, like the author pair above.
+   * PROVISIONAL: the field name and its position at the line's tail.
+   */
+  ending?: SessionEnding;
 }
 
 /** A read of `map/readings.txt`: what parsed and what is kept but unreadable. */
@@ -351,13 +362,13 @@ export function readingTextPath(
  * rewrite. The writer emits them in this order, the reader needs that order.
  */
 const READING_LINE =
-  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf|page|image|video|listing))?(?: \| manager: ([^|]+?))?(?: \| task: ([^|]+?))?$/;
+  /^on: (\S+) \| form: (\S+) \| from: (.+) \| taken: (\S+?)(?: \| bytes: (\d+))?(?: \| extract: (text|pdf|page|image|video|listing))?(?: \| manager: ([^|]+?))?(?: \| task: ([^|]+?))?(?: \| ending: (completed|stopped|failed|timed-out))?$/;
 
 /** Parse one line; anything out of shape is `null` (kept and reported). */
 export function parseReadingLine(line: string): Reading | null {
   const match = READING_LINE.exec(line);
   if (!match) return null;
-  const [, on, form, from, taken, bytes, extract, manager, task] = match;
+  const [, on, form, from, taken, bytes, extract, manager, task, ending] = match;
   if (on === "" || from === "" || taken === "") return null;
   // The vocabulary is provisional: a form the app does not know yet is
   // preserved and surfaced, never guessed into `path`. A SELECTION must name a
@@ -404,6 +415,17 @@ export function parseReadingLine(line: string): Reading | null {
     reading.manager = who;
     reading.task = of;
   }
+  // STORY 22.4 (PROVISIONAL): the ending rides only on a CURATOR's card. A
+  // rule copy has no run to name, and a completed run's card says nothing
+  // (absence IS completed), so an old line parses exactly as it did.
+  if (ending !== undefined) {
+    if (form !== "distilled") return null;
+    if (manager === undefined || task === undefined) return null;
+    if (ending !== "stopped" && ending !== "failed" && ending !== "timed-out") {
+      return null;
+    }
+    reading.ending = ending;
+  }
   return reading;
 }
 
@@ -425,7 +447,11 @@ export function serializeReadingLine(reading: Reading): string {
     reading.manager === undefined || reading.task === undefined
       ? ""
       : ` | manager: ${reading.manager} | task: ${reading.task}`;
-  return `on: ${reading.on} | form: ${reading.form} | from: ${reading.from} | taken: ${reading.taken}${size}${extract}${authors}`;
+  // STORY 22.4 (PROVISIONAL): a partial's ending is the line's last field, so
+  // a completed card's line keeps exactly the bytes it always had.
+  const ending =
+    reading.ending === undefined ? "" : ` | ending: ${reading.ending}`;
+  return `on: ${reading.on} | form: ${reading.form} | from: ${reading.from} | taken: ${reading.taken}${size}${extract}${authors}${ending}`;
 }
 
 /**
@@ -746,6 +772,11 @@ export function distilledReading(
    * optional provenance pair, never two record families.
    */
   authors?: { manager: string; task: string },
+  /**
+   * STORY 22.4 — THE ENDING, when a curator read a run that did not finish
+   * (PROVISIONAL). Absent keeps the completed card exactly as it was.
+   */
+  ending?: SessionEnding,
 ): Reading {
   return {
     on,
@@ -755,6 +786,7 @@ export function distilledReading(
     ...(authors === undefined
       ? {}
       : { manager: authors.manager, task: authors.task }),
+    ...(ending === undefined ? {} : { ending }),
   };
 }
 

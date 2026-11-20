@@ -8531,6 +8531,21 @@ body {
   color: var(--ink-faint);
 }
 
+/* STORY 22.4 — THE ONE QUIET LINE WHEN THE AUTOMATIC DISTIL MADE NO CARD. It
+   is a sentence and the rule copy's one verb, in the same small italic as the
+   calls declaration above; a card that was made says nothing at all here. */
+.session-distil-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 240px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
 /* While a run is live the card says so in ONE sentence and offers its stop.
    It is read from the live-run list, so it disappears with the run — there is
    no spinner here to outlive anything. */

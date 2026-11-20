@@ -328,14 +328,14 @@ export const ASK_CALLS_EFFORT_CURATOR =
   " for the answer; the distil call sends no effort";
 
 /**
- * STORY 19.4 — THE SESSION CARD'S DISTIL DECLARATION (PROVISIONAL wording). The
- * run already happened, so the press makes ONE call and the declaration says
- * only what is true before it: whose result is being read, and which model
- * distils it. The manager line, the same-model line and the no-manager line are
- * the ask's own constants — the distil step is the same step, one card family
- * over, and two wordings for one fact is how they drift.
+ * STORY 22.4 — THE SESSION CARD'S RUN DECLARATION (PROVISIONAL wording). The
+ * declaration stands BEFORE the run (as an ask's does): the task model answers,
+ * then the manager model distils the result into a card. The distil is
+ * automatic now, so no condition line is said — a partial's words are read too.
+ * The manager line, the same-model line and the no-manager line are the ask's
+ * own constants — the distil step is the same step, one card family over, and
+ * two wordings for one fact is how they drift.
  */
-export const SESSION_DISTIL_TASK = "this run was made by: ";
 
 /** A row and model as one name; a row that already says the model says it once. */
 function askModelWords(name: AskModelName): string {
@@ -380,11 +380,11 @@ export function askCallsWords(calls: AskCallsFacts): string[] {
 }
 
 /**
- * THE SESSION CARD'S ONE DECLARATION for the distil verb (story 19.4): the row
- * that made the run, then the model that would distil its result — or, when no
- * turn provider resolves at all, the honest fact that the rule copy beside it is
- * the only card path (there is no second call to promise). PURE, so the sentence
- * the person reads is the one the test asserts.
+ * THE SESSION CARD'S ONE DECLARATION BEFORE A RUN (story 22.4): the row that
+ * will answer, then the model that will distil its result — or, when no turn
+ * provider resolves at all, the honest fact that the card will be made by a
+ * rule (there is no second call to promise). PURE, so the sentence the person
+ * reads is the one the test asserts.
  */
 export function sessionDistilWords(facts: {
   /** The run's own tool row, as the card shows it. */
@@ -392,12 +392,22 @@ export function sessionDistilWords(facts: {
   /** The manager model, or null when no turn provider resolves at all. */
   manager: AskModelName | null;
 }): string[] {
-  if (facts.manager === null) return [ASK_CALLS_NO_MANAGER];
   const task = askModelWords(facts.task);
+  if (facts.manager === null) {
+    return [ASK_CALLS_TASK + task, ASK_CALLS_NO_MANAGER];
+  }
   const manager = askModelWords(facts.manager);
   if (manager === task) return [ASK_CALLS_SAME + task];
-  return [SESSION_DISTIL_TASK + task, ASK_CALLS_MANAGER + manager];
+  return [ASK_CALLS_TASK + task, ASK_CALLS_MANAGER + manager];
 }
+
+/**
+ * STORY 22.4 — THE ONE VERB A RUN WHOSE DISTIL MADE NO CARD OFFERS
+ * (PROVISIONAL wording): the rule's copy, still byte-for-byte the 18.4 path,
+ * but said as what it is now — a fallback after a decline or a failure, never
+ * a second equal choice beside the distil press.
+ */
+export const SESSION_RESULT_KEEP_VERB = "keep the result as a card";
 
 /**
  * THE PARTIAL'S ONE QUIET LINE (Epic 15 story 7b). A stopped, broken or

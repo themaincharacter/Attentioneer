@@ -444,7 +444,7 @@ export const CONTENT_CLASSES = [
   // STORY 18.4: the pending permission block (what the tool asks, its two
   // verbs and the no-allow-once note) and the result card's one verb. Inside
   // the card, which is content already; listed so a press on allow/refuse or
-  // "make a card from this" can never fall through to the plane.
+  // the result's fallback verb can never fall through to the plane.
   "session-permission",
   "session-permission-ask",
   "session-permission-note",

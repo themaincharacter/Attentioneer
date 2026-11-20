@@ -1619,7 +1619,7 @@ describe("a finished run's text becomes a card", () => {
     expect(readdirSync(join(base, "map")).sort()).toEqual([]);
   });
 
-  test("the result verb is offered only once a run has ended", () => {
+  test("the fallback copy verb is offered only in a distil notice, never beside the distil verb", () => {
     const props = {
       session: SESSION,
       toolName: "DeepSeek Harness (ACP)",
@@ -1633,14 +1633,41 @@ describe("a finished run's text becomes a card", () => {
       onClose: () => {},
       onMakeResult: async () => ({ ok: true as const }),
     };
+    // STORY 22.4: the rule copy is no longer an equal second choice. With no
+    // notice it is nowhere on the face, even after a completed run.
     expect(renderToStaticMarkup(createElement(SessionCard, props))).not.toContain(
-      "make a card from this",
+      "keep the result as a card",
     );
     expect(
       renderToStaticMarkup(
         createElement(SessionCard, { ...props, entries }),
       ),
-    ).toContain("make a card from this");
+    ).not.toContain("keep the result as a card");
+    // The automatic distil's one sentence brings the fallback verb with it.
+    const fallback = renderToStaticMarkup(
+      createElement(SessionCard, {
+        ...props,
+        entries,
+        distilNotice: "nothing here the map can use.",
+      }),
+    );
+    expect(fallback).toContain("nothing here the map can use.");
+    expect(fallback).toContain("keep the result as a card");
+    // A PARTIAL shows the sentence but offers no copy: a partial is never a
+    // result, so the rule's verb stays unavailable for it.
+    const partial = renderToStaticMarkup(
+      createElement(SessionCard, {
+        ...props,
+        entries: [
+          { kind: "started", t: "1" },
+          { kind: "text", text: "half an answer" },
+          { kind: "ended", ending: "stopped", t: "2" },
+        ] satisfies SessionEntry[],
+        distilNotice: "nothing here the map can use.",
+      }),
+    );
+    expect(partial).toContain("nothing here the map can use.");
+    expect(partial).not.toContain("keep the result as a card");
   });
 });
 

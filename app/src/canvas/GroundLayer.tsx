@@ -350,13 +350,21 @@ export function readingProvenance(
         ? "a rule's copy of a card that is gone"
         : "a rule's copy of " + name;
     }
+    // STORY 22.4 — A PARTIAL'S CARD NAMES ITS ENDING HERE (PROVISIONAL). The
+    // reading carries it only when the run did not finish, so a completed
+    // card's sentence keeps exactly the bytes it had.
+    const ending =
+      reading.ending === undefined
+        ? ""
+        : " · from a run that did not finish";
     return (
       "distilled by " +
       authors.manager +
       " from " +
       authors.task +
       "'s reply · from " +
-      (name === undefined ? "a card that is gone" : name)
+      (name === undefined ? "a card that is gone" : name) +
+      ending
     );
   }
   // STORY 20.1 (PROVISIONAL) — A PROJECT CARD THAT KEEPS A LISTING SAYS WHAT
@@ -659,6 +667,11 @@ interface GroundLayerProps {
   ) => Promise<GroundAddResult>;
   /** STORY 18.4 — each card's PENDING permission ask, as view state. */
   sessionPermission?: Readonly<Record<string, AcpPermissionAsk>>;
+  /**
+   * STORY 22.4 — each session card's ONE QUIET LINE when its automatic distil
+   * made no card (PROVISIONAL view state). Null/absent is silence.
+   */
+  sessionDistilNotice?: Readonly<Record<string, string>>;
   /** Answer the pending ask with the person's one verb. */
   onAnswerSessionPermission?: (
     slug: string,
@@ -823,6 +836,7 @@ export function GroundLayer({
   sessionEntries = {},
   sessionRunning = [],
   sessionPermission = {},
+  sessionDistilNotice = {},
   sessionSignIn = {},
   toolRowFacts = [],
   onCreateAsk,
@@ -1486,15 +1500,16 @@ export function GroundLayer({
         // wire's source is gone. Resolved ONCE here; the card assembles its
         // pre-send readback from these with the send's own pure assembler.
         const contextView = sessionContextOf(session);
-        // STORY 19.4 — THE DISTIL EGRESS, DECLARED BEFORE THE PRESS: the row
-        // that made the run, then the model that would distil its result (or
-        // the no-manager line, when the rule's copy beside it is the only card
-        // path). Read from the same config facts the ask's calls section uses.
+        // STORY 22.4 — THE CALLS, DECLARED BEFORE THE RUN: the task model
+        // answers, then the manager model distils the result into a card (or
+        // the no-manager line, when the card will be made by a rule). Read from
+        // the same config facts the ask's calls section uses. A card whose row
+        // this build does not ship cannot run, so it declares nothing.
         const distilWords =
-          calls === null
+          calls === null || row === null
             ? []
             : sessionDistilWords({
-                task: { row: row === null ? session.tool : row.name, model: "" },
+                task: { row: row.name, model: "" },
                 manager: calls.manager,
               });
         return (
@@ -1624,6 +1639,7 @@ export function GroundLayer({
                 : () => onDistilSessionResult(session.on)
             }
             distilWords={distilWords}
+            distilNotice={sessionDistilNotice[session.on] ?? null}
             onRemove={
               onRemoveSession === undefined
                 ? undefined

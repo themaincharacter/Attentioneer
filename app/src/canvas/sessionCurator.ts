@@ -4,10 +4,10 @@ import type { GroundLink } from "../map/groundLinks";
 import { cardProvenanceSourceSlug, type Reading } from "../map/readings";
 import {
   SESSION_RESULT_EMPTY_SENTENCE,
-  SESSION_RESULT_UNFINISHED_SENTENCE,
   sessionResultName,
-  sessionRunResult,
+  sessionRunText,
   type SessionCard,
+  type SessionEnding,
   type SessionEntry,
 } from "../map/sessions";
 import type { CuratorRead } from "../turn/curator";
@@ -17,12 +17,19 @@ import { taskOfSent } from "../turn/packet";
  * STORY 19.4 — THE CURATOR DISTILS A RUN'S RESULT (ADR-0037 §10's planned
  * reuse).
  *
- * A session card's copy verb ("make a card from this") is a RULE's copy and
- * stays exactly what it was: the run's words, whole, as a selection card. This
- * module is the SECOND path, the artifact: one CURATOR model call turns the
- * run's result into a card with a claim and its caveats. The curator itself is
- * REUSED AS-IS (turn/curator.ts): the same three inputs, the same caps, the same
- * parse, the same decline rule and the same sentences.
+ * A session card's rule copy is a RULE's copy and stays exactly what it was:
+ * a completed run's words, whole, as a selection card. This module is the
+ * SECOND path, the artifact: one CURATOR model call turns the run's result into
+ * a card with a claim and its caveats. The curator itself is REUSED AS-IS
+ * (turn/curator.ts): the same three inputs, the same caps, the same parse, the
+ * same decline rule and the same sentences.
+ *
+ * STORY 22.4 — THE CALL IS AUTOMATIC. A run's ending makes this call by itself
+ * (useGround's settle path), so the person never chooses between two verbs;
+ * the card's one verb is the manual re-press after a decline or a failure.
+ * A run that did NOT finish but left words is read the same way, and the
+ * artifact names the ending; the rule copy above still refuses a partial,
+ * because a partial is never a result.
  *
  * WHAT IS NEW HERE IS THE BRIEF. An ask card's brief is the person's typed
  * question. A session card's task is EPHEMERAL — the card holds no task field,
@@ -69,14 +76,31 @@ export const SESSION_CURATOR_FAILED_SENTENCE =
   "the result stands, but no card was made: the curator did not answer.";
 
 /**
- * WHAT A PRESS NEEDS TO HAVE (PURE): the task the run was sent, and the reply
- * that came back. Only a COMPLETED run has a result — a partial is never a
- * result (the 18.4 rule) — and only that same run's `sent` entry can brief the
- * curator. A transcript from before the task rode the packet has a completed
- * run and no task, and that refuses with its own sentence rather than guessing.
+ * THE ONE SENTENCE WHEN NO MANAGER RESOLVES (PROVISIONAL, story 22.4): no call
+ * was attempted, so the failure sentence would claim an answer that never
+ * happened. The person keeps the words and the rule's copy beside it is still
+ * the card path.
+ */
+export const SESSION_CURATOR_NO_MANAGER_SENTENCE =
+  "no manager model is configured, so no card was made.";
+
+/**
+ * WHAT A DISTIL NEEDS TO HAVE (PURE): the task the run was sent, and the words
+ * that came back. STORY 22.4 — the words may have come from a run that did NOT
+ * finish: a partial is never a RESULT (the rule's copy still refuses it), but
+ * it can hold text a curator reads to say what occurred. The ending rides
+ * beside the words so the artifact can name it. Only that same run's `sent`
+ * entry can brief the curator; a transcript from before the task rode the
+ * packet refuses with its own sentence rather than guessing.
  */
 export type SessionDistilBrief =
-  | { kind: "ready"; task: string; reply: string }
+  | {
+      kind: "ready";
+      task: string;
+      reply: string;
+      /** How that run ended; "completed" is the ordinary case. */
+      ending: SessionEnding;
+    }
   | { kind: "refused"; message: string };
 
 /** The last run's `sent` packet, or null: the span between two endings. */
@@ -107,14 +131,8 @@ function lastSentText(entries: readonly SessionEntry[]): string | null {
 export function sessionDistilBrief(
   entries: readonly SessionEntry[],
 ): SessionDistilBrief {
-  const result = sessionRunResult(entries);
-  if (result.ending === null) {
-    return { kind: "refused", message: SESSION_RESULT_EMPTY_SENTENCE };
-  }
-  if (result.ending !== "completed") {
-    return { kind: "refused", message: SESSION_RESULT_UNFINISHED_SENTENCE };
-  }
-  if (result.text === "") {
+  const run = sessionRunText(entries);
+  if (run.ending === null || run.text === "") {
     return { kind: "refused", message: SESSION_RESULT_EMPTY_SENTENCE };
   }
   const sent = lastSentText(entries);
@@ -122,7 +140,7 @@ export function sessionDistilBrief(
   if (task === null) {
     return { kind: "refused", message: SESSION_DISTIL_NO_TASK_SENTENCE };
   }
-  return { kind: "ready", task, reply: result.text };
+  return { kind: "ready", task, reply: run.text, ending: run.ending };
 }
 
 /**
@@ -171,6 +189,12 @@ export interface SessionCuratorInput {
   sentence: string | null;
   /** The two models the artifact names as its authors. */
   authors: { manager: string; task: string };
+  /**
+   * STORY 22.4 — HOW THE RUN THIS CARD DISTILS ENDED (PROVISIONAL). Absent is
+   * a completed run and the card says nothing extra; a partial writes its
+   * ending on the reading so the provenance line can name it.
+   */
+  ending?: SessionEnding;
 }
 
 /**
@@ -233,7 +257,12 @@ export async function writeCuratedRunCard(
     read.text,
     input.taken,
     undefined,
-    { taken: input.slugs },
+    {
+      taken: input.slugs,
+      ...(input.ending === undefined || input.ending === "completed"
+        ? {}
+        : { ending: input.ending }),
+    },
     input.authors,
   );
   if (written.kind === "refused") {

@@ -24,6 +24,7 @@ import { PacketSurface } from "./PacketSurface";
 import {
   ASK_DECLARATION_VERB,
   ASK_DECLARATION_VERB_SENT,
+  SESSION_RESULT_KEEP_VERB,
 } from "./contactRules";
 import { assembleSessionPacket, type AskPacketCard } from "../turn/packet";
 import type { TurnMessage } from "../turn/protocol";
@@ -339,6 +340,7 @@ export function SessionCard({
   onMakeResult,
   onDistilResult,
   distilWords = [],
+  distilNotice = null,
   onRemove,
   onRename,
   onMove,
@@ -467,11 +469,19 @@ export function SessionCard({
    */
   onDistilResult?: () => Promise<GroundAddResult>;
   /**
-   * STORY 19.4 — THE EGRESS, DECLARED BEFORE THE PRESS: the run's row, then the
-   * model that would distil its result (or the honest no-manager line). One
-   * quiet line per fact, from the pure rules; [] says nothing.
+   * STORY 22.4 — THE RUN'S CALLS, DECLARED BEFORE THE RUN: the task model
+   * answers, then the manager model distils the result (or the honest
+   * no-manager line). One quiet line per fact, from the pure rules; [] says
+   * nothing.
    */
   distilWords?: readonly string[];
+  /**
+   * STORY 22.4 — THE AUTOMATIC DISTIL'S ONE QUIET LINE, when it made no card
+   * (PROVISIONAL view state from the layer). A decline, an unusable card, a
+   * failed call or no manager leaves exactly this sentence; the rule's copy is
+   * offered beside it as the fallback verb. Null is silence: a card was made.
+   */
+  distilNotice?: string | null;
   /**
    * STORY 16.22 — RENAME this card: the shared name pill IS the rename field.
    * The name is the person's and the slug is identity (the transcript's file
@@ -829,19 +839,18 @@ export function SessionCard({
   }
 
   /**
-   * STORY 19.4 — the distil press. One curator call, then a card (or one
-   * sentence): the busy flag holds the verb while the model works, and a
-   * refusal — a decline, an unusable or over-long card, a failed call, no task
-   * in the transcript — lands in the problem line with NOTHING written and the
-   * transcript untouched.
+   * STORY 22.4 — the distil re-press. The automatic ending makes this call by
+   * itself; this verb is what remains for a person trying again after a
+   * decline or a failure. A refusal is the LAYER's one quiet line (the
+   * `distilNotice` prop), shown with the rule copy's fallback verb, so the
+   * card never says the same sentence twice.
    */
   async function distilResult(): Promise<void> {
     if (busy || onDistilResult === undefined) return;
     setBusy(true);
     setProblem(null);
-    const result = await onDistilResult();
+    await onDistilResult();
     setBusy(false);
-    if (!result.ok) setProblem(result.message);
   }
 
   /**
@@ -1352,6 +1361,19 @@ export function SessionCard({
           {declaration !== null && (
             <div className="session-card-declaration">{declaration}</div>
           )}
+          {/* STORY 22.4 — THE CALLS, NAMED BEFORE THE RUN: the task model
+              answers, then the manager model distils the result into a card
+              (or, with no manager, the card will be made by a rule). The distil
+              is automatic, so no condition line claims a press. */}
+          {distilWords.length > 0 && (
+            <div className="session-distil-declaration">
+              {distilWords.map((line, index) => (
+                <div className="session-distil-line" key={index}>
+                  {line}
+                </div>
+              ))}
+            </div>
+          )}
           {/* STORY 19.2 — THE BOUND RUN'S BLAST RADIUS, in one sentence: the
               folder's full path and what the person said the run may do there.
               Shown only when both are true, so an unbound or undeclared card
@@ -1435,18 +1457,25 @@ export function SessionCard({
                 {SETUP_VERBS.signIn}
               </button>
             )}
-            {/* STORY 18.4 — A FINISHED RUN'S RESULT BECOMES A COPY. Offered
-                once a run has ended; a run with no text refuses with the ONE
-                sentence in the problem line and writes nothing. */}
-            {entries.some((entry) => entry.kind === "ended") && (
-              <button
-                type="button"
-                className="session-card-make"
-                disabled={busy || onMakeResult === undefined}
-                onClick={() => void makeResult()}
-              >
-                make a card from this
-              </button>
+            {/* STORY 22.4 — THE QUIET FALLBACK. When the automatic distil made
+                no card — a decline, an unusable or over-long card, a failed
+                call, no manager — its ONE sentence sits here with the rule
+                copy's verb. The copy is unchanged (18.4) and refuses a partial
+                outright, so a partial shows the sentence without the verb. */}
+            {distilNotice !== null && (
+              <div className="session-distil-fallback">
+                <span className="session-distil-said">{distilNotice}</span>
+                {lastEnded !== null && lastEnded.ending === "completed" && (
+                  <button
+                    type="button"
+                    className="session-card-make"
+                    disabled={busy || onMakeResult === undefined}
+                    onClick={() => void makeResult()}
+                  >
+                    {SESSION_RESULT_KEEP_VERB}
+                  </button>
+                )}
+              </div>
             )}
             {/* STORY 19.4 — THE ARTIFACT PATH, beside the rule's copy: one
                 curator call turns the completed run's result into a card with
@@ -1463,19 +1492,6 @@ export function SessionCard({
                 distil this into a card
               </button>
             )}
-            {/* The egress, declared before the press: the run's row, then the
-                model that would distil it — or that no manager is configured,
-                in which case the rule's copy beside it is the card path. */}
-            {entries.some((entry) => entry.kind === "ended") &&
-              distilWords.length > 0 && (
-                <div className="session-distil-declaration">
-                  {distilWords.map((line, index) => (
-                    <div className="session-distil-line" key={index}>
-                      {line}
-                    </div>
-                  ))}
-                </div>
-              )}
             {/* STORY 18.5 — the card's remove, beside close: immediate,
                 reversible through the one toast. A live run is never cut by a
                 delete — the verb waits. */}

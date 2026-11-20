@@ -28,6 +28,8 @@ import {
   ASK_CALLS_MANAGER,
   ASK_CALLS_NO_MANAGER,
   ASK_CALLS_SAME,
+  ASK_CALLS_TASK,
+  SESSION_RESULT_KEEP_VERB,
   sessionDistilWords,
 } from "../src/canvas/contactRules";
 import {
@@ -36,7 +38,6 @@ import {
 } from "../src/canvas/useGround";
 import {
   SESSION_RESULT_EMPTY_SENTENCE,
-  SESSION_RESULT_UNFINISHED_SENTENCE,
   sessionResultName,
   type SessionCard as SessionCardFamily,
   type SessionEntry,
@@ -92,7 +93,7 @@ import { runRunContact, type RunContactDeps } from "../src/contacts/run";
  *     the session slug as its provenance and the wire back to the card;
  *   - a decline, an unusable block, an over-long card or a failed call writes
  *     NO card and leaves the transcript's entries untouched;
- *   - the rule's copy verb ("make a card from this") is untouched.
+ *   - the rule's copy path is untouched underneath its fallback verb.
  */
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
@@ -305,18 +306,26 @@ describe("the brief is the task, recovered from the run's own packet", () => {
     expect(SESSION_DISTIL_NO_TASK_SENTENCE).toContain("no card");
   });
 
-  test("only a completed run with text has a brief at all", () => {
+  test("a run with words has a brief, completed or not; no words has none", () => {
     expect(sessionDistilBrief([])).toEqual({
       kind: "refused",
       message: SESSION_RESULT_EMPTY_SENTENCE,
     });
+    // STORY 22.4 — A PARTIAL'S WORDS ARE READ TOO, and the ending rides back so
+    // the artifact can name it. The rule's COPY still refuses the same run.
     expect(
       sessionDistilBrief([
         { kind: "started", t: "1" },
+        { kind: "sent", text: PACKET.text, t: "1" },
         { kind: "text", text: "half" },
         { kind: "ended", ending: "stopped", t: "2" },
       ]),
-    ).toEqual({ kind: "refused", message: SESSION_RESULT_UNFINISHED_SENTENCE });
+    ).toEqual({
+      kind: "ready",
+      task: TASK,
+      reply: "half",
+      ending: "stopped",
+    });
     expect(
       sessionDistilBrief([
         { kind: "started", t: "1" },
@@ -329,6 +338,7 @@ describe("the brief is the task, recovered from the run's own packet", () => {
       kind: "ready",
       task: TASK,
       reply: SENTINEL_OTHER + REPLY,
+      ending: "completed",
     });
   });
 
@@ -854,32 +864,42 @@ describe("the card's two card verbs", () => {
     onDistilResult: async () => ({ ok: true as const }),
   };
 
-  test("the distil verb is offered only once a run has ended, beside the copy", () => {
+  test("the distil verb is one primary verb; the copy is a fallback, never a peer", () => {
     const closed = renderToStaticMarkup(createElement(SessionCard, props));
     expect(closed).not.toContain("distil this into a card");
     const open = renderToStaticMarkup(
       createElement(SessionCard, { ...props, entries: ENTRIES }),
     );
-    expect(open).toContain("make a card from this");
+    // STORY 22.4 — after the automatic distil succeeded the face says nothing
+    // about a copy: there is ONE card verb, the manual re-press.
     expect(open).toContain("distil this into a card");
-    // The egress is declared before the press, in the card's own quiet line.
+    expect(open).not.toContain(SESSION_RESULT_KEEP_VERB);
+    // The calls are declared BEFORE the run, in the card's own quiet lines.
+    const words = [
+      "the task model answers: Local agent",
+      "then the manager model distils the reply into a card: Small / Tiny",
+    ];
     const declared = renderToStaticMarkup(
       createElement(SessionCard, {
         ...props,
-        entries: ENTRIES,
-        distilWords: ["this run was made by: Local agent", "then the manager model distils the reply into a card: Small / Tiny"],
+        entries: [],
+        distilWords: words,
       }),
     );
-    expect(declared).toContain("this run was made by: Local agent");
-    expect(declared).toContain("then the manager model distils the reply into a card: Small / Tiny");
+    expect(declared).toContain(words[0]!);
+    expect(declared).toContain(words[1]!);
   });
 
-  test("the rule's copy verb is untouched: same words, same handler", () => {
+  test("the rule's copy is untouched underneath its fallback wording", () => {
     const card = source("canvas/SessionCard.tsx");
-    expect(card).toContain("make a card from this");
-    expect(card.match(/make a card from this/g)).toHaveLength(1);
-    // The copy still calls the untouched writer through its own prop.
+    // The verb the person reads now belongs to the notice, and the old equal
+    // choice is gone from the face.
+    expect(card).toContain("SESSION_RESULT_KEEP_VERB");
+    expect(card).not.toContain("make a card from this");
+    // It still calls the untouched writer through its own prop, inside the
+    // distil notice's block only.
     expect(card).toContain("onMakeResult()");
+    expect(card).toContain("distilNotice !== null");
     // And the hook's copy path is unchanged: writeResultCard on a selection.
     const hook = source("canvas/useGround.ts");
     expect(hook).toContain("await writeResultCard(");
@@ -889,11 +909,14 @@ describe("the card's two card verbs", () => {
     const task = { row: "Local agent", model: "" };
     const manager = { row: "Small", model: "Tiny" };
     expect(sessionDistilWords({ task, manager })).toEqual([
-      "this run was made by: Local agent",
+      ASK_CALLS_TASK + "Local agent",
       "then the manager model distils the reply into a card: Small / Tiny",
     ]);
     expect(sessionDistilWords({ task, manager }).join(" ")).toContain(
       ASK_CALLS_MANAGER,
+    );
+    expect(sessionDistilWords({ task, manager }).join(" ")).toContain(
+      ASK_CALLS_TASK,
     );
     // One model both: the ask's single line, because there is no difference
     // to name.
@@ -901,8 +924,10 @@ describe("the card's two card verbs", () => {
     expect(sessionDistilWords({ task, manager: same })).toEqual([
       ASK_CALLS_SAME + "Local agent",
     ]);
-    // No manager configured at all: the rule copy beside it is the card path.
+    // No manager configured at all: the card will be made by a rule, and the
+    // declaration says so instead of promising a second call.
     expect(sessionDistilWords({ task, manager: null })).toEqual([
+      ASK_CALLS_TASK + "Local agent",
       ASK_CALLS_NO_MANAGER,
     ]);
   });

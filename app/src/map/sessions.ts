@@ -1129,9 +1129,9 @@ export interface SessionRunResult {
   text: string;
 }
 
-export function sessionRunResult(
+function lastRunSpan(
   entries: readonly SessionEntry[],
-): SessionRunResult {
+): { ending: SessionEnding; start: number; end: number } | null {
   let lastEnd = -1;
   for (let at = entries.length - 1; at >= 0; at -= 1) {
     if (entries[at]!.kind === "ended") {
@@ -1139,11 +1139,9 @@ export function sessionRunResult(
       break;
     }
   }
-  if (lastEnd < 0) return { ending: null, text: "" };
+  if (lastEnd < 0) return null;
   const ended = entries[lastEnd]!;
-  if (ended.kind !== "ended" || ended.ending !== "completed") {
-    return { ending: ended.kind === "ended" ? ended.ending : null, text: "" };
-  }
+  if (ended.kind !== "ended") return null;
   // The run's own span: from the PREVIOUS ending (exclusive) to this one.
   let start = 0;
   for (let at = lastEnd - 1; at >= 0; at -= 1) {
@@ -1152,12 +1150,47 @@ export function sessionRunResult(
       break;
     }
   }
+  return { ending: ended.ending, start, end: lastEnd };
+}
+
+function spanText(
+  entries: readonly SessionEntry[],
+  span: { start: number; end: number },
+): string {
+  // The empty join: the transcript's chunks are verbatim and contiguous, so
+  // concatenating them reconstructs exactly the streamed words.
   let text = "";
-  for (let at = start; at < lastEnd; at += 1) {
+  for (let at = span.start; at < span.end; at += 1) {
     const entry = entries[at]!;
     if (entry.kind === "text") text += entry.text;
   }
-  return { ending: "completed", text };
+  return text;
+}
+
+export function sessionRunResult(
+  entries: readonly SessionEntry[],
+): SessionRunResult {
+  const span = lastRunSpan(entries);
+  if (span === null) return { ending: null, text: "" };
+  if (span.ending !== "completed") {
+    return { ending: span.ending, text: "" };
+  }
+  return { ending: "completed", text: spanText(entries, span) };
+}
+
+/**
+ * STORY 22.4 — THE LAST RUN'S WORDS, WHATEVER ITS ENDING (PURE, PROVISIONAL).
+ * A partial run is never a RESULT — the rule's copy above still refuses it —
+ * but it can hold text entries, and those words are what a curator may read to
+ * say what occurred. The ending rides beside them so the artifact can name it
+ * on its face; the copy path never calls this.
+ */
+export function sessionRunText(
+  entries: readonly SessionEntry[],
+): SessionRunResult {
+  const span = lastRunSpan(entries);
+  if (span === null) return { ending: null, text: "" };
+  return { ending: span.ending, text: spanText(entries, span) };
 }
 
 /**

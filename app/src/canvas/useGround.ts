@@ -96,9 +96,11 @@ import {
   sessionResultName,
   sessionResultSize,
   sessionRunResult,
+  sessionRunText,
   withSessionMoved,
   type RemovedSession,
   type SessionCard,
+  type SessionEnding,
   type SessionEntry,
   type SessionIo,
   type SessionPermissionReply,
@@ -279,6 +281,7 @@ import {
 import { mapDigest } from "../turn/curatorDigest";
 import {
   SESSION_CURATOR_FAILED_SENTENCE,
+  SESSION_CURATOR_NO_MANAGER_SENTENCE,
   sessionDistilBrief,
   writeCuratedRunCard,
 } from "./sessionCurator";
@@ -562,6 +565,14 @@ export interface GroundView {
    * CODE never enters it (the card's own field holds that for one send).
    */
   sessionSignIn: Readonly<Record<string, SessionSignIn>>;
+  /**
+   * STORY 22.4 — each session card's ONE QUIET LINE when its automatic distil
+   * made no card, keyed by slug (PROVISIONAL view state, never a record). It is
+   * filled by the run's ending, dropped when a new run starts or a card is
+   * made, and shown with the rule copy's fallback verb. Silence — a card was
+   * made — leaves no entry: no toast, no badge, no second sentence.
+   */
+  sessionDistilNotice: Readonly<Record<string, string>>;
   /**
    * STORY 22.1 — each tool row's PER-MACHINE fact, read from the app config's
    * `toolRows` key and laid over the shipped rows by id (PROVISIONAL). It is
@@ -910,7 +921,7 @@ export interface GroundView {
   /**
    * STORY 22.1 — TEST this card's tool row (PROVISIONAL): ONE tiny task through
    * the SAME run wire and lane the card's run uses, with NO cwd (a fresh
-   * session directory), one minute, and the row's normal env resolution. It is
+   * session directory), the probe’s stated budget, and the row's normal env resolution. It is
    * NOT a card run: no transcript line, no `sent`, no history, no mirror, no
    * record. A completed turn with words records the fact — verified, the date
    * and the first line — and the row's state says it; every other ending keeps
@@ -1109,6 +1120,7 @@ const EMPTY: GroundLoaded = {
   sessionRunning: [],
   sessionPermission: {},
   sessionSignIn: {},
+  sessionDistilNotice: {},
   toolRowFacts: [],
   readings: [],
   media: [],
@@ -2218,8 +2230,16 @@ export async function writeDistilledCard(
   text: string,
   taken: string,
   io: DistilledIo = DISTILLED_IO,
-  /** The shared slug set (ground + asks + sessions), as every new card mints. */
-  options: { taken?: ReadonlySet<string> } = {},
+  /**
+   * The shared slug set (ground + asks + sessions), as every new card mints,
+   * and STORY 22.4's ending: a run that did not finish writes it on the
+   * reading so the face can name it. Absent is a completed run, and every
+   * existing card keeps the bytes it had.
+   */
+  options: {
+    taken?: ReadonlySet<string>;
+    ending?: SessionEnding;
+  } = {},
   /**
    * STORY 17.12 — THE TWO MODELS when a CURATOR made this card: the manager
    * that distilled and the task whose reply it read. Absent is 17.11's rule
@@ -2235,6 +2255,7 @@ export async function writeDistilledCard(
     askSlug,
     taken,
     authors,
+    options.ending,
   );
   await io.storeDistilledText(workspacePath, reading.on, text);
   const nextReadings = withReading(readings, reading);
@@ -4427,6 +4448,17 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   // card draws. The phrase above sessionSignIn says the code never lands here.
   const sessionSignInRef = useRef<Record<string, SessionSignIn>>({});
   const sessionSignInHandlesRef = useRef<Record<string, SetupChildHandle>>({});
+  // STORY 22.4 — the automatic distil's one sentence per card (view state).
+  const sessionDistilNoticeRef = useRef<Record<string, string>>({});
+  /**
+   * STORY 22.4 — THE AUTO-DISTIL SEAM. The run's settle path is defined before
+   * the curator's callback (which reads the writer and the turn port), so the
+   * callback is handed through this ref rather than re-ordered: one distil
+   * implementation serves the automatic ending and the manual re-press.
+   */
+  const autoDistilRef = useRef<
+    ((slug: string) => Promise<GroundAddResult>) | null
+  >(null);
   // STORY 22.1: each tool row's per-machine fact, from the config file. It is
   // NOT map data — no write below touches it except a passing row test — and
   // the shipped rows stay immutable; this is what is laid over them by id.
@@ -4604,6 +4636,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     sessionRunning: sessionRunningRef.current,
     sessionPermission: sessionPermissionRef.current,
     sessionSignIn: sessionSignInRef.current,
+    sessionDistilNotice: sessionDistilNoticeRef.current,
     // STORY 22.1: the config's per-machine row facts, laid over the shipped
     // rows by the reading that draws them. VIEW ONLY; no map file holds one.
     toolRowFacts: toolRowFactsRef.current,
@@ -4797,6 +4830,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     sessionRunsRef.current = {};
     sessionRunningRef.current = [];
     sessionPermissionRef.current = {};
+    sessionDistilNoticeRef.current = {};
     // STORY 22.1b: a sign-in belongs to the card it opened from, and the card
     // belongs to the workspace it was made in. Leaving CANCELS every live setup
     // child (its own stop, then the child dies) and drops the view; nothing is
@@ -4830,6 +4864,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       sessionRunningRef.current = [];
       sessionRunsRef.current = {};
       sessionPermissionRef.current = {};
+      sessionDistilNoticeRef.current = {};
       sessionSignInHandlesRef.current = {};
       sessionSignInRef.current = {};
       readingsRef.current = [];
@@ -6397,6 +6432,13 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         // problem line is the whole of the press.
         return Promise.resolve({ ok: false, message: started.message });
       }
+      // STORY 22.4 — A NEW RUN PUTS THE LAST RUN'S QUIET LINE AWAY: the next
+      // ending's automatic distil is the only thing that may speak again.
+      if (sessionDistilNoticeRef.current[slug] !== undefined) {
+        const notices = { ...sessionDistilNoticeRef.current };
+        delete notices[slug];
+        sessionDistilNoticeRef.current = notices;
+      }
       sessionRunsRef.current = {
         ...sessionRunsRef.current,
         [slug]: started.start.handle,
@@ -6424,6 +6466,26 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             [slug]: transcript.entries,
           };
           setState(snapshot());
+          // STORY 22.4 — THE RESULT BECOMES A CARD BY ITSELF. The run's ending
+          // is the trigger: when the last run left words — completed, or a
+          // partial that still holds text — the distil flow runs with NO press,
+          // and its artifact lands beside this card. A refusal (a decline, a
+          // failed call, no manager) writes no card and leaves ONE quiet line
+          // on the face with the rule copy's fallback verb; it never turns the
+          // run's own result into a failure. A run with NO words has nothing to
+          // distil and does nothing; a transcript with no task answers its own
+          // one sentence instead of guessing what the run was asked.
+          const autoRun = sessionRunText(transcript.entries);
+          if (autoRun.ending !== null && autoRun.text !== "") {
+            const auto = await autoDistilRef.current?.(slug);
+            if (auto !== undefined && !auto.ok) {
+              sessionDistilNoticeRef.current = {
+                ...sessionDistilNoticeRef.current,
+                [slug]: auto.message,
+              };
+              setState(snapshot());
+            }
+          }
           // STORY 18.5 — THE RUN'S ONE MOVE, after it settles. ONE PRISM is
           // appended through the contact log's own queue, with the tool ROW's
           // id, the ending and the result's size — and NOT ONE WORD of what the
@@ -6463,7 +6525,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
 
   /**
    * STORY 22.1 — TEST THIS CARD'S ROW (PROVISIONAL). ONE tiny task through the
-   * same run wire and lane an ordinary run uses, with NO cwd, one minute and
+   * same run wire and lane an ordinary run uses, with NO cwd, the probe’s stated budget and
    * the row's normal env resolution — and NOTHING that belongs to the card:
    * no transcript entry, no `sent`, no history event, no mirror rewrite, no
    * record write. The run settles in memory with its ending and the first line
@@ -6820,6 +6882,13 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             ...statesRef.current,
             [records.reading.on]: "current" as ReadingState,
           };
+          // STORY 22.4 — THE FALLBACK MADE THE CARD, so its offer and its one
+          // sentence go: the face says nothing more about the attempt.
+          if (sessionDistilNoticeRef.current[slug] !== undefined) {
+            const notices = { ...sessionDistilNoticeRef.current };
+            delete notices[slug];
+            sessionDistilNoticeRef.current = notices;
+          }
           setState(snapshot());
           outcome = { ok: true };
           // The copy is an ordinary card: its appearance is an authored move,
@@ -6853,8 +6922,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
-   * STORY 19.4 — DISTIL THE LAST COMPLETED RUN'S RESULT INTO AN ARTIFACT CARD
-   * (ADR-0037 §10's planned reuse).
+   * STORY 19.4 — DISTIL THE LAST RUN'S WORDS INTO AN ARTIFACT CARD (ADR-0037
+   * §10's planned reuse). STORY 22.4 — THE RUN'S ENDING CALLS IT BY ITSELF;
+   * the verb that calls it too is the manual re-press, and a run that did not
+   * finish but left text is read the same way, its card naming the ending.
    *
    * THE RULE'S COPY STAYS: `makeCardFromRun` above is untouched, and the raw
    * result is exactly where it was, one press from the card's transcript. This
@@ -6867,7 +6938,9 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    *
    * THE BRIEF IS THE TASK: the run's task is ephemeral, so it is recovered from
    * the transcript's `sent` entry (sessionCurator.ts's `sessionDistilBrief`).
-   * No task, no completed run, no text: ONE sentence, NO call, nothing written.
+   * No task and no text: ONE sentence, NO call, nothing written. A partial's
+   * words ARE read; only the rule's copy refuses them, because a partial is
+   * never a result.
    *
    * THE MATERIAL RULE HOLDS BY CONSTRUCTION: only the task, the reply and the
    * map digest ride (turn/curator.ts and turn/curatorDigest.ts have no text
@@ -6890,9 +6963,28 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
       }
       const entries = sessionEntriesRef.current[slug] ?? [];
+      // STORY 22.4 — ONE WAY TO SAY A CARD WAS NOT MADE. This line is the
+      // card's ONE sentence, shown with the rule copy's fallback verb; it is
+      // also the only notice the automatic ending leaves, so a decline never
+      // arrives as a toast, a badge or a red failure.
+      const say = (message: string): GroundAddResult => {
+        sessionDistilNoticeRef.current = {
+          ...sessionDistilNoticeRef.current,
+          [slug]: message,
+        };
+        setState(snapshot());
+        return { ok: false, message };
+      };
+      const clearDistilNotice = (): void => {
+        if (sessionDistilNoticeRef.current[slug] === undefined) return;
+        const notices = { ...sessionDistilNoticeRef.current };
+        delete notices[slug];
+        sessionDistilNoticeRef.current = notices;
+        setState(snapshot());
+      };
       const brief = sessionDistilBrief(entries);
       if (brief.kind === "refused") {
-        return Promise.resolve({ ok: false, message: brief.message });
+        return Promise.resolve(say(brief.message));
       }
       // THE DIGEST (story 17.14's shape, story 19.4's anchor): the session card
       // being distilled, the artifacts already made from it, the cards wired
@@ -6930,8 +7022,14 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
         // no Move and the asymmetry's one sentence stands.
         const current = await loadTurnSettings();
         const manager = resolveManager(current);
-        if (turn === undefined || manager.kind !== "resolved") {
-          return { ok: false, message: SESSION_CURATOR_FAILED_SENTENCE };
+        if (turn === undefined) {
+          return say(SESSION_CURATOR_FAILED_SENTENCE);
+        }
+        if (manager.kind !== "resolved") {
+          // NO CALL IS MADE, so the failure sentence would claim an answer that
+          // never happened: the no-manager sentence says the truth and the
+          // rule's copy is still one press away.
+          return say(SESSION_CURATOR_NO_MANAGER_SENTENCE);
         }
         let managerKey = "";
         try {
@@ -6940,7 +7038,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
               ? await readSecret(manager.provider.id)
               : "";
         } catch {
-          return { ok: false, message: SESSION_CURATOR_FAILED_SENTENCE };
+          return say(SESSION_CURATOR_FAILED_SENTENCE);
         }
         const managerRoute = routeOf(
           manager.provider,
@@ -7007,11 +7105,14 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
                   task:
                     shippedAcpSpec(session.tool)?.name ?? session.tool,
                 },
+                // STORY 22.4 — a partial's card names its ending on its face;
+                // a completed run's card says exactly what it always did.
+                ending: brief.ending,
               },
               { writeCard: writeDistilledCard },
             );
             if (written.kind === "none") {
-              outcome = { ok: false, message: written.sentence };
+              outcome = say(written.sentence);
               return;
             }
             const card = written.card;
@@ -7026,6 +7127,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
               ...statesRef.current,
               [card.records.reading.on]: "current" as ReadingState,
             };
+            // A card was made, so the face says nothing: silence is success.
+            clearDistilNotice();
             setState(snapshot());
             const made = card.records.reading.on;
             outcome = { ok: true, created: made };
@@ -7041,14 +7144,21 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             queueMirror();
           })
           .then(() => outcome)
-          .catch(() => ({
-            ok: false,
-            message: "cannot write the map folder.",
-          }));
+          .catch(() => say("cannot write the map folder."));
       })();
     },
     [workspacePath, turn],
   );
+
+  /**
+   * STORY 22.4 — THE RUN'S ENDING HANDS THE CURATOR ITS CALL. The settle path
+   * is defined above the curator callback, so the callback is registered here
+   * and read from the ref there: one implementation, no re-ordering, and the
+   * manual verb goes through the same road.
+   */
+  useEffect(() => {
+    autoDistilRef.current = distilRunResult;
+  }, [distilRunResult]);
 
   /**
    * STORY 17.1 — ASK ONE QUESTION inside an ask card. STORY 17.3 makes the
@@ -8406,6 +8516,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     sessionRunning: state.sessionRunning,
     sessionPermission: state.sessionPermission,
     sessionSignIn: state.sessionSignIn,
+    sessionDistilNotice: state.sessionDistilNotice,
     toolRowFacts: state.toolRowFacts,
     readings: state.readings,
     media: state.media,
