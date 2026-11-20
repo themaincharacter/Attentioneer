@@ -538,6 +538,35 @@ export const CONTENT_CLASSES = [
   // sit OUTSIDE .plane (beside the comparison and the crank), so the plane's
   // armed gate never reaches them — and a held ghost draws nothing on the map.
   "ghost-diamond",
+  // STORY 21.3 — THE COMMAND CARD (ADR-0038 decision 1). It sits OUTSIDE
+  // `.plane` at app level, so the plane's armed gate never reaches it; listed
+  // here for the same belt-and-braces reason as the toast: an app-level surface
+  // over the map must never let a press fall through to a plane gesture. Every
+  // element the card draws is named, so a new affordance inherits the rule.
+  "command-card",
+  "command-card-bar",
+  "command-card-head",
+  "command-card-title",
+  "command-card-close",
+  "command-card-body",
+  "command-card-last",
+  "command-card-script",
+  "command-card-acts",
+  "command-card-verbs",
+  "command-card-accept",
+  "command-card-refuse",
+  "command-card-clarify",
+  "command-card-question",
+  "command-card-answer-row",
+  "command-card-answer",
+  "command-card-answer-send",
+  "command-card-problem",
+  "command-card-quiet",
+  "command-card-working",
+  "command-card-compose",
+  "command-card-instruction",
+  "command-card-read",
+  "command-card-elsewhere",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */

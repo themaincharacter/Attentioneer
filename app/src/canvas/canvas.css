@@ -8738,3 +8738,268 @@ body {
 .session-card-sent {
   padding-top: 2px;
 }
+
+
+/* ------------------------------------------------------------------------- *
+ * STORY 21.3 — THE COMMAND CARD (ADR-0038 decisions 1, 4 and 5).
+ *
+ * Closed by default: a slim bar at the bottom of the app with ONE line of
+ * invitation. No badge, no pulse, no unread marker, no entry animation — it
+ * does not call attention to itself and it does not open itself. The open card
+ * is a quiet non-modal surface, present on every map, whose BODY is its only
+ * scroll region (overflow on the body, never on the plane) and whose fixed
+ * bottom-right seat keeps it clear of the level control and the bottom-centre
+ * toast/armed bar. PROVISIONAL (ADR-0038's consequences): the seat, the width,
+ * the height bound and every measurement here.
+ * ------------------------------------------------------------------------- */
+
+.command-card {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 35;
+  box-sizing: border-box;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.command-card.closed {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* The closed bar's one line. A quiet chip, not a call to action: the sentence
+   is the whole surface and nothing marks it unread or counts anything. */
+.command-card-bar {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-soft);
+  background: rgba(255, 253, 248, 0.86);
+  border: 1px solid rgba(141, 136, 124, 0.22);
+  border-radius: 999px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+
+.command-card-bar:hover {
+  color: var(--ink-strong);
+  border-color: rgba(141, 136, 124, 0.4);
+}
+
+.command-card-bar:focus-visible,
+.command-card-close:focus-visible,
+.command-card-read:focus-visible,
+.command-card-accept:focus-visible,
+.command-card-refuse:focus-visible,
+.command-card-answer-send:focus-visible {
+  outline: 1.5px solid #6b675e;
+  outline-offset: 1px;
+}
+
+/* The open card. A quiet surface with a fixed maximum height: the page does
+   not scroll and the map never scrolls under it. */
+.command-card.open {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(60vh, 460px);
+  padding: 10px 13px 11px;
+  background: rgba(255, 253, 248, 0.97);
+  border: 1px solid rgba(141, 136, 124, 0.26);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(40, 35, 25, 0.08);
+}
+
+.command-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.command-card-title {
+  font-size: 10.5px;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.command-card-close {
+  padding: 0 2px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.command-card-close:hover {
+  color: var(--ink-strong);
+}
+
+/* THE BODY IS THE ONLY SCROLL REGION (the story's hard constraint). It takes
+   the content's height up to the card's bound and scrolls inside itself; the
+   wheel is contained here so the plane under the card never zooms. */
+.command-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.command-card-last {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+/* THE ACT LIST: a SHORT numbered list in plain words, one line per act. No
+   counts beyond the list's own numbers, no icons, no badges. */
+.command-card-acts {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--ink-strong);
+}
+
+.command-card-acts.applied {
+  color: var(--ink);
+}
+
+.command-card-verbs,
+.command-card-answer-row,
+.command-card-compose {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-card-verbs {
+  padding-top: 2px;
+}
+
+.command-card-accept,
+.command-card-read,
+.command-card-answer-send {
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.2;
+  color: var(--ink-strong);
+  background: rgba(141, 136, 124, 0.1);
+  border: 1px solid rgba(141, 136, 124, 0.28);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.command-card-accept:hover,
+.command-card-read:hover,
+.command-card-answer-send:hover {
+  background: rgba(141, 136, 124, 0.18);
+}
+
+.command-card-accept:disabled,
+.command-card-read:disabled,
+.command-card-answer-send:disabled,
+.command-card-refuse:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.command-card-refuse {
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.2;
+  color: var(--ink-soft);
+  background: none;
+  border: none;
+  padding: 4px 4px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.command-card-refuse:hover {
+  color: var(--ink-strong);
+}
+
+/* THE ONE CLARIFYING QUESTION. It is a question with a field, not a guess:
+   the acts are absent while it asks, and the card offers no accept. */
+.command-card-question {
+  font-style: italic;
+  color: var(--ink-strong);
+  overflow-wrap: anywhere;
+}
+
+.command-card-answer-row {
+  padding-top: 1px;
+}
+
+.command-card-instruction,
+.command-card-answer {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-strong);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid #e4dfd4;
+  border-radius: 4px;
+  padding: 4px 6px;
+  outline: none;
+}
+
+.command-card-instruction:focus,
+.command-card-answer:focus {
+  border-color: rgba(141, 136, 124, 0.55);
+}
+
+.command-card-instruction:disabled,
+.command-card-answer:disabled {
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+.command-card-compose {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  border-top: 1px solid var(--ink-rule);
+}
+
+/* The honest sentences: one quiet line each, never a red error state and
+   never a retry suggestion. */
+.command-card-problem,
+.command-card-quiet,
+.command-card-working,
+.command-card-elsewhere {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.command-card-elsewhere {
+  font-style: italic;
+  padding: 2px 0 4px;
+}
+
+.command-card-working {
+  color: var(--ink-marker);
+}

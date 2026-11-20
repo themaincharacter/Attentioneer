@@ -119,6 +119,35 @@ import {
 import { listenOsDrop, type OsDrop } from "./canvas/osDropWindow";
 import { ASK_UNTITLED_NAME } from "./map/asks";
 import { useGround, type GroundAddResult } from "./canvas/useGround";
+import {
+  COMMAND_FAILED_SENTENCE,
+  COMMAND_GHOST_REFUSAL_PREFIX,
+  CommandCard,
+  clarifiedInstruction,
+  commandAnchor,
+  commandViewOf,
+  failureReport,
+  type CommandBusy,
+  type CommandView,
+} from "./canvas/CommandCard";
+import {
+  applyCommandScript,
+  createAttentioneerHost,
+  type CommandApply,
+  type CommandIo,
+} from "./commands/attentioneerHost";
+import { appendCommandMove, interpretInstruction } from "./commands/interpreterCall";
+import { interpreterDigest } from "./commands/interpreterDigest";
+import type { InterpreterRead } from "./commands/interpreter";
+import type { CommandAct } from "./commands/acts";
+import {
+  createDirAll,
+  createMarkerExclusive,
+  listDir,
+  readTextFile,
+  removeFile,
+  writeTextFile,
+} from "./lib/fs";
 import { newWireClaim } from "./canvas/hookedWire";
 import { SketchToolbar } from "./canvas/SketchToolbar";
 import { LanguageGameBar } from "./canvas/LanguageGameBar";
@@ -487,6 +516,29 @@ import type { Workspace } from "./workspace/lifecycle";
  * send on a card.
  */
 const turnPort = createTurnPort();
+
+/**
+ * STORY 21.3 — THE COMMAND CARD'S BRIDGE (ADR-0038 decisions 3 and 6). The
+ * app's adapter (commands/attentioneerHost.ts) takes the fs port as data, so
+ * the window passes the SAME Tauri bridge every other write uses. No second
+ * write path is created: the host's proposals go through the existing ghost
+ * intake and its accepts are the app's own accept.
+ */
+const tauriCommandIo: CommandIo = {
+  readTextFile: (path) => readTextFile(path),
+  writeTextFile: (path, content) => writeTextFile(path, content),
+  removeFile: (path) => removeFile(path),
+  listDir: (path) => listDir(path),
+  createDirAll: (path) => createDirAll(path),
+  createMarkerExclusive: (path) => createMarkerExclusive(path),
+};
+
+/** The instruction's three wiring sentences (PROVISIONAL wording). */
+const COMMAND_NO_WORKSPACE_SENTENCE = "there is no workspace open.";
+const COMMAND_NO_MANAGER_SENTENCE =
+  "no manager model is configured, so nothing was interpreted.";
+const COMMAND_INTERPRET_FAILED_SENTENCE =
+  "the instruction could not be read, so nothing was applied.";
 
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -937,6 +989,214 @@ function App() {
   const [ghostTurnNote, setGhostTurnNote] = useState<string | null>(null);
   // A workspace that resumed in dynamics with no set prompts the selector once.
   const autoPromptedRef = useRef<string | null>(null);
+  // STORY 21.3 — THE COMMAND CARD (ADR-0038 decisions 1 and 4). CLOSED by
+  // default, on every map. There is no effect, timer or map read that opens it:
+  // only the person's press sets `commandOpen` true. The view is what the
+  // interpreter answered, or the last apply; none of it is a record, and a
+  // refusal writes nothing but the interpreter's one Move.
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandInstruction, setCommandInstruction] = useState("");
+  const [commandAnswer, setCommandAnswer] = useState("");
+  const [commandView, setCommandView] = useState<CommandView | null>(null);
+  const [commandBusy, setCommandBusy] = useState<CommandBusy>(null);
+  /**
+   * THE INTERPRETER'S DIGEST (story 21.2, ADR-0038 decision 6). Composed from
+   * the LOADED view — names, kinds, one line about, states and wires, never a
+   * reading body (interpreterDigest's input has no text door). Recomputed when
+   * the map's records change, so an accepted script's next instruction sees the
+   * map it just changed.
+   */
+  const commandDigest = useMemo(
+    () =>
+      interpreterDigest({
+        references: ground.references,
+        asks: ground.asks,
+        sessions: ground.sessions,
+        readings: ground.readings,
+        links: ground.links,
+        states: ground.states,
+      }),
+    [
+      ground.references,
+      ground.asks,
+      ground.sessions,
+      ground.readings,
+      ground.links,
+      ground.states,
+    ],
+  );
+
+  /**
+   * STORY 21.3 — ONE INTERPRETER CALL, ONE EGRESS (ADR-0038 decision 2; 21.2's
+   * seam). The manager/curator row's existing send door, resolved here exactly
+   * as the curator does, and the ONE PRISM written by appendCommandMove. The
+   * Move is anchored on the MAP (commandAnchor); a command card is not a card
+   * record, so when no card is open the map itself is the anchor. Nothing is
+   * applied: this answers a script, a question, or one sentence.
+   */
+  const requestInterpretation = useCallback(
+    async (instruction: string): Promise<InterpreterRead> => {
+      if (workspace === null) {
+        return { kind: "problem", sentence: COMMAND_NO_WORKSPACE_SENTENCE };
+      }
+      try {
+        const settings = await loadTurnSettings();
+        const manager = resolveManager(settings);
+        if (manager.kind !== "resolved") {
+          return { kind: "problem", sentence: COMMAND_NO_MANAGER_SENTENCE };
+        }
+        const managerKey =
+          manager.provider.kind === "http"
+            ? await readSecret(manager.provider.id)
+            : "";
+        const route = routeOf(manager.provider, manager.model, managerKey);
+        const turn = await interpretInstruction({
+          input: { instruction, digest: commandDigest },
+          on: commandAnchor(level),
+          sendMessages: (messages) => turnPort.sendMessages(route, messages),
+          recordMove: (move) => appendCommandMove(workspace.path, move),
+        });
+        return turn.read;
+      } catch {
+        // A throw here is before or around the call seam; the sentence is the
+        // app's, never the transport's prose. Nothing was applied either way.
+        return { kind: "problem", sentence: COMMAND_INTERPRET_FAILED_SENTENCE };
+      }
+    },
+    [workspace, level, commandDigest],
+  );
+
+  /**
+   * STORY 21.3 — ONE PRESS (ADR-0038 decision 4). Executes the whole script and
+   * accepts the ghosts it filed through the app's OWN accept, then re-reads the
+   * map folder so the cards show what landed. A mid-script failure accepts NO
+   * ghost: the map holds what it held, and the card names the failing act.
+   */
+  const requestApply = useCallback(
+    async (acts: readonly CommandAct[]): Promise<CommandApply> => {
+      if (workspace === null) {
+        return {
+          ok: false,
+          phase: "none",
+          run: null,
+          sentence: COMMAND_NO_WORKSPACE_SENTENCE,
+        };
+      }
+      const host = createAttentioneerHost({
+        workspacePath: workspace.path,
+        io: tauriCommandIo,
+      });
+      const result = await applyCommandScript(acts, host);
+      // Re-read whatever happened: a clean apply shows its cards, and a refused
+      // ghost (a pathological accept) shows exactly what DID land instead of
+      // leaving the map's view stale. This read writes nothing.
+      await ground.reload();
+      return result;
+    },
+    [workspace, ground.reload],
+  );
+
+  /** Read one instruction (or its one answered clarification) and show it. */
+  const runCommand = useCallback(
+    async (instruction: string, answered: boolean): Promise<void> => {
+      setCommandBusy("reading");
+      setCommandAnswer("");
+      try {
+        const read = await requestInterpretation(instruction);
+        const next = commandViewOf(instruction, read);
+        setCommandView(
+          next.kind === "question" ? { ...next, answered } : next,
+        );
+      } finally {
+        setCommandBusy(null);
+      }
+    },
+    [requestInterpretation],
+  );
+
+  /** The person pressed read: one instruction, verbatim, then the field clears. */
+  const interpretCommand = useCallback(() => {
+    const instruction = commandInstruction;
+    if (instruction.trim() === "") return;
+    setCommandInstruction("");
+    void runCommand(instruction, false);
+  }, [commandInstruction, runCommand]);
+
+  /**
+   * THE ONE CLARIFYING QUESTION IS ANSWERED ONCE (the story's scope). The next
+   * interpretation carries the instruction, the question and the answer; a
+   * second question is shown plainly and proposes nothing.
+   */
+  const answerCommandQuestion = useCallback(() => {
+    if (commandView?.kind !== "question" || commandView.answered) return;
+    const answer = commandAnswer.trim();
+    if (answer === "") return;
+    const instruction = clarifiedInstruction(
+      commandView.instruction,
+      commandView.question,
+      answer,
+    );
+    void runCommand(instruction, true);
+  }, [commandView, commandAnswer, runCommand]);
+
+  /**
+   * THE PERSON'S ACCEPT ON THE SCRIPT IS THE ACCEPTANCE OF ITS GHOSTS. One call
+   * to the app's one apply seam; there is no second question and no partial
+   * apply. A failure names the act and what did not apply.
+   */
+  const acceptCommand = useCallback(() => {
+    if (commandView?.kind !== "acts" || commandBusy !== null) return;
+    const acts = commandView.acts;
+    const instruction = commandView.instruction;
+    setCommandBusy("applying");
+    void requestApply(acts)
+      .then((result) => {
+        if (result.ok) {
+          setCommandView({ kind: "applied", instruction, acts });
+          return;
+        }
+        const sentence =
+          result.phase === "execution" && result.run !== null
+            ? failureReport(acts, result.run)
+            : result.phase === "accept"
+              ? COMMAND_GHOST_REFUSAL_PREFIX + result.sentence
+              : result.sentence;
+        setCommandView({ kind: "failed", instruction, sentence });
+      })
+      .catch(() => {
+        setCommandView({
+          kind: "failed",
+          instruction,
+          sentence: COMMAND_FAILED_SENTENCE,
+        });
+      })
+      .finally(() => setCommandBusy(null));
+  }, [commandView, commandBusy, requestApply]);
+
+  /**
+   * A REFUSAL MOVES NOTHING (ADR-0038 decision 4). The interpreter's Move is
+   * already written; this drops the script and shows one quiet line. It does
+   * not execute, accept, reload or log anything.
+   */
+  const refuseCommand = useCallback(() => {
+    if (commandView?.kind !== "acts") return;
+    setCommandView({ kind: "refused", instruction: commandView.instruction });
+    setCommandAnswer("");
+    setCommandBusy(null);
+  }, [commandView]);
+
+  /** Closing drops the stored view; opening always starts a fresh card. */
+  const closeCommandCard = useCallback(() => {
+    setCommandOpen(false);
+    setCommandBusy(null);
+  }, []);
+
+  const openCommandCard = useCallback(() => {
+    setCommandInstruction("");
+    setCommandAnswer("");
+    setCommandView(null);
+    setCommandOpen(true);
+  }, []);
 
   /**
    * Open the quiet assumption overlay for one target at a world anchor. Dead
@@ -5708,6 +5968,29 @@ function App() {
         duplicateQuantities={duplicateQuantities}
         orphanQuantities={orphanQuantities}
         outOfPlayQuantities={outOfPlayQuantities}
+      />
+
+      {/* STORY 21.3 — THE COMMAND CARD (ADR-0038 decisions 1 and 4). It is
+          mounted HERE, at APP level and outside `.plane`, so it is present on
+          every map and its fixed position cannot pan or zoom. CLOSED by
+          default: the flag starts false and only the person's press opens it.
+          Its own body is the one scroll region; the map never scrolls under it,
+          and the wheel over the card stays on the card. */}
+      <CommandCard
+        level={level}
+        open={commandOpen}
+        instruction={commandInstruction}
+        answer={commandAnswer}
+        view={commandView}
+        busy={commandBusy}
+        onOpen={openCommandCard}
+        onClose={closeCommandCard}
+        onInstruction={setCommandInstruction}
+        onAnswer={setCommandAnswer}
+        onInterpret={interpretCommand}
+        onAnswerQuestion={answerCommandQuestion}
+        onAccept={acceptCommand}
+        onRefuse={refuseCommand}
       />
 
       {/* the walk (story 3): the selected loop's derived read — steps, signs,

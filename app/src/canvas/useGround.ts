@@ -695,6 +695,15 @@ export interface GroundView {
   /** The map folder's ground records have been read once. */
   loaded: boolean;
   /**
+   * STORY 21.3 — RE-READ THE MAP FOLDER. The command card's apply writes
+   * through the EXISTING ghost intake and accept, which are the app's own
+   * records path but not this hook's queued writers; after an accepted script
+   * the map must show what landed. This is a READ (it writes nothing, clears no
+   * view-only pull and repairs no record) and the same load the workspace open
+   * runs, so one view can never drift from the files.
+   */
+  reload: () => Promise<void>;
+  /**
    * STORY 17.1 — MAKE AN ASK CARD beside a reference. STORY 17.10 rewrites what
    * that means, per the user's correction: the card is created EMPTY (no
    * anchor, nothing from the press but the point) and the SOURCE IS WIRED INTO
@@ -1126,6 +1135,7 @@ type GroundLoaded = Omit<
   | "dismissPull"
   | "restore"
   | "dismissRestore"
+  | "reload"
 >;
 
 const EMPTY: GroundLoaded = {
@@ -8731,6 +8741,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     restorableSession: state.restorableSession,
     restoreNotice: state.restoreNotice,
     loaded: state.loaded,
+    reload,
     createAsk,
     createEmptyAsk,
     askFromSelection,

@@ -10,7 +10,13 @@ import { loadGroundLinks, type GroundLink } from "../map/groundLinks";
 import { loadNotes, noteByteLength, NOTE_MAX_BYTES } from "../map/notes";
 import { readingTextPath, previewText } from "../map/readings";
 import { loadSessions, type SessionCard } from "../map/sessions";
-import type { CommandHost, CommandOutcome } from "./execute";
+import {
+  executeScript,
+  type CommandHost,
+  type CommandOutcome,
+  type CommandRun,
+} from "./execute";
+import type { CommandAct } from "./acts";
 import {
   GROUND_MOVES,
   NOTE_CARD_REFUSAL,
@@ -425,6 +431,59 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     session,
   };
   return host;
+}
+
+/**
+ * STORY 21.3 — ONE PRESS (ADR-0038 decision 4). The command card's accept runs
+ * the WHOLE script through the executor, then accepts the ghosts it filed
+ * through the SAME app accept the driver's --accept exercises. There is no
+ * second confirmation here and no partial application: when the executor stops
+ * at an act, NO ghost is accepted, so the map holds exactly what it held before
+ * (the acts' earlier ghosts stay filed in the inbox, not applied).
+ *
+ * THE FAILURE IS THE APP'S OWN WORDS. A host refusal comes back exactly as the
+ * executor spoke it; a refused ghost comes back through acceptLine. The card
+ * turns the executor's run into the named failure report, so which act failed
+ * and what did not apply are both said.
+ */
+export type CommandApply =
+  | { ok: true; run: CommandRun }
+  | {
+      ok: false;
+      phase: "execution" | "accept" | "none";
+      run: CommandRun | null;
+      sentence: string;
+    };
+
+/** Apply one interpreter script in ONE press: execute it, then accept its ghosts. */
+export async function applyCommandScript(
+  acts: readonly CommandAct[],
+  host: ReturnType<typeof createAttentioneerHost>,
+): Promise<CommandApply> {
+  const run = await executeScript(acts, host);
+  if (!run.ok) {
+    return {
+      ok: false,
+      phase: "execution",
+      run,
+      sentence: run.sentence ?? "the script stopped.",
+    };
+  }
+  const accepted = await host.accept(run.ids);
+  const refused = accepted.find(
+    (answer) =>
+      answer.outcome.outcome !== "applied" &&
+      answer.outcome.outcome !== "already-applied",
+  );
+  if (refused !== undefined) {
+    return {
+      ok: false,
+      phase: "accept",
+      run,
+      sentence: acceptLine(refused.id, refused.outcome),
+    };
+  }
+  return { ok: true, run };
 }
 
 /** The one sentence an accepted ghost reports (the driver prints it). */
