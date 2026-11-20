@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import type { CommandAct } from "../commands/acts";
 import type { CommandRun } from "../commands/execute";
-import type { InterpreterRead } from "../commands/interpreter";
+import type { InterpreterExchange, InterpreterRead } from "../commands/interpreter";
+import { utf8ByteLength } from "../lib/textBytes";
 import type { Level } from "../workspace/level";
 
 /**
@@ -41,6 +42,39 @@ import type { Level } from "../workspace/level";
  * sentence, and the failure sentence's shape.
  */
 
+/* ------------------------------------------------------------------ *
+ * STORY 21.5 — THE CARD HOLDS A CONVERSATION (ADR-0038's 2026-11-20
+ * amendment: this is a PRIMARY way to use the app, not a debug panel).
+ *
+ * A primary surface holds a conversation. Each EXCHANGE is one thing the
+ * person said and what became of it — the instruction VERBATIM, the acts it
+ * understood in plain words (or the one question the card asked), and the
+ * outcome: applied, refused, or failed at <act>. That is VIEW STATE beside the
+ * interpreter's Move; there is NO new record family, no counter and no log.
+ *
+ * IT IS BOUNDED, AND SAYS SO. The last few exchanges and a byte cap, WHOLE
+ * EXCHANGES ONLY — an exchange is never clipped. When an older turn is
+ * dropped the card says THAT in one qualitative sentence, never how many: an
+ * app without counters does not grow one in its conversation.
+ *
+ * A FOLLOW-UP CARRIES THE TURNS. The card hands the recent exchanges to the
+ * interpreter so "do that again, but to the other card" resolves against what
+ * just happened — while the here-and-now digest is rebuilt for every call, so
+ * a card created by an earlier turn is visible BY NAME.
+ *
+ * NOTHING AUTO-REPEATS. An earlier turn is context for reading the newest
+ * instruction, never a standing order; the card sends one instruction per
+ * turn, and the prompt says so (commands/interpreter.ts).
+ *
+ * UNDO IS ACTS OR ONE SENTENCE (story 21.5 rule 5). The vocabulary only adds:
+ * no act removes a card, a wire or a note, and this story adds no act. So an
+ * undo-shaped instruction cannot become an inverse ghost yet, and the card
+ * says so in ONE honest sentence — never a silent no-op, never a guess, and
+ * never a repeat of the turn it was asked to take back. When a removing act
+ * arrives (the amendment's coverage ambition), the inverse goes here.
+ * PROVISIONAL: the sentence, the undo shapes recognised, and both bounds.
+ * ------------------------------------------------------------------ */
+
 /** The closed bar's one line of invitation (PROVISIONAL). */
 export const COMMAND_INVITATION = "tell the app what to change";
 
@@ -77,6 +111,51 @@ export const COMMAND_FAILED_SENTENCE = "nothing was applied.";
 /** The one sentence a refused ghost leaves (PROVISIONAL). */
 export const COMMAND_GHOST_REFUSAL_PREFIX = "the app refused one of the script's ghosts: ";
 
+/** The outcome line's lead when an act failed: the story's own words. */
+export const COMMAND_FAILED_AT_PREFIX = "failed at ";
+
+/**
+ * The one honest sentence an undo-shaped instruction gets (STORY 21.5 rule 5,
+ * PROVISIONAL). The vocabulary can only add; nothing in it takes a card, a
+ * wire or a note back, so the card says that instead of guessing at an inverse
+ * it cannot file or staying silent.
+ */
+export const COMMAND_UNDO_SENTENCE =
+  "the acts can add a card, a wire or a note, and none of them can take one back, so nothing was applied.";
+
+/** The largest number of exchanges the card keeps in view (PROVISIONAL). */
+export const COMMAND_HISTORY_MAX_EXCHANGES = 6;
+
+/** The largest the kept conversation may reach, in UTF-8 bytes (PROVISIONAL). */
+export const COMMAND_HISTORY_MAX_BYTES = 1200;
+
+/**
+ * The one qualitative sentence a bounded conversation carries: it says THAT
+ * earlier turns were dropped, never how many. The card has no counters, and a
+ * count dressed as context would be one.
+ */
+export const COMMAND_HISTORY_OMITTED_SENTENCE =
+  "earlier turns were dropped, because this conversation is bounded.";
+
+/**
+ * THE UNDO SHAPES the card recognises (PROVISIONAL). This is not the app
+ * reading the instruction for meaning — the model does that — it is the app
+ * declining to send a class of instruction the vocabulary PROVABLY cannot
+ * express, so a take-back is never guessed into an add and never silently
+ * repeated. A shape that slips past these still cannot repeat: the prompt
+ * tells the model the acts only add (commands/interpreter.ts).
+ */
+const UNDO_SHAPES: readonly RegExp[] = [
+  /\bundo\b/i,
+  /\btake (that|it) back\b/i,
+  /\bput (that|it) back\b/i,
+  /\b(reverse|roll) (that|it|the last)\b/i,
+  /\brollback\b/i,
+  /\brevert\b/i,
+  /\bun-?(add|do)\b/i,
+  /\bremove (that|it|the (note|wire|card))\b/i,
+];
+
 /**
  * WHAT THE PERSON'S ACCEPT MEANS (ADR-0038 decision 4). The script preview is
  * the ghost preview: accepting it applies its acts, and there is no second
@@ -92,26 +171,282 @@ export const COMMAND_REFUSE_VERB = "refuse";
 export const COMMAND_READ_VERB = "read the instruction";
 export const COMMAND_ANSWER_VERB = "answer";
 
-/** The quiet "you said" label above the last instruction (PROVISIONAL). */
+/** The quiet "you said" label above each instruction (PROVISIONAL). */
 export const COMMAND_LAST_LABEL = "you said: ";
+
+/** The labels the card puts on the one question it asked (PROVISIONAL). */
+export const COMMAND_ASKED_LABEL = "it asked: ";
+export const COMMAND_ANSWERED_LABEL = "you answered: ";
 
 /** What the card is waiting on, or null when it is not waiting (view state). */
 export type CommandBusy = "reading" | "applying" | null;
 
-/** What the interpreter answered, as the card shows it. */
+/** The one question the card asked and the person's answer to it. */
+export interface CommandQuestion {
+  question: string;
+  answer: string;
+}
+
+/** How one exchange ended: the story's three outcomes, plus the app's sentence. */
+export type ExchangeOutcome =
+  | { kind: "applied" }
+  | { kind: "refused" }
+  | { kind: "failed"; act: string | null; sentence: string }
+  | { kind: "nothing"; sentence: string };
+
+/** One turn of the card's conversation: view state, never a record. */
+export interface CommandExchange {
+  /** The person's words, VERBATIM, exactly as they typed them. */
+  instruction: string;
+  /** The acts it understood, as the card's plain lines; empty when it did not. */
+  understood: readonly string[];
+  /** The question the card asked and the answer it got, when it had to ask. */
+  question: CommandQuestion | null;
+  /** What became of it: applied, refused, failed at <act>, or a sentence. */
+  outcome: ExchangeOutcome;
+}
+
+/** The card's conversation: the kept exchanges and whether older ones were dropped. */
+export interface CommandThread {
+  exchanges: readonly CommandExchange[];
+  dropped: boolean;
+}
+
+/** An empty conversation: nothing said yet. */
+export const EMPTY_COMMAND_THREAD: CommandThread = {
+  exchanges: [],
+  dropped: false,
+};
+
+/** What the interpreter answered, as the card shows it — the ONE live turn. */
 export type CommandView =
-  | { kind: "acts"; instruction: string; acts: readonly CommandAct[] }
   | {
-      kind: "question";
+      kind: "acts";
       instruction: string;
-      question: string;
-      /** The one answer was given: a second question is shown, not asked again. */
-      answered: boolean;
+      acts: readonly CommandAct[];
+      /** The question this script answers, when the turn needed one. */
+      question: CommandQuestion | null;
     }
-  | { kind: "problem"; instruction: string; sentence: string }
-  | { kind: "applied"; instruction: string; acts: readonly CommandAct[] }
-  | { kind: "failed"; instruction: string; sentence: string }
-  | { kind: "refused"; instruction: string };
+  | { kind: "question"; instruction: string; question: string };
+
+/** One interpreter answer: still live (a script to accept, a question to answer) or done. */
+export type CommandTurn =
+  | { kind: "pending"; view: CommandView }
+  | { kind: "done"; exchange: CommandExchange };
+
+/** One exchange's size for the bound: its words, measured exactly once. */
+function exchangeBytes(exchange: CommandExchange): number {
+  const parts = [
+    exchange.instruction,
+    exchange.understood.join("\n"),
+    exchange.question === null
+      ? ""
+      : exchange.question.question + "\n" + exchange.question.answer,
+    exchangeOutcomeLine(exchange),
+    exchange.outcome.kind === "failed" ? exchange.outcome.sentence : "",
+  ];
+  return utf8ByteLength(parts.join("\n"));
+}
+
+/**
+ * ADD ONE EXCHANGE, and keep the conversation bounded (STORY 21.5 rule 1).
+ * WHOLE EXCHANGES ONLY, newest kept: the turn the person just had is never
+ * dropped from view — the bound trims what came BEFORE it — and the dropped
+ * flag makes the card say so in one qualitative sentence. There is no count
+ * anywhere in the result.
+ */
+export function appendExchange(
+  thread: CommandThread,
+  exchange: CommandExchange,
+): CommandThread {
+  const all = [...thread.exchanges, exchange];
+  const kept: CommandExchange[] = [];
+  let bytes = 0;
+  let dropped = thread.dropped;
+  for (let index = all.length - 1; index >= 0; index -= 1) {
+    const candidate = all[index]!;
+    const size = exchangeBytes(candidate);
+    const first = kept.length === 0;
+    if (
+      !first &&
+      (kept.length + 1 > COMMAND_HISTORY_MAX_EXCHANGES ||
+        bytes + size > COMMAND_HISTORY_MAX_BYTES)
+    ) {
+      dropped = true;
+      break;
+    }
+    bytes += size;
+    kept.unshift(candidate);
+  }
+  return { exchanges: kept, dropped };
+}
+
+/** The conversation's outcome line for one exchange (the story's own words). */
+export function exchangeOutcomeLine(exchange: CommandExchange): string {
+  switch (exchange.outcome.kind) {
+    case "applied":
+      return COMMAND_APPLIED_SENTENCE;
+    case "refused":
+      return COMMAND_REFUSED_SENTENCE;
+    case "failed":
+      return (
+        COMMAND_FAILED_AT_PREFIX +
+        (exchange.outcome.act === null
+          ? "the first act"
+          : JSON.stringify(exchange.outcome.act))
+      );
+    case "nothing":
+      return exchange.outcome.sentence;
+  }
+}
+
+/**
+ * THE CONVERSATION AS THE PROMPT RECEIVES IT (STORY 21.5 rule 3). The recent
+ * exchanges become plain data: the instruction verbatim, what was understood,
+ * the question and its answer, and the outcome — no React, no record, and no
+ * partial exchange.
+ */
+export function historyTurns(thread: CommandThread): InterpreterExchange[] {
+  return thread.exchanges.map((exchange) => ({
+    instruction: exchange.instruction,
+    understood: exchange.understood,
+    question: exchange.question?.question ?? null,
+    answer: exchange.question?.answer ?? null,
+    outcome: exchangeOutcomeLine(exchange),
+  }));
+}
+
+/** Is this instruction asking the app to take something back? */
+export function undoRequestOf(instruction: string): boolean {
+  return UNDO_SHAPES.some((shape) => shape.test(instruction));
+}
+
+/**
+ * THE UNDO RULE (STORY 21.5 rule 5). The vocabulary is adds only — ACT_SPECS
+ * carries no removing act, and this story adds none — so the inverse of an add
+ * cannot be expressed as acts. The honest sentence is the whole answer: the
+ * card offers no script, writes nothing and never re-runs the turn it was
+ * asked to take back. The inverse belongs in this function the day a removing
+ * act exists (ADR-0038's amendment: coverage grows story by story).
+ */
+export function undoSentenceOf(instruction: string): string | null {
+  return undoRequestOf(instruction) ? COMMAND_UNDO_SENTENCE : null;
+}
+
+/** The exchange an undo-shaped instruction completes: nothing applied, said. */
+export function undoExchangeOf(
+  instruction: string,
+  question: CommandQuestion | null,
+): CommandExchange | null {
+  const sentence = undoSentenceOf(instruction);
+  if (sentence === null) return null;
+  return {
+    instruction,
+    understood: [],
+    question,
+    outcome: { kind: "nothing", sentence },
+  };
+}
+
+/** An exchange that applied nothing, with the app's one sentence why. */
+export function nothingExchange(
+  instruction: string,
+  question: CommandQuestion | null,
+  sentence: string,
+): CommandExchange {
+  return {
+    instruction,
+    understood: [],
+    question,
+    outcome: { kind: "nothing", sentence },
+  };
+}
+
+/** An exchange the person's accept completed. */
+export function appliedExchange(
+  instruction: string,
+  acts: readonly CommandAct[],
+  question: CommandQuestion | null,
+): CommandExchange {
+  return {
+    instruction,
+    understood: actLines(acts),
+    question,
+    outcome: { kind: "applied" },
+  };
+}
+
+/** An exchange the person refused: the script is dropped, nothing moves. */
+export function refusedExchange(
+  instruction: string,
+  acts: readonly CommandAct[],
+  question: CommandQuestion | null,
+): CommandExchange {
+  return {
+    instruction,
+    understood: actLines(acts),
+    question,
+    outcome: { kind: "refused" },
+  };
+}
+
+/** An exchange whose script stopped at one act, named exactly. */
+export function failedExchange(
+  instruction: string,
+  acts: readonly CommandAct[],
+  question: CommandQuestion | null,
+  sentence: string,
+  act: string | null,
+): CommandExchange {
+  return {
+    instruction,
+    understood: actLines(acts),
+    question,
+    outcome: { kind: "failed", act, sentence },
+  };
+}
+
+/**
+ * TURN ONE INTERPRETER ANSWER INTO THE CARD (STORY 21.5). An answer that is a
+ * script or a first question stays LIVE — the person still has to accept it or
+ * answer it. Anything else (a problem, or a second question after the one
+ * answer) is a COMPLETED exchange with one sentence, because there is nothing
+ * left for the person to do with it.
+ */
+export function commandTurnOf(
+  instruction: string,
+  read: InterpreterRead,
+  question: CommandQuestion | null,
+): CommandTurn {
+  if (read.kind === "acts") {
+    return {
+      kind: "pending",
+      view: { kind: "acts", instruction, acts: read.acts, question },
+    };
+  }
+  if (read.kind === "question") {
+    // One question per exchange: asking again after an answer would start a
+    // second round the story does not offer, so the turn completes and says so.
+    if (question !== null) {
+      return {
+        kind: "done",
+        exchange: nothingExchange(
+          instruction,
+          question,
+          COMMAND_SECOND_QUESTION_SENTENCE,
+        ),
+      };
+    }
+    return {
+      kind: "pending",
+      view: { kind: "question", instruction, question: read.question },
+    };
+  }
+  return {
+    kind: "done",
+    exchange: nothingExchange(instruction, question, read.sentence),
+  };
+}
 
 export interface CommandCardProps {
   /** The map on screen. The card is present on every map (ADR-0038 §1). */
@@ -122,7 +457,11 @@ export interface CommandCardProps {
   instruction: string;
   /** The clarifying answer, while the one question is being answered. */
   answer: string;
-  /** The interpreter's answer or the last outcome, or null before one. */
+  /** The kept conversation, oldest first (view state, never a record). */
+  exchanges: readonly CommandExchange[];
+  /** Whether older turns were dropped by the bound (said, never counted). */
+  dropped: boolean;
+  /** The one live turn — a script to accept or a question to answer — or null. */
   view: CommandView | null;
   /** The wait, or null when the card is not waiting on anything. */
   busy: CommandBusy;
@@ -247,25 +586,6 @@ export function clarifiedInstruction(
   );
 }
 
-/** Turn one interpreter answer into the card's view (PURE). */
-export function commandViewOf(
-  instruction: string,
-  read: InterpreterRead,
-): CommandView {
-  if (read.kind === "acts") {
-    return { kind: "acts", instruction, acts: read.acts };
-  }
-  if (read.kind === "question") {
-    return {
-      kind: "question",
-      instruction,
-      question: read.question,
-      answered: false,
-    };
-  }
-  return { kind: "problem", instruction, sentence: read.sentence };
-}
-
 /** The composer's disabled state: nothing to read, or already waiting. */
 function readDisabled(instruction: string, busy: CommandBusy): boolean {
   return busy !== null || instruction.trim() === "";
@@ -274,6 +594,46 @@ function readDisabled(instruction: string, busy: CommandBusy): boolean {
 /** The answer's disabled state: nothing to answer, or already waiting. */
 function answerDisabled(answer: string, busy: CommandBusy): boolean {
   return busy !== null || answer.trim() === "";
+}
+
+/**
+ * ONE EXCHANGE AS THE CARD DRAWS IT: the instruction verbatim, the acts it
+ * understood (or the question and the answer), and the outcome. "applied" is
+ * the shortest line here on purpose — a change that worked says so and stops.
+ */
+function Exchange({ exchange }: { exchange: CommandExchange }) {
+  return (
+    <li className="command-card-exchange">
+      <div className="command-card-exchange-instruction">
+        {COMMAND_LAST_LABEL}
+        {exchange.instruction}
+      </div>
+
+      {exchange.question !== null && (
+        <div className="command-card-exchange-question">
+          <div>{COMMAND_ASKED_LABEL}{exchange.question.question}</div>
+          {exchange.question.answer !== "" && (
+            <div>{COMMAND_ANSWERED_LABEL}{exchange.question.answer}</div>
+          )}
+        </div>
+      )}
+
+      {exchange.understood.length > 0 && (
+        <ol className="command-card-acts">
+          {exchange.understood.map((line, index) => (
+            <li key={index}>{line}</li>
+          ))}
+        </ol>
+      )}
+
+      <div className="command-card-outcome">
+        {exchangeOutcomeLine(exchange)}
+      </div>
+      {exchange.outcome.kind === "failed" && (
+        <div className="command-card-quiet">{exchange.outcome.sentence}</div>
+      )}
+    </li>
+  );
 }
 
 /**
@@ -286,6 +646,8 @@ export function CommandCard({
   open,
   instruction,
   answer,
+  exchanges,
+  dropped,
   view,
   busy,
   onOpen,
@@ -362,7 +724,22 @@ export function CommandCard({
       ) : (
         <>
           <div className="command-card-body">
-            {view !== null && view.instruction !== "" && (
+            {exchanges.length > 0 && (
+              <ol className="command-card-thread">
+                {exchanges.map((exchange, index) => (
+                  <Exchange key={index} exchange={exchange} />
+                ))}
+              </ol>
+            )}
+
+            {/* The bound SAID, never counted: one qualitative sentence. */}
+            {dropped && (
+              <div className="command-card-quiet">
+                {COMMAND_HISTORY_OMITTED_SENTENCE}
+              </div>
+            )}
+
+            {view !== null && (
               <div className="command-card-last">
                 {COMMAND_LAST_LABEL}
                 {view.instruction}
@@ -371,6 +748,12 @@ export function CommandCard({
 
             {view?.kind === "acts" && (
               <div className="command-card-script">
+                {view.question !== null && (
+                  <div className="command-card-exchange-question">
+                    <div>{COMMAND_ASKED_LABEL}{view.question.question}</div>
+                    <div>{COMMAND_ANSWERED_LABEL}{view.question.answer}</div>
+                  </div>
+                )}
                 <ol className="command-card-acts">
                   {actLines(view.acts).map((line, index) => (
                     <li key={index}>{line}</li>
@@ -403,66 +786,29 @@ export function CommandCard({
                 <div className="command-card-question" role="status">
                   {view.question}
                 </div>
-                {!view.answered ? (
-                  <div className="command-card-answer-row">
-                    <input
-                      className="command-card-answer"
-                      value={answer}
-                      placeholder="answer the question"
-                      aria-label="answer the clarifying question"
-                      disabled={waiting}
-                      onChange={(event) => onAnswer(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter") return;
-                        event.preventDefault();
-                        onAnswerQuestion();
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="command-card-answer-send"
-                      disabled={answerDisabled(answer, busy)}
-                      onClick={onAnswerQuestion}
-                    >
-                      {COMMAND_ANSWER_VERB}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="command-card-quiet">
-                    {COMMAND_SECOND_QUESTION_SENTENCE}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {view?.kind === "problem" && (
-              <div className="command-card-problem" role="status">
-                {view.sentence}
-              </div>
-            )}
-
-            {view?.kind === "applied" && (
-              <div className="command-card-script">
-                <ol className="command-card-acts applied">
-                  {actLines(view.acts).map((line, index) => (
-                    <li key={index}>{line}</li>
-                  ))}
-                </ol>
-                <div className="command-card-quiet">
-                  {COMMAND_APPLIED_SENTENCE}
+                <div className="command-card-answer-row">
+                  <input
+                    className="command-card-answer"
+                    value={answer}
+                    placeholder="answer the question"
+                    aria-label="answer the clarifying question"
+                    disabled={waiting}
+                    onChange={(event) => onAnswer(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      onAnswerQuestion();
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="command-card-answer-send"
+                    disabled={answerDisabled(answer, busy)}
+                    onClick={onAnswerQuestion}
+                  >
+                    {COMMAND_ANSWER_VERB}
+                  </button>
                 </div>
-              </div>
-            )}
-
-            {view?.kind === "failed" && (
-              <div className="command-card-problem" role="status">
-                {view.sentence}
-              </div>
-            )}
-
-            {view?.kind === "refused" && (
-              <div className="command-card-quiet">
-                {COMMAND_REFUSED_SENTENCE}
               </div>
             )}
 

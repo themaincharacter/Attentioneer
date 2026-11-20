@@ -1,4 +1,5 @@
 import { ACT_SPECS, validateAct, type ActField, type CommandAct } from "./acts";
+import { utf8ByteLength } from "../lib/textBytes";
 import { fencedBlocksOf } from "../turn/proposal";
 import type { TurnMessage } from "../turn/protocol";
 
@@ -43,9 +44,16 @@ import type { TurnMessage } from "../turn/protocol";
  * (commands/interpreterCall.ts is that seam) and this module would be the same
  * in another app that carried the same vocabulary.
  *
- * PROVISIONAL (the story's own list): the fence's language tag, every sentence
- * below, the shape of the digest text, the question-length bound, and whether
- * a question is stored anywhere (it is not, for now).
+ * STORY 21.5 ADDS THE CONVERSATION, NOT A FOURTH OUTCOME. The input may carry
+ * the card's recent exchanges; they ride as a bounded block of CONTEXT, so a
+ * follow-up ("do that again, but to the other card") can be understood against
+ * what just happened. The parser is unchanged: a script, ONE question, or ONE
+ * sentence — the history never becomes an instruction of its own.
+ *
+ * PROVISIONAL (the stories' own lists): the fence's language tag, every
+ * sentence below, the shape of the digest text, the question-length bound, the
+ * history's bounds and wording, and whether a question is stored anywhere (the
+ * interpreter stores nothing; the card keeps its exchange as view state).
  */
 
 /** The fence's language tag (PROVISIONAL). */
@@ -88,6 +96,105 @@ export interface InterpreterInput {
    * records and reading LINES, and has no text input to leak).
    */
   digest: string;
+  /**
+   * The recent turns of the card's conversation (STORY 21.5), oldest first and
+   * already bounded by the card. This module bounds it AGAIN, because the
+   * prompt's own allowance is not the caller's promise: an exchange that does
+   * not fit whole is left out, never clipped.
+   */
+  history?: readonly InterpreterExchange[];
+}
+
+/**
+ * STORY 21.5 — THE CONVERSATION THE PROMPT CARRIES (ADR-0038's 2026-11-20
+ * amendment: the command card is a PRIMARY way to use the app, so a follow-up
+ * — "do that again, but to the other card" — has to be understood against what
+ * just happened).
+ *
+ * ONE EXCHANGE is one thing the person said and what became of it: the
+ * instruction VERBATIM, the acts it understood as the card's plain lines, the
+ * one question the card asked and the answer it got, and the outcome in the
+ * app's own words. It is VIEW STATE — canvas/CommandCard.tsx owns it — handed
+ * here as plain data. This module never records it and there is no new record
+ * family anywhere in the story.
+ *
+ * BOUNDED, AND SAYS SO. {@link INTERPRETER_HISTORY_MAX_EXCHANGES} exchanges and
+ * {@link INTERPRETER_HISTORY_MAX_BYTES} bytes, WHOLE EXCHANGES ONLY, newest
+ * kept: in a conversation the recent turn is the one a "that one" refers to.
+ * What is dropped is never counted — {@link INTERPRETER_HISTORY_OMITTED_SENTENCE}
+ * says THAT turns are missing, because an app with no counters does not grow
+ * one in a prompt. PROVISIONAL: both bounds and the block's wording.
+ */
+export interface InterpreterExchange {
+  /** The person's words, VERBATIM, exactly as the card recorded them. */
+  instruction: string;
+  /** What the app understood: one plain line per act, or none. */
+  understood: readonly string[];
+  /** The one question the card asked, or null when it did not ask. */
+  question: string | null;
+  /** The person's answer to that question, or null. */
+  answer: string | null;
+  /** How the turn ended, in the app's words: applied, refused, failed at … */
+  outcome: string;
+}
+
+/** The most exchanges a prompt's history carries (PROVISIONAL). */
+export const INTERPRETER_HISTORY_MAX_EXCHANGES = 6;
+
+/** The largest size the rendered history may reach, in UTF-8 bytes (PROVISIONAL). */
+export const INTERPRETER_HISTORY_MAX_BYTES = 2048;
+
+/**
+ * The one qualitative sentence a bounded history carries: it says THAT turns
+ * were left out, never how many — a count would be a counter wearing context.
+ */
+export const INTERPRETER_HISTORY_OMITTED_SENTENCE =
+  "earlier turns were dropped, because this history is bounded.";
+
+/** One exchange as its history block: whole, labelled, never truncated. */
+function historyBlockOf(exchange: InterpreterExchange): string {
+  const lines: string[] = ["the person said: " + exchange.instruction];
+  if (exchange.understood.length > 0) {
+    lines.push("the app understood: " + exchange.understood.join("; "));
+  }
+  if (exchange.question !== null) {
+    lines.push("the card asked: " + exchange.question);
+  }
+  if (exchange.answer !== null) {
+    lines.push("the person answered: " + exchange.answer);
+  }
+  lines.push("outcome: " + exchange.outcome);
+  return lines.join("\n");
+}
+
+/**
+ * THE HISTORY TEXT (story 21.5), pure and bounded. An EMPTY string means there
+ * is no conversation yet, and the caller omits the section rather than sending
+ * a heading with nothing under it.
+ */
+export function interpreterHistory(
+  exchanges: readonly InterpreterExchange[],
+): string {
+  const blocks: string[] = [];
+  let omitted = false;
+  for (let index = exchanges.length - 1; index >= 0; index -= 1) {
+    const block = historyBlockOf(exchanges[index]!);
+    if (blocks.length >= INTERPRETER_HISTORY_MAX_EXCHANGES) {
+      omitted = true;
+      break;
+    }
+    if (
+      utf8ByteLength([block, ...blocks].join("\n\n")) >
+      INTERPRETER_HISTORY_MAX_BYTES
+    ) {
+      omitted = true;
+      break;
+    }
+    blocks.unshift(block);
+  }
+  if (blocks.length === 0) return "";
+  if (omitted) blocks.unshift(INTERPRETER_HISTORY_OMITTED_SENTENCE);
+  return blocks.join("\n\n");
 }
 
 /** What reading one interpreter answer found. */
@@ -113,6 +220,9 @@ const CATALOGUE_HEADING = "## the acts";
 
 /** The answer's heading. */
 const ANSWER_HEADING = "## the answer";
+
+/** The conversation's heading (the section is omitted while it is empty). */
+const HISTORY_HEADING = "## the conversation so far";
 
 /** One declared payload field as the catalogue shows it. */
 function fieldText(field: ActField): string {
@@ -158,6 +268,20 @@ export function interpreterCatalogue(): string {
  */
 export function buildInterpreterPrompt(input: InterpreterInput): string {
   const digest = input.digest.trim();
+  const history = interpreterHistory(input.history ?? []);
+  // No conversation yet is no section: a heading with nothing under it would
+  // read as an empty turn the model must account for.
+  const historySection =
+    history === ""
+      ? []
+      : [
+          HISTORY_HEADING,
+          "",
+          "What the person and the app already said and did on this map, oldest first. It is CONTEXT for what the newest instruction's words refer to — never an order to repeat: act only on the instruction above.",
+          "",
+          history,
+          "",
+        ];
   return [
     INTERPRETER_TITLE,
     "",
@@ -167,6 +291,7 @@ export function buildInterpreterPrompt(input: InterpreterInput): string {
     "",
     input.instruction,
     "",
+    ...historySection,
     DIGEST_HEADING,
     "",
     "What this map holds. These are labels and facts, never a card's reading body:",
@@ -193,10 +318,13 @@ export function buildInterpreterPrompt(input: InterpreterInput): string {
     "",
     "2. If the instruction could mean two different changes, or you cannot tell which change is wanted, ask ONE short question in plain text and write NO block. Propose nothing. Do not guess.",
     "",
+    "The acts only ADD. None of them removes what an earlier turn added, so an instruction that asks to take something back has NO script here: write NO block, and write ONE plain sentence saying the app cannot take it back. Never answer it by repeating the earlier acts.",
+    "",
     "Rules that are limits, not style:",
     "- Reference only cards named in the map digest. Never invent a card, a name or a wire.",
     "- Never use an act outside the list above.",
     "- Write one block at most. A second block is ignored.",
+    "- An earlier turn above is context, never a standing order: only the instruction above may be acted on, and a turn already answered is not repeated because it appears in the conversation.",
     "- Do not describe what you did or apologise. This is a script; the person sees the outcome.",
   ].join("\n");
 }

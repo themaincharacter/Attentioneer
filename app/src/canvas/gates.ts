@@ -567,6 +567,14 @@ export const CONTENT_CLASSES = [
   "command-card-instruction",
   "command-card-read",
   "command-card-elsewhere",
+  // STORY 21.5 — THE CONVERSATION (ADR-0038's amendment). Each exchange is
+  // ordinary app-level content: the instruction, the acts understood and the
+  // outcome. Named for the belt-and-braces rule above.
+  "command-card-thread",
+  "command-card-exchange",
+  "command-card-exchange-instruction",
+  "command-card-exchange-question",
+  "command-card-outcome",
 ] as const;
 
 /** The CSS selector the plane uses to spot a content press (CanvasPlane). */

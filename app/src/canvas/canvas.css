@@ -8868,6 +8868,57 @@ body {
 
 /* THE ACT LIST: a SHORT numbered list in plain words, one line per act. No
    counts beyond the list's own numbers, no icons, no badges. */
+/* STORY 21.5 — THE CONVERSATION. A quiet vertical list, oldest first: each
+   exchange is one thing the person said and what became of it. The list is not
+   a chat transcript with bubbles and timestamps (no counts, no clock): it is
+   the card's memory, drawn the same quiet way as the rest of the app. */
+.command-card-thread {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.command-card-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--ink-rule);
+}
+
+.command-card-exchange:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.command-card-exchange-instruction {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.command-card-exchange-question {
+  font-size: 11.5px;
+  line-height: 1.45;
+  font-style: italic;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+/* The outcome is ONE short line: "those acts ran." / "nothing was applied." /
+   "failed at …". It is the quietest thing in the exchange, and the applied
+   case is the shortest — a change that worked says so and stops. */
+.command-card-outcome {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-faint);
+  overflow-wrap: anywhere;
+}
+
 .command-card-acts {
   margin: 0;
   padding-left: 20px;

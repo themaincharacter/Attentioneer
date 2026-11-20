@@ -38,13 +38,15 @@ import {
   CommandCard,
   actLine,
   actLines,
+  appliedExchange,
   clarifiedInstruction,
   commandAnchor,
   commandMapLive,
-  commandViewOf,
+  commandTurnOf,
   failureReport,
+  refusedExchange,
   type CommandCardProps,
-  type CommandView,
+  type CommandQuestion,
 } from "../src/canvas/CommandCard";
 import { nodeCommandIo } from "../scripts/commands";
 
@@ -79,6 +81,8 @@ function render(props: Partial<CommandCardProps> = {}): string {
       open: true,
       instruction: "",
       answer: "",
+      exchanges: [],
+      dropped: false,
       view: null,
       busy: null,
       onOpen: () => {},
@@ -219,7 +223,12 @@ describe("the understood acts are a short numbered list in plain words", () => {
 
   test("the render is an ordered list, one item per act, with accept and refuse", () => {
     const html = render({
-      view: { kind: "acts", instruction: "wire and note", acts: [WIRE, NOTE] },
+      view: {
+        kind: "acts",
+        instruction: "wire and note",
+        acts: [WIRE, NOTE],
+        question: null,
+      },
     });
     expect(html).toContain('<ol class="command-card-acts">');
     expect(listCount(html)).toBe(2);
@@ -355,7 +364,9 @@ describe("one press applies the script; a refusal applies nothing", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const refuse = APP_TSX.slice(start, end);
-    expect(refuse).toContain('kind: "refused"');
+    // STORY 21.5: the refusal becomes an EXCHANGE in the card's conversation —
+    // it still writes nothing beyond the interpreter's already-written Move.
+    expect(refuse).toContain("refusedExchange");
     for (const banned of [
       "requestApply",
       "applyCommandScript",
@@ -367,7 +378,9 @@ describe("one press applies the script; a refusal applies nothing", () => {
     }
     // The one quiet line the refusal leaves, and no retry suggestion.
     const html = render({
-      view: { kind: "refused", instruction: "wire and note" },
+      exchanges: [
+        refusedExchange("wire and note", [WIRE, NOTE], null),
+      ],
     });
     expect(html).toContain(COMMAND_REFUSED_SENTENCE);
     expect(html).not.toContain(COMMAND_ACCEPT_VERB);
@@ -385,17 +398,21 @@ describe("ambiguity is ONE question with a field, and proposes nothing", () => {
   };
 
   test("the view is a question, not acts", () => {
-    const view = commandViewOf("do the thing", read);
+    const turn = commandTurnOf("do the thing", read, null);
+    expect(turn.kind).toBe("pending");
+    if (turn.kind !== "pending") return;
+    const view = turn.view;
     expect(view.kind).toBe("question");
     if (view.kind !== "question") return;
     expect(view.question).toBe(read.question);
-    expect(view.answered).toBe(false);
     expect("acts" in view).toBe(false);
   });
 
   test("the render is the question plus a field; no acts and no accept", () => {
+    const turn = commandTurnOf("do the thing", read, null);
+    if (turn.kind !== "pending") throw new Error("a question stays live");
     const html = render({
-      view: commandViewOf("do the thing", read),
+      view: turn.view,
       answer: "",
     });
     expect(html).toContain('class="command-card-question"');
@@ -418,14 +435,20 @@ describe("ambiguity is ONE question with a field, and proposes nothing", () => {
   });
 
   test("a second question is shown plainly and asks nothing again", () => {
-    const html = render({
-      view: {
-        kind: "question",
-        instruction: "do the thing",
-        question: "Which card?",
-        answered: true,
-      },
-    });
+    // STORY 21.5: a second question COMPLETES the exchange (one question per
+    // exchange), so the card shows the app's sentence and offers no field.
+    const answered: CommandQuestion = {
+      question: read.question,
+      answer: "the wire first",
+    };
+    const turn = commandTurnOf(
+      "do the thing",
+      { kind: "question", question: "Which card?" },
+      answered,
+    );
+    expect(turn.kind).toBe("done");
+    if (turn.kind !== "done") return;
+    const html = render({ exchanges: [turn.exchange] });
     expect(html).toContain(COMMAND_SECOND_QUESTION_SENTENCE);
     expect(html).not.toContain("command-card-answer-row");
     expect(html).not.toContain(COMMAND_ACCEPT_VERB);
@@ -577,7 +600,7 @@ describe("the card steers no map content and is belt-and-braces content", () => 
 
   test("the applied face keeps the same plain list and one quiet sentence", () => {
     const html = render({
-      view: { kind: "applied", instruction: "wire and note", acts: [WIRE, NOTE] },
+      exchanges: [appliedExchange("wire and note", [WIRE, NOTE], null)],
     });
     expect(listCount(html)).toBe(2);
     expect(html).toContain(COMMAND_APPLIED_SENTENCE);

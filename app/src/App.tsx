@@ -123,11 +123,21 @@ import {
   COMMAND_FAILED_SENTENCE,
   COMMAND_GHOST_REFUSAL_PREFIX,
   CommandCard,
+  EMPTY_COMMAND_THREAD,
+  appendExchange,
+  appliedExchange,
   clarifiedInstruction,
   commandAnchor,
-  commandViewOf,
+  commandTurnOf,
+  failedExchange,
   failureReport,
+  historyTurns,
+  refusedExchange,
+  undoExchangeOf,
   type CommandBusy,
+  type CommandExchange,
+  type CommandQuestion,
+  type CommandThread,
   type CommandView,
 } from "./canvas/CommandCard";
 import {
@@ -1001,6 +1011,16 @@ function App() {
   const [commandView, setCommandView] = useState<CommandView | null>(null);
   const [commandBusy, setCommandBusy] = useState<CommandBusy>(null);
   /**
+   * STORY 21.5 — THE CARD'S CONVERSATION (ADR-0038's 2026-11-20 amendment: a
+   * PRIMARY surface holds a conversation). The kept exchanges are VIEW STATE
+   * beside the interpreter's Move — no record family, no counter — bounded by
+   * CommandCard's own rule (whole exchanges, newest kept, the bound said in one
+   * sentence). The card keeps them when it closes: this is its memory, and a
+   * follow-up is exactly the turn that needs it.
+   */
+  const [commandThread, setCommandThread] =
+    useState<CommandThread>(EMPTY_COMMAND_THREAD);
+  /**
    * THE INTERPRETER'S DIGEST (story 21.2, ADR-0038 decision 6). Composed from
    * the LOADED view — names, kinds, one line about, states and wires, never a
    * reading body (interpreterDigest's input has no text door). Recomputed when
@@ -1036,7 +1056,10 @@ function App() {
    * applied: this answers a script, a question, or one sentence.
    */
   const requestInterpretation = useCallback(
-    async (instruction: string): Promise<InterpreterRead> => {
+    async (
+      instruction: string,
+      promptInstruction: string | null,
+    ): Promise<InterpreterRead> => {
       if (workspace === null) {
         return { kind: "problem", sentence: COMMAND_NO_WORKSPACE_SENTENCE };
       }
@@ -1052,7 +1075,17 @@ function App() {
             : "";
         const route = routeOf(manager.provider, manager.model, managerKey);
         const turn = await interpretInstruction({
-          input: { instruction, digest: commandDigest },
+          input: {
+            // The exchange records the person's words verbatim; an answered
+            // question sends the same words WITH the question, so the model
+            // reads a continuation rather than an unrelated new instruction.
+            instruction: promptInstruction ?? instruction,
+            digest: commandDigest,
+            // The here-and-now digest above is rebuilt for every call, so a
+            // card created by an earlier turn is visible BY NAME; the turns
+            // themselves say what "that one" referred to (STORY 21.5 §3).
+            history: historyTurns(commandThread),
+          },
           on: commandAnchor(level),
           sendMessages: (messages) => turnPort.sendMessages(route, messages),
           recordMove: (move) => appendCommandMove(workspace.path, move),
@@ -1064,7 +1097,7 @@ function App() {
         return { kind: "problem", sentence: COMMAND_INTERPRET_FAILED_SENTENCE };
       }
     },
-    [workspace, level, commandDigest],
+    [workspace, level, commandDigest, commandThread],
   );
 
   /**
@@ -1097,22 +1130,56 @@ function App() {
     [workspace, ground.reload],
   );
 
-  /** Read one instruction (or its one answered clarification) and show it. */
+  /**
+   * ONE EXCHANGE JOINS THE CONVERSATION, and the live turn clears with it
+   * (STORY 21.5). The append is the card's own bound: whole exchanges, newest
+   * kept, and the dropped flag becomes the one qualitative sentence. Nothing is
+   * written anywhere — this is view state beside the interpreter's Move.
+   */
+  const commitCommandExchange = useCallback((exchange: CommandExchange) => {
+    setCommandThread((thread) => appendExchange(thread, exchange));
+    setCommandView(null);
+    setCommandAnswer("");
+  }, []);
+
+  /**
+   * READ ONE INSTRUCTION and show what the app understood (STORY 21.5). The
+   * UNDO GUARD runs first: the vocabulary can only add, so an instruction that
+   * asks to take something back has no script the app could file, and sending
+   * it would invite the model to guess at an inverse — or to repeat the turn it
+   * was asked to take back. The card says so in ONE honest sentence instead.
+   *
+   * The prompt gets the here-and-now digest (rebuilt for every call), the
+   * recent exchanges and the catalogue, so a follow-up resolves against what
+   * just happened. It gets ONE instruction: a prior turn is context, never a
+   * standing order (STORY 21.5 §6).
+   */
   const runCommand = useCallback(
-    async (instruction: string, answered: boolean): Promise<void> => {
+    async (
+      instruction: string,
+      promptInstruction: string | null,
+      question: CommandQuestion | null,
+    ): Promise<void> => {
+      const undo = undoExchangeOf(instruction, question);
+      if (undo !== null) {
+        commitCommandExchange(undo);
+        return;
+      }
       setCommandBusy("reading");
       setCommandAnswer("");
       try {
-        const read = await requestInterpretation(instruction);
-        const next = commandViewOf(instruction, read);
-        setCommandView(
-          next.kind === "question" ? { ...next, answered } : next,
-        );
+        const read = await requestInterpretation(instruction, promptInstruction);
+        const turn = commandTurnOf(instruction, read, question);
+        if (turn.kind === "done") {
+          commitCommandExchange(turn.exchange);
+          return;
+        }
+        setCommandView(turn.view);
       } finally {
         setCommandBusy(null);
       }
     },
-    [requestInterpretation],
+    [commitCommandExchange, requestInterpretation],
   );
 
   /** The person pressed read: one instruction, verbatim, then the field clears. */
@@ -1120,40 +1187,44 @@ function App() {
     const instruction = commandInstruction;
     if (instruction.trim() === "") return;
     setCommandInstruction("");
-    void runCommand(instruction, false);
+    void runCommand(instruction, null, null);
   }, [commandInstruction, runCommand]);
 
   /**
-   * THE ONE CLARIFYING QUESTION IS ANSWERED ONCE (the story's scope). The next
-   * interpretation carries the instruction, the question and the answer; a
-   * second question is shown plainly and proposes nothing.
+   * THE ONE CLARIFYING QUESTION, ANSWERED ONCE (STORY 21.5 §4). The answer
+   * CONTINUES the exchange: the instruction stays the person's own words and
+   * the question and its answer ride with it — the thread gains one exchange,
+   * not two. A second question completes that exchange with one sentence
+   * (CommandCard's commandTurnOf) rather than asking again.
    */
   const answerCommandQuestion = useCallback(() => {
-    if (commandView?.kind !== "question" || commandView.answered) return;
+    if (commandView?.kind !== "question") return;
     const answer = commandAnswer.trim();
     if (answer === "") return;
-    const instruction = clarifiedInstruction(
+    const question = { question: commandView.question, answer };
+    void runCommand(
       commandView.instruction,
-      commandView.question,
-      answer,
+      clarifiedInstruction(commandView.instruction, commandView.question, answer),
+      question,
     );
-    void runCommand(instruction, true);
   }, [commandView, commandAnswer, runCommand]);
 
   /**
    * THE PERSON'S ACCEPT ON THE SCRIPT IS THE ACCEPTANCE OF ITS GHOSTS. One call
    * to the app's one apply seam; there is no second question and no partial
-   * apply. A failure names the act and what did not apply.
+   * apply. The exchange records what ran, or — exactly as the executor reports
+   * it — which act failed and what did not apply (STORY 21.5's outcome line).
    */
   const acceptCommand = useCallback(() => {
     if (commandView?.kind !== "acts" || commandBusy !== null) return;
     const acts = commandView.acts;
     const instruction = commandView.instruction;
+    const question = commandView.question;
     setCommandBusy("applying");
     void requestApply(acts)
       .then((result) => {
         if (result.ok) {
-          setCommandView({ kind: "applied", instruction, acts });
+          commitCommandExchange(appliedExchange(instruction, acts, question));
           return;
         }
         const sentence =
@@ -1162,36 +1233,57 @@ function App() {
             : result.phase === "accept"
               ? COMMAND_GHOST_REFUSAL_PREFIX + result.sentence
               : result.sentence;
-        setCommandView({ kind: "failed", instruction, sentence });
+        const failedAct =
+          result.run === null
+            ? null
+            : (acts[result.run.applied]?.act ?? null);
+        commitCommandExchange(
+          failedExchange(instruction, acts, question, sentence, failedAct),
+        );
       })
       .catch(() => {
-        setCommandView({
-          kind: "failed",
-          instruction,
-          sentence: COMMAND_FAILED_SENTENCE,
-        });
+        commitCommandExchange(
+          failedExchange(
+            instruction,
+            acts,
+            question,
+            COMMAND_FAILED_SENTENCE,
+            null,
+          ),
+        );
       })
       .finally(() => setCommandBusy(null));
-  }, [commandView, commandBusy, requestApply]);
+  }, [commandView, commandBusy, requestApply, commitCommandExchange]);
 
   /**
    * A REFUSAL MOVES NOTHING (ADR-0038 decision 4). The interpreter's Move is
-   * already written; this drops the script and shows one quiet line. It does
-   * not execute, accept, reload or log anything.
+   * already written; this drops the script and records the exchange as
+   * refused. It does not execute, accept, rerun or log anything.
    */
   const refuseCommand = useCallback(() => {
     if (commandView?.kind !== "acts") return;
-    setCommandView({ kind: "refused", instruction: commandView.instruction });
-    setCommandAnswer("");
+    commitCommandExchange(
+      refusedExchange(
+        commandView.instruction,
+        commandView.acts,
+        commandView.question,
+      ),
+    );
     setCommandBusy(null);
-  }, [commandView]);
+  }, [commandView, commitCommandExchange]);
 
-  /** Closing drops the stored view; opening always starts a fresh card. */
+  /**
+   * Closing hides the card and keeps its conversation: a primary surface's
+   * memory does not vanish because the surface was put away. A pending turn is
+   * dropped when the card next OPENS — an unanswered script was never applied,
+   * and the next instruction starts a new one.
+   */
   const closeCommandCard = useCallback(() => {
     setCommandOpen(false);
     setCommandBusy(null);
   }, []);
 
+  /** Opening starts a fresh TURN; the conversation it joins is kept. */
   const openCommandCard = useCallback(() => {
     setCommandInstruction("");
     setCommandAnswer("");
@@ -6043,6 +6135,8 @@ function App() {
         open={commandOpen}
         instruction={commandInstruction}
         answer={commandAnswer}
+        exchanges={commandThread.exchanges}
+        dropped={commandThread.dropped}
         view={commandView}
         busy={commandBusy}
         onOpen={openCommandCard}
