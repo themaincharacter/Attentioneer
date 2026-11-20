@@ -119,21 +119,33 @@ export const ACP_INHERITED_ENV = ["PATH", "HOME"] as const;
 export const ACP_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
+ * STORY 21.0 — HOW MUCH LATER THAN THE BUDGET THE PROMPT'S WAIT EXPIRES.
+ *
+ * The budget's own timer is armed a fraction of a millisecond AFTER the clock
+ * reading this wait is computed from, so a wait of exactly the remaining
+ * budget can land FIRST. When it does, the request timeout states "the run
+ * failed" while the run's own clock was about to state a timed-out ending —
+ * and a permission request still waiting gets recorded as cancelled rather
+ * than unanswered. The run's budget timer is the one authority for a timed-out
+ * ending, so the prompt's wait always outlasts it by this margin; the prompt
+ * request is only ever a backstop for a transport that stops reading at all.
+ */
+export const ACP_PROMPT_OUTLAST_MS = 100;
+
+/**
  * STORY 22.2 — HOW LONG THE PROMPT MAY WAIT (PURE, PROVISIONAL). \`session/prompt\`
  * answers at TURN END, so its wait is whatever the run's own budget has left —
- * never the flat request default that suits a handshake. A run whose budget has
- * already gone answers with the smallest honest wait (the budget timer is the
- * backstop that states the ending then).
- *
- * ROUNDED UP, so the request's wait never preempts the budget by a fraction of
- * a millisecond: the run's own timer is the one that states a timed-out ending,
- * and the prompt's wait can only ever agree with it or outlast it.
+ * never the flat request default that suits a handshake — plus the stated
+ * outlast. A run whose budget has already gone still waits that margin, so the
+ * budget timer can state the ending first rather than a request timeout.
  */
 export function acpPromptTimeoutMs(
   budgetMs: number,
   elapsedMs: number,
 ): number {
-  return Math.max(1, Math.ceil(budgetMs - elapsedMs));
+  return (
+    Math.max(1, Math.ceil(budgetMs - elapsedMs)) + ACP_PROMPT_OUTLAST_MS
+  );
 }
 
 /** How long a cancelled turn may take to settle before the child is killed. */
@@ -258,6 +270,28 @@ export interface AcpRunHandle {
   close(): Promise<void>;
 }
 
+/**
+ * STORY 21.0 — THE CLOCK A RUN READS, AND THE TIMERS IT ARMS (PROVISIONAL).
+ * One narrow pair, the same shape the platform gives, so production's default
+ * is the platform itself and a test's is a hand it can move.
+ */
+export interface AcpRunClock {
+  /** Milliseconds since the epoch; only differences are used. */
+  now(): number;
+  /** Arm one timer and hand back its handle. */
+  setTimeout(callback: () => void, ms: number): unknown;
+  /** Drop one armed timer. */
+  clearTimeout(handle: unknown): void;
+}
+
+/** The clock production uses: the platform's own timers and wall clock. */
+export const ACP_REAL_CLOCK: AcpRunClock = {
+  now: () => Date.now(),
+  setTimeout: (callback, ms) => setTimeout(callback, ms),
+  clearTimeout: (handle) =>
+    clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
 /** What a run needs from the app. Everything here is injected and testable. */
 export interface AcpRunOptions {
   /**
@@ -337,6 +371,14 @@ export interface AcpRunOptions {
    * \`ACP_REQUEST_TIMEOUT_MS\`.
    */
   requestTimeoutMs?: number;
+  /**
+   * STORY 21.0 — THE RUN'S CLOCK AND TIMERS (INJECTED FOR TESTS). Production
+   * passes nothing and gets the wall clock; a test hands over a clock it can
+   * advance, so a budget can expire at a stated instant instead of a real one.
+   * Every timer the run owns (the budget, the cancel grace) and every elapsed
+   * reading comes from here, so no ending depends on how fast the machine is.
+   */
+  clock?: AcpRunClock;
   /** Every progress entry as it happens, in order. */
   onProgress?: (entry: AcpProgressEntry) => void;
   /** The name this client tells the server in `initialize`. */
@@ -530,8 +572,11 @@ export function startAcpRun(
    * a budget that ran out, cancelled for a stop.
    */
   let pendingPermission: AcpPermissionAsk | null = null;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let grace: ReturnType<typeof setTimeout> | null = null;
+  // The run's clock and timers are the platform's unless a test handed its own
+  // (STORY 21.0): every deadline below is read from and armed on this one.
+  const clock = options.clock ?? ACP_REAL_CLOCK;
+  let timer: unknown = null;
+  let grace: unknown = null;
 
   let resolveResult!: (result: AcpRunResult) => void;
   const result = new Promise<AcpRunResult>((resolve) => {
@@ -559,11 +604,11 @@ export function startAcpRun(
     if (settled) return;
     settled = true;
     if (timer !== null) {
-      clearTimeout(timer);
+      clock.clearTimeout(timer);
       timer = null;
     }
     if (grace !== null) {
-      clearTimeout(grace);
+      clock.clearTimeout(grace);
       grace = null;
     }
     const live = transport;
@@ -707,7 +752,7 @@ export function startAcpRun(
     // Give the turn a moment to settle as cancelled; if it cannot, the grace
     // timer closes the run and the child dies anyway.
     if (grace === null) {
-      grace = setTimeout(() => {
+      grace = clock.setTimeout(() => {
         void finish("stopped", null, "cancelled");
       }, ACP_CANCEL_GRACE_MS);
     }
@@ -724,8 +769,8 @@ export function startAcpRun(
 
   // The overall budget starts now: it covers the handshake, the session and
   // the turn. Timeout is its own ending, never a failed one.
-  const budgetStartedAt = Date.now();
-  timer = setTimeout(() => {
+  const budgetStartedAt = clock.now();
+  timer = clock.setTimeout(() => {
     if (settled) return;
     timedOut = true;
     // STORY 18.4: a request nobody answered is SAID as unanswered, not folded
@@ -915,7 +960,7 @@ export function startAcpRun(
       const turned = await transport.prompt(sessionId, prompt, {
         timeoutMs: acpPromptTimeoutMs(
           budgetMs,
-          Date.now() - budgetStartedAt,
+          clock.now() - budgetStartedAt,
         ),
       });
       if (cancelled || turned.stopReason === "cancelled") {

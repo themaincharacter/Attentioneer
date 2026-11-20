@@ -24,6 +24,7 @@ import {
   type SidecarLine,
 } from "../src/turn/protocol";
 import { SESSION_RUN_UNREACHABLE, startSessionRun } from "../src/turn/acpSession";
+import { createRunLane } from "../sidecar/runs";
 import { acpMissingKeySentence, type AcpSpec } from "../src/turn/acpSpecs";
 import type { SidecarStart } from "../src/turn/sidecar";
 import type { TurnTransport } from "../src/turn/turn";
@@ -33,6 +34,7 @@ import {
   openSidecar,
   type SidecarPipe,
 } from "./fixtures/sidecar-pipe";
+import { manualClock } from "./fixtures/manual-clock";
 
 /**
  * Epic 18 story 3b — THE RUN LANE MOVED TO THE SIDECAR, PROVEN THROUGH IT.
@@ -57,6 +59,12 @@ import {
  *   5. THE WINDOW'S SEAM: a missing key and an absent sidecar are each one
  *      sentence and nothing hangs; and NO window module imports the run's
  *      process-bound module any more (the proof that the lane left the window).
+ *
+ * STORY 21.0: one test below — an unanswered permission settling as the run's
+ * timeout — drives the LANE in this process with a clock the test moves. It is
+ * the exception to "through the actual sidecar": the ending had to stop racing
+ * a 180 ms budget, and the lane's own line builders are what the sidecar would
+ * write. Every line kind it touches is still proven over the real pipe above.
  */
 
 const ROOT = mkdtempSync(join(tmpdir(), "attentioneer-session-sidecar-"));
@@ -522,46 +530,72 @@ describe("a run, streamed by the sidecar", () => {
   });
 
   test("an unanswered permission settles as the run's timeout, stated as unanswered", async () => {
-    const pipe = await sidecar();
+    // STORY 21.0 — the clock is the test's. This used to run through the real
+    // sidecar on a 180 ms budget, so the ending depended on whether the ask
+    // beat the budget; now the ask is awaited as an EVENT and the budget is
+    // advanced by hand. The lines are the lane's own builders (the same ones
+    // the sidecar writes), and the wire for each of them is still proven end to
+    // end by the other tests in this file.
+    const { clock, advance } = manualClock();
     const base = workspace();
     const reportPath = join(base, "report.json");
-    // A TEST-ONLY short budget. Nobody answers the ask.
-    const request = runRequest(17, "normal", reportPath, { timeoutMinutes: 0.003 });
-    const parts: Array<Extract<SidecarLine, { kind: "run-part" }>> = [];
-    const permissions: Array<Extract<SidecarLine, { kind: "run-permission" }>> = [];
+    const said: SidecarLine[] = [];
+    let asked!: () => void;
+    const ask = new Promise<void>((resolve) => {
+      asked = resolve;
+    });
+    let resolvedEnd!: (line: Extract<SidecarLine, { kind: "run-end" }>) => void;
     const ended = new Promise<Extract<SidecarLine, { kind: "run-end" }>>(
-      (resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("the run never ended")), 10_000);
-        pipe.transport.subscribe(request.run, (line) => {
-          if (line.kind === "run-permission" && line.run === request.run) {
-            permissions.push(line);
-            return;
-          }
-          if (line.kind === "run-part" && line.run === request.run) {
-            parts.push(line);
-            return;
-          }
-          if (line.kind === "run-end" && line.run === request.run) {
-            clearTimeout(timer);
-            resolve(line);
-          }
-        });
+      (resolve) => {
+        resolvedEnd = resolve;
       },
     );
-    await send(pipe, JSON.stringify(request));
+    const lane = createRunLane({
+      clock: clock,
+      say: (raw) => {
+        const line = parseSidecarLine(raw);
+        if (line === null) throw new Error("the lane wrote a line it cannot mean");
+        said.push(line);
+        if (line.kind === "run-permission") asked();
+        if (line.kind === "run-end") resolvedEnd(line);
+      },
+    });
+    lane.start(runRequest(17, "normal", reportPath));
+    // Nobody answers the ask: the run's own budget is the only way out.
+    await ask;
+    advance(60_000);
     const end = await ended;
+
+    const permissions = said.filter(
+      (line): line is Extract<SidecarLine, { kind: "run-permission" }> =>
+        line.kind === "run-permission",
+    );
     expect(permissions).toHaveLength(1);
-    expect(end.kind === "run-end" ? end.ending : null).toBe("timed-out");
-    const sentence = end.kind === "run-end" ? end.sentence : null;
-    expect(sentence).toContain("unanswered");
+    expect(end.ending).toBe("timed-out");
+    expect(end.sentence).toContain("unanswered");
     // The run recorded the ask as unanswered, never as a refusal.
-    const permissionEntry = parts
+    const permissionEntry = said
+      .filter(
+        (line): line is Extract<SidecarLine, { kind: "run-part" }> =>
+          line.kind === "run-part",
+      )
       .map((line) => line.entry)
       .find((entry) => entry.kind === "permission");
     expect(permissionEntry).toMatchObject({
       kind: "permission",
       reply: { outcome: "unanswered" },
     });
+    const started = said
+      .filter(
+        (line): line is Extract<SidecarLine, { kind: "run-part" }> =>
+          line.kind === "run-part",
+      )
+      .map((line) => line.entry)
+      .find((entry) => entry.kind === "started");
+    if (started !== undefined && started.kind === "started") {
+      madeDirs.push(started.cwd);
+    }
+    await lane.shutdown();
     expect(await gone((await reportOf(reportPath)).pid)).toBe(true);
   });
 

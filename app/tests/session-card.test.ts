@@ -62,6 +62,12 @@ import { allowOnceOption, refuseOption } from "../src/turn/acpEntries";
 import { type SidecarStart } from "../src/turn/sidecar";
 import { type TurnTransport } from "../src/turn/turn";
 import {
+  parseSidecarLine,
+  runEndLine,
+  runPartLine,
+  runPermissionLine,
+} from "../src/turn/protocol";
+import {
   openSidecar,
   type SidecarPipe,
 } from "./fixtures/sidecar-pipe";
@@ -228,31 +234,73 @@ async function lane(): Promise<TurnTransport> {
   return pipe.transport;
 }
 
-async function reportOf(path: string): Promise<{ pid: number; env: Record<string, string> }> {
-  for (let at = 0; at < 200; at += 1) {
-    try {
-      return JSON.parse(readFileSync(path, "utf8")) as {
-        pid: number;
-        env: Record<string, string>;
-      };
-    } catch {
-      await Bun.sleep(10);
-    }
-  }
-  throw new Error("the fake server wrote no report");
+/**
+ * The fake's own report, read once a run has SETTLED (story 21.0). The child
+ * writes it before its protocol starts and a run's ending is only said after
+ * the child was killed and reaped, so by the time an awaited `done` is here
+ * both facts are already true: this is a read, not a wait on a clock.
+ */
+function reportOf(path: string): {
+  pid: number;
+  env: Record<string, string>;
+} {
+  return JSON.parse(readFileSync(path, "utf8")) as {
+    pid: number;
+    env: Record<string, string>;
+  };
 }
 
-/** Did this pid go away? The child is reaped by close, so this settles quickly. */
-async function gone(pid: number): Promise<boolean> {
-  for (let at = 0; at < 200; at += 1) {
-    try {
-      process.kill(pid, 0);
-    } catch {
-      return true;
-    }
-    await Bun.sleep(10);
+/**
+ * Did this pid go away? A settled run-end is said after `finish` awaited the
+ * child's close, so the answer is a fact at this point, not a race (story
+ * 21.0 — no test in this file polls a clock).
+ */
+function gone(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
   }
-  return false;
+}
+
+/**
+ * A SCRIPTED SIDECAR FOR ONE RUN (story 21.0). It reads the `run` line the
+ * card sends and answers with exactly the lines that run would write, each
+ * handed over by the test. There is no process and no clock here on purpose:
+ * the card's half — what the transcript records and when — is what these
+ * tests prove, and an ending must never race a budget to be observed. The
+ * run's own clock is proven in `acp-run.test.ts`; the wire between the two
+ * halves is proven in `session-sidecar.test.ts`.
+ */
+function scriptedRun(
+  answer: (
+    run: { request: number; run: number },
+    say: (raw: string) => void,
+  ) => void,
+): { transport: TurnTransport; sent: string[] } {
+  const waiting = new Map<number, (line: NonNullable<ReturnType<typeof parseSidecarLine>>) => void>();
+  const sent: string[] = [];
+  const transport: TurnTransport = {
+    async send(line) {
+      sent.push(line);
+      const request = JSON.parse(line) as { id: number; run: number };
+      const handler = waiting.get(request.id);
+      if (handler === undefined) throw new Error("no subscriber for the run");
+      answer({ request: request.id, run: request.run }, (raw) => {
+        const parsed = parseSidecarLine(raw);
+        if (parsed === null) throw new Error("the script wrote a bad line");
+        handler(parsed);
+      });
+    },
+    subscribe(id, handler) {
+      waiting.set(id, handler);
+      return () => {
+        if (waiting.get(id) === handler) waiting.delete(id);
+      };
+    },
+  };
+  return { transport, sent };
 }
 
 /** Every regular file under a folder, workspace-relative, sorted. */
@@ -589,7 +637,7 @@ describe("a run's transcript, appended as it arrives", () => {
     expect(text).toBe(serializeSessionTranscript(done.entries));
     expect(text.endsWith("\n")).toBe(true);
     // And the child is dead on this path, like every other.
-    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
+    expect(gone(reportOf(fx.reportPath).pid)).toBe(true);
   });
 
   test("a permission waits for the person, and the REFUSAL crosses the wire", async () => {
@@ -616,7 +664,7 @@ describe("a run's transcript, appended as it arrives", () => {
       reply: "refused",
     });
     expect(done.ending).toBe("completed");
-    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
+    expect(gone(reportOf(fx.reportPath).pid)).toBe(true);
   });
 
   test("an ALLOW-ONCE is the only allow the transcript can state", async () => {
@@ -653,23 +701,63 @@ describe("a run's transcript, appended as it arrives", () => {
     const text = readFileSync(sessionTranscriptPath(base, "one"), "utf8");
     expect(text).toContain('"reply":"allowed-once"');
     expect(text).not.toContain("always");
-    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
+    expect(gone(reportOf(fx.reportPath).pid)).toBe(true);
   });
 
   test("an unanswered permission times out and the transcript says so", async () => {
-    // A short budget: nobody presses either verb, so the request outlives it.
-    const fx = fixture("normal", { timeoutMinutes: 0.003 });
+    // STORY 21.0 — the ending is HANDED OVER, not waited for. The run's own
+    // clock decides a timeout in `acp-run.test.ts`; here the card is given the
+    // three lines that clock would write, in order, so the transcript assertions
+    // cannot depend on a permission request beating a 180 ms budget.
     const base = workspace();
     const asks: string[] = [];
-    const started = beginSessionRun(base, fx.row, "one", {
+    const toolCall = {
+      toolCallId: "call-1",
+      title: "Read the working directory",
+      kind: "read",
+      status: "pending",
+    };
+    const options = [
+      { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+      { optionId: "allow-always", name: "Allow always", kind: "allow_always" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ];
+    const ask: AcpPermissionAsk = {
+      id: 7,
+      method: "session/request_permission",
+      toolCall,
+      options,
+    };
+    const scripted = scriptedRun(({ request, run }, say) => {
+      // Nobody presses either verb: the ask goes down, then the budget's own
+      // ending arrives with the request still waiting.
+      say(runPermissionLine(request, run, ask));
+      say(
+        runPartLine(request, run, {
+          kind: "permission",
+          method: ask.method,
+          toolCall: ask.toolCall,
+          options: ask.options,
+          reply: { outcome: "unanswered" },
+        }),
+      );
+      say(
+        runEndLine(
+          request,
+          run,
+          "timed-out",
+          "the run ran out of its budget with a permission request unanswered, so what arrived is a partial, not a result",
+        ),
+      );
+    });
+    const started = beginSessionRun(base, row("normal"), "one", {
       task: TASK,
       readKey: async () => "",
-      transport: await lane(),
+      transport: scripted.transport,
       start: async () => STARTED,
-      transcriptIo: fx.transcriptIo,
-      onPermission: (ask) => {
-        asks.push(ask.method);
-        // Deliberately no answer: the run's own budget is the only way out.
+      transcriptIo: nodeIo(),
+      onPermission: (given) => {
+        asks.push(given.method);
       },
     });
     const done = await started.done;
@@ -684,6 +772,10 @@ describe("a run's transcript, appended as it arrives", () => {
     const last = done.entries[done.entries.length - 1]!;
     expect(last.kind).toBe("ended");
     expect(last.kind === "ended" ? last.sentence : "").toContain("unanswered");
+    // No answer was ever sent: the run's budget is the only way out.
+    expect(
+      scripted.sent.some((line) => line.includes("run-permission-reply")),
+    ).toBe(false);
     // And the file says the same after a reopen.
     const parsed = await loadSessionTranscript(base, "one", nodeIo());
     expect(parsed.entries).toContainEqual({
@@ -691,26 +783,31 @@ describe("a run's transcript, appended as it arrives", () => {
       name: "Read the working directory",
       reply: "unanswered",
     });
-    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
   });
 
   test("a stopped run keeps the partial and says it was stopped", async () => {
     const fx = fixture("hang-mid-turn");
     const base = workspace();
     const arrived: SessionEntry[] = [];
-    const started = beginSessionRun(base, fx.row, "one", {
+    let stopped = false;
+    let started!: ReturnType<typeof beginSessionRun>;
+    started = beginSessionRun(base, fx.row, "one", {
       task: TASK,
       readKey: async () => "",
       transport: await lane(),
       start: async () => STARTED,
       transcriptIo: fx.transcriptIo,
-      onEntry: (entry) => arrived.push(entry),
+      // STORY 21.0 — stop it on the ENTRY, not on a clock: the first words to
+      // arrive are the fact that the run is mid-turn, so the cancel cannot
+      // arrive before the thing it stops.
+      onEntry: (entry) => {
+        arrived.push(entry);
+        if (!stopped && entry.kind === "text") {
+          stopped = true;
+          started.handle.cancel();
+        }
+      },
     });
-    // Wait until the run has actually said something, then stop it.
-    for (let at = 0; at < 200 && !arrived.some((e) => e.kind === "text"); at += 1) {
-      await Bun.sleep(10);
-    }
-    started.handle.cancel();
     const done = await started.done;
 
     expect(done.ending).toBe("stopped");
@@ -722,7 +819,7 @@ describe("a run's transcript, appended as it arrives", () => {
     // The file holds the same partial and the same ending.
     const parsed = await loadSessionTranscript(base, "one", nodeIo());
     expect(parsed.entries).toEqual([...done.entries]);
-    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
+    expect(gone(reportOf(fx.reportPath).pid)).toBe(true);
   });
 
   test("a dying server is a failed run with one sentence", async () => {
@@ -744,20 +841,40 @@ describe("a run's transcript, appended as it arrives", () => {
     // What arrived before the break is kept.
     expect(done.entries.some((entry) => entry.kind === "text")).toBe(true);
     expect(sessionEntryLine(last)).toContain("the run failed:");
-    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
+    expect(gone(reportOf(fx.reportPath).pid)).toBe(true);
   });
 
   test("a run that runs out of its budget is timed-out, never a result", async () => {
-    // The wire's budget is a number of minutes so a test can state a short
-    // one; a ROW still refuses anything under a minute (acpSpecs' rule).
-    const fx = fixture("silent", { timeoutMinutes: 0.003 });
+    // STORY 21.0 — the ending is HANDED OVER, not waited for. A real budget is
+    // proven in `acp-run.test.ts` (by a clock the test moves) and through the
+    // sidecar in `session-sidecar.test.ts`; here the card is given the ending
+    // that budget writes, so its sentence is asserted without a 180 ms wait.
     const base = workspace();
-    const started = beginSessionRun(base, fx.row, "one", {
+    const scripted = scriptedRun(({ request, run }, say) => {
+      say(runPartLine(request, run, {
+        kind: "started",
+        command: "/bin/one",
+        args: [],
+        cwd: "/tmp/one",
+        declaration: "this run will receive no key",
+        inherited: ["PATH", "HOME"],
+        envNames: [],
+      }));
+      say(
+        runEndLine(
+          request,
+          run,
+          "timed-out",
+          "the run ran out of its budget, so what arrived is a partial, not a result",
+        ),
+      );
+    });
+    const started = beginSessionRun(base, row("silent"), "one", {
       task: TASK,
       readKey: async () => "",
-      transport: await lane(),
+      transport: scripted.transport,
       start: async () => STARTED,
-      transcriptIo: fx.transcriptIo,
+      transcriptIo: nodeIo(),
     });
     const done = await started.done;
     expect(done.ending).toBe("timed-out");
@@ -766,7 +883,24 @@ describe("a run's transcript, appended as it arrives", () => {
     expect(sessionEntryLine(last)).toBe(
       "it ran out of its budget; what arrived stays.",
     );
-    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
+    // The file says the same, so a reopen has the ending too.
+    const parsed = await loadSessionTranscript(base, "one", nodeIo());
+    expect(parsed.entries[parsed.entries.length - 1]).toEqual(last);
+  });
+
+  test("no run test in this file waits on elapsed time", async () => {
+    // STORY 21.0's source check, kept beside the tests it governs. An ending
+    // that arrives from a scripted line or an event is deterministic; one that
+    // arrives from a budget is a race with the machine. The sidecar fixture's
+    // own bounded waits live in `fixtures/sidecar-pipe.ts`, not in these
+    // bodies, and the run's real budget is proven by a MOVED clock in
+    // `acp-run.test.ts`.
+    const source = readFileSync(fileURLToPath(import.meta.url), "utf8");
+    expect(source).not.toContain("Bun" + ".sleep");
+    expect(source).not.toContain("set" + "Timeout");
+    // A sub-minute row would be a real budget in disguise: every row here
+    // keeps the shipped minute, and every short deadline is scripted.
+    expect(source).not.toMatch(/timeoutMinutes:\s*0?\./);
   });
 
   test("the shipped row has NO key, and its run fails for want of one instead of hanging", async () => {
@@ -804,7 +938,7 @@ describe("a run's transcript, appended as it arrives", () => {
     const parsed = await loadSessionTranscript(base, "one", nodeIo());
     expect(parsed.entries[parsed.entries.length - 1]).toEqual(last);
     // Nothing hung: the child was killed on this path like every other.
-    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
+    expect(gone(reportOf(fx.reportPath).pid)).toBe(true);
   });
 
   test("a second run appends after the previous run's ended line", async () => {
@@ -872,7 +1006,7 @@ describe("a run's transcript, appended as it arrives", () => {
     // The key DID reach the child through the request's PAYLOAD (there is no
     // other path: the sidecar holds no store), beside PATH/HOME and nothing
     // else. The report is the child's own view.
-    const report = await reportOf(fx.reportPath);
+    const report = reportOf(fx.reportPath);
     expect(report.env.DEEPSEEK_API_KEY).toBe(SENTINEL);
     expect(Object.keys(report.env).sort()).toEqual([
       "DEEPSEEK_API_KEY",
@@ -888,7 +1022,7 @@ describe("a run's transcript, appended as it arrives", () => {
       expect(serializeSessionEntryLine(entry)).not.toContain(SENTINEL);
       expect(sessionEntryLine(entry)).not.toContain(SENTINEL);
     }
-    expect(await gone((await reportOf(fx.reportPath)).pid)).toBe(true);
+    expect(gone(reportOf(fx.reportPath).pid)).toBe(true);
   });
 
   test("the card's record path writes nothing outside map/", async () => {

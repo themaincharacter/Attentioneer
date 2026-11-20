@@ -22,6 +22,7 @@ import {
 } from "../src/turn/acpSpecs";
 import {
   ACP_CHILD_WORDS_MAX,
+  ACP_PROMPT_OUTLAST_MS,
   ACP_RUN_SENTENCES,
   acpChildExitSentence,
   acpInheritedEnvironment,
@@ -39,6 +40,7 @@ import {
 } from "../src/turn/acpEntries";
 import { bunSpawn } from "../src/turn/acp";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
+import { manualClock } from "./fixtures/manual-clock";
 
 /**
  * Story 18.2 — A TOOL ROW AND ONE HEADLESS RUN, PROVEN AGAINST THE FAKE SERVER.
@@ -105,6 +107,7 @@ interface BeginOptions {
   environment?: Record<string, string | undefined>;
   timeoutMs?: number;
   requestTimeoutMs?: number;
+  clock?: AcpRunOptions["clock"];
 }
 
 /** Start a run against the fake and keep everything a proof needs. */
@@ -137,6 +140,7 @@ function begin(
     ...(options.requestTimeoutMs === undefined
       ? {}
       : { requestTimeoutMs: options.requestTimeoutMs }),
+    ...(options.clock === undefined ? {} : { clock: options.clock }),
     onProgress: (entry) => progress.push(entry),
     spawn: (command, args, spawnOptions) => {
       spawned.env = { ...(spawnOptions.env ?? {}) };
@@ -586,14 +590,64 @@ describe("one headless run, every ending", () => {
     expect(await gone(run.report().pid)).toBe(true);
   });
 
-  test("the prompt's wait is the run's remaining budget (the seam's value)", () => {
+  test("a budget that expires while a permission waits is a timeout, and the ask is unanswered", async () => {
+    // STORY 21.0 — the budget is moved BY HAND, so no wall clock can decide
+    // whether the permission arrives before the timeout. Nobody answers: the
+    // run's own clock is the only way out, exactly as it is for a person who
+    // walks away from the card.
+    const { clock, advance } = manualClock();
+    let arrived!: () => void;
+    const asked = new Promise<void>((resolve) => {
+      arrived = resolve;
+    });
+    const run = begin("normal", {
+      timeoutMs: 600_000,
+      clock,
+      replyToPermission: () => {
+        arrived();
+        return new Promise(() => {});
+      },
+    });
+    await asked;
+    advance(600_000);
+    const result = await run.handle.result;
+
+    expect(result.ending).toBe("timed-out");
+    expect(result.sentence).toBe(ACP_RUN_SENTENCES.permissionUnanswered);
+    const permission = result.entries.find(
+      (entry) => entry.kind === "permission",
+    );
+    expect(permission).toMatchObject({
+      kind: "permission",
+      reply: { outcome: "unanswered" },
+    });
+    expect(await gone(run.report().pid)).toBe(true);
+  });
+
+  test("the prompt's wait is the run's remaining budget plus the stated outlast", () => {
     // STORY 22.2 — the prompt does not wait a transport constant; it waits
-    // what the row's budget has left. This is the value the call is handed.
-    expect(acpPromptTimeoutMs(10 * 60_000, 0)).toBe(600_000);
-    expect(acpPromptTimeoutMs(10 * 60_000, 12_000)).toBe(588_000);
-    // A budget already gone is the smallest honest wait; the budget timer
-    // states the ending, not this number.
-    expect(acpPromptTimeoutMs(5, 50)).toBe(1);
+    // what the row's budget has left. STORY 21.0 adds the outlast, so the
+    // budget's own timer can never lose a photo finish to this wait.
+    expect(acpPromptTimeoutMs(10 * 60_000, 0)).toBe(
+      600_000 + ACP_PROMPT_OUTLAST_MS,
+    );
+    expect(acpPromptTimeoutMs(10 * 60_000, 12_000)).toBe(
+      588_000 + ACP_PROMPT_OUTLAST_MS,
+    );
+    // A budget already gone gives the smallest honest wait: the outlast.
+    expect(acpPromptTimeoutMs(5, 50)).toBe(1 + ACP_PROMPT_OUTLAST_MS);
+    // And whatever the reading, the request's deadline is strictly later than
+    // the budget's: the run's own timer states a timed-out ending.
+    for (const [budget, elapsed] of [
+      [180, 0],
+      [180, 90],
+      [180, 179],
+      [600_000, 599_999],
+    ] as const) {
+      expect(acpPromptTimeoutMs(budget, elapsed)).toBeGreaterThan(
+        Math.max(0, budget - elapsed),
+      );
+    }
   });
 
   test("a turn that answers after the old flat wait finishes normally", async () => {

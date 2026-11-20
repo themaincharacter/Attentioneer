@@ -75,6 +75,7 @@ import {
   startAcpRun,
   type AcpPermissionAsk,
   type AcpPermissionReply,
+  type AcpRunClock,
   type AcpRunHandle,
 } from "../src/turn/acpRun.ts";
 import {
@@ -182,6 +183,13 @@ export function commandFound(
 export interface RunLaneOptions {
   /** Write ONE already-built line to the host. */
   say: (line: string) => void;
+  /**
+   * STORY 21.0 — THE RUN'S CLOCK AND TIMERS (INJECTED FOR TESTS). Production
+   * passes nothing and the lane's runs take the wall clock; a test hands over
+   * one it can advance, so the budget expires at a stated instant rather than
+   * racing a request. The lane itself owns no clock of its own.
+   */
+  clock?: AcpRunClock;
 }
 
 /**
@@ -294,6 +302,9 @@ export function createRunLane(options: RunLaneOptions): RunLane {
       // THE KEY IS ALREADY HERE, and it is the only road: no store, no row.
       readKey: async () => "",
       resolvedEnv: request.env,
+      // STORY 21.0 — a test may hand the run a clock it can move; production
+      // arms the platform's own timers.
+      ...(options.clock === undefined ? {} : { clock: options.clock }),
       // STORY 18.4 — THE RUN WAITS FOR A PERSON. The ask goes DOWN the wire;
       // the promise settles only when an answer comes UP, and the run's own
       // budget is the only other way out. There is no default allow.
