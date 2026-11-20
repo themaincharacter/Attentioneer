@@ -6,12 +6,14 @@ import {
 } from "../ghost/registry";
 import {
   GROUND_SELF_LINK_REFUSAL,
+  parseGroundLinkLine,
   parseGroundLinks,
   serializeGroundLinkLine,
   type GroundLink,
 } from "../map/groundLinks";
 import {
   parseGround,
+  parseGroundLine,
   serializeGroundLine,
   addGroundReference,
 } from "../map/ground";
@@ -123,8 +125,11 @@ function closureAddCard(
   target: GhostTarget,
   params: Record<string, unknown>,
   before: string | null,
-  after: string,
+  after: string | null,
 ): readonly GhostIssue[] {
+  if (after === null) {
+    return [issue("append-only", "adding a card cannot remove the file")];
+  }
   const label = params.label;
   if (target.kind !== "spot" || typeof label !== "string") {
     return [issue("params", "the card proposal has no point or no label")];
@@ -174,8 +179,11 @@ function closureAddWire(
   target: GhostTarget,
   _params: Record<string, unknown>,
   before: string | null,
-  after: string,
+  after: string | null,
 ): readonly GhostIssue[] {
+  if (after === null) {
+    return [issue("append-only", "adding a wire cannot remove the file")];
+  }
   if (target.kind !== "link") {
     return [issue("params", "the wire proposal has no pair")];
   }
@@ -230,8 +238,11 @@ function closureAddNote(
   target: GhostTarget,
   params: Record<string, unknown>,
   before: string | null,
-  after: string,
+  after: string | null,
 ): readonly GhostIssue[] {
+  if (after === null) {
+    return [issue("append-only", "adding a note cannot remove the file")];
+  }
   const text = params.text;
   if (target.kind !== "card") {
     return [issue("params", NOTE_CARD_REFUSAL)];
@@ -280,8 +291,11 @@ function closureAddAsk(
   target: GhostTarget,
   params: Record<string, unknown>,
   before: string | null,
-  after: string,
+  after: string | null,
 ): readonly GhostIssue[] {
+  if (after === null) {
+    return [issue("append-only", "adding an ask card cannot remove the file")];
+  }
   const label = params.label;
   if (target.kind !== "spot" || typeof label !== "string") {
     return [issue("params", "the ask proposal has no point or no label")];
@@ -301,6 +315,170 @@ function closureAddAsk(
     return [issue("append-only", "the dry run's last record is not this ask")];
   }
   if (result.malformed.length !== base.malformed.length) {
+    return [issue("append-only", "the dry run would change the file's preserved lines")];
+  }
+  return [];
+}
+
+/*
+ * STORY 21.6 — THE REMOVALS (ADR-0038's 2026-11-20 amendment: a primary
+ * surface with only adds cannot fix a mistake it just made). Each row removes
+ * exactly ONE thing and derives exactly ONE step; nothing here cascades and
+ * nothing here deletes more than the person named.
+ *
+ * HOW A REMOVAL IS EXPRESSED: the ghost step vocabulary gained a second op
+ * (envelope.ts). A record-file removal names the EXACT line the base holds, so
+ * the dry run drops that one line and keeps every other byte (malformed and
+ * hand-formatted lines included); a note is one file, so its removal names no
+ * line and the file itself goes. The line is read from the base bytes the
+ * deriver is handed — never re-serialized from a parse — so a hand-edited file
+ * keeps every byte the removal did not take. PROVISIONAL with the act names.
+ *
+ * A CARD'S WIRES ARE NOT THIS MOVE'S BUSINESS: removing a card's ground line
+ * leaves its links in `ground-links.txt` as preserved, REPORTED orphans (the
+ * links family's own rule); the app's delete path is where the cascade lives
+ * and this ghost must not guess at it.
+ */
+
+/**
+ * The raw line in a record file whose parsed form satisfies `matches`, or
+ * null. The RAW segment is returned (a CR included when the file is CRLF), so
+ * the step names bytes the file actually holds.
+ */
+function rawLineWhere(
+  before: string | null,
+  matches: (line: string) => boolean,
+): string | null {
+  if (before === null) return null;
+  for (const segment of before.split("\n")) {
+    const bare = segment.replace(/\r$/, "");
+    if (matches(bare)) return segment;
+  }
+  return null;
+}
+
+/** UNWIRE — drop the one line holding this exact ordered pair. */
+function deriveUnwireSteps(
+  target: GhostTarget,
+  _params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  if (target.kind !== "link") return [];
+  const line = rawLineWhere(before, (raw) => {
+    const link = parseGroundLinkLine(raw);
+    return link !== null && link.from === target.from && link.to === target.to;
+  });
+  if (line === null) return [];
+  return [{ op: "remove", file: GROUND_WIRE_FILE, line }];
+}
+
+function closureUnwire(
+  target: GhostTarget,
+  _params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (target.kind !== "link") {
+    return [issue("params", "the unwire proposal has no pair")];
+  }
+  if (after === null) {
+    return [issue("append-only", "removing one wire cannot leave no file")];
+  }
+  const base = parseGroundLinks(before ?? "");
+  const key = serializeGroundLinkLine({ from: target.from, to: target.to });
+  const at = base.links.findIndex(
+    (link: GroundLink) => serializeGroundLinkLine(link) === key,
+  );
+  if (at === -1) {
+    return [issue("append-only", "the map does not wire those two cards")];
+  }
+  const expected = base.links
+    .filter((_link: GroundLink, index: number) => index !== at)
+    .map(serializeGroundLinkLine);
+  const result = parseGroundLinks(after);
+  if (result.links.map(serializeGroundLinkLine).join("\n") !== expected.join("\n")) {
+    return [issue("append-only", "the dry run did not drop exactly this one wire")];
+  }
+  if (result.malformed.join("\n") !== base.malformed.join("\n")) {
+    return [issue("append-only", "the dry run would change the file's preserved lines")];
+  }
+  return [];
+}
+
+/** REMOVE NOTE — one card's note file goes; no line is named because no line exists. */
+function deriveRemoveNoteSteps(
+  target: GhostTarget,
+  _params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  if (target.kind !== "card" || before === null) return [];
+  return [{ op: "remove", file: groundNoteFile(target.slug) }];
+}
+
+function closureRemoveNote(
+  target: GhostTarget,
+  _params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (target.kind !== "card") {
+    return [issue("params", NOTE_CARD_REFUSAL)];
+  }
+  if (before === null) {
+    return [
+      issue(
+        "append-only",
+        "there is no note file to remove for that card",
+      ),
+    ];
+  }
+  if (after !== null) {
+    return [issue("append-only", "removing a note must remove its one file")];
+  }
+  return [];
+}
+
+/** REMOVE CARD — drop the one ground line naming this card. */
+function deriveRemoveCardSteps(
+  target: GhostTarget,
+  _params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  if (target.kind !== "card") return [];
+  const line = rawLineWhere(before, (raw) => {
+    const card = parseGroundLine(raw);
+    return card !== null && card.on === target.slug;
+  });
+  if (line === null) return [];
+  return [{ op: "remove", file: GROUND_CARD_FILE, line }];
+}
+
+function closureRemoveCard(
+  target: GhostTarget,
+  _params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (target.kind !== "card") {
+    return [issue("params", "the card removal has no card")];
+  }
+  if (after === null) {
+    return [issue("append-only", "removing one card cannot leave no file")];
+  }
+  const base = parseGround(before ?? "");
+  const key = target.slug;
+  const at = base.references.findIndex((reference) => reference.on === key);
+  if (at === -1) {
+    return [issue("append-only", "the map does not carry that card")];
+  }
+  const expected = base.references
+    .filter((_reference, index) => index !== at)
+    .map(serializeGroundLine);
+  const result = parseGround(after);
+  if (result.references.map(serializeGroundLine).join("\n") !== expected.join("\n")) {
+    return [issue("append-only", "the dry run did not drop exactly this one card")];
+  }
+  if (result.malformed.join("\n") !== base.malformed.join("\n")) {
     return [issue("append-only", "the dry run would change the file's preserved lines")];
   }
   return [];
@@ -399,14 +577,78 @@ const ASK_ROW: MoveDefinition = {
     "Add one ask card at one point, with the words it would carry. Nothing is sent and no question is recorded: sending is the person's, and an unsent question is not a record.",
 };
 
+const UNWIRE_ROW: MoveDefinition = {
+  move: { family: "wire", verb: "remove" },
+  game: "ground",
+  files: [GROUND_WIRE_FILE],
+  params: [],
+  targetCount: 1,
+  targets: only("link", [
+    { kind: "word", why: "an unwire names the two cards it separates" },
+    { kind: "loop", why: "an unwire names the two cards it separates" },
+    { kind: "spot", why: "an unwire names the two cards it separates" },
+    { kind: "card", why: "an unwire names BOTH cards; one card is not a wire" },
+  ]),
+  steps: deriveUnwireSteps,
+  closure: closureUnwire,
+  boundary:
+    "Remove one wire between two cards that are already on the map. Nothing else changes: no card, note, reading or other wire is added, rewritten or removed.",
+};
+
+const NOTE_REMOVE_ROW: MoveDefinition = {
+  move: { family: "note", verb: "remove" },
+  game: "ground",
+  files: [],
+  filesFor: (target) =>
+    target.kind === "card" ? [groundNoteFile(target.slug)] : [],
+  params: [],
+  targetCount: 1,
+  targets: only("card", [
+    { kind: "word", why: "a note belongs to a card on this map" },
+    { kind: "loop", why: "a note belongs to a card on this map" },
+    { kind: "spot", why: "a note belongs to a card on this map" },
+    { kind: "link", why: "a note belongs to a card on this map" },
+  ]),
+  steps: deriveRemoveNoteSteps,
+  closure: closureRemoveNote,
+  boundary:
+    "Remove one card's note, with every word it holds. Nothing else changes: the card, its name, point, reading and wires stay exactly as they are.",
+};
+
+const CARD_REMOVE_ROW: MoveDefinition = {
+  move: { family: "card", verb: "remove" },
+  game: "ground",
+  files: [GROUND_CARD_FILE],
+  params: [],
+  targetCount: 1,
+  targets: only("card", [
+    { kind: "word", why: "a card is one ground line, and its line names it" },
+    { kind: "loop", why: "a card is one ground line, and its line names it" },
+    { kind: "spot", why: "a card is one ground line, and its line names it" },
+    { kind: "link", why: "a card is one ground line, and its line names it" },
+  ]),
+  steps: deriveRemoveCardSteps,
+  closure: closureRemoveCard,
+  // NO INVENTED CASCADE: this move takes the card's ground line and stops. Its
+  // links stay in `ground-links.txt` as preserved, reported orphans; its
+  // reading, note and picture stay where they are. The app's own delete path is
+  // where a person's card deletion cascades, and a ghost does not guess at it.
+  boundary:
+    "Remove one card from the map. Nothing else changes: its wires, reading, note and picture are not taken, because the app's own delete path is where that cascade lives.",
+};
+
 /**
  * The command card's ground rows, in the vocabulary's order. Handed to the
  * ghost session's `moves` option by `attentioneerHost.ts`; NEVER appended to
- * the live `MOVES` table (the app's expansion gate is ADR-0025's).
+ * the live `MOVES` table (the app's expansion gate is ADR-0025's). STORY 21.6
+ * appends the three removal rows — each one ghost, each one change.
  */
 export const GROUND_MOVES: readonly MoveDefinition[] = [
   CARD_ROW,
   WIRE_ROW,
   NOTE_ROW,
   ASK_ROW,
+  UNWIRE_ROW,
+  NOTE_REMOVE_ROW,
+  CARD_REMOVE_ROW,
 ];

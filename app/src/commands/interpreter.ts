@@ -318,7 +318,7 @@ export function buildInterpreterPrompt(input: InterpreterInput): string {
     "",
     "2. If the instruction could mean two different changes, or you cannot tell which change is wanted, ask ONE short question in plain text and write NO block. Propose nothing. Do not guess.",
     "",
-    "The acts only ADD. None of them removes what an earlier turn added, so an instruction that asks to take something back has NO script here: write NO block, and write ONE plain sentence saying the app cannot take it back. Never answer it by repeating the earlier acts.",
+    "The acts can ADD and REMOVE (the removal acts are in the list above). An instruction that names a specific wire, note or card to take away is a removal script: use the removal act for that one thing, and never invent a cascade (removing a card is not removing its wires). A general 'undo that' is the app's own to resolve against the last applied turn; if you are asked it anyway, write NO block and NEVER answer it by repeating the earlier acts.",
     "",
     "Rules that are limits, not style:",
     "- Reference only cards named in the map digest. Never invent a card, a name or a wire.",

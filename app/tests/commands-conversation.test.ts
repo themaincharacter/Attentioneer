@@ -11,7 +11,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ACT_NAMES, type CommandAct } from "../src/commands/acts";
+import {
+  ACT_NAMES,
+  INVERSE_ACT_OF,
+  inverseActOf,
+  type CommandAct,
+} from "../src/commands/acts";
 import {
   applyCommandScript,
   createAttentioneerHost,
@@ -52,11 +57,13 @@ import {
   exchangeOutcomeLine,
   failedExchange,
   historyTurns,
+  lastAppliedActsOf,
   nothingExchange,
   refusedExchange,
   undoSentenceOf,
   undoExchangeOf,
   undoRequestOf,
+  undoScriptOf,
   type CommandExchange,
   type CommandQuestion,
   type CommandThread,
@@ -561,21 +568,168 @@ describe("a clarifying question continues the thread", () => {
  * UNDO: ACTS OR ONE HONEST SENTENCE — NEVER A NO-OP, NEVER A GUESS
  * ------------------------------------------------------------------ */
 
-describe("an undo-shaped instruction gets one honest sentence", () => {
-  test("the vocabulary has no inverse act, and this story adds none", () => {
-    // The honest basis of the sentence: ACT_SPECS is adds and reads only.
-    expect(ACT_NAMES).toEqual([
-      "map_overview",
-      "read_card",
-      "read_wires",
-      "propose_card",
-      "propose_wire",
-      "propose_note",
-      "propose_ask",
-    ]);
+describe("an undo-shaped instruction is the last applied act's inverse, or one honest sentence", () => {
+  test("the vocabulary now pairs each creating act with the removal that takes it back", () => {
+    // STORY 21.6: the inverse exists, so the sentence is the FALLBACK, not the
+    // rule (ADR-0038's amendment: coverage grows act by act).
+    expect(INVERSE_ACT_OF).toEqual({
+      propose_wire: "propose_unwire",
+      propose_unwire: "propose_wire",
+      propose_note: "propose_remove_note",
+      propose_remove_note: "propose_note",
+      propose_card: "propose_remove_card",
+      propose_remove_card: "propose_card",
+    });
     for (const name of ACT_NAMES) {
-      expect(name).not.toMatch(/remove|delete|drop|undo|take|back/i);
+      if (!(name in INVERSE_ACT_OF)) continue;
+      expect(ACT_NAMES).toContain(INVERSE_ACT_OF[name]);
     }
+    // The applied act's own fields build the offered inverse; the two
+    // directions that need the record's words or point are NOT invented.
+    const wire = inverseActOf({
+      act: "propose_wire",
+      map: "ground",
+      payload: { from: "rain", to: "soil" },
+    });
+    expect(wire).toEqual({
+      act: "propose_unwire",
+      map: "ground",
+      payload: { from: "rain", to: "soil" },
+    });
+    const note = inverseActOf({
+      act: "propose_note",
+      map: "ground",
+      payload: { card: "rain", note: "the gauge" },
+    });
+    expect(note).toEqual({
+      act: "propose_remove_note",
+      map: "ground",
+      payload: { card: "rain" },
+    });
+    const card = inverseActOf({
+      act: "propose_card",
+      map: "ground",
+      payload: { name: "rain gauge", x: 1, y: 2 },
+    });
+    expect(card).toEqual({
+      act: "propose_remove_card",
+      map: "ground",
+      payload: { card: "rain gauge" },
+    });
+    expect(
+      inverseActOf({
+        act: "propose_remove_note",
+        map: "ground",
+        payload: { card: "rain" },
+      }),
+    ).toBeNull();
+    expect(
+      inverseActOf({
+        act: "propose_remove_card",
+        map: "ground",
+        payload: { card: "rain" },
+      }),
+    ).toBeNull();
+  });
+
+  test("the LAST APPLIED act decides what 'undo that' offers", () => {
+    const wire: CommandAct = {
+      act: "propose_wire",
+      map: "ground",
+      payload: { from: "rain", to: "soil" },
+    };
+    const note: CommandAct = {
+      act: "propose_note",
+      map: "ground",
+      payload: { card: "rain", note: "the gauge" },
+    };
+    const card: CommandAct = {
+      act: "propose_card",
+      map: "ground",
+      payload: { name: "rain gauge", x: 1, y: 2 },
+    };
+    expect(undoScriptOf("undo that", [wire])).toEqual([
+      {
+        act: "propose_unwire",
+        map: "ground",
+        payload: { from: "rain", to: "soil" },
+      },
+    ]);
+    expect(undoScriptOf("take that back", [note])).toEqual([
+      { act: "propose_remove_note", map: "ground", payload: { card: "rain" } },
+    ]);
+    expect(undoScriptOf("undo the card", [card])).toEqual([
+      {
+        act: "propose_remove_card",
+        map: "ground",
+        payload: { card: "rain gauge" },
+      },
+    ]);
+    // The search walks a script's acts backwards: a read last changed nothing,
+    // so the change before it is what "undo that" answers.
+    expect(
+      undoScriptOf("undo that", [
+        wire,
+        { act: "read_card", map: "ground", payload: { card: "rain" } },
+      ]),
+    ).not.toBeNull();
+    // No applied change, or a removal whose inverse needs the record's words:
+    // the honest sentence, not a guess.
+    expect(undoScriptOf("undo that", null)).toBeNull();
+    expect(
+      undoScriptOf("undo that", [
+        { act: "propose_remove_note", map: "ground", payload: { card: "rain" } },
+      ]),
+    ).toBeNull();
+    expect(
+      undoSentenceOf("undo that", [
+        { act: "propose_remove_card", map: "ground", payload: { card: "rain" } },
+      ]),
+    ).toBe(COMMAND_UNDO_SENTENCE);
+    // The reverse wire direction IS computable: undoing an unwire re-wires.
+    expect(
+      undoScriptOf("undo that", [
+        { act: "propose_unwire", map: "ground", payload: { from: "rain", to: "soil" } },
+      ]),
+    ).toEqual([
+      {
+        act: "propose_wire",
+        map: "ground",
+        payload: { from: "rain", to: "soil" },
+      },
+    ]);
+    // A non-undo instruction is still the model's.
+    expect(undoScriptOf("wire rain to soil", [wire])).toBeNull();
+  });
+
+  test("an applied exchange keeps its acts; the newest applied one wins", () => {
+    const wire: CommandAct = {
+      act: "propose_wire",
+      map: "ground",
+      payload: { from: "rain", to: "soil" },
+    };
+    const note: CommandAct = {
+      act: "propose_note",
+      map: "ground",
+      payload: { card: "rain", note: "words" },
+    };
+    const refused = refusedExchange("add a card", [note], null);
+    const first = appliedExchange("wire", [wire], null);
+    const second = appendExchange(
+      appendExchange(EMPTY_COMMAND_THREAD, first),
+      appliedExchange("note", [note], null),
+    );
+    expect(lastAppliedActsOf(second.exchanges)).toEqual([note]);
+    // A refusal after the last applied turn does not change what undo means.
+    const withRefusal = appendExchange(second, refused);
+    expect(lastAppliedActsOf(withRefusal.exchanges)).toEqual([note]);
+    // An exchange from before the story carries no acts, so no inverse is
+    // invented from its lines.
+    expect(
+      lastAppliedActsOf([
+        { ...first, acts: undefined },
+      ]),
+    ).toBeNull();
   });
 
   test("undo shapes are recognised; other instructions are left to the model", () => {
@@ -640,8 +794,8 @@ describe("an undo-shaped instruction gets one honest sentence", () => {
       instruction: "take the note back",
       digest: "",
     });
-    expect(prompt).toContain("The acts only ADD");
-    expect(prompt).toContain("Never answer it by repeating the earlier acts");
+    expect(prompt).toContain("The acts can ADD and REMOVE");
+    expect(prompt).toContain("NEVER answer it by repeating the earlier acts");
     expect(prompt).toContain("never a standing order");
   });
 });

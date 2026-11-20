@@ -69,7 +69,7 @@ describe("the portable half imports nothing app specific (ADR-0038 §3)", () => 
 });
 
 describe("the vocabulary is declared data (ADR-0038 §3)", () => {
-  test("seven acts: three reads and four proposals", () => {
+  test("ten acts: three reads and seven proposals (STORY 21.6 adds the removals)", () => {
     expect(ACT_NAMES).toEqual([
       "map_overview",
       "read_card",
@@ -78,9 +78,12 @@ describe("the vocabulary is declared data (ADR-0038 §3)", () => {
       "propose_wire",
       "propose_note",
       "propose_ask",
+      "propose_unwire",
+      "propose_remove_note",
+      "propose_remove_card",
     ]);
     expect(ACT_SPECS.filter((spec) => spec.family === "read")).toHaveLength(3);
-    expect(ACT_SPECS.filter((spec) => spec.family === "propose")).toHaveLength(4);
+    expect(ACT_SPECS.filter((spec) => spec.family === "propose")).toHaveLength(7);
   });
 
   test("every act declares whether it writes, and NONE does: a proposal is a ghost", () => {
@@ -95,10 +98,19 @@ describe("the vocabulary is declared data (ADR-0038 §3)", () => {
     }
   });
 
-  test("the never-list is absent by construction: no act names one of those verbs", () => {
+  test("the never-list is unchanged: no act names one of those verbs", () => {
+    // STORY 21.6: REMOVAL is NOT on the never-list — a person can take a wire,
+    // a note or a card back by hand, so the acts may propose it too. The
+    // never-list itself (keys, providers, runs, sends, outside the map folder)
+    // is exactly what it was.
     for (const name of ACT_NAMES) {
-      expect(name).not.toMatch(/delete|remove|rename|key|provider|run|send|outside|settings/i);
+      expect(name).not.toMatch(/delete|rename|key|provider|run|send|outside|settings/i);
     }
+    expect(ACT_NAMES.filter((name) => /^propose_(remove|unwire)/.test(name))).toEqual([
+      "propose_unwire",
+      "propose_remove_note",
+      "propose_remove_card",
+    ]);
     // The absence is stated in the code, not left to a reader's guess.
     expect(source("src/commands/acts.ts")).toContain(
       "THE NEVER-LIST IS ABSENT BY CONSTRUCTION",
@@ -223,6 +235,18 @@ describe("executeScript: whole-script validation, then order", () => {
       async proposeAsk() {
         state.calls.push("proposeAsk");
         return answer("ask proposal", "ghost-4");
+      },
+      async proposeUnwire() {
+        state.calls.push("proposeUnwire");
+        return answer("unwire proposal", "ghost-5");
+      },
+      async proposeRemoveNote() {
+        state.calls.push("proposeRemoveNote");
+        return answer("note removal", "ghost-6");
+      },
+      async proposeRemoveCard() {
+        state.calls.push("proposeRemoveCard");
+        return answer("card removal", "ghost-7");
       },
     };
     return {

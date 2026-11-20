@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { CommandAct } from "../commands/acts";
+import { inverseActOf, type CommandAct } from "../commands/acts";
 import type { CommandRun } from "../commands/execute";
 import type { InterpreterExchange, InterpreterRead } from "../commands/interpreter";
 import { utf8ByteLength } from "../lib/textBytes";
@@ -66,13 +66,22 @@ import type { Level } from "../workspace/level";
  * instruction, never a standing order; the card sends one instruction per
  * turn, and the prompt says so (commands/interpreter.ts).
  *
- * UNDO IS ACTS OR ONE SENTENCE (story 21.5 rule 5). The vocabulary only adds:
- * no act removes a card, a wire or a note, and this story adds no act. So an
- * undo-shaped instruction cannot become an inverse ghost yet, and the card
- * says so in ONE honest sentence — never a silent no-op, never a guess, and
- * never a repeat of the turn it was asked to take back. When a removing act
- * arrives (the amendment's coverage ambition), the inverse goes here.
- * PROVISIONAL: the sentence, the undo shapes recognised, and both bounds.
+ * UNDO IS ACTS (STORY 21.6). The vocabulary now removes as well as adds
+ * (ADR-0038's 2026-11-20 amendment: coverage grows act by act, and a primary
+ * surface must be able to take back what it just did). So an undo-shaped
+ * instruction asks the LAST APPLIED exchange what it did and offers that act's
+ * inverse as a ghost — "undo that" after a wire offers the unwire; after a note,
+ * the note's removal; after a card, the card's removal. The person's press is
+ * still the accept, and the inverse is never applied on its own.
+ *
+ * THE SENTENCE REMAINS THE FALLBACK (story 21.5 rule 5), not the rule: when
+ * nothing was applied, when the last applied act has no computable inverse (a
+ * removed note's words and a removed card's point live only in the record), or
+ * when the vocabulary has no pair, the card says so in ONE honest sentence —
+ * never a silent no-op, never a guess, never a repeat of the turn it was asked
+ * to take back.
+ * PROVISIONAL: the sentence, the undo shapes recognised, both bounds, and which
+ * pair directions are offered from the applied act alone.
  * ------------------------------------------------------------------ */
 
 /** The closed bar's one line of invitation (PROVISIONAL). */
@@ -115,13 +124,14 @@ export const COMMAND_GHOST_REFUSAL_PREFIX = "the app refused one of the script's
 export const COMMAND_FAILED_AT_PREFIX = "failed at ";
 
 /**
- * The one honest sentence an undo-shaped instruction gets (STORY 21.5 rule 5,
- * PROVISIONAL). The vocabulary can only add; nothing in it takes a card, a
- * wire or a note back, so the card says that instead of guessing at an inverse
- * it cannot file or staying silent.
+ * The one honest sentence an undo-shaped instruction gets when the card cannot
+ * offer a real inverse (STORY 21.5 rule 5, the fallback since STORY 21.6,
+ * PROVISIONAL). It says there is nothing here the app knows how to take back —
+ * no applied change, an applied act with no pair, or a pair whose inverse needs
+ * words only the record holds — instead of guessing or staying silent.
  */
 export const COMMAND_UNDO_SENTENCE =
-  "the acts can add a card, a wire or a note, and none of them can take one back, so nothing was applied.";
+  "there is no change here the app can take back, so nothing was applied.";
 
 /** The largest number of exchanges the card keeps in view (PROVISIONAL). */
 export const COMMAND_HISTORY_MAX_EXCHANGES = 6;
@@ -140,10 +150,11 @@ export const COMMAND_HISTORY_OMITTED_SENTENCE =
 /**
  * THE UNDO SHAPES the card recognises (PROVISIONAL). This is not the app
  * reading the instruction for meaning — the model does that — it is the app
- * declining to send a class of instruction the vocabulary PROVABLY cannot
- * express, so a take-back is never guessed into an add and never silently
- * repeated. A shape that slips past these still cannot repeat: the prompt
- * tells the model the acts only add (commands/interpreter.ts).
+ * resolving a take-back against the LAST APPLIED ACT so the inverse is offered
+ * as a real ghost (STORY 21.6) and never guessed into an add or a repeat. When
+ * no pair can be computed the card answers 21.5's sentence instead; a shape
+ * that slips past these is still told, in the prompt, never to repeat a turn it
+ * is asked to take back (commands/interpreter.ts).
  */
 const UNDO_SHAPES: readonly RegExp[] = [
   /\bundo\b/i,
@@ -204,6 +215,14 @@ export interface CommandExchange {
   question: CommandQuestion | null;
   /** What became of it: applied, refused, failed at <act>, or a sentence. */
   outcome: ExchangeOutcome;
+  /**
+   * STORY 21.6 — THE ACTS THE APPLIED EXCHANGE RAN, kept so a later "undo that"
+   * can offer the inverse of what actually landed instead of guessing at it.
+   * VIEW STATE like the rest of the exchange: no record family, no log. Absent
+   * on a refused or failed exchange (nothing landed) and on exchanges made
+   * before this story (the card then falls back to 21.5's sentence).
+   */
+  acts?: readonly CommandAct[];
 }
 
 /** The card's conversation: the kept exchanges and whether older ones were dropped. */
@@ -322,23 +341,69 @@ export function undoRequestOf(instruction: string): boolean {
 }
 
 /**
- * THE UNDO RULE (STORY 21.5 rule 5). The vocabulary is adds only — ACT_SPECS
- * carries no removing act, and this story adds none — so the inverse of an add
- * cannot be expressed as acts. The honest sentence is the whole answer: the
- * card offers no script, writes nothing and never re-runs the turn it was
- * asked to take back. The inverse belongs in this function the day a removing
- * act exists (ADR-0038's amendment: coverage grows story by story).
+ * THE LAST APPLIED EXCHANGE'S ACTS (STORY 21.6): the newest exchange whose
+ * outcome was applied, in act order, or null when nothing has landed in the
+ * conversation the card still holds. One pass backwards, no stack, no history
+ * beyond the bounded conversation — the immediate inverse is the scope.
  */
-export function undoSentenceOf(instruction: string): string | null {
-  return undoRequestOf(instruction) ? COMMAND_UNDO_SENTENCE : null;
+export function lastAppliedActsOf(
+  exchanges: readonly CommandExchange[],
+): readonly CommandAct[] | null {
+  for (let index = exchanges.length - 1; index >= 0; index -= 1) {
+    const exchange = exchanges[index]!;
+    if (exchange.outcome.kind !== "applied") continue;
+    return exchange.acts ?? null;
+  }
+  return null;
+}
+
+/**
+ * THE UNDO RULE (STORY 21.6, ADR-0038's amendment). An undo-shaped instruction
+ * resolves to the inverse of the LAST APPLIED act when the vocabulary pairs it
+ * and the applied act carries what the inverse needs — ONE act, offered as a
+ * ghost the person accepts. The search walks the applied exchange's acts
+ * backwards so a script ending in a read still finds the change it made; when
+ * nothing pairs, null (the sentence below answers instead).
+ *
+ * The inverse itself is the vocabulary's own pairing (commands/acts.ts's
+ * `inverseActOf`), not a second table here.
+ */
+export function undoScriptOf(
+  instruction: string,
+  lastAppliedActs: readonly CommandAct[] | null,
+): CommandAct[] | null {
+  if (!undoRequestOf(instruction) || lastAppliedActs === null) return null;
+  for (let index = lastAppliedActs.length - 1; index >= 0; index -= 1) {
+    const inverse = inverseActOf(lastAppliedActs[index]!);
+    if (inverse !== null) return [inverse];
+  }
+  return null;
+}
+
+/**
+ * THE UNDO SENTENCE — THE FALLBACK SINCE STORY 21.6. An undo-shaped
+ * instruction gets the honest sentence only when no real inverse is offered;
+ * a non-undo instruction gets null (the model reads it). The bidirectional
+ * "no real inverse" is decided by {@link undoScriptOf}, so the card and this
+ * sentence cannot disagree about whether a script is on offer.
+ */
+export function undoSentenceOf(
+  instruction: string,
+  lastAppliedActs: readonly CommandAct[] | null = null,
+): string | null {
+  if (!undoRequestOf(instruction)) return null;
+  return undoScriptOf(instruction, lastAppliedActs) === null
+    ? COMMAND_UNDO_SENTENCE
+    : null;
 }
 
 /** The exchange an undo-shaped instruction completes: nothing applied, said. */
 export function undoExchangeOf(
   instruction: string,
   question: CommandQuestion | null,
+  lastAppliedActs: readonly CommandAct[] | null = null,
 ): CommandExchange | null {
-  const sentence = undoSentenceOf(instruction);
+  const sentence = undoSentenceOf(instruction, lastAppliedActs);
   if (sentence === null) return null;
   return {
     instruction,
@@ -373,6 +438,8 @@ export function appliedExchange(
     understood: actLines(acts),
     question,
     outcome: { kind: "applied" },
+    // STORY 21.6: what landed, so "undo that" can offer its inverse.
+    acts,
   };
 }
 
@@ -509,6 +576,12 @@ export function actLine(act: CommandAct): string {
       return "add a note to " + text("card");
     case "propose_ask":
       return "add an ask card " + JSON.stringify(text("name"));
+    case "propose_unwire":
+      return "unwire " + text("from") + " → " + text("to");
+    case "propose_remove_note":
+      return "remove the note on " + text("card");
+    case "propose_remove_card":
+      return "remove the card " + JSON.stringify(text("card"));
     default:
       // Unreachable through the validated vocabulary; the act's own name is
       // the honest fallback rather than an invented sentence.

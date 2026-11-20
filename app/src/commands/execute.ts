@@ -45,6 +45,14 @@ export interface CommandHost {
   proposeNote(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
   /** Propose an ask card. */
   proposeAsk(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
+  /**
+   * STORY 21.6 — the removals. Each proposes ONE removal as a ghost; none
+   * deletes anything itself (the person accepts, and the app's own Restore
+   * stays the undo of the undo).
+   */
+  proposeUnwire(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
+  proposeRemoveNote(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
+  proposeRemoveCard(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
 }
 
 /** What running a script left behind. */
@@ -91,6 +99,12 @@ async function runOne(act: CommandAct, host: CommandHost): Promise<CommandOutcom
       return host.proposeNote(payload);
     case "propose_ask":
       return host.proposeAsk(payload);
+    case "propose_unwire":
+      return host.proposeUnwire(payload);
+    case "propose_remove_note":
+      return host.proposeRemoveNote(payload);
+    case "propose_remove_card":
+      return host.proposeRemoveCard(payload);
     default:
       // Unreachable: validateAct registered the name. Kept explicit so a new
       // act added to the vocabulary without a dispatch fails loudly in a test.

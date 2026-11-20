@@ -221,6 +221,18 @@ describe("the understood acts are a short numbered list in plain words", () => {
     expect(actLine(WIRE)).toContain("→");
   });
 
+  test("the removal acts read as removals (STORY 21.6)", () => {
+    expect(actLines([
+      { act: "propose_unwire", map: "ground", payload: { from: "rain gauge", to: "soil" } },
+      { act: "propose_remove_note", map: "ground", payload: { card: "rain" } },
+      { act: "propose_remove_card", map: "ground", payload: { card: "rain gauge" } },
+    ])).toEqual([
+      "unwire rain gauge → soil",
+      "remove the note on rain",
+      'remove the card "rain gauge"',
+    ]);
+  });
+
   test("the render is an ordered list, one item per act, with accept and refuse", () => {
     const html = render({
       view: {
@@ -521,6 +533,18 @@ describe("a failure names the act and every act's disposition", () => {
       async proposeAsk() {
         calls.push("propose_ask");
         return { ok: true, line: "ask filed", id: "ghost-3" };
+      },
+      async proposeUnwire() {
+        calls.push("propose_unwire");
+        return { ok: true, line: "unwire filed", id: "ghost-4" };
+      },
+      async proposeRemoveNote() {
+        calls.push("propose_remove_note");
+        return { ok: true, line: "note removal filed", id: "ghost-5" };
+      },
+      async proposeRemoveCard() {
+        calls.push("propose_remove_card");
+        return { ok: true, line: "card removal filed", id: "ghost-6" };
       },
     };
     const acts: CommandAct[] = [

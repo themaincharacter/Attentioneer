@@ -101,17 +101,44 @@ export interface GhostExpect {
 }
 
 /**
- * One derived step, READ-ONLY (ADR-0024 decision 1). v1 has one op: append one
- * canonical JSONL line to one file. The list is a rendering of the deriver's
+ * One derived step, READ-ONLY (ADR-0024 decision 1). A step APPENDS one
+ * canonical line or REMOVES one thing; the list is a rendering of the deriver's
  * output, never an instruction the app follows: accept re-derives it.
+ *
+ * STORY 21.6 — A GHOST CAN REMOVE (ADR-0038's 2026-11-20 amendment: a primary
+ * surface with only adds cannot fix a mistake it just made). The op is the
+ * smallest generic addition the intake needed: an append of one line, or a
+ * removal of one line from a file (or of the file itself, when no line is
+ * named). The step still says WHAT changes, never a cascade: the move's deriver
+ * names exactly one thing, and the closure proves the bytes are the base minus
+ * that one thing. PROVISIONAL with the act names — the op's spelling and the
+ * optional `line` are the first shape.
  */
-export interface GhostStep {
-  /** The one op v1 knows. */
+export type GhostStep = GhostAppendStep | GhostRemoveStep;
+
+/** Append one canonical line to one file (the v1 op, unchanged). */
+export interface GhostAppendStep {
+  /** The one append op. */
   op: "append";
   /** The workspace-relative file the step writes. */
   file: string;
-  /** The canonical JSONL line (through `serialize.ts`) the step appends. */
+  /** The canonical line (through `serialize.ts`) the step appends. */
   line: string;
+}
+
+/** Remove one line from one file, or the file itself when no line is named. */
+export interface GhostRemoveStep {
+  /** The removal op. */
+  op: "remove";
+  /** The workspace-relative file the step touches. */
+  file: string;
+  /**
+   * The EXACT line to drop, as the base file holds it (the deriver reads the
+   * base bytes and names the line, CR included when the file is CRLF). Absent
+   * means the file itself goes: a note is one file, so removing it removes no
+   * line from anyone else's record.
+   */
+  line?: string;
 }
 
 /**

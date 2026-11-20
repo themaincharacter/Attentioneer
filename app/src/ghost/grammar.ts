@@ -23,6 +23,7 @@ import {
   isParamKind,
   moveOf,
   MOVES,
+  withoutLine,
   type DryRun,
   type DryRunFile,
   type MoveDefinition,
@@ -42,13 +43,21 @@ import type { GhostSnapshot } from "./snapshot";
  * policy requires an accepted playing set refuses without one; ADR-0025
  * decision 3, the authoring rule the plane's writers obey through
  * `authoringLive`); the base pin against the file ACTUALLY
- * on disk; and append-only closure by APPLYING the derived steps to the
+ * on disk; and closure by APPLYING the derived steps to the
  * snapshot and parsing
  * the result back — a derived list alone proves nothing. It re-derives the
  * steps every time, so a tampered stored list is IGNORED: the deriver owns the
  * steps. It also recognises an APPLIED ghost (the files already hold the
  * derived bytes and stripping the appended line reproduces the pin) — the
  * crash story's applied-but-unmarked reconcile.
+ *
+ * STORY 21.6 — THE STEPS ARE APPENDS OR REMOVALS (ADR-0038's 2026-11-20
+ * amendment: coverage grows act by act, and a primary surface must be able to
+ * take back what it just did). The closure rule is the same in both
+ * directions: the produced bytes must be the base PLUS one claim, or the base
+ * MINUS exactly the one line the deriver named (or minus the file, for a
+ * note). The reconcile stays append-only; a removal is never reconstructed
+ * from nothing.
  *
  * It cannot check meaning, same-thing-ness, prose quality or "small" (ADR-0025
  * decision 1). A ghost that passes is still a claim the person judges.
@@ -375,6 +384,14 @@ function reconstructedBases(current: string, line: string): string[] {
  * and the base each strip recovers hashes to the pin. The append rule never
  * rewrites a line, so this is the exact reconcile — keyed on the in-session
  * id's envelope and the base pin it minted (ADR-0025 decision 2).
+ *
+ * STORY 21.6 — A REMOVAL IS NEVER RECONCILED. The append reconcile works by
+ * stripping the appended bytes back off; a removal cannot be undone that way
+ * without re-inventing the bytes it took, and a guess is not a reconcile. So a
+ * removal that landed without its marker is REFUSED by the pin on the retry
+ * (the file no longer hashes to the base it was built on) — the person can see
+ * the removal already happened and propose nothing more. Failing closed is
+ * the honest half of the crash story here.
  */
 function reconciled(
   steps: readonly GhostStep[],
@@ -384,6 +401,7 @@ function reconciled(
   if (steps.length === 0) return false;
   let tail = current ?? "";
   for (const step of steps) {
+    if (step.op !== "append") return false;
     const bases = reconstructedBases(tail, step.line);
     if (bases.length === 0) return false;
     const match = bases.find((base) => sha256Hex(base) === pinDigest);
@@ -550,9 +568,10 @@ export function validateGhost(
     ]);
   }
 
-  // v1: single-file appends (crash sufficiency, ADR-0025 decision 3). The
-  // move's files may be TARGET-DEPENDENT (STORY 21.1: a note is named by the
-  // card it is about), so the list is read for this target, never assumed.
+  // ONE FILE, ONE MOVE (crash sufficiency, ADR-0025 decision 3). The move's
+  // files may be TARGET-DEPENDENT (STORY 21.1: a note is named by the card it
+  // is about), so the list is read for this target, never assumed. STORY 21.6's
+  // removals keep the same single-file rule: a removal ghosts ONE thing.
   const declaredFiles = filesOf(entry, target.target);
   if (declaredFiles.length !== 1) {
     return refused([
@@ -598,16 +617,40 @@ export function validateGhost(
   }
   const pinDigest = expect.expect.files[file];
 
-  // The dry run: apply the derived steps to the snapshot's bytes.
+  // The dry run: apply the derived steps to the snapshot's bytes. Two ops, one
+  // rule each — append one line, or remove one line (or the file itself).
   const runFiles: DryRunFile[] = [];
   let current = snapshot.files[file] ?? null;
   for (const step of steps) {
-    if (step.op !== "append") {
+    let after: string | null;
+    if (step.op === "append") {
+      after = appendLine(current, step.line);
+    } else if (step.op === "remove") {
+      if (step.line === undefined) {
+        // No line named: the file itself goes (a note is one file).
+        after = null;
+      } else {
+        const without = withoutLine(current, step.line);
+        if (without === undefined) {
+          return refused([
+            issue(
+              "append-only",
+              `the dry run would remove "${step.line}", which ${file} does not hold`,
+            ),
+          ]);
+        }
+        after = without;
+      }
+    } else {
       return refused([
-        issue("append-only", `v1 knows only appends; "${step.op}" is not one`),
+        issue(
+          "append-only",
+          `this build knows appends and removals; the step op "${String(
+            (step as { op?: unknown }).op,
+          )}" is neither`,
+        ),
       ]);
     }
-    const after = appendLine(current, step.line);
     runFiles.push({ path: file, before: current, after });
     current = after;
   }

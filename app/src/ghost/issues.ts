@@ -49,7 +49,12 @@ export const GHOST_ISSUE_CODES = [
   "policy",
   /** The target the claim is about is not on the map. */
   "dangling-target",
-  /** The dry run would not only append (rewrite, drop, or a duplicate claim). */
+  /**
+   * The dry run's bytes are not exactly the move's one change: a rewrite, a
+   * dropped line the move did not name, a removal the file cannot hold, or a
+   * duplicate claim. (STORY 21.6 widened this from appends to the one removal
+   * the vocabulary now speaks; the code's name is history, not the rule.)
+   */
   "append-only",
   /** v1 moves write one file, and the pin names exactly that file. */
   "single-file",

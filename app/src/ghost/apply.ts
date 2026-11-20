@@ -18,10 +18,12 @@ import type { DryRun } from "./registry";
  * and nothing is written — the proposal stays where it was and the person can
  * reject or re-intake.
  *
- * v1 is constrained to SINGLE-FILE APPENDS (ADR-0025 decision 3): one file,
- * one appended line. That is the crash sufficiency — a crash can leave one
- * file's append landed or not landed, never a cross-file fan-out half done, and
- * the pin/reconcile names which of the two happened.
+ * A move is constrained to ONE FILE, ONE CHANGE (ADR-0025 decision 3): one
+ * file, one appended line, or one removal. That is the crash sufficiency — a
+ * crash can leave one file's change landed or not landed, never a cross-file
+ * fan-out half done, and the pin names which of the two happened. STORY 21.6's
+ * removals keep the same shape; a card's wires are NOT part of the ghost (the
+ * app's own delete path is where that cascade lives).
  *
  * Provisional: the error type and the order (the run's file order).
  */
@@ -35,6 +37,12 @@ export class GhostPinError extends Error {
 /**
  * Write the dry run's files, pin-checked at the write. The caller has already
  * claimed the in-flight marker; it releases it when this returns or throws.
+ *
+ * STORY 21.6 — A NULL AFTER IS A REMOVAL. The dry run's produced bytes are
+ * written as before; when a removal leaves no file (a note), the file is
+ * REMOVED through the port after the same pin check. The removal is the same
+ * one-file, one-change discipline as an append: the pin proves the base the
+ * person accepted is still the base on disk, and only then does the file go.
  */
 export async function applyGhost(
   workspacePath: string,
@@ -48,6 +56,10 @@ export async function applyGhost(
       throw new GhostPinError(
         `${file.path} moved after the ghost's base pin; nothing was written`,
       );
+    }
+    if (file.after === null) {
+      await fs.remove(path);
+      continue;
     }
     await fs.writeText(path, file.after);
   }

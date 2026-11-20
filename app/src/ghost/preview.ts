@@ -117,9 +117,13 @@ export interface StepView {
   changed: boolean;
 }
 
-/** The one op v1 knows, said as an action. Anything else says its own op. */
+/**
+ * What the step DOES, in the person's words. STORY 21.6 adds the removal's two
+ * readings: one line leaves a record file, or one file goes (a note).
+ */
 function doesOf(step: GhostStep): string {
-  return step.op === "append" ? "append one line to" : step.op;
+  if (step.op === "append") return "append one line to";
+  return step.line === undefined ? "remove the file" : "remove one line from";
 }
 
 /** A step's claim as the record reads it (the deriver's own line). */
@@ -145,14 +149,22 @@ export function stepViews(
   nameOf: (slug: string) => string,
 ): StepView[] {
   return envelope.steps.map((step, index) => {
-    const claim = claimOf(step.line);
+    // A removal's line is the record it takes, not a claim to parse; a file
+    // removal has no line at all, and both say so by carrying the line's bytes
+    // plainly.
+    const claim = step.op === "append" ? claimOf(step.line) : null;
+    const line = step.line ?? "";
     const before = previous === null ? undefined : previous.steps[index];
     return {
       file: step.file,
       does: doesOf(step),
       about: claim === null ? "" : claim.about === "" ? "" : nameOf(claim.about),
-      text: claim === null ? step.line : claim.text,
-      changed: previous !== null && (before === undefined || before.line !== step.line),
+      text: claim === null ? line : claim.text,
+      changed:
+        previous !== null &&
+        (before === undefined ||
+          before.op !== step.op ||
+          (before.line ?? "") !== line),
     };
   });
 }

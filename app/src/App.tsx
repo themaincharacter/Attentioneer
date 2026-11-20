@@ -132,8 +132,10 @@ import {
   failedExchange,
   failureReport,
   historyTurns,
+  lastAppliedActsOf,
   refusedExchange,
   undoExchangeOf,
+  undoScriptOf,
   type CommandBusy,
   type CommandExchange,
   type CommandQuestion,
@@ -1144,10 +1146,13 @@ function App() {
 
   /**
    * READ ONE INSTRUCTION and show what the app understood (STORY 21.5). The
-   * UNDO GUARD runs first: the vocabulary can only add, so an instruction that
-   * asks to take something back has no script the app could file, and sending
-   * it would invite the model to guess at an inverse — or to repeat the turn it
-   * was asked to take back. The card says so in ONE honest sentence instead.
+   * UNDO GUARD runs first (STORY 21.6): an instruction that asks to take
+   * something back is resolved against the LAST APPLIED exchange — "undo that"
+   * after a wire offers the unwire, after a note the note's removal — and the
+   * offered inverse is a pending script the person still has to accept. Only
+   * when no real inverse exists does the card answer with 21.5's ONE honest
+   * sentence, and it never sends a take-back to the model to guess at or to
+   * repeat the turn it was asked to take back.
    *
    * The prompt gets the here-and-now digest (rebuilt for every call), the
    * recent exchanges and the catalogue, so a follow-up resolves against what
@@ -1160,7 +1165,16 @@ function App() {
       promptInstruction: string | null,
       question: CommandQuestion | null,
     ): Promise<void> => {
-      const undo = undoExchangeOf(instruction, question);
+      const lastApplied = lastAppliedActsOf(commandThread.exchanges);
+      const inverse = undoScriptOf(instruction, lastApplied);
+      if (inverse !== null) {
+        // A real inverse: offer it as the pending script, exactly like an
+        // interpreted one. The person's accept is the only thing that applies.
+        setCommandAnswer("");
+        setCommandView({ kind: "acts", instruction, acts: inverse, question });
+        return;
+      }
+      const undo = undoExchangeOf(instruction, question, lastApplied);
       if (undo !== null) {
         commitCommandExchange(undo);
         return;
@@ -1179,7 +1193,7 @@ function App() {
         setCommandBusy(null);
       }
     },
-    [commitCommandExchange, requestInterpretation],
+    [commitCommandExchange, requestInterpretation, commandThread.exchanges],
   );
 
   /** The person pressed read: one instruction, verbatim, then the field clears. */

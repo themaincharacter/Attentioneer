@@ -204,8 +204,12 @@ export interface DryRunFile {
   path: string;
   /** The bytes on disk (null = absent); the base the closure is proved on. */
   before: string | null;
-  /** The bytes the steps produce. */
-  after: string;
+  /**
+   * The bytes the steps produce; null = the file is gone (STORY 21.6's one
+   * removal that leaves no file: a note). A null after is a DELETE, pinned and
+   * applied like every other step — never a truncation pretending to be one.
+   */
+  after: string | null;
 }
 
 /** The dry run: the derived steps and the bytes they produce. */
@@ -275,7 +279,7 @@ export interface MoveDefinition {
     target: GhostTarget,
     params: Record<string, unknown>,
     before: string | null,
-    after: string,
+    after: string | null,
   ) => readonly GhostIssue[];
 }
 
@@ -314,6 +318,34 @@ export function appendLine(before: string | null, line: string): string {
   return `${base}\n${line}\n`;
 }
 
+/**
+ * STORY 21.6 — THE REMOVAL'S ONE BYTE RULE. Drop the FIRST line that equals
+ * the step's line, keeping every other byte: the file's line ending style is
+ * untouched, a hand-formatted or malformed line the deriver did not name stays
+ * exactly as it is, and a file that still holds records keeps the record
+ * files' trailing newline. Returns `undefined` when the line is not there —
+ * the grammar refuses rather than writing "close enough".
+ *
+ * A removal never reorders, rewrites or re-serializes: it is the append rule's
+ * mirror image, so the closure can prove the produced bytes are the base minus
+ * exactly the one line the deriver named.
+ */
+export function withoutLine(
+  before: string | null,
+  line: string,
+): string | undefined {
+  if (before === null) return undefined;
+  const parts = before.split("\n");
+  const index = parts.indexOf(line);
+  if (index === -1) return undefined;
+  parts.splice(index, 1);
+  const joined = parts.join("\n");
+  // The record files' convention: a file that held a trailing newline still
+  // does, even when the removal took its last line.
+  if (before.endsWith("\n") && !joined.endsWith("\n")) return `${joined}\n`;
+  return joined;
+}
+
 /** Build the derived step: one canonical JSONL line, appended to the one file. */
 function deriveAddAssumptionSteps(
   target: GhostTarget,
@@ -343,8 +375,12 @@ function closureAddAssumption(
   target: GhostTarget,
   params: Record<string, unknown>,
   before: string | null,
-  after: string,
+  after: string | null,
 ): readonly GhostIssue[] {
+  // An add never deletes the file; a null here is a deriver bug, refused.
+  if (after === null) {
+    return [issue("append-only", "adding a claim cannot remove the file")];
+  }
   const record = assumptionRecordOf(target, params);
   if (record === null) {
     return [issue("params", "the claim has no target or no text")];

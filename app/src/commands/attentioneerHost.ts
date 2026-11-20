@@ -326,6 +326,132 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     return propose(body, (id) => `proposed an ask card "${name}" at (${x}, ${y}); ghost ${id}`);
   }
 
+  /*
+   * STORY 21.6 — THE REMOVALS THROUGH THE SAME INTAKE (ADR-0038's 2026-11-20
+   * amendment). Each one re-checks the digest's names against the records it
+   * just loaded: a card that is not there is refused BY NAME, in one sentence,
+   * BEFORE any ghost is filed. A removal files exactly one ghost and changes no
+   * record; the accept is the app's own.
+   *
+   * THE NEVER-LIST IS UNCHANGED: nothing here reaches a key, a provider row, a
+   * run or a file outside the map folder. Removal is not on that list — it is a
+   * thing a person can do by hand, so the acts may propose it too.
+   */
+
+  async function proposeUnwire(
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<CommandOutcome> {
+    const view = await loadView();
+    const wantedFrom = String(payload.from);
+    const wantedTo = String(payload.to);
+    const from = findCard(view, wantedFrom);
+    const to = findCard(view, wantedTo);
+    if (from === null) {
+      return {
+        ok: false,
+        sentence: `the unwire needs both cards on the map, and "${wantedFrom}" is not one of them.`,
+      };
+    }
+    if (to === null) {
+      return {
+        ok: false,
+        sentence: `the unwire needs both cards on the map, and "${wantedTo}" is not one of them.`,
+      };
+    }
+    if (from.slug === to.slug) {
+      return { ok: false, sentence: "a card cannot wire to itself." };
+    }
+    if (
+      !view.links.some(
+        (link) => link.from === from.slug && link.to === to.slug,
+      )
+    ) {
+      return {
+        ok: false,
+        sentence: `the map does not wire "${from.name}" to "${to.name}".`,
+      };
+    }
+    const body = {
+      move: { family: "wire", verb: "remove" },
+      target: { kind: "link", from: from.slug, to: to.slug },
+      params: {},
+      rationale: whyOf(
+        payload,
+        `removing the wire from "${from.name}" to "${to.name}"`,
+      ),
+    };
+    return propose(
+      body,
+      (id) =>
+        `proposed removing the wire "${from.name}" -> "${to.name}"; ghost ${id}`,
+    );
+  }
+
+  async function proposeRemoveNote(
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<CommandOutcome> {
+    const view = await loadView();
+    const wanted = String(payload.card);
+    const card = findCard(view, wanted);
+    if (card === null) {
+      return { ok: false, sentence: `"${wanted}" is not a card on this map.` };
+    }
+    if (card.kind !== "reference") {
+      // A note belongs to a reference card (the note family's own rule); an ask
+      // card carries a conversation instead, which this act does not touch.
+      return {
+        ok: false,
+        sentence: `"${card.name}" is an ask card; a note belongs to a reference card.`,
+      };
+    }
+    if (view.notes[card.slug] === undefined) {
+      return {
+        ok: false,
+        sentence: `"${card.name}" has no note to remove.`,
+      };
+    }
+    const body = {
+      move: { family: "note", verb: "remove" },
+      target: { kind: "card", slug: card.slug },
+      params: {},
+      rationale: whyOf(payload, `removing the note on "${card.name}"`),
+    };
+    return propose(
+      body,
+      (id) => `proposed removing the note on "${card.name}"; ghost ${id}`,
+    );
+  }
+
+  async function proposeRemoveCard(
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<CommandOutcome> {
+    const view = await loadView();
+    const wanted = String(payload.card);
+    const card = findCard(view, wanted);
+    if (card === null) {
+      return { ok: false, sentence: `"${wanted}" is not a card on this map.` };
+    }
+    if (card.kind !== "reference") {
+      // PROVISIONAL: an ask card's own record, conversation and media make its
+      // removal a different shape (the app's delete path knows it); this act
+      // removes reference cards for now and says so by name.
+      return {
+        ok: false,
+        sentence: `"${card.name}" is an ask card; this act removes reference cards.`,
+      };
+    }
+    const body = {
+      move: { family: "card", verb: "remove" },
+      target: { kind: "card", slug: card.slug },
+      params: {},
+      rationale: whyOf(payload, `removing the card "${card.name}"`),
+    };
+    return propose(
+      body,
+      (id) => `proposed removing the card "${card.name}"; ghost ${id}`,
+    );
+  }
+
   async function readOverview(): Promise<CommandOutcome> {
     const view = await loadView();
     const names = view.references.slice(0, 12).map((card) => `"${card.name}"`);
@@ -427,6 +553,9 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     proposeWire,
     proposeNote,
     proposeAsk,
+    proposeUnwire,
+    proposeRemoveNote,
+    proposeRemoveCard,
     accept,
     session,
   };
