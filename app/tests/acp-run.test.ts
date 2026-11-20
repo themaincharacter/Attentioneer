@@ -316,11 +316,16 @@ describe("the ACP row is data, and a key is never one of its fields", () => {
     const dsh = shippedAcpSpec("dsh-acp");
     expect(dsh).not.toBeNull();
     if (dsh === null) throw new Error("unreachable");
-    expect(dsh.args).toEqual(["--profile", "acp"]);
+    expect(dsh.args).toEqual([
+      "--profile",
+      "acp",
+      "--patch",
+      "/home/kickapookid/bin/dsh-account-route.yml",
+    ]);
     expect(dsh.env).toEqual([]);
     expect(dsh.cwdPolicy).toBe("session");
     expect(dsh.notes).toContain("UNVERIFIED");
-    expect(dsh.notes).toContain("DEEPSEEK_API_KEY");
+    expect(dsh.notes).toContain("missing key");
     expect(shippedAcpSpec("something-else")).toBeNull();
 
     // The shipped row is a valid row; its honesty is the empty env list.

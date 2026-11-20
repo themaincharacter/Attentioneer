@@ -347,7 +347,7 @@ export const ACP_SPECS: readonly AcpSpec[] = [
     verified: false,
     command:
       "/home/kickapookid/bin/dsh-acp.sh",
-    args: ["--profile", "acp"],
+    args: ["--profile", "acp", "--patch", "/home/kickapookid/bin/dsh-account-route.yml"],
     cwdPolicy: ACP_CWD_POLICY,
     env: [],
     timeoutMinutes: DEFAULT_ACP_TIMEOUT_MINUTES,
@@ -355,7 +355,7 @@ export const ACP_SPECS: readonly AcpSpec[] = [
     // (spike, 2026-11-19), so this row can continue a session.
     resume: "protocol",
     notes:
-      "UNVERIFIED — the spike (18.1) reached this absolute dsh.cmd with --profile acp and created a session; no env entry is declared, so a prompt is refused for a missing DEEPSEEK_API_KEY until you add one for your provider row. The server also advertises session/resume and answered it live (spike, 2026-11-19), so a card using this row can continue its last session. On this machine the command names a small wrapper (the tool’s own launcher is a Windows shim and the app runs in WSL) that sets the launcher’s own runtime flag and runs the same entry. Edit the command for another install.",
+      "UNVERIFIED — the spike (18.1) reached this absolute dsh.cmd with --profile acp and created a session; no env entry is declared: without an overlay a prompt is refused naming its missing key. On this machine the args carry a small overlay (one-time setup) that selects the tool’s own signed-in account route, and a full run completed through the app’s own lane on 2026-11-19. The server also advertises session/resume and answered it live (spike, 2026-11-19), so a card using this row can continue its last session. On this machine the command names a small wrapper (the tool’s own launcher is a Windows shim and the app runs in WSL) that sets the launcher’s own runtime flag and runs the same entry. Edit the command for another install.",
   },
   {
     kind: "acp",
