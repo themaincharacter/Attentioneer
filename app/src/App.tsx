@@ -128,14 +128,17 @@ import {
   appliedExchange,
   clarifiedInstruction,
   commandAnchor,
+  actLine,
   commandTurnOf,
   failedExchange,
   failureReport,
   historyTurns,
-  lastAppliedActsOf,
+  lastAppliedExchangeOf,
+  nothingExchange,
   refusedExchange,
   undoExchangeOf,
-  undoScriptOf,
+  undoOfferOf,
+  undoSecondSentence,
   type CommandBusy,
   type CommandExchange,
   type CommandQuestion,
@@ -1241,13 +1244,15 @@ function App() {
 
   /**
    * READ ONE INSTRUCTION and show what the app understood (STORY 21.5). The
-   * UNDO GUARD runs first (STORY 21.6): an instruction that asks to take
-   * something back is resolved against the LAST APPLIED exchange — "undo that"
-   * after a wire offers the unwire, after a note the note's removal — and the
-   * offered inverse is a pending script the person still has to accept. Only
-   * when no real inverse exists does the card answer with 21.5's ONE honest
-   * sentence, and it never sends a take-back to the model to guess at or to
-   * repeat the turn it was asked to take back.
+   * UNDO GUARD runs first (STORY 21.6, WIDENED BY STORY 21.10): an instruction
+   * that asks to take something back is resolved against the LAST APPLIED
+   * exchange — now against EVERY act of its script, in reverse order, as ONE
+   * pending script the person accepts once (ADR-0038 Amendment 2: undo is the
+   * second net AFTER acceptance, and it takes back the script as a whole).
+   * Acts the pairing cannot invert are named in the offer's note, never
+   * dropped silently; only when no inverse exists at all does the card answer
+   * with 21.5's ONE honest sentence. It never sends a take-back to the model to
+   * guess at or to repeat the turn it was asked to take back.
    *
    * The prompt gets the here-and-now digest (rebuilt for every call), the
    * recent exchanges and the catalogue, so a follow-up resolves against what
@@ -1260,18 +1265,43 @@ function App() {
       promptInstruction: string | null,
       question: CommandQuestion | null,
     ): Promise<void> => {
-      const lastApplied = lastAppliedActsOf(commandThread.exchanges);
-      const inverse = undoScriptOf(instruction, lastApplied);
-      if (inverse !== null) {
-        // A real inverse: offer it as the pending script, exactly like an
-        // interpreted one. The person's accept is the only thing that applies.
+      const lastApplied = lastAppliedExchangeOf(commandThread.exchanges);
+      // STORY 21.10 — THE WHOLE-SCRIPT UNDO (ADR-0038 Amendment 2). Every act
+      // of the last applied script is inverted, in reverse order, as ONE
+      // pending script; the person's accept is still the only thing that
+      // applies. `undo` rides along so the completed exchange can note what it
+      // took back and what it could not.
+      const offer = undoOfferOf(instruction, lastApplied);
+      if (offer !== null && lastApplied !== null) {
         setCommandAnswer("");
-        setCommandView({ kind: "acts", instruction, acts: inverse, question });
+        setCommandView({
+          kind: "acts",
+          instruction,
+          acts: offer.acts,
+          question,
+          undo: {
+            instruction: lastApplied.instruction,
+            omitted: offer.omitted.map(actLine),
+            bounded: offer.bounded,
+          },
+        });
         return;
       }
-      const undo = undoExchangeOf(instruction, question, lastApplied);
+      const undo = undoExchangeOf(
+        instruction,
+        question,
+        lastApplied?.acts ?? null,
+      );
       if (undo !== null) {
-        commitCommandExchange(undo);
+        // ONE GENERATION: an undo of an undo that cannot be put back whole is
+        // said in its own sentence, never offered as a partial restore that
+        // would re-wire or re-name content the undo left undone.
+        const second = undoSecondSentence(instruction, lastApplied);
+        commitCommandExchange(
+          second === null
+            ? undo
+            : nothingExchange(instruction, question, second),
+        );
         return;
       }
       setCommandBusy("reading");
@@ -1329,14 +1359,19 @@ function App() {
     const acts = commandView.acts;
     const instruction = commandView.instruction;
     const question = commandView.question;
+    // STORY 21.10 — an undo's accept keeps the offer's note, so its own
+    // exchange says which instruction it took back and what it could not.
+    const undo = commandView.undo ?? null;
     setCommandBusy("applying");
     void requestApply(acts)
       .then((result) => {
         if (result.ok) {
           // STORY 21.8 — the exchange keeps the acts AS THEY APPLIED, so a move
           // or a name carries the previous point/words its inverse needs.
+          // STORY 21.10 — the WHOLE applied script is kept (bounded), and an
+          // undo's own note with it.
           commitCommandExchange(
-            appliedExchange(instruction, result.applied, question),
+            appliedExchange(instruction, result.applied, question, undo),
           );
           return;
         }

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { inverseActOf, type CommandAct } from "../commands/acts";
+import { actSpecOf, inverseActOf, type CommandAct } from "../commands/acts";
 import type { CommandRun } from "../commands/execute";
 import type { InterpreterExchange, InterpreterRead } from "../commands/interpreter";
 import { utf8ByteLength } from "../lib/textBytes";
@@ -97,6 +97,35 @@ import type { Level } from "../workspace/level";
  * pair directions are offered from the applied act alone.
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * STORY 21.10 — UNDO THE WHOLE SCRIPT, NOT JUST ITS LAST ACT
+ * (ADR-0038 Amendment 2, the person: "start with propose and then can always
+ * undo if you accept the proposal and change your mind".)
+ *
+ * 21.6 took back ONE act, the last one that had an inverse, so a three-act
+ * script left two changes behind. Amendment 2 says undo is the second net
+ * AFTER acceptance and it is about the SCRIPT: "undo that" now offers the
+ * inverse of EVERY act of the last applied script, in REVERSE order — a wire
+ * made after a card is taken back before the card — as ONE script the person
+ * accepts once, like any other.
+ *
+ * HONEST PARTIAL, ALWAYS. Where an act has no expressible inverse the offer
+ * names it and leaves it as it is; it never dresses a partial take-back as a
+ * complete one. A bounded kept script says its earliest acts are out of reach
+ * for the same reason.
+ *
+ * A SECOND UNDO IS ONE GENERATION. The undo reads the last APPLIED EXCHANGE
+ * only, never the script it took back, so a second "undo that" cannot
+ * double-invert the original into a redo. Where that last exchange was itself
+ * an undo that cannot be put back WHOLE, the card says so and offers nothing:
+ * a partial restore could re-wire a card that stayed removed. The rule lives
+ * in undoOfferOf and its sentence beside the code.
+ *
+ * AN UNDO COMPLETES ITS OWN EXCHANGE. The accepted undo's exchange notes the
+ * instruction it took back and any act it could not, so the history says what
+ * moved. View state only: no new act, no record family, no counter.
+ * ------------------------------------------------------------------ */
+
 /** The closed bar's one line of invitation (PROVISIONAL). */
 export const COMMAND_INVITATION = "tell the app what to change";
 
@@ -149,6 +178,62 @@ export const COMMAND_FAILED_AT_PREFIX = "failed at ";
  */
 export const COMMAND_UNDO_SENTENCE =
   "there is no change here the app can take back, so nothing was applied.";
+
+/**
+ * STORY 21.10 — THE WHOLE-SCRIPT UNDO, IN ONE OFFER (ADR-0038 Amendment 2: undo
+ * is the second net, AFTER acceptance, and it takes back the LAST APPLIED SCRIPT
+ * as a whole — every act of it, in reverse order — not just its final act).
+ *
+ * THE ORDER IS THE APPOSITE ONE. Acts are undone from the last to the first,
+ * because a wire created after a card must be removed before the card: the
+ * reverse of how the script was applied is the only order the records accept.
+ *
+ * THE OFFER IS ONE SCRIPT AND ONE PRESS. The inverses are a script like any
+ * other, so the person accepts once and the executor applies it whole; the card
+ * never asks per act.
+ *
+ * IT NEVER CLAIMS COMPLETENESS IT DOES NOT HAVE. An act the vocabulary cannot
+ * invert from what it carries (a removed note's words, a removed card's point,
+ * an ask that has no paired removal) is NAMED as not taken back, and the rest
+ * still applies. The one sentence below is the card's promise that a partial
+ * undo is said out loud. PROVISIONAL: the wording and the act-list bound.
+ */
+export const COMMAND_UNDO_COMPLETE_SENTENCE =
+  "this undo takes back every act of that script, in reverse order.";
+
+/** The lead into the acts a partial undo will leave exactly as they are. */
+export const COMMAND_UNDO_PARTIAL_PREFIX =
+  "this undo takes back the rest; it will leave these acts as they are: ";
+
+/** The one sentence a bounded applied script adds to its undo (no count, ever). */
+export const COMMAND_UNDO_BOUNDED_SENTENCE =
+  "the earliest acts of that script are no longer held, so they will not be undone.";
+
+/**
+ * THE SECOND UNDO (STORY 21.10, ADR-0038 Amendment 2 rule 3). An undo is itself
+ * an applied script, so the pairing keeps working one generation at a time. But
+ * a PARTIAL restore of an undo can put a wire back to a card that stayed
+ * removed, or re-name a card the undo itself removed: a broken composite dressed
+ * as a complete take-back. When the last change was an undo that cannot be put
+ * back WHOLE, the card says so and offers nothing, rather than double-inverting
+ * into that nonsense.
+ */
+export const COMMAND_UNDO_SECOND_SENTENCE =
+  "the last change was itself an undo, and it cannot be put back whole, so nothing was applied.";
+
+/** The labels the card puts on what an undo takes back, and leaves (PROVISIONAL). */
+export const COMMAND_UNDO_TAKES_BACK_LABEL = "takes back: ";
+export const COMMAND_UNDO_TOOK_BACK_LABEL = "took back: ";
+export const COMMAND_UNDO_NOT_TAKEN_BACK_LABEL = "not taken back: ";
+
+/**
+ * The largest number of applied acts one exchange keeps (STORY 21.10,
+ * PROVISIONAL). The TAIL is kept, because the undo walks the applied script
+ * backwards; when a script is longer than this, the card says in one sentence
+ * that its earliest acts are out of reach rather than pretending they are not
+ * there. The bound is view state's, like the conversation's own.
+ */
+export const COMMAND_EXCHANGE_MAX_ACTS = 12;
 
 /** The largest number of exchanges the card keeps in view (PROVISIONAL). */
 export const COMMAND_HISTORY_MAX_EXCHANGES = 6;
@@ -238,8 +323,43 @@ export interface CommandExchange {
    * VIEW STATE like the rest of the exchange: no record family, no log. Absent
    * on a refused or failed exchange (nothing landed) and on exchanges made
    * before this story (the card then falls back to 21.5's sentence).
+   *
+   * STORY 21.10 — THE WHOLE SCRIPT, BOUNDED. This is every act the script ran,
+   * in act order, not just the last one, so an undo can invert all of them in
+   * reverse order. It is bounded like the conversation: the TAIL is kept (the
+   * undo walks backwards), and {@link actsBounded} says when the earliest acts
+   * were dropped so the offer never claims to take back a part it does not hold.
    */
   acts?: readonly CommandAct[];
+  /** STORY 21.10 — the applied script was longer than the exchange keeps. */
+  actsBounded?: boolean;
+  /**
+   * STORY 21.10 — set on an UNDO's own exchange: what it took back and what it
+   * could not, so the completed turn notes the undo it performed (Amendment 2:
+   * "accepting a script and changing your mind is a normal move"). View state
+   * again: the records it moved are the only record of the undo.
+   */
+  undo?: CommandUndo;
+}
+
+/** What one undo took back, as the exchange keeps it (STORY 21.10, view state). */
+export interface CommandUndo {
+  /** The instruction whose applied script this undo took back, VERBATIM. */
+  instruction: string;
+  /** The applied acts it could NOT take back, as the card's plain lines. */
+  omitted: readonly string[];
+  /** The applied script was longer than the exchange keeps (its earliest acts). */
+  bounded: boolean;
+}
+
+/** One whole-script undo as the card can offer it (STORY 21.10). */
+export interface CommandUndoOffer {
+  /** The inverse acts, in the REVERSE order of the applied script's acts. */
+  acts: readonly CommandAct[];
+  /** The applied acts with no expressible inverse, in the scan's reverse order. */
+  omitted: readonly CommandAct[];
+  /** The applied script's earliest acts were bounded out of view. */
+  bounded: boolean;
 }
 
 /** The card's conversation: the kept exchanges and whether older ones were dropped. */
@@ -262,6 +382,12 @@ export type CommandView =
       acts: readonly CommandAct[];
       /** The question this script answers, when the turn needed one. */
       question: CommandQuestion | null;
+      /**
+       * STORY 21.10 — set when the script is a whole-script UNDO, so the card
+       * can say what it takes back and what it cannot, and the exchange the
+       * accept completes can note the undo it performed.
+       */
+      undo?: CommandUndo | null;
     }
   | { kind: "question"; instruction: string; question: string };
 
@@ -358,43 +484,144 @@ export function undoRequestOf(instruction: string): boolean {
 }
 
 /**
- * THE LAST APPLIED EXCHANGE'S ACTS (STORY 21.6): the newest exchange whose
- * outcome was applied, in act order, or null when nothing has landed in the
- * conversation the card still holds. One pass backwards, no stack, no history
- * beyond the bounded conversation — the immediate inverse is the scope.
+ * THE LAST APPLIED EXCHANGE (STORY 21.6, widened by STORY 21.10): the newest
+ * exchange whose outcome was applied, or null when nothing has landed in the
+ * conversation the card still holds. ONE PASS BACKWARDS, no stack and no
+ * history beyond the bounded conversation: the immediate inverse is the scope,
+ * and an undo never reaches past the last applied script to the one before it.
  */
-export function lastAppliedActsOf(
+export function lastAppliedExchangeOf(
   exchanges: readonly CommandExchange[],
-): readonly CommandAct[] | null {
+): CommandExchange | null {
   for (let index = exchanges.length - 1; index >= 0; index -= 1) {
     const exchange = exchanges[index]!;
-    if (exchange.outcome.kind !== "applied") continue;
-    return exchange.acts ?? null;
+    if (exchange.outcome.kind === "applied") return exchange;
   }
   return null;
 }
 
 /**
- * THE UNDO RULE (STORY 21.6, ADR-0038's amendment). An undo-shaped instruction
- * resolves to the inverse of the LAST APPLIED act when the vocabulary pairs it
- * and the applied act carries what the inverse needs — ONE act, offered as a
- * ghost the person accepts. The search walks the applied exchange's acts
- * backwards so a script ending in a read still finds the change it made; when
- * nothing pairs, null (the sentence below answers instead).
+ * THE LAST APPLIED EXCHANGE'S ACTS (STORY 21.6), every one of them (STORY
+ * 21.10): the whole applied script in act order, so the undo can invert all of
+ * it. An exchange from before 21.6 carries no acts, and null is the honest
+ * answer then — the card never invents a script from the exchange's plain
+ * lines.
+ */
+export function lastAppliedActsOf(
+  exchanges: readonly CommandExchange[],
+): readonly CommandAct[] | null {
+  return lastAppliedExchangeOf(exchanges)?.acts ?? null;
+}
+
+/**
+ * THE INVERSE OF EVERY ACT, IN REVERSE ORDER (STORY 21.10, ADR-0038 Amendment
+ * 2). Walks the applied script from its LAST act to its first, because that is
+ * the order the records accept: a wire created after a card must be taken back
+ * before the card. Each act is inverted by the vocabulary's own pairing
+ * (commands/acts.ts's `inverseActOf`), never by a second table here.
  *
- * The inverse itself is the vocabulary's own pairing (commands/acts.ts's
- * `inverseActOf`), not a second table here.
+ * HONEST PARTIAL. A CHANGE the pairing cannot invert from the applied act alone
+ * goes into `omitted` so the card can name it. A READ goes into neither list:
+ * it changed nothing, so there is nothing to take back and naming it would
+ * suggest something happened.
+ */
+function inverseScriptOf(
+  applied: readonly CommandAct[],
+  bounded: boolean,
+): { acts: CommandAct[]; omitted: CommandAct[]; bounded: boolean } {
+  const acts: CommandAct[] = [];
+  const omitted: CommandAct[] = [];
+  for (let index = applied.length - 1; index >= 0; index -= 1) {
+    const act = applied[index]!;
+    const inverse = inverseActOf(act);
+    if (inverse !== null) {
+      acts.push(inverse);
+      continue;
+    }
+    if (actSpecOf(act.act)?.family === "propose") omitted.push(act);
+  }
+  return { acts, omitted, bounded };
+}
+
+/**
+ * THE UNDO SCRIPT (STORY 21.6, WHOLE-SCRIPT SINCE STORY 21.10): the inverse of
+ * EVERY applied act, in reverse order, as ONE script the person accepts once.
+ * Null when the instruction is not undo-shaped, when nothing was applied, or
+ * when no act of the applied script can be inverted at all (then the sentence
+ * below answers instead). The omitted acts are not lost to the card: see
+ * {@link undoOfferOf}, which carries them for the offer's honest sentence.
  */
 export function undoScriptOf(
   instruction: string,
   lastAppliedActs: readonly CommandAct[] | null,
+  bounded = false,
 ): CommandAct[] | null {
   if (!undoRequestOf(instruction) || lastAppliedActs === null) return null;
-  for (let index = lastAppliedActs.length - 1; index >= 0; index -= 1) {
-    const inverse = inverseActOf(lastAppliedActs[index]!);
-    if (inverse !== null) return [inverse];
+  const script = inverseScriptOf(lastAppliedActs, bounded);
+  return script.acts.length === 0 ? null : script.acts;
+}
+
+/**
+ * THE WHOLE-SCRIPT UNDO THE CARD OFFERS (STORY 21.10, ADR-0038 Amendment 2).
+ * The last applied exchange answers with every inverse it can express, in
+ * reverse order, plus the acts it cannot — so the offer can say what will not
+ * be undone instead of claiming completeness.
+ *
+ * ONE GENERATION, AND WHOLE OR NOTHING FOR AN UNDO. The undo reads ONLY the
+ * last applied exchange, so it never reaches back to the script it took back
+ * (that would double-invert). When that last exchange was ITSELF an undo, a
+ * PARTIAL restore is refused here: putting back the invertible part of an undo
+ * can re-wire a card that stayed removed or re-name a card the undo removed,
+ * which is the nonsense the rule forbids. Then the card answers with
+ * {@link COMMAND_UNDO_SECOND_SENTENCE} and offers nothing.
+ */
+export function undoOfferOf(
+  instruction: string,
+  last: CommandExchange | null,
+): CommandUndoOffer | null {
+  if (!undoRequestOf(instruction) || last === null) return null;
+  const applied = last.acts ?? null;
+  if (applied === null) return null;
+  const script = inverseScriptOf(applied, last.actsBounded === true);
+  if (script.acts.length === 0) return null;
+  if (last.undo !== undefined && (script.omitted.length > 0 || script.bounded)) {
+    return null;
   }
-  return null;
+  return script;
+}
+
+/**
+ * THE SECOND UNDO'S ONE SENTENCE (STORY 21.10). The card asks this only after
+ * {@link undoOfferOf} declined: when the last change was itself an undo that
+ * could not be put back whole, saying WHAT happened is better than a partial
+ * script that would break the map. Null when the last change was not an undo,
+ * so the ordinary 21.5 fallback sentence still answers.
+ */
+export function undoSecondSentence(
+  instruction: string,
+  last: CommandExchange | null,
+): string | null {
+  if (!undoRequestOf(instruction)) return null;
+  if (last === null || last.undo === undefined) return null;
+  return COMMAND_UNDO_SECOND_SENTENCE;
+}
+
+/**
+ * THE OFFER'S ONE HONEST SENTENCE (STORY 21.10): complete when every act can be
+ * taken back, otherwise the acts that will be left as they are, named in the
+ * card's own plain words. A bounded script adds that its earliest acts are out
+ * of reach. Never a count, and never a claim of completeness it does not hold.
+ */
+export function undoLine(undo: CommandUndo | null | undefined): string | null {
+  if (undo === null || undo === undefined) return null;
+  const parts: string[] = [];
+  if (undo.omitted.length > 0) {
+    parts.push(COMMAND_UNDO_PARTIAL_PREFIX + undo.omitted.join(", ") + ".");
+  }
+  if (undo.bounded) parts.push(COMMAND_UNDO_BOUNDED_SENTENCE);
+  return parts.length === 0
+    ? COMMAND_UNDO_COMPLETE_SENTENCE
+    : parts.join(" ");
 }
 
 /**
@@ -444,19 +671,41 @@ export function nothingExchange(
   };
 }
 
-/** An exchange the person's accept completed. */
+/**
+ * An exchange the person's accept completed. STORY 21.10 keeps the WHOLE
+ * applied script (bounded, the tail kept) so a later "undo that" can invert
+ * every act of it; `undo` is only set when this acceptance was itself an undo,
+ * and it is what lets the exchange note what it took back.
+ */
 export function appliedExchange(
   instruction: string,
   acts: readonly CommandAct[],
   question: CommandQuestion | null,
+  undo: CommandUndo | null = null,
 ): CommandExchange {
+  const bounded = acts.length > COMMAND_EXCHANGE_MAX_ACTS;
+  const kept = bounded
+    ? acts.slice(acts.length - COMMAND_EXCHANGE_MAX_ACTS)
+    : [...acts];
   return {
     instruction,
     understood: actLines(acts),
     question,
     outcome: { kind: "applied" },
     // STORY 21.6: what landed, so "undo that" can offer its inverse.
-    acts,
+    acts: kept,
+    ...(bounded ? { actsBounded: true } : {}),
+    ...(undo === null
+      ? {}
+      : {
+          // The note's own bound is the ORIGINAL script's, which the offer
+          // already carries; the undo's applied tail is what a next undo reads.
+          undo: {
+            instruction: undo.instruction,
+            omitted: undo.omitted,
+            bounded: undo.bounded || bounded,
+          },
+        }),
   };
 }
 
@@ -764,6 +1013,26 @@ function Exchange({ exchange }: { exchange: CommandExchange }) {
         </ol>
       )}
 
+      {/* STORY 21.10 — AN UNDO NOTES WHAT IT TOOK BACK. The complete take-back
+          needs no more than that line; a partial one names the acts it left as
+          they are, and a bounded script says its earliest acts are out of
+          reach. Never a completeness claim the offer did not have. */}
+      {exchange.undo !== undefined && (
+        <div className="command-card-quiet">
+          <div>
+            {COMMAND_UNDO_TOOK_BACK_LABEL}
+            {exchange.undo.instruction}
+          </div>
+          {exchange.undo.omitted.length > 0 && (
+            <div>
+              {COMMAND_UNDO_NOT_TAKEN_BACK_LABEL}
+              {exchange.undo.omitted.join(", ")}.
+            </div>
+          )}
+          {exchange.undo.bounded && <div>{COMMAND_UNDO_BOUNDED_SENTENCE}</div>}
+        </div>
+      )}
+
       <div className="command-card-outcome">
         {exchangeOutcomeLine(exchange)}
       </div>
@@ -895,6 +1164,18 @@ export function CommandCard({
               <div className="command-card-exchange-question">
                 <div>{COMMAND_ASKED_LABEL}{view.question.question}</div>
                 <div>{COMMAND_ANSWERED_LABEL}{view.question.answer}</div>
+              </div>
+            )}
+            {/* STORY 21.10 — A WHOLE-SCRIPT UNDO SAYS WHAT IT TAKES BACK,
+                and which acts it cannot: the offer's honest sentence sits
+                above the list, so a partial undo is visible BEFORE the press. */}
+            {view.undo != null && (
+              <div className="command-card-quiet">
+                <div>
+                  {COMMAND_UNDO_TAKES_BACK_LABEL}
+                  {view.undo.instruction}
+                </div>
+                <div>{undoLine(view.undo)}</div>
               </div>
             )}
             <ol className="command-card-acts">
