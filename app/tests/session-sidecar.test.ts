@@ -32,6 +32,8 @@ import {
   BUN,
   FAKE_SERVER,
   openSidecar,
+  waitForExit,
+  waitForJson,
   type SidecarPipe,
 } from "./fixtures/sidecar-pipe";
 import { manualClock } from "./fixtures/manual-clock";
@@ -65,6 +67,19 @@ import { manualClock } from "./fixtures/manual-clock";
  * the exception to "through the actual sidecar": the ending had to stop racing
  * a 180 ms budget, and the lane's own line builders are what the sidecar would
  * write. Every line kind it touches is still proven over the real pipe above.
+ *
+ * STORY 21.0b — THE OTHER WAITS, SWEPT. Every test here used to watch a real
+ * child through polls: a read of its report file in a loop, a `process.kill`
+ * loop until a pid disappeared, a sleep before a stop. A poll is a guess about
+ * how long another process takes, and the guess is what fails on a loaded
+ * machine. Now each test waits for THE EVENT that orders the fact it asserts:
+ * the run's `session` entry proves the child's own report has landed (the fake
+ * writes it before it speaks a word of protocol), `run-end` is written only
+ * after `finish` has killed and reaped the child, and a stop waits for the
+ * run's first update rather than for a number of milliseconds. The one probe
+ * that still asks the OS twice is the closed-stdout exit path, where a host
+ * that is not a parent gets no death event for a grandchild; that guard lives
+ * in the pipe harness beside the process it watches.
  */
 
 const ROOT = mkdtempSync(join(tmpdir(), "attentioneer-session-sidecar-"));
@@ -130,30 +145,64 @@ async function send(pipe: SidecarPipe, line: string): Promise<void> {
   await pipe.transport.send(line);
 }
 
-/** Collect every line for one run until its `run-end`, or fail on the budget. */
-async function collectRun(
-  pipe: SidecarPipe,
-  run: number,
-  budgetMs = 15_000,
-): Promise<{ entries: SidecarLine[]; end: SidecarLine }> {
+/**
+ * ONE RUN, WATCHED BY ITS OWN EVENTS. Subscribing before the request is sent
+ * means no line is missed; every promise below is settled by a line the run
+ * itself wrote, never by a clock.
+ */
+interface RunWatch {
+  /** Every `run-part` the run streamed, in arrival order. */
+  entries: SidecarLine[];
+  /** The one ending. `run-end` is written after the child is killed and reaped. */
+  end: Promise<Extract<SidecarLine, { kind: "run-end" }>>;
+  /** The child answered the handshake: its own report has already landed. */
+  session: Promise<void>;
+  /** The turn's first streamed update: the run is under way. */
+  update: Promise<void>;
+  /** The run's one permission ask, exactly as the wire carried it. */
+  ask: Promise<Extract<SidecarLine, { kind: "run-permission" }>>;
+  /** Every ask the run made, so a second one could never pass for one. */
+  asks: Array<Extract<SidecarLine, { kind: "run-permission" }>>;
+}
+
+function watchRun(pipe: SidecarPipe, run: number): RunWatch {
   const entries: SidecarLine[] = [];
-  const end = await new Promise<SidecarLine>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error("the run never ended")),
-      budgetMs,
-    );
-    pipe.transport.subscribe(run, (line) => {
-      if (line.kind === "run-part" && line.run === run) {
-        entries.push(line);
-        return;
-      }
-      if (line.kind === "run-end" && line.run === run) {
-        clearTimeout(timer);
-        resolve(line);
-      }
-    });
+  const asks: Array<Extract<SidecarLine, { kind: "run-permission" }>> = [];
+  let sawSession!: () => void;
+  let sawUpdate!: () => void;
+  let sawAsk!: (line: Extract<SidecarLine, { kind: "run-permission" }>) => void;
+  let sawEnd!: (line: Extract<SidecarLine, { kind: "run-end" }>) => void;
+  const session = new Promise<void>((resolve) => {
+    sawSession = resolve;
   });
-  return { entries, end };
+  const update = new Promise<void>((resolve) => {
+    sawUpdate = resolve;
+  });
+  const ask = new Promise<Extract<SidecarLine, { kind: "run-permission" }>>(
+    (resolve) => {
+      sawAsk = resolve;
+    },
+  );
+  const end = new Promise<Extract<SidecarLine, { kind: "run-end" }>>(
+    (resolve) => {
+      sawEnd = resolve;
+    },
+  );
+  pipe.transport.subscribe(run, (line) => {
+    if (line.kind === "run-part" && line.run === run) {
+      entries.push(line);
+      if (line.entry.kind === "session") sawSession();
+      if (line.entry.kind === "update") sawUpdate();
+      return;
+    }
+    if (line.kind === "run-permission" && line.run === run) {
+      asks.push(line);
+      sawAsk(line);
+      return;
+    }
+    if (line.kind === "run-end" && line.run === run) sawEnd(line);
+  });
+  return { entries, end, session, update, ask, asks };
 }
 
 interface Report {
@@ -162,29 +211,28 @@ interface Report {
   env: Record<string, string>;
 }
 
-async function reportOf(path: string): Promise<Report> {
-  for (let at = 0; at < 400; at += 1) {
-    try {
-      return JSON.parse(readFileSync(path, "utf8")) as Report;
-    } catch {
-      await Bun.sleep(10);
-    }
-  }
-  throw new Error("the fake server wrote no report");
+/**
+ * The report the fake server wrote for itself. It writes that file BEFORE it
+ * speaks one word of protocol, so a caller that has seen the run's `session`
+ * entry (or its ending) reads a file that already landed: the read is ordered
+ * by an event, never retried until it works.
+ */
+function reportAt(path: string): Report {
+  return JSON.parse(readFileSync(path, "utf8")) as Report;
 }
 
-/** Did this pid go away? A killed child settles quickly. */
-async function gone(pid: number, budgetMs = 8_000): Promise<boolean> {
-  const deadline = Date.now() + budgetMs;
-  while (Date.now() < deadline) {
-    try {
-      process.kill(pid, 0);
-    } catch {
-      return true;
-    }
-    await Bun.sleep(20);
+/**
+ * Is this pid gone? Asked ONCE, because the event that orders it has already
+ * happened: a run's `run-end` follows `finish`, which kills and reaps the
+ * child first, and a sidecar's own exit awaits every live run's close.
+ */
+function isGone(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
   }
-  return false;
 }
 
 /* ------------------------------------------------------------------ *
@@ -364,9 +412,10 @@ describe("a run, streamed by the sidecar", () => {
     const base = workspace();
     const reportPath = join(base, "report.json");
     const request = runRequest(11, "tools", reportPath);
-    const collected = collectRun(pipe, request.run);
+    const run = watchRun(pipe, request.run);
     await send(pipe, JSON.stringify(request));
-    const { entries, end } = await collected;
+    const entries = run.entries;
+    const end = await run.end;
 
     const kinds = entries
       .filter((line) => line.kind === "run-part")
@@ -390,7 +439,7 @@ describe("a run, streamed by the sidecar", () => {
     expect(existsSync(entry.cwd)).toBe(true);
     expect(readdirSync(entry.cwd)).toEqual([]);
     expect(entry.command).toBe(BUN);
-    const report = await reportOf(reportPath);
+    const report = reportAt(reportPath);
     expect(Object.keys(report.env).sort()).toEqual(["HOME", "PATH"]);
     // The transcript-shaped order: tool pending, text, tool completed, text.
     const updates = entries.filter(
@@ -398,7 +447,7 @@ describe("a run, streamed by the sidecar", () => {
         line.kind === "run-part" && line.entry.kind === "update",
     );
     expect(updates.length).toBeGreaterThanOrEqual(4);
-    expect(await gone(report.pid)).toBe(true);
+    expect(isGone(report.pid)).toBe(true);
   });
 
   test("a stop answers with the run's own ending, asks the server, and kills the child", async () => {
@@ -406,19 +455,19 @@ describe("a run, streamed by the sidecar", () => {
     const base = workspace();
     const reportPath = join(base, "report.json");
     const request = runRequest(12, "hang-mid-turn", reportPath);
-    const collected = collectRun(pipe, request.run);
+    const run = watchRun(pipe, request.run);
     await send(pipe, JSON.stringify(request));
 
-    // Wait for the run to actually say something before stopping it.
-    const report = await reportOf(reportPath);
-    await Bun.sleep(100);
+    // Stop it once it has SAID something: the first update is the event, so a
+    // cancel can never be the thing that arrived early.
+    await run.update;
     await send(pipe, runCancelLine(90, request.run));
-    const { end } = await collected;
+    const end = await run.end;
 
-    expect(end.kind === "run-end" ? end.ending : null).toBe("stopped");
+    expect(end.ending).toBe("stopped");
     // The client ASKED the server (session/cancel) before the child was killed.
     expect(existsSync(reportPath + ".cancel")).toBe(true);
-    expect(await gone(report.pid)).toBe(true);
+    expect(isGone(reportAt(reportPath).pid)).toBe(true);
   });
 
   test("a dying server is a failed run with one sentence, and the child is gone", async () => {
@@ -426,12 +475,13 @@ describe("a run, streamed by the sidecar", () => {
     const base = workspace();
     const reportPath = join(base, "report.json");
     const request = runRequest(13, "die-mid-turn", reportPath);
-    const collected = collectRun(pipe, request.run);
+    const run = watchRun(pipe, request.run);
     await send(pipe, JSON.stringify(request));
-    const { entries, end } = await collected;
+    const entries = run.entries;
+    const end = await run.end;
 
-    expect(end.kind === "run-end" ? end.ending : null).toBe("failed");
-    const sentence = end.kind === "run-end" ? end.sentence : null;
+    expect(end.ending).toBe("failed");
+    const sentence = end.sentence;
     expect(typeof sentence).toBe("string");
     // What arrived before the break is kept; the ending carries the reason.
     expect(
@@ -439,8 +489,7 @@ describe("a run, streamed by the sidecar", () => {
         (line) => line.kind === "run-part" && line.entry.kind === "update",
       ),
     ).toBe(true);
-    const report = await reportOf(reportPath);
-    expect(await gone(report.pid)).toBe(true);
+    expect(isGone(reportAt(reportPath).pid)).toBe(true);
   });
 
   test("a budget that runs out is timed-out, never a result", async () => {
@@ -450,13 +499,14 @@ describe("a run, streamed by the sidecar", () => {
     // A TEST-ONLY short budget: the wire's minutes are a number, a row's are
     // whole minutes (acpSpecs refuses anything under one).
     const request = runRequest(14, "silent", reportPath, { timeoutMinutes: 0.003 });
-    const collected = collectRun(pipe, request.run);
+    const run = watchRun(pipe, request.run);
     await send(pipe, JSON.stringify(request));
-    const { end } = await collected;
-    expect(end.kind === "run-end" ? end.ending : null).toBe("timed-out");
-    expect(end.kind === "run-end" ? end.sentence : null).toContain("budget");
-    const report = await reportOf(reportPath);
-    expect(await gone(report.pid)).toBe(true);
+    // The fake answers NOTHING, so the budget is the only possible ending; the
+    // wait is the run's own stated budget, not a guess about the machine.
+    const end = await run.end;
+    expect(end.ending).toBe("timed-out");
+    expect(end.sentence).toContain("budget");
+    expect(isGone(reportAt(reportPath).pid)).toBe(true);
   });
 
   test("a permission waits for the person; an allow-once continues the run", async () => {
@@ -464,35 +514,12 @@ describe("a run, streamed by the sidecar", () => {
     const base = workspace();
     const reportPath = join(base, "report.json");
     const request = runRequest(16, "normal", reportPath);
-    const permissions: Array<Extract<SidecarLine, { kind: "run-permission" }>> = [];
-    const parts: Array<Extract<SidecarLine, { kind: "run-part" }>> = [];
-    const ended = new Promise<Extract<SidecarLine, { kind: "run-end" }>>(
-      (resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("the run never ended")), 10_000);
-        pipe.transport.subscribe(request.run, (line) => {
-          if (line.kind === "run-permission" && line.run === request.run) {
-            permissions.push(line);
-            return;
-          }
-          if (line.kind === "run-part" && line.run === request.run) {
-            parts.push(line);
-            return;
-          }
-          if (line.kind === "run-end" && line.run === request.run) {
-            clearTimeout(timer);
-            resolve(line);
-          }
-        });
-      },
-    );
+    const run = watchRun(pipe, request.run);
     await send(pipe, JSON.stringify(request));
 
-    // Nothing answers until a person does: the run is waiting on the ask.
-    for (let at = 0; at < 400 && permissions.length === 0; at += 1) {
-      await Bun.sleep(10);
-    }
-    expect(permissions).toHaveLength(1);
-    const permission = permissions[0]!;
+    // Nothing answers until a person does: the run is waiting on the ask, and
+    // the ask is an event rather than a number of milliseconds.
+    const permission = await run.ask;
     expect(permission.method).toBe("session/request_permission");
     expect(permission.toolCall).toMatchObject({
       title: "Read the working directory",
@@ -509,10 +536,16 @@ describe("a run, streamed by the sidecar", () => {
       pipe,
       runPermissionReplyLine(500, request.run, permission.ask, "allow-once"),
     );
-    const end = await ended;
-    expect(end.kind === "run-end" ? end.ending : null).toBe("completed");
+    const end = await run.end;
+    expect(end.ending).toBe("completed");
+    // It asked ONCE: a second ask would be a second interruption.
+    expect(run.asks).toHaveLength(1);
 
-    const permissionEntry = parts
+    const permissionEntry = run.entries
+      .filter(
+        (line): line is Extract<SidecarLine, { kind: "run-part" }> =>
+          line.kind === "run-part",
+      )
       .map((line) => line.entry)
       .find((entry) => entry.kind === "permission");
     expect(permissionEntry).toMatchObject({
@@ -526,7 +559,7 @@ describe("a run, streamed by the sidecar", () => {
         ? permissionEntry.reply
         : null;
     expect(JSON.stringify(reply)).not.toContain("allow-always");
-    expect(await gone((await reportOf(reportPath)).pid)).toBe(true);
+    expect(isGone(reportAt(reportPath).pid)).toBe(true);
   });
 
   test("an unanswered permission settles as the run's timeout, stated as unanswered", async () => {
@@ -596,17 +629,13 @@ describe("a run, streamed by the sidecar", () => {
       madeDirs.push(started.cwd);
     }
     await lane.shutdown();
-    expect(await gone((await reportOf(reportPath)).pid)).toBe(true);
+    expect(isGone(reportAt(reportPath).pid)).toBe(true);
   });
 
   test("a reply naming no waiting ask is answered with one sentence", async () => {
     const pipe = await sidecar();
-    const answer = new Promise<SidecarLine>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("no answer")), 5_000);
-      pipe.transport.subscribe(501, (line) => {
-        clearTimeout(timer);
-        resolve(line);
-      });
+    const answer = new Promise<SidecarLine>((resolve) => {
+      pipe.transport.subscribe(501, (line) => resolve(line));
     });
     await send(pipe, runPermissionReplyLine(501, 404, 1, "allow-once"));
     const line = await answer;
@@ -622,35 +651,29 @@ describe("a run, streamed by the sidecar", () => {
     const reportPath = join(base, "report.json");
     const request = runRequest(15, "hang-mid-turn", reportPath);
     // The refusal comes back on the SECOND request's id.
-    const refusal = new Promise<SidecarLine>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("no refusal")), 5_000);
-      pipe.transport.subscribe(115, (line) => {
-        clearTimeout(timer);
-        resolve(line);
-      });
+    const refusal = new Promise<SidecarLine>((resolve) => {
+      pipe.transport.subscribe(115, (line) => resolve(line));
     });
-    const collected = collectRun(pipe, request.run);
+    const run = watchRun(pipe, request.run);
     await send(pipe, JSON.stringify(request));
-    await reportOf(reportPath);
+    // The session entry is the proof the first run is live, so the duplicate
+    // is sent into a lane that is already holding it.
+    await run.session;
     await send(pipe, JSON.stringify({ ...request, id: 115, run: request.run }));
     const answer = await refusal;
     expect(answer.kind).toBe("error");
     expect(answer.kind === "error" ? answer.message : "").toContain("already running");
 
     await send(pipe, runCancelLine(91, request.run));
-    const { end } = await collected;
-    expect(end.kind === "run-end" ? end.ending : null).toBe("stopped");
-    expect(await gone((await reportOf(reportPath)).pid)).toBe(true);
+    const end = await run.end;
+    expect(end.ending).toBe("stopped");
+    expect(isGone(reportAt(reportPath).pid)).toBe(true);
   });
 
   test("a cancel naming no live run is answered, not ignored", async () => {
     const pipe = await sidecar();
-    const answer = new Promise<SidecarLine>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("no answer")), 5_000);
-      pipe.transport.subscribe(92, (line) => {
-        clearTimeout(timer);
-        resolve(line);
-      });
+    const answer = new Promise<SidecarLine>((resolve) => {
+      pipe.transport.subscribe(92, (line) => resolve(line));
     });
     await send(pipe, runCancelLine(92, 404));
     const line = await answer;
@@ -672,12 +695,13 @@ describe("the key crosses in the payload and nowhere else", () => {
     const request = runRequest(21, "tools", reportPath, {
       env: { DEEPSEEK_API_KEY: KEY },
     });
-    const collected = collectRun(pipe, request.run);
+    const run = watchRun(pipe, request.run);
     await send(pipe, JSON.stringify(request));
-    const { entries, end } = await collected;
-    expect(end.kind === "run-end" ? end.ending : null).toBe("completed");
+    const entries = run.entries;
+    const end = await run.end;
+    expect(end.ending).toBe("completed");
 
-    const report = await reportOf(reportPath);
+    const report = reportAt(reportPath);
     // The child's environment is EXACTLY PATH, HOME and the granted name.
     expect(Object.keys(report.env).sort()).toEqual([
       "DEEPSEEK_API_KEY",
@@ -693,7 +717,7 @@ describe("the key crosses in the payload and nowhere else", () => {
     expect(pipe.stderr()).not.toContain(KEY);
     expect(JSON.stringify(entries)).not.toContain(KEY);
     expect(JSON.stringify(end)).not.toContain(KEY);
-    expect(await gone(report.pid)).toBe(true);
+    expect(isGone(report.pid)).toBe(true);
   });
 
   test("with no grant the child gets PATH/HOME only", async () => {
@@ -701,12 +725,12 @@ describe("the key crosses in the payload and nowhere else", () => {
     const base = workspace();
     const reportPath = join(base, "report.json");
     const request = runRequest(22, "tools", reportPath);
-    const collected = collectRun(pipe, request.run);
+    const run = watchRun(pipe, request.run);
     await send(pipe, JSON.stringify(request));
-    await collected;
-    const report = await reportOf(reportPath);
+    await run.end;
+    const report = reportAt(reportPath);
     expect(Object.keys(report.env).sort()).toEqual(["HOME", "PATH"]);
-    expect(await gone(report.pid)).toBe(true);
+    expect(isGone(report.pid)).toBe(true);
   });
 });
 
@@ -722,14 +746,16 @@ describe("the sidecar's own exit paths kill the child", () => {
     const base = workspace();
     const reportPath = join(base, "report.json");
     const request = runRequest(31, "hang-mid-turn", reportPath);
+    const run = watchRun(pipe, request.run);
     await send(pipe, JSON.stringify(request));
-    const report = await reportOf(reportPath);
+    // The handshake's answer proves the child is up, so its report already landed.
+    await run.session;
+    const report = reportAt(reportPath);
 
-    // Close stdin: the sidecar's finally closes every live run.
+    // Close stdin: the sidecar's finally closes every live run before it exits.
     pipe.child.stdin.end();
-    expect(await gone(report.pid)).toBe(true);
-    // And the process itself is done, with the run's ending said on the way out.
     await pipe.child.exited;
+    expect(isGone(report.pid)).toBe(true);
   });
 
   test("a closed stdout closes every live run", async () => {
@@ -751,9 +777,12 @@ describe("the sidecar's own exit paths kill the child", () => {
       const request = runRequest(32, "drip", reportPath, { timeoutMinutes: 1 });
       child.stdin.write(JSON.stringify(request) + "\n");
       await child.stdin.flush();
-      const report = await reportOf(reportPath);
-      // The pipe is closed by the wrapper; the failing write kills the run.
-      expect(await gone(report.pid)).toBe(true);
+      // The wrapper owns this sidecar's stdout, so no line can order the
+      // child's report here; the harness asks, with a stated budget.
+      const report = await waitForJson<Report>(reportPath);
+      // The pipe is closed by the wrapper; the failing write kills the run,
+      // and a host that is not the parent is told only by asking the OS.
+      expect(await waitForExit(report.pid)).toBe(true);
     } finally {
       child.kill();
     }
@@ -764,19 +793,36 @@ describe("the sidecar's own exit paths kill the child", () => {
  * 5. The window's seam: one request, one sentence, nothing hangs.
  * ------------------------------------------------------------------ */
 
-/** A transport that records what the window sends and lets a test answer. */
+/**
+ * A transport that records what the window sends and lets a test answer. Its
+ * `sentAt` is the EVENT a test waits on: the window's seam sends after its own
+ * awaits, so the line is awaited rather than polled for.
+ */
 function recording(): {
   transport: TurnTransport;
   sent: string[];
+  sentAt(count: number): Promise<void>;
   deliver(id: number, line: SidecarLine): void;
 } {
   const sent: string[] = [];
   const waiting = new Map<number, (line: SidecarLine) => void>();
+  const sentWaiters: Array<{ count: number; resolve: () => void }> = [];
   return {
     sent,
+    sentAt(count) {
+      if (sent.length >= count) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        sentWaiters.push({ count, resolve });
+      });
+    },
     transport: {
       async send(line) {
         sent.push(line);
+        for (const waiter of [...sentWaiters]) {
+          if (sent.length < waiter.count) continue;
+          sentWaiters.splice(sentWaiters.indexOf(waiter), 1);
+          waiter.resolve();
+        }
       },
       subscribe(id, handler) {
         waiting.set(id, handler);
@@ -860,9 +906,7 @@ describe("the window's run seam", () => {
         onEntry: (entry) => arrived.push(entry.kind),
       },
     );
-    for (let at = 0; at < 200 && wire.sent.length === 0; at += 1) {
-      await Bun.sleep(5);
-    }
+    await wire.sentAt(1);
     const request = parseRequestLine(wire.sent[0] as string);
     expect(request?.kind).toBe("run");
     if (request?.kind !== "run") throw new Error("not a run request");
@@ -899,15 +943,11 @@ describe("the window's run seam", () => {
       transport: wire.transport,
       start: async () => RUNNING,
     });
-    for (let at = 0; at < 200 && wire.sent.length === 0; at += 1) {
-      await Bun.sleep(5);
-    }
+    await wire.sentAt(1);
     const request = parseRequestLine(wire.sent[0] as string);
     if (request?.kind !== "run") throw new Error("not a run request");
     handle.cancel();
-    for (let at = 0; at < 200 && wire.sent.length < 2; at += 1) {
-      await Bun.sleep(5);
-    }
+    await wire.sentAt(2);
     expect(parseRequestLine(wire.sent[1] as string)).toMatchObject({
       kind: "run-cancel",
       run: request.run,
@@ -932,9 +972,7 @@ describe("the window's run seam", () => {
     });
     // The default start is the app's own; this test never lets it run: the
     // subscription is already in place, so answer it directly.
-    for (let at = 0; at < 200 && wire.sent.length === 0; at += 1) {
-      await Bun.sleep(5);
-    }
+    await wire.sentAt(1);
     const request = parseRequestLine(wire.sent[0] as string);
     if (request?.kind !== "run") throw new Error("not a run request");
     wire.deliver(request.id, {

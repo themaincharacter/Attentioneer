@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseSidecarLine, type SidecarLine } from "../../src/turn/protocol";
 import type { TurnTransport } from "../../src/turn/turn";
@@ -162,4 +163,52 @@ export function openSidecar(
       child.kill();
     },
   };
+}
+
+/**
+ * WAIT FOR A FILE A CHILD WROTE, WHEN NO PIPE EVENT ORDERS IT (story 21.0b).
+ *
+ * One test drives a wrapper that owns the sidecar's stdout, so no line can
+ * order the fake server's own report for it. This asks the filesystem, with a
+ * stated budget, in the harness where the real process lives — never inside a
+ * test's assertion. It parses what it reads, so a file caught half-written is
+ * simply not there yet.
+ */
+export async function waitForJson<T>(
+  path: string,
+  budgetMs = 10_000,
+): Promise<T> {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    try {
+      return JSON.parse(readFileSync(path, "utf8")) as T;
+    } catch {
+      if (Date.now() >= deadline) {
+        throw new Error("no report was written at " + path);
+      }
+      await Bun.sleep(10);
+    }
+  }
+}
+
+/**
+ * WAIT FOR A PROCESS TO BE GONE. POSIX gives a host that is not the parent no
+ * death event for a grandchild, so this must ask the OS. It is a guard on an
+ * event — the child is killed by the sidecar's own shutter — and never an
+ * assertion about how long the app took.
+ */
+export async function waitForExit(
+  pid: number,
+  budgetMs = 10_000,
+): Promise<boolean> {
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await Bun.sleep(20);
+  }
+  return false;
 }

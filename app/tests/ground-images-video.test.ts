@@ -7,6 +7,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -174,14 +175,17 @@ class Lines {
     this.handlers.push(handler);
   }
 
-  async next(budgetMs = 5_000): Promise<string> {
-    const deadline = Date.now() + budgetMs;
+  /**
+   * The next line, awaited as an EVENT: the reader resolves the waiters it was
+   * holding when a line arrives (and again when the pipe closes). No budget and
+   * no poll — a test that never gets its line fails on the runner's own
+   * timeout, never on a guess about how fast the machine is.
+   */
+  async next(): Promise<string> {
     while (this.ready.length === 0) {
       if (this.closed) throw new Error("the sidecar closed before answering");
-      if (Date.now() >= deadline) throw new Error("timed out waiting for a line");
       await new Promise<void>((resolve) => {
         this.waiting.push(resolve);
-        setTimeout(resolve, 10);
       });
     }
     return this.ready.shift() as string;
@@ -341,12 +345,33 @@ function snapshot(workspace: string): Record<string, string> {
   return out;
 }
 
+/**
+ * WHEN THE FIXTURE'S FILE WAS WRITTEN, in whole milliseconds. A take stamps its
+ * reading from a whole-millisecond ISO string while the filesystem keeps the
+ * modified time finer than that; a take in the file's OWN millisecond would read
+ * as "changed" though nothing changed. Pinning both sides is what makes "the
+ * file cannot look newer than the reading" a fact rather than a hope.
+ */
+const IMAGE_WRITTEN_AT = 1_700_000_000_000;
+
 /** A real PNG on disk, outside the workspace (as an OS pick would be). */
-function realImage(): { dir: string; path: string; bytes: number } {
+function realImage(): {
+  dir: string;
+  path: string;
+  bytes: number;
+  /** The reading's stamp: exactly the file's own modified time. */
+  taken: string;
+} {
   const dir = mkdtempSync(join(tmpdir(), "attentioneer-image-"));
   const path = join(dir, "photo.png");
   writeFileSync(path, Buffer.from(PNG_BASE64, "base64"));
-  return { dir, path, bytes: statSync(path).size };
+  utimesSync(path, IMAGE_WRITTEN_AT / 1000, IMAGE_WRITTEN_AT / 1000);
+  return {
+    dir,
+    path,
+    bytes: statSync(path).size,
+    taken: new Date(IMAGE_WRITTEN_AT).toISOString(),
+  };
 }
 
 /* ------------------------------------------------------------------ *
@@ -440,17 +465,22 @@ describe("an image is a FILE reading that is never copied", () => {
     const workspace = freshWorkspace();
     const image = realImage();
     try {
-      // The stamp is the write's own clock, so the file cannot look "newer".
+      // The stamp is the file's own modified time, pinned by the fixture, so
+      // the file cannot look "newer" and the state is an ORDER, not a race.
       const taken = await takeReading(
         workspace,
         "river-photo",
         image.path,
         readingIo,
-        new Date().toISOString(),
+        image.taken,
       );
       if (taken.kind !== "taken") throw new Error("expected a reading");
       expect(
-        resolveReadingState(taken.reading, metaOf(image.path), Date.now()),
+        resolveReadingState(
+          taken.reading,
+          metaOf(image.path),
+          Date.parse(image.taken),
+        ),
       ).toBe("current");
       // The file can be moved or deleted — the state says so, with no copy claim.
       rmSync(image.path);
@@ -855,19 +885,15 @@ describe("a video card is copied beside the map and reopens OFFLINE", () => {
   test("an image reads back after a reopen with no server and no copy", async () => {
     const workspace = freshWorkspace();
     const image = realImage();
-    // The reading's `taken` and the file's own modified stamp are two clocks:
-    // the write lands mid-millisecond, while the ISO timestamp is cut to whole
-    // milliseconds, so taking the reading in that SAME millisecond reads as
-    // "changed" even though nothing changed. Let the clock move past the write
-    // before the reading is taken; the fixture is still untouched after it.
-    await Bun.sleep(5);
     try {
+      // The fixture pins the file's modified time and hands the reading that
+      // same instant, so "current" is a comparison of two stated numbers.
       const taken = await takeReading(
         workspace,
         "photo",
         image.path,
         readingIo,
-        new Date().toISOString(),
+        image.taken,
       );
       if (taken.kind !== "taken") throw new Error("expected a reading");
       await saveReadings(workspace, [taken.reading], [], readingIo);
@@ -889,7 +915,7 @@ describe("a video card is copied beside the map and reopens OFFLINE", () => {
         resolveReadingState(
           reopened.readings.readings[0],
           metaOf(image.path),
-          Date.now(),
+          Date.parse(image.taken),
         ),
       ).toBe("current");
       // No text file, no copy: the workspace is records only.
