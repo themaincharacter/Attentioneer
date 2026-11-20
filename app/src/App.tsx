@@ -137,6 +137,7 @@ import {
   type CommandIo,
 } from "./commands/attentioneerHost";
 import { appendCommandMove, interpretInstruction } from "./commands/interpreterCall";
+import { devCommandsPath } from "./dev/gate";
 import { interpreterDigest } from "./commands/interpreterDigest";
 import type { InterpreterRead } from "./commands/interpreter";
 import type { CommandAct } from "./commands/acts";
@@ -4566,6 +4567,67 @@ function App() {
     autoPromptedRef.current = workspace.path;
     openSelector();
   }, [workspace, loaded, model, openSelector]);
+
+  // STORY 21.4 — THE DEV COMMAND FILE (ADR-0038 decision 6, second half): a
+  // DEVELOPER build may watch ONE file a person named explicitly and run the
+  // act script written there through the SAME apply path the command card uses
+  // (propose, then accept in one call), appending one JSON line per act to
+  // `<path>.results`. No socket, no port, no listening, no discovery: the gate
+  // (`dev/gate.ts`) refuses without an absolute path, and this whole block is
+  // written behind `import.meta.env.DEV`.
+  //
+  // RELEASE BUILD REFUSES: `import.meta.env.DEV` is replaced with `false` at
+  // build time, so the block — and the dynamic import that is
+  // `dev/commandFile.ts`'s ONLY reference — is dropped from a release bundle.
+  // The watcher module is loaded lazily for exactly that reason; a static
+  // import would ship it whatever the guard said. `dev-command-file.test.ts`
+  // holds the shape in place: the guard is the build's own flag, the import is
+  // dynamic and guarded, and no other module imports the watcher.
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let cancelled = false;
+    if (import.meta.env.DEV) {
+      const path = devCommandsPath(
+        import.meta.env.ATTENTIONEER_DEV_COMMANDS,
+        import.meta.env.DEV,
+      );
+      if (path !== null && workspace !== null) {
+        const workspacePath = workspace.path;
+        void import("./dev/commandFile").then(({ startDevCommandFile }) => {
+          if (cancelled) return;
+          stop = startDevCommandFile({
+            path,
+            deps: {
+              readText: (file) => readTextFile(file),
+              // APPEND, in the app's own vocabulary: read the earlier bytes and
+              // write them back untouched with the new lines after them. The
+              // watcher never writes the script and never deletes either file.
+              appendText: async (file, text) => {
+                const earlier = await readTextFile(file);
+                await writeTextFile(file, (earlier ?? "") + text);
+              },
+              // THE COMMAND CARD'S PATH, NOT A SECOND ONE: a fresh host over
+              // the window's bridge, the one-press apply (execute then accept),
+              // then the map re-reads so the cards show what landed.
+              applyScript: async (acts) => {
+                const host = createAttentioneerHost({
+                  workspacePath,
+                  io: tauriCommandIo,
+                });
+                const result = await applyCommandScript(acts, host);
+                await ground.reload();
+                return result;
+              },
+            },
+          });
+        });
+      }
+    }
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [workspace, ground.reload]);
 
   if (!workspace) {
     return <WorkspaceGate onOpen={setWorkspace} />;
