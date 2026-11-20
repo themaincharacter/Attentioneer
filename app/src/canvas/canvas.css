@@ -5774,6 +5774,61 @@ body {
   cursor: text;
 }
 
+/* STORY 20.2 (PROVISIONAL) — THE EXPLORER: a quiet block on an expanded
+   project card, above the kept reading. One level of the folder as rows and
+   one quiet line naming the path from the project root. No border, no box, no
+   count: this is a place to walk, not a panel about one. The rows are the
+   folder's own names at the reading's prose size, so the listing's words and
+   the living folder's words read as the same kind of thing. PROVISIONAL: the
+   block's look, the row spacing and the quiet path line. */
+.ground-explorer {
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(141, 136, 124, 0.16);
+}
+
+.ground-explorer-path {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.ground-explorer-rows {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 3px;
+}
+
+.ground-explorer-row {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--prose-size);
+  line-height: var(--prose-leading);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ground-explorer-row:hover {
+  color: var(--ink-strong);
+}
+
+.ground-explorer-row:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+}
+
+.ground-explorer-problem {
+  margin-top: 4px;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
 /* STORY 17 (shortlist items 7–9) — THE FOLD'S FACE. A small card with more than
    its stated lines ends in a SOFT FADE, never a hard cut, and ONE small verb:
    "more" opens the card (the same move as a press on the body). The verb is

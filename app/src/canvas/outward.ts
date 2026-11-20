@@ -88,6 +88,25 @@ export async function openFolderOutward(
 }
 
 /**
+ * STORY 20.2 (PROVISIONAL) — OPEN A FILE the project card's explorer was
+ * pointed at: the system's DEFAULT handler decides what that means, and this
+ * module is the ONLY call site the opener plugin has. The capability's scope is
+ * the one authority (it allows `$HOME/**` and `/mnt/c/**`), so a file outside
+ * it is refused by the IPC authority and reads `CANNOT_OPEN`; a box with no
+ * handler for the file's kind is the same honest outcome. Nothing is written,
+ * watched or held — the person's own tools do the editing.
+ *
+ * `open` is injectable so a test can prove the exact joined path handed over
+ * and that a refused path reaches no launcher (and no writer — there is none).
+ */
+export async function openFileOutward(
+  file: string,
+  open: (path: string) => Promise<void> = openPath,
+): Promise<OutwardResult> {
+  return attempt(() => open(file), CANNOT_OPEN);
+}
+
+/**
  * STORY 22.1b (PROVISIONAL) — OPEN THE PAGE a tool's own sign-in printed: one
  * address, the system's browser, and nothing else. The address came from the
  * CHILD's output, so it is DATA, not an authored pointer: the scheme guard runs

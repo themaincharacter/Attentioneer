@@ -91,6 +91,17 @@ import type {
   AcpPermissionChoice,
 } from "../turn/acpEntries";
 import { GroundConceptPanel, GroundNote } from "./GroundNote";
+import { FolderExplorerFace } from "./FolderExplorer";
+import {
+  ascendExplorer,
+  closeExplorer,
+  descendExplorer,
+  openExplorerEntry,
+  openExplorerRoot,
+  type ExplorerIo,
+  type ExplorerView,
+} from "./explorerRules";
+import { listDirEntries } from "../lib/fs";
 import {
   applyMention,
   MentionPicker,
@@ -107,6 +118,14 @@ import {
   sessionContextFactsOf,
   type GroundAddResult,
 } from "./useGround";
+
+/**
+ * STORY 20.2 (PROVISIONAL) — THE EXPLORER'S ONE BRIDGE DOOR. A project card's
+ * expanded face reads a level through this and nothing else: one bounded
+ * listing per gesture, never a watcher, a poll or a held handle. Stated once
+ * at module scope so no card can grow a second reader.
+ */
+const EXPLORER_IO: ExplorerIo = { listDirEntries };
 
 /**
  * The ground map's own layer (story 16.1; story 16.2 made the row live; story
@@ -1907,6 +1926,12 @@ function GroundCard({
   const droppedRef = useRef<Point | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  // STORY 20.2 (PROVISIONAL) — THE EXPLORER IS VIEW STATE, like the picker and
+  // the panel below it: where the person walked inside the project folder and
+  // what that level said. It is never a record and never written; closing the
+  // card empties the shape (the effect further down does exactly that).
+  const [explorer, setExplorer] = useState<ExplorerView | null>(null);
+  const [explorerBusy, setExplorerBusy] = useState(false);
   // STORY 16.7 — the picker and the concept panel are VIEW state too. The
   // picker holds the trigger's range so an insertion replaces exactly the typed
   // `@query`; the panel holds the word the person just opened.
@@ -2217,6 +2242,36 @@ function GroundCard({
     // repeats without another gesture.
   }, [open, reading, onTakeListing]);
 
+  // STORY 20.2 (PROVISIONAL) — THE FOLDER THIS CARD EXPLORES, when it is a
+  // project card: the one absolute path the explorer reads from and joins
+  // under. A file card's explorer does not exist, so the effect below clears
+  // the view state and nothing else changes.
+  const explorerFolder =
+    reading !== null && reading.form === "folder" ? reading.from : null;
+
+  // STORY 20.2 (PROVISIONAL) — THE TOP LEVEL IS READ ON THE EXPAND. Expanding
+  // the card is the person's own gesture, so the first level is read here and
+  // nowhere else; every later level is read by the navigation handlers below,
+  // ONE bounded listing per press. Nothing is watched, polled or held: a
+  // closed card drops the whole shape (closeExplorer answers null), so no
+  // history, no mirror and no reading is left behind by browsing.
+  useEffect(() => {
+    if (!open || explorerFolder === null) {
+      setExplorer(closeExplorer());
+      return;
+    }
+    let live = true;
+    setExplorerBusy(true);
+    void openExplorerRoot(explorerFolder, EXPLORER_IO).then((next) => {
+      if (!live) return;
+      setExplorerBusy(false);
+      setExplorer(next);
+    });
+    return () => {
+      live = false;
+    };
+  }, [open, explorerFolder]);
+
   const word = readingStateWord(state, reading);
   // STORY 16.25 — the RECORD's point is what React renders; the hand's own
   // frame is written on the card's element, so a drag re-renders nothing here.
@@ -2314,6 +2369,57 @@ function GroundCard({
     if (reading === null || reading.form !== "folder") return;
     const result = await openFolderOutward(reading.from);
     if (!result.ok && result.message !== null) setProblem(result.message);
+  }
+
+  /**
+   * STORY 20.2 (PROVISIONAL) — ONE STEP through the explorer, and ONE read.
+   * Every descent and every ascent asks the bridge for exactly one level; the
+   * pure module decides what the answer means (a refused level answers its one
+   * sentence and never becomes where the person is). Nothing is written, and
+   * the card's kept reading, its line and its refresh are untouched by any of
+   * it.
+   */
+  async function exploreStep(run: () => Promise<ExplorerView>) {
+    if (explorerBusy) return;
+    setExplorerBusy(true);
+    const next = await run();
+    setExplorerBusy(false);
+    setExplorer(next);
+  }
+
+  /** One click on a folder row: read that level, then go down. */
+  function enterFolder(name: string) {
+    if (explorer === null || explorerFolder === null) return;
+    void exploreStep(() =>
+      descendExplorer(explorer, explorerFolder, name, EXPLORER_IO),
+    );
+  }
+
+  /** One click on the way up: the level above is read as the stack pops. */
+  function ascendFolder() {
+    if (explorer === null || explorerFolder === null) return;
+    void exploreStep(() =>
+      ascendExplorer(explorer, explorerFolder, EXPLORER_IO),
+    );
+  }
+
+  /**
+   * STORY 20.2 (PROVISIONAL) — THE DOUBLE CLICK ON A FILE ROW: the exact
+   * joined path goes to the system's default handler through the outward door
+   * (this card's ONLY opener). A refused path (outside the capability's scope,
+   * or no handler on this box) answers the existing "cannot open" sentence in
+   * the explorer's own line. Nothing is written and nothing else changes.
+   */
+  async function openExplorerFile(name: string) {
+    if (explorer === null || explorerFolder === null) return;
+    const result = await openExplorerEntry(
+      explorerFolder,
+      explorer.segments,
+      name,
+    );
+    if (!result.ok && result.message !== null) {
+      setExplorer({ ...explorer, problem: result.message });
+    }
   }
 
   /** Enter the note editor in place, seeded with the stored note (or empty). */
@@ -2551,6 +2657,25 @@ function GroundCard({
         <div className="ground-kind">{kindLine}</div>
       )}
       <div className="ground-body" ref={bodyRef}>
+        {/* STORY 20.2 (PROVISIONAL) — THE EXPLORER: a quiet block on an
+            EXPANDED project card, ABOVE the kept reading. It is live
+            navigation over the folder (one on-demand listing per press), while
+            the reading below is the 20.1 snapshot the card KEEPS — the two
+            never touch: browsing writes no record, no history and no reading.
+            Folders descend on one click; a file opens on the double click. */}
+        {open &&
+          folderCard &&
+          reading !== null &&
+          explorer !== null && (
+            <FolderExplorerFace
+              folder={reading.from}
+              view={explorer}
+              busy={explorerBusy}
+              onEnter={enterFolder}
+              onAscend={ascendFolder}
+              onOpenFile={(name) => void openExplorerFile(name)}
+            />
+          )}
         {/* STORY 16.14: the page's image line — above the note and the reading,
             and only when a local copy exists. It renders from the map folder,
             so it still shows with the machine offline. */}

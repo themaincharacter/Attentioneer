@@ -601,8 +601,12 @@ export function readmeEntryOf(
   return null;
 }
 
-/** One entry's line: its verbatim name, with a trailing slash for a folder. */
-function entryLine(entry: DirEntry): string {
+/**
+ * One entry's line: its verbatim name, with a trailing slash for a folder.
+ * Exported for STORY 20.2's explorer, which marks a folder the SAME way the
+ * kept listing does — one marking rule, so the two faces can never disagree.
+ */
+export function folderEntryLine(entry: DirEntry): string {
   return entry.isDir ? entry.name + "/" : entry.name;
 }
 
@@ -634,7 +638,7 @@ export function folderReadingText(
       left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
     )
     .slice(0, LISTING_MAX_ENTRIES)
-    .map(entryLine)
+    .map(folderEntryLine)
     .join("\n");
   if (readmeHead === null || readmeHead === "") return listing;
   const head = FOLDER_README_HEADING + "\n" + readmeHead;
@@ -670,8 +674,13 @@ export function folderKeptProvenance(reading: Reading): string | null {
     : "the listing kept when it was read";
 }
 
-/** Join one top-level entry's name onto its folder, in the folder's convention. */
-function joinFolderPath(folder: string, name: string): string {
+/**
+ * Join one entry's name onto its folder, in the folder's convention (the
+ * separator follows the root). Exported for STORY 20.2's explorer so a
+ * descended level and an opened file are the SAME path the kept listing's
+ * take would have read — one joining rule, not two.
+ */
+export function joinFolderPath(folder: string, name: string): string {
   const separator = folder.includes("\\") && !folder.includes("/") ? "\\" : "/";
   return folder.replace(/[\\/]+$/, "") + separator + name;
 }
