@@ -5,6 +5,8 @@ import {
   ACT_NAMES,
   ACT_SPECS,
   actsFromScript,
+  CHANGE_MAP,
+  COMMAND_MAPS,
   validateAct,
 } from "../src/commands/acts";
 import { executeScript, type CommandHost, type CommandOutcome } from "../src/commands/execute";
@@ -69,11 +71,13 @@ describe("the portable half imports nothing app specific (ADR-0038 §3)", () => 
 });
 
 describe("the vocabulary is declared data (ADR-0038 §3)", () => {
-  test("twelve acts: three reads and nine proposals (STORY 21.8 adds place and name)", () => {
+  test("fourteen acts: five reads and nine proposals (STORY 21.9 reads every map)", () => {
     expect(ACT_NAMES).toEqual([
       "map_overview",
       "read_card",
       "read_wires",
+      "read_words",
+      "read_map",
       "propose_card",
       "propose_wire",
       "propose_note",
@@ -84,8 +88,35 @@ describe("the vocabulary is declared data (ADR-0038 §3)", () => {
       "propose_move",
       "propose_rename",
     ]);
-    expect(ACT_SPECS.filter((spec) => spec.family === "read")).toHaveLength(3);
+    expect(ACT_SPECS.filter((spec) => spec.family === "read")).toHaveLength(5);
     expect(ACT_SPECS.filter((spec) => spec.family === "propose")).toHaveLength(9);
+  });
+
+  test("a READ may name any map; a CHANGE names the ground map alone (STORY 21.9)", () => {
+    // Every map is readable...
+    for (const map of COMMAND_MAPS) {
+      const read = validateAct({ act: "read_map", map, payload: {} });
+      expect(read.ok).toBe(true);
+      if (read.ok) expect(read.act.map).toBe(map);
+    }
+    // ...and no map but the ground one may be changed: not even a proposal.
+    for (const map of COMMAND_MAPS) {
+      for (const spec of ACT_SPECS.filter((one) => one.family === "propose")) {
+        const change = validateAct({
+          act: spec.name,
+          map,
+          payload: {},
+        });
+        if (map === "ground") continue;
+        expect(change.ok).toBe(false);
+        if (change.ok) continue;
+        // ONE sentence, and it says what the limitation is.
+        expect(change.sentence).toContain("ground");
+        expect(change.sentence.slice(0, -1)).not.toContain(".");
+      }
+    }
+    expect(COMMAND_MAPS).toEqual(["ground", "concept", "dynamics"]);
+    expect(COMMAND_MAPS).toContain(CHANGE_MAP);
   });
 
   test("every act declares whether it writes, and NONE does: a proposal is a ghost", () => {
@@ -228,6 +259,14 @@ describe("executeScript: whole-script validation, then order", () => {
         state.calls.push("readWires");
         return answer("wires");
       },
+      async readWords() {
+        state.calls.push("readWords");
+        return answer("words");
+      },
+      async readMap(map) {
+        state.calls.push(`readMap:${map}`);
+        return answer(`map:${map}`);
+      },
       async proposeCard(payload) {
         state.calls.push(`proposeCard:${String(payload.name)}`);
         return answer(`card proposal ${String(payload.name)}`, "ghost-1");
@@ -332,6 +371,21 @@ describe("executeScript: whole-script validation, then order", () => {
     expect(run.lines).toEqual(["overview", "card proposal one"]);
     expect(run.sentence).toBe("the wire is refused.");
     expect(fake.calls).toEqual(["readOverview", "proposeCard:one", "proposeWire"]);
+  });
+
+  test("the two map reads dispatch with the map they name (STORY 21.9)", async () => {
+    const fake = fakeHost();
+    const run = await executeScript(
+      [
+        { act: "read_words", map: "concept", payload: {} },
+        { act: "read_map", map: "dynamics", payload: {} },
+        { act: "read_map", map: "ground", payload: {} },
+      ],
+      fake.host,
+    );
+    expect(run.ok).toBe(true);
+    expect(run.lines).toEqual(["words", "map:dynamics", "map:ground"]);
+    expect(fake.calls).toEqual(["readWords", "readMap:dynamics", "readMap:ground"]);
   });
 
   test("a script that is not a list is one sentence", async () => {

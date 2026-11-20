@@ -150,7 +150,7 @@ import {
 } from "./commands/attentioneerHost";
 import { appendCommandMove, interpretInstruction } from "./commands/interpreterCall";
 import { devCommandsPath } from "./dev/gate";
-import { interpreterDigest } from "./commands/interpreterDigest";
+import { interpreterDigestOf } from "./commands/interpreterDigest";
 import type { InterpreterRead } from "./commands/interpreter";
 import type { CommandAct } from "./commands/acts";
 import {
@@ -1035,31 +1035,90 @@ function App() {
   const [commandThread, setCommandThread] =
     useState<CommandThread>(EMPTY_COMMAND_THREAD);
   /**
-   * THE INTERPRETER'S DIGEST (story 21.2, ADR-0038 decision 6). Composed from
-   * the LOADED view — names, kinds, one line about, states and wires, never a
-   * reading body (interpreterDigest's input has no text door). Recomputed when
-   * the map's records change, so an accepted script's next instruction sees the
-   * map it just changed.
+   * THE INTERPRETER'S DIGEST (story 21.2, ADR-0038 decision 6), ONE PER MAP
+   * (STORY 21.9, ADR-0038's 2026-11-20 amendment: the command card is a PRIMARY
+   * way to use the app and stands on every map, so the digest describes the map
+   * the person is looking at instead of always the ground one).
+   *
+   * Composed from the LOADED view — names, kinds, one line about, states and
+   * wires on the ground; names and kinds on the other two — and NEVER from a
+   * body: the ground input has no text door, and the other maps' inputs are
+   * narrowed to {slug, name} and to a claim's TARGET before they are handed in,
+   * so a word's memory and a claim's words cannot ride. Recomputed when the
+   * map's records change, so an accepted script's next instruction sees the map
+   * it just changed.
    */
-  const commandDigest = useMemo(
-    () =>
-      interpreterDigest({
-        references: ground.references,
-        asks: ground.asks,
-        sessions: ground.sessions,
-        readings: ground.readings,
-        links: ground.links,
-        states: ground.states,
-      }),
-    [
-      ground.references,
-      ground.asks,
-      ground.sessions,
-      ground.readings,
-      ground.links,
-      ground.states,
-    ],
-  );
+  const commandDigest = useMemo(() => {
+    if (level === "concept") {
+      return interpreterDigestOf({
+        map: "concept",
+        words: refs.map((reference) => ({
+          slug: reference.slug ?? reference.id,
+          name: reference.name,
+        })),
+      });
+    }
+    if (level === "dynamics") {
+      // The words' names, never their memories: the view is already the lowered
+      // pair, and the playing set is a list of slugs the person reads by name.
+      const names: Record<string, string> = {};
+      for (const reference of refs) {
+        names[reference.slug ?? reference.id] = reference.name;
+      }
+      return interpreterDigestOf({
+        map: "dynamics",
+        names,
+        playingSet: model !== null,
+        words: (model?.words ?? []).map((slug) => ({
+          slug,
+          name: names[slug] ?? slug,
+        })),
+        links: links.map((link) => ({
+          from: link.from,
+          to: link.to,
+          sign: link.sign,
+        })),
+        loops: loops.map((loop) => ({
+          name: loop.name,
+          slug: loopSlug(loop.name),
+        })),
+        // A claim's TEXT is a body: only what it is about rides here.
+        assumptions: assumptions.map((assumption) => ({
+          target: assumption.target,
+        })),
+        quantities: quantities.map((quantity) => ({
+          target:
+            quantity.type === "stock"
+              ? { type: "word" as const, slug: quantity.on }
+              : { type: "link" as const, from: quantity.from, to: quantity.to },
+          stated: quantity.amount !== null,
+        })),
+      });
+    }
+    return interpreterDigestOf({
+      map: "ground",
+      references: ground.references,
+      asks: ground.asks,
+      sessions: ground.sessions,
+      readings: ground.readings,
+      links: ground.links,
+      states: ground.states,
+    });
+  }, [
+    level,
+    refs,
+    model,
+    links,
+    loops,
+    assumptions,
+    quantities,
+    ground.references,
+    ground.asks,
+    ground.sessions,
+    ground.readings,
+    ground.links,
+    ground.states,
+  ]);
 
   /**
    * STORY 21.3 — ONE INTERPRETER CALL, ONE EGRESS (ADR-0038 decision 2; 21.2's
@@ -1095,6 +1154,10 @@ function App() {
             // reads a continuation rather than an unrelated new instruction.
             instruction: promptInstruction ?? instruction,
             digest: commandDigest,
+            // STORY 21.9 — the prompt knows where the card stands, so a change
+            // instruction on another map is answered with ONE sentence instead
+            // of a script (and the app refuses a change script it is sent).
+            map: level,
             // The here-and-now digest above is rebuilt for every call, so a
             // card created by an earlier turn is visible BY NAME; the turns
             // themselves say what "that one" referred to (STORY 21.5 §3).

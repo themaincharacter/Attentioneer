@@ -18,7 +18,10 @@ import {
   createAttentioneerHost,
 } from "../src/commands/attentioneerHost";
 import { executeScript, type CommandHost } from "../src/commands/execute";
-import { INTERPRETER_FENCE } from "../src/commands/interpreter";
+import {
+  INTERPRETER_FENCE,
+  INTERPRETER_GROUND_ONLY_SENTENCE,
+} from "../src/commands/interpreter";
 import {
   interpretInstruction,
   type InterpreterMove,
@@ -41,9 +44,10 @@ import {
   appliedExchange,
   clarifiedInstruction,
   commandAnchor,
-  commandMapLive,
+  commandChangesLive,
   commandTurnOf,
   failureReport,
+  nothingExchange,
   refusedExchange,
   type CommandCardProps,
   type CommandQuestion,
@@ -177,15 +181,37 @@ describe("present on every map; elsewhere it says what it cannot do", () => {
     expect(APP_TSX).toContain("on every map");
   });
 
-  test("a non-ground map gets the sentence, no field and no acts", () => {
-    expect(commandMapLive("ground")).toBe(true);
-    expect(commandMapLive("concept")).toBe(false);
-    expect(commandMapLive("dynamics")).toBe(false);
-    const html = render({ level: "concept" });
-    expect(html).toContain(COMMAND_NON_GROUND_SENTENCE);
-    expect(html).not.toContain("command-card-instruction");
-    expect(html).not.toContain("command-card-acts");
+  test("another map SAYS which half works, and still offers the read half", () => {
+    // STORY 21.9: every map is READABLE now, so the sentence is about changes
+    // and the field (the read half) stays. Nothing is offered to accept until
+    // the interpreter answers with a script.
+    expect(commandChangesLive("ground")).toBe(true);
+    expect(commandChangesLive("concept")).toBe(false);
+    expect(commandChangesLive("dynamics")).toBe(false);
+    for (const level of ["concept", "dynamics"] as const) {
+      const html = render({ level });
+      expect(html).toContain(COMMAND_NON_GROUND_SENTENCE);
+      expect(html).toContain("command-card-instruction");
+      expect(html).not.toContain("command-card-acts");
+      expect(html).not.toContain(COMMAND_ACCEPT_VERB);
+    }
+    // The ground map carries no such note: nothing there is limited.
+    expect(render({ level: "ground" })).not.toContain(COMMAND_NON_GROUND_SENTENCE);
+  });
+
+  test("a change instruction on another map shows the app's one sentence, and no accept", () => {
+    // The interpreter refuses a change on a map the app cannot change whole
+    // (interpreter.ts's readForMap); the card shows that refusal like any other
+    // answered turn — one quiet sentence and NOTHING to press.
+    const html = render({
+      level: "concept",
+      exchanges: [
+        nothingExchange("add a card for the sea", null, INTERPRETER_GROUND_ONLY_SENTENCE),
+      ],
+    });
+    expect(html).toContain(INTERPRETER_GROUND_ONLY_SENTENCE);
     expect(html).not.toContain(COMMAND_ACCEPT_VERB);
+    expect(html).not.toContain("command-card-acts");
   });
 
   test("the anchor is the map itself when no card is open", () => {
@@ -517,6 +543,12 @@ describe("a failure names the act and every act's disposition", () => {
       },
       async readWires() {
         return { ok: true, line: "wires" };
+      },
+      async readWords() {
+        return { ok: true, line: "words" };
+      },
+      async readMap() {
+        return { ok: true, line: "map" };
       },
       async proposeCard() {
         calls.push("propose_card");

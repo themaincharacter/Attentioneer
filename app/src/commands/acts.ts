@@ -57,17 +57,46 @@
  * point); the host remembers the previous value at proposal time, so the undo
  * the card offers never invents one.
  *
+ * STORY 21.9 — THE VOCABULARY CAN SEE EVERY MAP, AND CAN CHANGE ONE
+ * (ADR-0038's 2026-11-20 amendment: the command card is a PRIMARY way to use the
+ * app and it is mounted on every map; on two of the three maps it could neither
+ * act nor answer, so it was a dead box there). Two read acts join the table —
+ * `read_words` (the concept map's words, names only) and `read_map` (any map's
+ * short overview) — and a read act MAY name any map. A CHANGE may not: every
+ * propose act still names the ground map and only the ground map, because the
+ * other maps' acts need their own design. That rule lives HERE, in the one door
+ * a model's reply passes, so it is a schema refusal and not a prompt wish.
+ *
  * PROVISIONAL (ADR-0038's consequences): the act names, the payload keys and
  * their types (STORY 21.7 adds the `texts` list type for the cards to wire),
- * the map value being only `"ground"`, and the script's line shape (one act
- * object per line, read by the driver beside this file).
+ * the two read acts' names and descriptions (STORY 21.9), the map argument's
+ * shape, and the script's line shape (one act object per line, read by the
+ * driver beside this file).
  */
 
-/** The maps a command may name. PROVISIONAL: only the ground map, for now. */
-export type CommandMap = "ground";
+/**
+ * The maps a command may name. STORY 21.9: all three, because a READ may look at
+ * any of them; a CHANGE is still the ground map's alone (see validateAct).
+ */
+export type CommandMap = "ground" | "concept" | "dynamics";
 
-/** The maps the vocabulary knows today, as data. */
-export const COMMAND_MAPS: readonly CommandMap[] = ["ground"];
+/** The maps the vocabulary knows today, as data (STORY 21.9). */
+export const COMMAND_MAPS: readonly CommandMap[] = [
+  "ground",
+  "concept",
+  "dynamics",
+];
+
+/** The one map a change may name, until the other maps' acts are designed. */
+export const CHANGE_MAP: CommandMap = "ground";
+
+/**
+ * The reads that may name a map other than the ground one (STORY 21.9,
+ * PROVISIONAL). The three reads 21.1 wrote describe GROUND content — a card, a
+ * wire, a reading — so they keep that meaning; these two are the ones that know
+ * the other maps, and a model that wants another map's content uses them.
+ */
+export const MAP_READ_ACTS: readonly string[] = ["read_words", "read_map"];
 
 /** The two families: what reads the map, and what proposes to it. */
 export type ActFamily = "read" | "propose";
@@ -135,6 +164,28 @@ export const ACT_SPECS: readonly ActSpec[] = [
     family: "read",
     writes: false,
     description: "Read the list of wires between cards.",
+    required: [],
+    optional: [],
+  },
+  // STORY 21.9 — THE OTHER MAPS CAN BE READ (ADR-0038's amendment). A read
+  // names no card and changes nothing; it is how the card answers on a map whose
+  // content is its own. `read_words` is the concept map's word list (names
+  // only — a word's memory is a BODY and never rides); `read_map` is any map's
+  // short overview, named by the act's own "map" field.
+  {
+    name: "read_words",
+    family: "read",
+    writes: false,
+    description: "Read the list of words on the concept map, by name only.",
+    required: [],
+    optional: [],
+  },
+  {
+    name: "read_map",
+    family: "read",
+    writes: false,
+    description:
+      "Read a short overview of the map this act names: what it holds, by kind.",
     required: [],
     optional: [],
   },
@@ -326,15 +377,34 @@ export function validateAct(raw: unknown): ActRead {
   if (typeof map !== "string" || map === "") {
     return {
       ok: false,
-      sentence: `the act "${name}" needs a map; only "ground" is known.`,
+      sentence: `the act "${name}" needs a map; ground, concept and dynamics are the ones known.`,
     };
   }
-  if (map !== "ground") {
+  if (!(COMMAND_MAPS as readonly string[]).includes(map)) {
     return {
       ok: false,
-      sentence: `the act "${name}" names the map "${map}"; only "ground" is known.`,
+      sentence: `the act "${name}" names the map "${map}"; ground, concept and dynamics are the ones known.`,
     };
   }
+  // STORY 21.9 — A READ MAY LOOK AT ANY MAP; A CHANGE MAY NOT. The other two
+  // maps' acts need their own design, so a propose act naming one is refused
+  // HERE, by name, before any ghost exists (ADR-0038's 2026-11-20 amendment).
+  if (spec.family === "propose" && map !== CHANGE_MAP) {
+    return {
+      ok: false,
+      sentence: `the act "${name}" changes the ground map; the ${map} map has no change acts yet.`,
+    };
+  }
+  // STORY 21.9 — AND ONE STEP NARROWER FOR THE OLDER READS: they describe the
+  // ground map's content, so they may only name it. Naming another map is
+  // `read_map`'s (its shape) or `read_words`'s (the concept map's names).
+  if (spec.family === "read" && map !== CHANGE_MAP && !MAP_READ_ACTS.includes(name)) {
+    return {
+      ok: false,
+      sentence: `the act "${name}" reads the ground map; read_words and read_map are the acts that read another map.`,
+    };
+  }
+  const commandMap = map as CommandMap;
   const payload = raw.payload;
   if (!isObject(payload)) {
     return { ok: false, sentence: `the act "${name}" needs a payload object.` };
@@ -406,7 +476,7 @@ export function validateAct(raw: unknown): ActRead {
   for (const field of allowed) {
     if (field.key in payload) clean[field.key] = payload[field.key];
   }
-  return { ok: true, act: { act: name, map: "ground", payload: clean } };
+  return { ok: true, act: { act: name, map: commandMap, payload: clean } };
 }
 
 /**

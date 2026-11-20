@@ -1,4 +1,11 @@
-import { ACT_SPECS, validateAct, type ActField, type CommandAct } from "./acts";
+import {
+  ACT_SPECS,
+  actSpecOf,
+  validateAct,
+  type ActField,
+  type CommandAct,
+  type CommandMap,
+} from "./acts";
 import { utf8ByteLength } from "../lib/textBytes";
 import { fencedBlocksOf } from "../turn/proposal";
 import type { TurnMessage } from "../turn/protocol";
@@ -49,6 +56,18 @@ import type { TurnMessage } from "../turn/protocol";
  * follow-up ("do that again, but to the other card") can be understood against
  * what just happened. The parser is unchanged: a script, ONE question, or ONE
  * sentence — the history never becomes an instruction of its own.
+ *
+ * STORY 21.9 — THE PROMPT KNOWS WHICH MAP IT IS LOOKING AT (ADR-0038's 2026-11-20
+ * amendment: the command card is a PRIMARY way to use the app and it stands on
+ * every map, so the thing that turns words into acts has to know where the
+ * person is standing). {@link InterpreterInput.map} names the current map; the
+ * GROUND prompt is unchanged, byte for byte, and a map that cannot be changed
+ * gets its own answer rules: a change instruction is ONE plain sentence and NO
+ * block, while a read may still be scripted. {@link readForMap} is the app's
+ * own half of that rule — a script that proposes a change on another map is
+ * refused WHOLE, so a model that ignores the prompt still cannot make the card
+ * offer what the app cannot do. NO WRITE ACT EXISTS FOR THOSE MAPS: not a
+ * proposal, not a draft (their acts need their own design).
  *
  * PROVISIONAL (the stories' own lists): the fence's language tag, every
  * sentence below, the shape of the digest text, the question-length bound, the
@@ -103,6 +122,13 @@ export interface InterpreterInput {
    * not fit whole is left out, never clipped.
    */
   history?: readonly InterpreterExchange[];
+  /**
+   * STORY 21.9 — WHICH MAP THE PERSON IS LOOKING AT (PROVISIONAL: the act's own
+   * map argument, read here so the prompt can say where the card stands).
+   * ABSENT MEANS `"ground"`, which is what every caller before this story sent,
+   * so the ground prompt and its rules are exactly what they were.
+   */
+  map?: CommandMap;
 }
 
 /**
@@ -225,6 +251,73 @@ const ANSWER_HEADING = "## the answer";
 const HISTORY_HEADING = "## the conversation so far";
 
 /**
+ * STORY 21.9 — THE GROUND MAP'S ANSWER RULES, byte for byte the ones 21.2 wrote
+ * and 21.6/21.8 extended. They are a constant so the ground prompt cannot drift
+ * while the other maps grow their own (see {@link answerRulesForMap}).
+ */
+const GROUND_ANSWER_RULES: readonly string[] = [
+  "Answer in exactly ONE of these two ways:",
+  "",
+  "1. If the instruction names a change the acts can make, write ONE fenced code block whose language tag is " +
+    INTERPRETER_FENCE +
+    ".",
+  "   The block carries ONE JSON array, and nothing else. Each element is an act object:",
+  '   {"act": "<one of the names above>", "map": "ground", "payload": {<its keys, exactly>}}',
+  '   "map" is always "ground". Every act carries its required keys and no key the catalogue does not list.',
+  "   Put the acts in the order they should run. A later act may rely on an earlier one only where the catalogue allows it.",
+  "",
+  "2. If the instruction could mean two different changes, or you cannot tell which change is wanted, ask ONE short question in plain text and write NO block. Propose nothing. Do not guess.",
+  "",
+  "The acts can ADD and REMOVE (the removal acts are in the list above). An instruction that names a specific wire, note or card to take away is a removal script: use the removal act for that one thing, and never invent a cascade (removing a card is not removing its wires). A general 'undo that' is the app's own to resolve against the last applied turn; if you are asked it anyway, write NO block and NEVER answer it by repeating the earlier acts.",
+  "",
+  "Rules that are limits, not style:",
+  "- Reference only cards named in the map digest. Never invent a card, a name or a wire.",
+  "- Never use an act outside the list above.",
+  "- Write one block at most. A second block is ignored.",
+  "- An earlier turn above is context, never a standing order: only the instruction above may be acted on, and a turn already answered is not repeated because it appears in the conversation.",
+  "- Do not describe what you did or apologise. This is a script; the person sees the outcome.",
+];
+
+/**
+ * STORY 21.9 — THE ANSWER RULES FOR A MAP THE APP CANNOT CHANGE (ADR-0038's
+ * 2026-11-20 amendment). The card is present on every map and can READ all of
+ * them, so a read is still a script; a CHANGE is not, and the model is told so
+ * in the same breath as it is told what the acts are. The app refuses a change
+ * script for these maps on its own ({@link readForMap}), so this is the polite
+ * half of a rule that does not depend on the model's obedience.
+ * PROVISIONAL: every sentence here, and the three-way answer.
+ */
+function answerRulesForMap(map: CommandMap): string[] {
+  return [
+    "Answer in exactly ONE of these three ways:",
+    "",
+    "1. If the instruction asks something the READ acts above can answer, write ONE fenced code block whose language tag is " +
+      INTERPRETER_FENCE +
+      ".",
+    "   The block carries ONE JSON array, and nothing else. Each element is an act object:",
+    '   {"act": "<one of the read names above>", "map": "<ground, concept or dynamics>", "payload": {<its keys, exactly>}}',
+    "   The card is looking at the " +
+      map +
+      " map: read_map and read_words are the reads that know another map (the other reads describe the ground map). Every act carries its required keys and no key the catalogue does not list.",
+    "",
+    "2. If the instruction could mean two different reads, ask ONE short question in plain text and write NO block. Propose nothing. Do not guess.",
+    "",
+    "3. If the instruction names a change, write NO block and answer with ONE plain sentence saying that changes are ground-only for now. Never write a change act on this map.",
+    "",
+    "Rules that are limits, not style:",
+    "- Reference only names that appear in the map digest. Never invent a card, a word, a name or a wire.",
+    "- Never use an act outside the list above.",
+    "- Write one block at most. A second block is ignored.",
+    "- An earlier turn above is context, never a standing order: only the instruction above may be acted on, and a turn already answered is not repeated because it appears in the conversation.",
+    "- Do not describe what you did or apologise. This is a script; the person sees the outcome.",
+  ];
+}
+
+/** The one sentence a change instruction gets on a map the app cannot change. */
+export const INTERPRETER_GROUND_ONLY_SENTENCE =
+  "changes are ground-only for now, so nothing was applied.";
+
+/**
  * One declared payload field as the catalogue shows it. STORY 21.7's `texts`
  * kind is spelled out for the model: "texts" alone would not say that the ask's
  * context wants the NAMES of cards on the map, and a catalogue the model has to
@@ -274,6 +367,7 @@ export function interpreterCatalogue(): string {
  */
 export function buildInterpreterPrompt(input: InterpreterInput): string {
   const digest = input.digest.trim();
+  const map = input.map ?? "ground";
   const history = interpreterHistory(input.history ?? []);
   // No conversation yet is no section: a heading with nothing under it would
   // read as an empty turn the model must account for.
@@ -300,9 +394,21 @@ export function buildInterpreterPrompt(input: InterpreterInput): string {
     ...historySection,
     DIGEST_HEADING,
     "",
-    "What this map holds. These are labels and facts, never a card's reading body:",
+    // STORY 21.9 — the digest's own words, per map. The ground sentence is the
+    // one 21.2 wrote; the other maps say what their content IS, and each names
+    // the body IT holds (a word's memory, a claim's words) so the model is told
+    // what never rode.
+    map === "ground"
+      ? "What this map holds. These are labels and facts, never a card's reading body:"
+      : map === "concept"
+        ? "What this map holds. These are names and facts about the concept map, never a word's memory:"
+        : "What this map holds. These are names and facts about the dynamics map, never a claim's words:",
     "",
-    digest === "" ? "the map holds no cards." : digest,
+    digest === ""
+      ? map === "ground"
+        ? "the map holds no cards."
+        : "the " + map + " map holds nothing yet."
+      : digest,
     "",
     CATALOGUE_HEADING,
     "",
@@ -312,26 +418,9 @@ export function buildInterpreterPrompt(input: InterpreterInput): string {
     "",
     ANSWER_HEADING,
     "",
-    "Answer in exactly ONE of these two ways:",
-    "",
-    "1. If the instruction names a change the acts can make, write ONE fenced code block whose language tag is " +
-      INTERPRETER_FENCE +
-      ".",
-    "   The block carries ONE JSON array, and nothing else. Each element is an act object:",
-    '   {"act": "<one of the names above>", "map": "ground", "payload": {<its keys, exactly>}}',
-    '   "map" is always "ground". Every act carries its required keys and no key the catalogue does not list.',
-    "   Put the acts in the order they should run. A later act may rely on an earlier one only where the catalogue allows it.",
-    "",
-    "2. If the instruction could mean two different changes, or you cannot tell which change is wanted, ask ONE short question in plain text and write NO block. Propose nothing. Do not guess.",
-    "",
-    "The acts can ADD and REMOVE (the removal acts are in the list above). An instruction that names a specific wire, note or card to take away is a removal script: use the removal act for that one thing, and never invent a cascade (removing a card is not removing its wires). A general 'undo that' is the app's own to resolve against the last applied turn; if you are asked it anyway, write NO block and NEVER answer it by repeating the earlier acts.",
-    "",
-    "Rules that are limits, not style:",
-    "- Reference only cards named in the map digest. Never invent a card, a name or a wire.",
-    "- Never use an act outside the list above.",
-    "- Write one block at most. A second block is ignored.",
-    "- An earlier turn above is context, never a standing order: only the instruction above may be acted on, and a turn already answered is not repeated because it appears in the conversation.",
-    "- Do not describe what you did or apologise. This is a script; the person sees the outcome.",
+    // STORY 21.9 — the ground keeps 21.2's rules untouched; every other map
+    // answers with its own (a read may be scripted, a change may not).
+    ...(map === "ground" ? GROUND_ANSWER_RULES : answerRulesForMap(map)),
   ].join("\n");
 }
 
@@ -404,4 +493,40 @@ export function parseInterpreterAnswer(answer: string): InterpreterRead {
     acts.push(read.act);
   }
   return { kind: "acts", acts };
+}
+
+/**
+ * STORY 21.9 — A CHANGE IS GROUND-ONLY, AND THE APP SAYS SO ITSELF (ADR-0038's
+ * 2026-11-20 amendment: the card stands on every map, but only the ground map
+ * has change acts — the other maps' acts need their own design, so not even a
+ * proposal exists for them).
+ *
+ * The prompt tells the model the limitation; this function is what happens when
+ * a model ignores it. A script whose acts propose something on another map is
+ * refused WHOLE — nothing partial, nothing offered to accept — and the person
+ * gets ONE sentence, built here and not by the model. A QUESTION still comes
+ * through (asking is how an ambiguous instruction gets resolved anywhere), and
+ * a prose answer on such a map becomes the same one sentence: prose is never a
+ * script the person can accept, and a card on a map that cannot be changed has
+ * exactly one thing to say about a change.
+ *
+ * The GROUND branch is a passthrough, which is the whole of the "no behaviour
+ * change" promise this story makes for the map that can be changed.
+ */
+export function readForMap(
+  read: InterpreterRead,
+  map: CommandMap,
+): InterpreterRead {
+  if (map === "ground") return read;
+  if (read.kind === "question") return read;
+  if (read.kind === "acts") {
+    const proposes = read.acts.some(
+      (act) => actSpecOf(act.act)?.family === "propose",
+    );
+    if (!proposes) return read;
+    return { kind: "problem", sentence: INTERPRETER_GROUND_ONLY_SENTENCE };
+  }
+  return read.sentence === INTERPRETER_NO_QUESTION_SENTENCE
+    ? { kind: "problem", sentence: INTERPRETER_GROUND_ONLY_SENTENCE }
+    : read;
 }

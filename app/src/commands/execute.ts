@@ -1,4 +1,9 @@
-import { validateAct, validateAppAct, type CommandAct } from "./acts";
+import {
+  validateAct,
+  validateAppAct,
+  type CommandAct,
+  type CommandMap,
+} from "./acts";
 
 /**
  * STORY 21.1 — THE EXECUTOR, THE PORTABLE HALF (ADR-0038 §3, §5, §6).
@@ -50,6 +55,16 @@ export interface CommandHost {
   readCard(card: string): Promise<CommandOutcome>;
   /** The wire list. */
   readWires(): Promise<CommandOutcome>;
+  /**
+   * STORY 21.9 — the concept map's words, by NAME only. A word's memory is a
+   * body, and a read that carried one would put prose in a prompt.
+   */
+  readWords(): Promise<CommandOutcome>;
+  /**
+   * STORY 21.9 — one map's short overview, named by the act's own map field.
+   * Any map may be read; nothing here changes one.
+   */
+  readMap(map: CommandMap): Promise<CommandOutcome>;
   /** Propose a card; the answer names the ghost it filed. */
   proposeCard(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
   /** Propose a wire. */
@@ -120,6 +135,12 @@ async function runOne(act: CommandAct, host: CommandHost): Promise<CommandOutcom
       return host.readCard(String(payload.card));
     case "read_wires":
       return host.readWires();
+    // STORY 21.9 — the two reads that opened the other maps. A read names no
+    // card, files no ghost and changes no record; the map is the act's own.
+    case "read_words":
+      return host.readWords();
+    case "read_map":
+      return host.readMap(act.map);
     case "propose_card":
       return host.proposeCard(payload);
     case "propose_wire":

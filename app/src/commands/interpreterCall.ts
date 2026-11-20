@@ -6,6 +6,7 @@ import type { TurnResult } from "../turn/turn";
 import {
   buildInterpreterMessages,
   parseInterpreterAnswer,
+  readForMap,
   type InterpreterInput,
   type InterpreterRead,
 } from "./interpreter";
@@ -153,7 +154,14 @@ export async function interpretInstruction(
     };
   }
   return {
-    read: parseInterpreterAnswer(answer),
+    // STORY 21.9 — the answer is parsed for its SHAPE, then read for the MAP:
+    // on a map the app cannot change, a script that proposes anything is
+    // refused whole and the person gets the app's one sentence instead. The
+    // ground map's read is a passthrough (see interpreter.ts's readForMap).
+    read: readForMap(
+      parseInterpreterAnswer(answer),
+      call.input.map ?? "ground",
+    ),
     left: true,
     ending,
     answer,

@@ -36,6 +36,26 @@ import { utf8ByteLength } from "../lib/textBytes";
  * {@link INTERPRETER_DIGEST_OMITTED_SENTENCE} says the list is short rather
  * than letting the model believe it has seen the whole map. PROVISIONAL: both
  * bounds, the wire cap, the sentence and the line shape below.
+ *
+ * STORY 21.9 — THE DIGEST SEES EVERY MAP (ADR-0038's 2026-11-20 amendment: the
+ * command card is a PRIMARY way to use the app and it is mounted on every map,
+ * so a digest that could only describe the ground map made the card a dead box
+ * on the other two). The composer is now MAP-AWARE — {@link interpreterDigestOf}
+ * takes the map's own records and answers in that map's vocabulary:
+ *
+ *   - ground  — the cards, exactly as before (this function is untouched, which
+ *               is what keeps the ground digest byte-identical);
+ *   - concept — the words, by NAME only. A word's memory is a BODY, so the
+ *               concept input's shape carries a slug and a name and no memory
+ *               at all: there is no door for one to ride.
+ *   - dynamics — whatever that map's records hold: the playing set's words, the
+ *               signed links, the named loops, the claims (as TARGETS only —
+ *               never their words) and the quantities (never a word's text).
+ *
+ * WHAT DOES NOT CHANGE: names, kinds and one line about, never a body, for
+ * every map; the same two bounds; whole entries only; ONE sentence when the
+ * list is short, with no count in it. PROVISIONAL: the concept and dynamics
+ * line shapes and their omitted sentences.
  */
 
 /** The largest number of card entries a digest carries (PROVISIONAL). */
@@ -234,4 +254,244 @@ export function interpreterDigest(input: InterpreterDigestInput): string {
   }
   if (omitted) lines.push(INTERPRETER_DIGEST_OMITTED_SENTENCE);
   return lines.join("\n");
+}
+
+/* ------------------------------------------------------------------ *
+ * STORY 21.9 — THE OTHER TWO MAPS' DIGESTS
+ *
+ * The ground composer above is untouched on purpose: the same records must
+ * compose the same bytes (a test pins the exact text). Everything below is the
+ * SAME discipline on the other maps' records — names, kinds, one line about,
+ * the same bounds, whole items only, ONE sentence when the list is short — and
+ * the same absence of a door for a body.
+ * ------------------------------------------------------------------ */
+
+/**
+ * One item as the digest may see it. The concept input's shape is a slug and a
+ * name and NOTHING else: a word's file also holds its memory, and a digest that
+ * could hold one is how prose ends up in a prompt. The record's own type is
+ * deliberately not imported — the narrowing happens where a caller hands it in.
+ */
+export interface DigestWord {
+  /** Record identity: the word's file slug (the mention's key). */
+  slug: string;
+  /** The person's coined name. */
+  name: string;
+}
+
+/** The concept map's digest input: its words, by name only. */
+export interface ConceptDigestInput {
+  words: readonly DigestWord[];
+}
+
+/** One signed link as the digest may see it: the pair and its authored sign. */
+export interface DynamicsDigestLink {
+  from: string;
+  to: string;
+  sign: "+" | "-";
+}
+
+/** One named loop as the digest may see it: its name and its slug. */
+export interface DynamicsDigestLoop {
+  name: string;
+  slug: string;
+}
+
+/**
+ * What a claim or a quantity is about, in the digest's own words. The record's
+ * target union is mirrored here WITHOUT the claim's text: an assumption is
+ * prose the person keeps revisable, and a body has no door into this module.
+ */
+export type DynamicsDigestTarget =
+  | { type: "word"; slug: string }
+  | { type: "link"; from: string; to: string }
+  | { type: "loop"; slug: string }
+  | { type: "spot" };
+
+/** One claim, as its TARGET only — never its words. */
+export interface DynamicsDigestAssumption {
+  target: DynamicsDigestTarget;
+}
+
+/** One quantity, as its target and whether a number was stated. */
+export interface DynamicsDigestQuantity {
+  target: DynamicsDigestTarget;
+  /** A stated amount rides as its own fact; an absent amount is a visible unknown. */
+  stated: boolean;
+}
+
+/**
+ * The dynamics map's digest input: whatever that map's records hold. `names`
+ * is every word on the map by slug, so a link or a claim can be NAMED the way
+ * the person sees it rather than cited by a slug; `playingSet` says whether the
+ * map plays at all (absence is a fact, not an emptiness to hide).
+ */
+export interface DynamicsDigestInput {
+  names: Readonly<Record<string, string>>;
+  playingSet: boolean;
+  words: readonly DigestWord[];
+  links: readonly DynamicsDigestLink[];
+  loops: readonly DynamicsDigestLoop[];
+  assumptions: readonly DynamicsDigestAssumption[];
+  quantities: readonly DynamicsDigestQuantity[];
+}
+
+/** The one sentence a bounded concept digest ends with (PROVISIONAL). */
+export const INTERPRETER_DIGEST_WORDS_OMITTED_SENTENCE =
+  "some words on this map were left out, because this digest is bounded.";
+
+/** The one sentence a bounded dynamics digest ends with (PROVISIONAL). */
+export const INTERPRETER_DIGEST_ITEMS_OMITTED_SENTENCE =
+  "some items on this map were left out, because this digest is bounded.";
+
+/**
+ * The one sentence a dynamics digest opens with when no playing set has been
+ * accepted (PROVISIONAL): the map's own rule is that nothing plays without one,
+ * so the model is told before it is offered any content.
+ */
+export const INTERPRETER_DIGEST_NO_SET_SENTENCE =
+  "no playing set is accepted on this map yet, so nothing here plays.";
+
+/** One digest line off the ground map: name, kind and ONE line about. */
+interface MapEntry {
+  name: string;
+  kind: string;
+  about: string;
+}
+
+/** One entry as its line: whole, one line, quoted name (the ground line's opening). */
+function mapLineOf(entry: MapEntry): string {
+  return "- " + JSON.stringify(entry.name) + " — " + entry.kind + " — " + entry.about;
+}
+
+/**
+ * THE SAME BOUND, for the other maps' entries: the count first, then the bytes,
+ * WHOLE ENTRIES ONLY — the first entry that does not fit stops the list, and the
+ * one qualitative sentence says the list is short. Never a count of what was
+ * left out (the app has no counters, and one dressed as context would be one).
+ */
+function boundedMapLines(
+  head: string,
+  entries: readonly MapEntry[],
+  omittedSentence: string,
+): string {
+  if (entries.length === 0 && head === "") return "";
+  const lines: string[] = head === "" ? [] : [head];
+  let omitted = false;
+  for (const entry of entries) {
+    if (lines.length >= INTERPRETER_DIGEST_MAX_CARDS) {
+      omitted = true;
+      break;
+    }
+    const candidate = [...lines, mapLineOf(entry)].join("\n");
+    if (utf8ByteLength(candidate) > INTERPRETER_DIGEST_MAX_BYTES) {
+      omitted = true;
+      break;
+    }
+    lines.push(mapLineOf(entry));
+  }
+  if (omitted) lines.push(omittedSentence);
+  return lines.join("\n");
+}
+
+/**
+ * THE CONCEPT MAP'S DIGEST (story 21.9): its words, each with its name and one
+ * line about, and NO memory. An empty string means the map holds no words, and
+ * the caller omits the section rather than sending a heading with nothing
+ * under it.
+ */
+export function conceptDigest(input: ConceptDigestInput): string {
+  return boundedMapLines(
+    "",
+    input.words.map((word) => ({
+      name: word.name,
+      kind: "word",
+      about: "a coined word",
+    })),
+    INTERPRETER_DIGEST_WORDS_OMITTED_SENTENCE,
+  );
+}
+
+/**
+ * THE DYNAMICS MAP'S DIGEST (story 21.9): whatever that map's records hold —
+ * the playing set's words, the signed links, the named loops, the claims (as
+ * their targets, never their words) and the quantities (as targets and whether
+ * a number was stated). Rendered in that order, which is also the order the
+ * bound trims: the model reads the map's shape from the top.
+ *
+ * NO AMOUNT VALUE rides. A quantity's number is the map's content, and the
+ * digest's job is to let the model NAME what is there, not to restate it.
+ */
+export function dynamicsDigest(input: DynamicsDigestInput): string {
+  const loopNames = new Map(input.loops.map((loop) => [loop.slug, loop.name]));
+  const nameOf = (slug: string): string => input.names[slug] ?? slug;
+  const labelOf = (target: DynamicsDigestTarget): string => {
+    switch (target.type) {
+      case "word":
+        return nameOf(target.slug);
+      case "link":
+        return nameOf(target.from) + " → " + nameOf(target.to);
+      case "loop":
+        return loopNames.get(target.slug) ?? target.slug;
+      case "spot":
+        return "a spot on the map";
+    }
+  };
+
+  const entries: MapEntry[] = [];
+  for (const word of input.words) {
+    entries.push({ name: word.name, kind: "word", about: "in the playing set" });
+  }
+  for (const link of input.links) {
+    entries.push({
+      name: nameOf(link.from) + " → " + nameOf(link.to),
+      kind: "link",
+      about: "a signed link, sign " + link.sign,
+    });
+  }
+  for (const loop of input.loops) {
+    entries.push({ name: loop.name, kind: "loop", about: "a named loop of words" });
+  }
+  for (const assumption of input.assumptions) {
+    entries.push({
+      name: labelOf(assumption.target),
+      kind: "assumption",
+      about: "a claim kept open",
+    });
+  }
+  for (const quantity of input.quantities) {
+    entries.push({
+      name: labelOf(quantity.target),
+      kind: "quantity",
+      about: quantity.stated ? "a stated number" : "a number not stated yet",
+    });
+  }
+  return boundedMapLines(
+    input.playingSet ? "" : INTERPRETER_DIGEST_NO_SET_SENTENCE,
+    entries,
+    INTERPRETER_DIGEST_ITEMS_OMITTED_SENTENCE,
+  );
+}
+
+/** What {@link interpreterDigestOf} composes, per map. */
+export type MapDigestInput =
+  | ({ map: "ground" } & InterpreterDigestInput)
+  | ({ map: "concept" } & ConceptDigestInput)
+  | ({ map: "dynamics" } & DynamicsDigestInput);
+
+/**
+ * THE MAP-AWARE DIGEST (story 21.9): one door, the map's own vocabulary. The
+ * ground branch is the function above unchanged — that is what keeps the ground
+ * path's bytes identical — and the other two are their own composers, so no
+ * map's input shape can carry another map's body.
+ */
+export function interpreterDigestOf(input: MapDigestInput): string {
+  switch (input.map) {
+    case "ground":
+      return interpreterDigest(input);
+    case "concept":
+      return conceptDigest(input);
+    case "dynamics":
+      return dynamicsDigest(input);
+  }
 }

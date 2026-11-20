@@ -31,7 +31,20 @@ import type { Level } from "../workspace/level";
  * ON ANOTHER MAP, ONE HONEST SENTENCE (ADR-0038 decision 1's "every map" and
  * the story's scope): the card is present everywhere, but the vocabulary only
  * names the ground map for now, so elsewhere it says so and offers NO acts, no
- * accept and no refuse. It does not pretend the map can be changed yet.
+ * accept and no refuse. It does not pretend the map can be changed yet. (STORY
+ * 21.9 refines this: only the CHANGE half is out of reach there — the paragraph
+ * below says what replaced the dead box.)
+ *
+ * STORY 21.9 — THE SENTENCE IS ABOUT CHANGES, BECAUSE THE READS NOW WORK
+ * (ADR-0038's 2026-11-20 amendment: the card is a PRIMARY way to use the app
+ * and it stands on every map, so a box that could neither act nor answer was
+ * dead on two of the three). The card asks the map it is standing on now: its
+ * digest is that map's own content, its reads may look at any map, and the ONE
+ * sentence it carries is about the half that does NOT work yet — a change still
+ * names the ground map alone. A change instruction typed on another map is
+ * refused by the interpreter with one sentence and offers nothing to accept
+ * (commands/interpreter.ts's readForMap); the card shows that sentence like any
+ * other answer, and never an accept button for it.
  *
  * FOCUS AND SCROLL. The card is a non-modal section, never a focus trap: Tab
  * moves out of it, and Esc closes it. Its BODY is the only scroll region (the
@@ -90,9 +103,13 @@ export const COMMAND_INVITATION = "tell the app what to change";
 /** The open card's quiet title (PROVISIONAL). */
 export const COMMAND_TITLE = "command";
 
-/** The one sentence another map gets instead of acts (PROVISIONAL). */
+/**
+ * The one sentence another map gets (STORY 21.9, PROVISIONAL). It is about the
+ * HALF THAT DOES NOT WORK YET: reading every map does, so the card says what a
+ * change can name rather than claiming the card is inert where it stands.
+ */
 export const COMMAND_NON_GROUND_SENTENCE =
-  "commands only change the ground map for now.";
+  "you can read this map; changes are ground-only for now.";
 
 /** The one quiet line a refusal leaves (PROVISIONAL). */
 export const COMMAND_REFUSED_SENTENCE = "nothing was applied.";
@@ -542,8 +559,13 @@ export interface CommandCardProps {
   onRefuse(): void;
 }
 
-/** Is a command allowed to name this map at all? (PROVISIONAL: ground only.) */
-export function commandMapLive(level: Level): boolean {
+/**
+ * MAY A CHANGE NAME THIS MAP? (STORY 21.9, PROVISIONAL: the ground map alone —
+ * ADR-0038's amendment grows coverage act by act, and the other maps' acts need
+ * their own design.) A READ is live everywhere; this is the one half the card
+ * still has to announce.
+ */
+export function commandChangesLive(level: Level): boolean {
   return level === "ground";
 }
 
@@ -568,6 +590,11 @@ export function actLine(act: CommandAct): string {
       return "read " + text("card");
     case "read_wires":
       return "read the wires";
+    // STORY 21.9 — the two reads that opened the other maps, in plain words.
+    case "read_words":
+      return "read the words";
+    case "read_map":
+      return "read the " + act.map + " map";
     case "propose_card":
       return "add a card " + JSON.stringify(text("name"));
     case "propose_wire":
@@ -787,9 +814,10 @@ export function CommandCard({
   }, [open, onClose]);
 
   // The instruction field is where the person's press lands: focus it on open,
-  // once. A later re-render never steals focus back.
+  // once. A later re-render never steals focus back. STORY 21.9: the field is
+  // on every map now (a read is live everywhere), so there is no map to skip.
   useEffect(() => {
-    if (!open || !commandMapLive(level)) return;
+    if (!open) return;
     inputRef.current?.focus();
   }, [open, level]);
 
@@ -828,136 +856,138 @@ export function CommandCard({
         </button>
       </div>
 
-      {!commandMapLive(level) ? (
+      {/* STORY 21.9 — WHICH HALF THE CARD IS DOING. Off the ground map the
+          reads are live and only the changes are not, so the card says that in
+          ONE sentence above a body that still works. It is not a warning and
+          not a block: the person can still ask this map what it holds. */}
+      {!commandChangesLive(level) && (
         <div className="command-card-elsewhere">
           {COMMAND_NON_GROUND_SENTENCE}
         </div>
-      ) : (
-        <>
-          <div className="command-card-body">
-            {exchanges.length > 0 && (
-              <ol className="command-card-thread">
-                {exchanges.map((exchange, index) => (
-                  <Exchange key={index} exchange={exchange} />
-                ))}
-              </ol>
-            )}
-
-            {/* The bound SAID, never counted: one qualitative sentence. */}
-            {dropped && (
-              <div className="command-card-quiet">
-                {COMMAND_HISTORY_OMITTED_SENTENCE}
-              </div>
-            )}
-
-            {view !== null && (
-              <div className="command-card-last">
-                {COMMAND_LAST_LABEL}
-                {view.instruction}
-              </div>
-            )}
-
-            {view?.kind === "acts" && (
-              <div className="command-card-script">
-                {view.question !== null && (
-                  <div className="command-card-exchange-question">
-                    <div>{COMMAND_ASKED_LABEL}{view.question.question}</div>
-                    <div>{COMMAND_ANSWERED_LABEL}{view.question.answer}</div>
-                  </div>
-                )}
-                <ol className="command-card-acts">
-                  {actLines(view.acts).map((line, index) => (
-                    <li key={index}>{line}</li>
-                  ))}
-                </ol>
-                <div className="command-card-verbs">
-                  <button
-                    type="button"
-                    className="command-card-accept"
-                    title={COMMAND_ONE_PRESS}
-                    disabled={waiting}
-                    onClick={onAccept}
-                  >
-                    {COMMAND_ACCEPT_VERB}
-                  </button>
-                  <button
-                    type="button"
-                    className="command-card-refuse"
-                    disabled={waiting}
-                    onClick={onRefuse}
-                  >
-                    {COMMAND_REFUSE_VERB}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {view?.kind === "question" && (
-              <div className="command-card-clarify">
-                <div className="command-card-question" role="status">
-                  {view.question}
-                </div>
-                <div className="command-card-answer-row">
-                  <input
-                    className="command-card-answer"
-                    value={answer}
-                    placeholder="answer the question"
-                    aria-label="answer the clarifying question"
-                    disabled={waiting}
-                    onChange={(event) => onAnswer(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter") return;
-                      event.preventDefault();
-                      onAnswerQuestion();
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="command-card-answer-send"
-                    disabled={answerDisabled(answer, busy)}
-                    onClick={onAnswerQuestion}
-                  >
-                    {COMMAND_ANSWER_VERB}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {busy !== null && (
-              <div className="command-card-working" role="status">
-                {busy === "reading"
-                  ? COMMAND_READING_SENTENCE
-                  : COMMAND_APPLYING_SENTENCE}
-              </div>
-            )}
-          </div>
-
-          <div className="command-card-compose">
-            <input
-              ref={inputRef}
-              className="command-card-instruction"
-              value={instruction}
-              placeholder="say what to change"
-              aria-label="the instruction"
-              disabled={waiting}
-              onChange={(event) => onInstruction(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                event.preventDefault();
-                onInterpret();
-              }}
-            />
-            <button
-              type="button"
-              className="command-card-read"
-              disabled={readDisabled(instruction, busy)}
-              onClick={onInterpret}
-            >
-              {COMMAND_READ_VERB}
-            </button>
-          </div>
-        </>
       )}
+
+      <div className="command-card-body">
+        {exchanges.length > 0 && (
+          <ol className="command-card-thread">
+            {exchanges.map((exchange, index) => (
+              <Exchange key={index} exchange={exchange} />
+            ))}
+          </ol>
+        )}
+
+        {/* The bound SAID, never counted: one qualitative sentence. */}
+        {dropped && (
+          <div className="command-card-quiet">
+            {COMMAND_HISTORY_OMITTED_SENTENCE}
+          </div>
+        )}
+
+        {view !== null && (
+          <div className="command-card-last">
+            {COMMAND_LAST_LABEL}
+            {view.instruction}
+          </div>
+        )}
+
+        {view?.kind === "acts" && (
+          <div className="command-card-script">
+            {view.question !== null && (
+              <div className="command-card-exchange-question">
+                <div>{COMMAND_ASKED_LABEL}{view.question.question}</div>
+                <div>{COMMAND_ANSWERED_LABEL}{view.question.answer}</div>
+              </div>
+            )}
+            <ol className="command-card-acts">
+              {actLines(view.acts).map((line, index) => (
+                <li key={index}>{line}</li>
+              ))}
+            </ol>
+            <div className="command-card-verbs">
+              <button
+                type="button"
+                className="command-card-accept"
+                title={COMMAND_ONE_PRESS}
+                disabled={waiting}
+                onClick={onAccept}
+              >
+                {COMMAND_ACCEPT_VERB}
+              </button>
+              <button
+                type="button"
+                className="command-card-refuse"
+                disabled={waiting}
+                onClick={onRefuse}
+              >
+                {COMMAND_REFUSE_VERB}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view?.kind === "question" && (
+          <div className="command-card-clarify">
+            <div className="command-card-question" role="status">
+              {view.question}
+            </div>
+            <div className="command-card-answer-row">
+              <input
+                className="command-card-answer"
+                value={answer}
+                placeholder="answer the question"
+                aria-label="answer the clarifying question"
+                disabled={waiting}
+                onChange={(event) => onAnswer(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  onAnswerQuestion();
+                }}
+              />
+              <button
+                type="button"
+                className="command-card-answer-send"
+                disabled={answerDisabled(answer, busy)}
+                onClick={onAnswerQuestion}
+              >
+                {COMMAND_ANSWER_VERB}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {busy !== null && (
+          <div className="command-card-working" role="status">
+            {busy === "reading"
+              ? COMMAND_READING_SENTENCE
+              : COMMAND_APPLYING_SENTENCE}
+          </div>
+        )}
+      </div>
+
+      <div className="command-card-compose">
+        <input
+          ref={inputRef}
+          className="command-card-instruction"
+          value={instruction}
+          placeholder="say what to change"
+          aria-label="the instruction"
+          disabled={waiting}
+          onChange={(event) => onInstruction(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            onInterpret();
+          }}
+        />
+        <button
+          type="button"
+          className="command-card-read"
+          disabled={readDisabled(instruction, busy)}
+          onClick={onInterpret}
+        >
+          {COMMAND_READ_VERB}
+        </button>
+      </div>
     </section>
   );
 }

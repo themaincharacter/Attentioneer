@@ -13,6 +13,18 @@ import {
   type AskCard,
 } from "../map/asks";
 import { loadGround, type GroundReference } from "../map/ground";
+// STORY 21.9 — THE OTHER MAPS' RECORD PARSERS. The loaders beside these parse
+// functions read through lib/fs (the window's bridge); a command reads through
+// the SAME injected bridge as everything else here, so the file's bytes come
+// from the caller's port and the parse is the record family's own.
+import { listConceptWords, type ConceptWord } from "../map/conceptWords";
+import { parseDistances, distancesPath } from "../map/distances";
+import { linksPath, parseLinks, type Link } from "../map/links";
+import { loopsPath, parseLoops, type Loop } from "../map/loops";
+import { assumptionsPath, parseAssumptions, type Assumption } from "../map/assumptions";
+import { parseQuantities, quantitiesPath, type Quantity } from "../map/quantities";
+import { modelPath, parseModel, type PlayingSet } from "../map/model";
+import { mapDir } from "../map/records";
 import {
   appendEvents,
   cardMoveEvent,
@@ -34,7 +46,7 @@ import {
   type CommandOutcome,
   type CommandRun,
 } from "./execute";
-import type { CommandAct } from "./acts";
+import type { CommandAct, CommandMap } from "./acts";
 import {
   GROUND_MOVES,
   NOTE_CARD_REFUSAL,
@@ -905,6 +917,171 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     return { ok: true, line: flat(`${shown.join(", ")}${more}.`) };
   }
 
+
+  /* ------------------------------------------------------------------ *
+   * STORY 21.9 — THE READERS FOR THE OTHER TWO MAPS
+   *
+   * ADR-0038's 2026-11-20 amendment makes the command card a PRIMARY way to use
+   * the app on every map, so the card has to be able to READ what stands on the
+   * two maps whose acts are not designed yet. These readers are the app's half:
+   * they go through the record families' OWN parsers over the SAME injected
+   * bridge, and they answer NAMES and KINDS only. Nothing here writes, proposes
+   * or stats a body: a word's memory and a claim's words are read out of the
+   * files and then dropped at the door, because a read's line is prompt-adjacent
+   * material and a body in it would be the leak the digest refuses.
+   *
+   * THE COMMITTED MODEL ONLY (PROVISIONAL): a running branch is a scenario
+   * folder this seam does not know about, so these reads answer the map's own
+   * records and never a branch's. The digest the card sends DOES follow the
+   * branch (it is composed from the loaded view); these read acts are the
+   * map's, and a branch's reads are a later story's business.
+   * PROVISIONAL: the sentences and the twelve-name bound (readOverview's).
+   * ------------------------------------------------------------------ */
+
+  /** Names for slugs: a person reads a word, never its file name. */
+  function nameMapOf(words: readonly ConceptWord[]): Record<string, string> {
+    const names: Record<string, string> = {};
+    for (const word of words) names[word.slug] = word.name;
+    return names;
+  }
+
+  /** Every dynamics record, parsed through the caller's bridge. */
+  interface DynamicsView {
+    links: Link[];
+    loops: Loop[];
+    assumptions: Assumption[];
+    quantities: Quantity[];
+    model: PlayingSet | null;
+    unreadable: number;
+  }
+
+  async function loadDynamicsView(): Promise<DynamicsView> {
+    const recordsDir = mapDir(workspacePath);
+    const [linksText, loopsText, assumptionsText, quantitiesText, modelText] =
+      await Promise.all([
+        io.readTextFile(linksPath(recordsDir)),
+        io.readTextFile(loopsPath(workspacePath)),
+        io.readTextFile(assumptionsPath(workspacePath)),
+        io.readTextFile(quantitiesPath(recordsDir)),
+        io.readTextFile(modelPath(recordsDir)),
+      ]);
+    // A missing file is an empty record set to every one of these parsers, so
+    // the null the bridge answers is handed on as the empty text it means.
+    const links = parseLinks(linksText ?? "");
+    const loops = parseLoops(loopsText ?? "");
+    const assumptions = parseAssumptions(assumptionsText ?? "");
+    const quantities = parseQuantities(quantitiesText);
+    const model = parseModel(modelText);
+    return {
+      links: links.links,
+      loops: loops.loops,
+      assumptions: assumptions.assumptions,
+      quantities: quantities.quantities,
+      model: model.model,
+      unreadable:
+        links.malformed.length +
+        loops.malformed.length +
+        assumptions.malformed.length +
+        quantities.malformed.length +
+        (model.malformed === null ? 0 : 1),
+    };
+  }
+
+  /** A bounded, NAMES-ONLY list of the concept map's words (STORY 21.9). */
+  async function readWords(): Promise<CommandOutcome> {
+    const words = await listConceptWords(workspacePath, io);
+    if (words.length === 0) {
+      return { ok: true, line: "the concept map holds no words." };
+    }
+    const names = words.slice(0, 12).map((word) => `"${word.name}"`);
+    const more =
+      words.length > names.length
+        ? ` and ${words.length - names.length} more`
+        : "";
+    return {
+      ok: true,
+      line: flat(
+        `the concept map holds ${words.length} word(s): ${names.join(", ")}${more}.`,
+      ),
+    };
+  }
+
+  /** The concept map's shape: words and their distance wires (STORY 21.9). */
+  async function readConceptOverview(): Promise<CommandOutcome> {
+    const [words, text] = await Promise.all([
+      listConceptWords(workspacePath, io),
+      io.readTextFile(distancesPath(workspacePath)),
+    ]);
+    const distances = text === null ? { distances: [], malformed: [] } : parseDistances(text);
+    const wordLine =
+      words.length === 0 ? "no words" : `${words.length} word(s)`;
+    const wireLine =
+      distances.distances.length === 0
+        ? "no distance wires"
+        : `${distances.distances.length} distance wire(s)`;
+    const unreadable =
+      distances.malformed.length === 0
+        ? "no unreadable lines"
+        : `${distances.malformed.length} unreadable line(s)`;
+    return {
+      ok: true,
+      line: flat(
+        `the concept map holds ${wordLine} and ${wireLine}; ${unreadable}.`,
+      ),
+    };
+  }
+
+  /** The dynamics map's shape, by kind (STORY 21.9). */
+  async function readDynamicsOverview(): Promise<CommandOutcome> {
+    const [view, words] = await Promise.all([
+      loadDynamicsView(),
+      listConceptWords(workspacePath, io),
+    ]);
+    const names = nameMapOf(words);
+    const play =
+      view.model === null
+        ? "no playing set yet"
+        : `${view.model.words.length} word(s) in play` +
+          (view.model.words.length === 0
+            ? ""
+            : ": " +
+              view.model.words
+                .slice(0, 12)
+                .map((slug) => `"${names[slug] ?? slug}"`)
+                .join(", "));
+    const line = (count: number, one: string, many: string): string =>
+      count === 0 ? one : `${count} ${many}`;
+    const unreadable =
+      view.unreadable === 0
+        ? "no unreadable lines"
+        : `${view.unreadable} unreadable line(s)`;
+    return {
+      ok: true,
+      line: flat(
+        `the dynamics map holds ${line(view.links.length, "no signed links", "signed link(s)")}, ${line(
+          view.loops.length,
+          "no named loops",
+          "named loop(s)",
+        )}, ${line(view.assumptions.length, "no claims", "claim(s)")} and ${line(
+          view.quantities.length,
+          "no quantities",
+          "quantity line(s)",
+        )}; ${play}; ${unreadable}.`,
+      ),
+    };
+  }
+
+  /**
+   * STORY 21.9 — ONE MAP'S OVERVIEW, named by the act's own map field. The
+   * ground map keeps the meaning it had in 21.1 (`map_overview` is that read);
+   * the other two answer their own records' shape and change nothing.
+   */
+  async function readMap(map: CommandMap): Promise<CommandOutcome> {
+    if (map === "concept") return readConceptOverview();
+    if (map === "dynamics") return readDynamicsOverview();
+    return readOverview();
+  }
+
   /**
    * STORY 21.7 — WHAT THE ACCEPTED ASK GHOSTS LEFT WAITING, in accept order: a
    * card's slug and the question its composer should hold. Pure read of this
@@ -1021,6 +1198,9 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     readOverview,
     readCard,
     readWires,
+    // STORY 21.9 — the two reads the other maps answer with.
+    readWords,
+    readMap,
     proposeCard,
     proposeWire,
     proposeNote,
