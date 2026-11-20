@@ -346,6 +346,29 @@ export function withoutLine(
   return joined;
 }
 
+/**
+ * STORY 21.8 — THE REWRITE'S ONE BYTE RULE. Replace the FIRST line that equals
+ * the step's `line` with the step's `with`, keeping every other byte: the
+ * file's line-ending style, the order, and every malformed or hand-formatted
+ * line the deriver did not name. Returns `undefined` when the line is not there
+ * — the grammar refuses rather than rewriting "close enough". It is the append
+ * and removal rules' sibling, so a one-line move or rename can be proved at the
+ * dry run instead of trusted to a whole-file writer. PROVISIONAL with the act
+ * names.
+ */
+export function replacedLine(
+  before: string | null,
+  line: string,
+  withLine: string,
+): string | undefined {
+  if (before === null) return undefined;
+  const parts = before.split("\n");
+  const index = parts.indexOf(line);
+  if (index === -1) return undefined;
+  parts[index] = withLine;
+  return parts.join("\n");
+}
+
 /** Build the derived step: one canonical JSONL line, appended to the one file. */
 function deriveAddAssumptionSteps(
   target: GhostTarget,

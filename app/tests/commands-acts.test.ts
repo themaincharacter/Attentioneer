@@ -69,7 +69,7 @@ describe("the portable half imports nothing app specific (ADR-0038 §3)", () => 
 });
 
 describe("the vocabulary is declared data (ADR-0038 §3)", () => {
-  test("ten acts: three reads and seven proposals (STORY 21.6 adds the removals)", () => {
+  test("twelve acts: three reads and nine proposals (STORY 21.8 adds place and name)", () => {
     expect(ACT_NAMES).toEqual([
       "map_overview",
       "read_card",
@@ -81,9 +81,11 @@ describe("the vocabulary is declared data (ADR-0038 §3)", () => {
       "propose_unwire",
       "propose_remove_note",
       "propose_remove_card",
+      "propose_move",
+      "propose_rename",
     ]);
     expect(ACT_SPECS.filter((spec) => spec.family === "read")).toHaveLength(3);
-    expect(ACT_SPECS.filter((spec) => spec.family === "propose")).toHaveLength(7);
+    expect(ACT_SPECS.filter((spec) => spec.family === "propose")).toHaveLength(9);
   });
 
   test("every act declares whether it writes, and NONE does: a proposal is a ghost", () => {
@@ -99,14 +101,22 @@ describe("the vocabulary is declared data (ADR-0038 §3)", () => {
     }
   });
 
-  test("the never-list is unchanged: no act names one of those verbs", () => {
+  test("the never-list: no act names a key, a provider, a run or a send", () => {
     // STORY 21.6: REMOVAL is NOT on the never-list — a person can take a wire,
-    // a note or a card back by hand, so the acts may propose it too. The
-    // never-list itself (keys, providers, runs, sends, outside the map folder)
-    // is exactly what it was.
+    // a note or a card back by hand, so the acts may propose it too. STORY 21.8:
+    // a NAME is not on the never-list either, because the act PROPOSES it for
+    // the person to accept (AGENTS.md's guardrail is the description's own
+    // sentence, not an absent act). The safety list itself is unchanged.
     for (const name of ACT_NAMES) {
-      expect(name).not.toMatch(/delete|rename|key|provider|run|send|outside|settings/i);
+      expect(name).not.toMatch(/delete|key|provider|run|send|outside|settings/i);
     }
+    // The one name-shaped act says it is a proposal, never an instruction.
+    const rename = ACT_SPECS.find((spec) => spec.name === "propose_rename");
+    expect(rename).toBeDefined();
+    expect(rename!.description.toLowerCase()).toContain(
+      "propose a name for the person to accept",
+    );
+    expect(rename!.description.toLowerCase()).not.toContain("rename");
     expect(ACT_NAMES.filter((name) => /^propose_(remove|unwire)/.test(name))).toEqual([
       "propose_unwire",
       "propose_remove_note",
@@ -248,6 +258,14 @@ describe("executeScript: whole-script validation, then order", () => {
       async proposeRemoveCard() {
         state.calls.push("proposeRemoveCard");
         return answer("card removal", "ghost-7");
+      },
+      async proposeMove() {
+        state.calls.push("proposeMove");
+        return answer("move proposal", "ghost-8");
+      },
+      async proposeRename() {
+        state.calls.push("proposeRename");
+        return answer("name proposal", "ghost-9");
       },
     };
     return {

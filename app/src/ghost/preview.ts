@@ -119,10 +119,12 @@ export interface StepView {
 
 /**
  * What the step DOES, in the person's words. STORY 21.6 adds the removal's two
- * readings: one line leaves a record file, or one file goes (a note).
+ * readings: one line leaves a record file, or one file goes (a note). STORY
+ * 21.8 adds the one-line rewrite a move or a rename makes.
  */
 function doesOf(step: GhostStep): string {
   if (step.op === "append") return "append one line to";
+  if (step.op === "replace") return "rewrite one line in";
   return step.line === undefined ? "remove the file" : "remove one line from";
 }
 
@@ -164,7 +166,11 @@ export function stepViews(
         previous !== null &&
         (before === undefined ||
           before.op !== step.op ||
-          (before.line ?? "") !== line),
+          (before.line ?? "") !== line ||
+          // STORY 21.8: a rewrite's new bytes are part of what the step says.
+          (before.op === "replace" && step.op === "replace"
+            ? before.with !== step.with
+            : false)),
     };
   });
 }

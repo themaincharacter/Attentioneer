@@ -6,12 +6,24 @@ import {
 import type { GhostFs } from "../ghost/port";
 import {
   addAsk,
+  askRefusal,
   askTurnPath,
   loadAsks,
   sharedSlugs,
   type AskCard,
 } from "../map/asks";
 import { loadGround, type GroundReference } from "../map/ground";
+import {
+  appendEvents,
+  cardMoveEvent,
+  cardRenameEvent,
+  type CardRenameKind,
+} from "../map/history";
+import {
+  PLACE_DIRECTIONS,
+  placedFrom,
+  type PlaceDirection,
+} from "../canvas/geometry";
 import { loadGroundLinks, type GroundLink } from "../map/groundLinks";
 import { loadNotes, noteByteLength, NOTE_MAX_BYTES } from "../map/notes";
 import { readingTextPath, previewText } from "../map/readings";
@@ -36,8 +48,11 @@ import {
  * files, their notes, the ask cards' lines); proposals go through the EXISTING
  * ghost intake — `createGhostSession`'s text door, its grammar, its inbox and
  * its accept. There is NO second write path here and no direct record write:
- * this module never calls a record writer. A proposal is a ghost the person
- * accepts; the accept is the app's own accept.
+ * this module never writes a record itself. A proposal is a ghost the person
+ * accepts; the accept is the app's own accept. (STORY 21.8 adds one post-accept
+ * audit: a place or a name that changed its record appends THE one
+ * card.move/card.rename line through the history writer the app's own drag and
+ * name pill use — ADR-0038 §8's audit, never a proposal's write.)
  *
  * The move table is the command card's (groundMoves.ts), handed to the session
  * as DATA so the app's live registry stays one move. A ghost filed here accepts
@@ -103,6 +118,29 @@ export interface AskDraftHint {
   /** The person's question, waiting unsent. */
   question: string;
 }
+
+/**
+ * STORY 21.8 — WHAT ONE PLACE OR ONE NAME TOOK BACK FROM. View state beside the
+ * proposal, never a record: the spot of a move and the old words of a name are
+ * read at proposal time, used for the ONE audit line on the accept, and offered
+ * as the inverse act's value. PROVISIONAL with the act names.
+ */
+type PendingAudit =
+  | {
+      kind: "move";
+      slug: string;
+      fromX: number;
+      fromY: number;
+      toX: number;
+      toY: number;
+    }
+  | {
+      kind: "rename";
+      slug: string;
+      family: CardRenameKind;
+      from: string;
+      to: string;
+    };
 
 /** What the loaded view carries, read fresh for each act. */
 interface GroundView {
@@ -182,6 +220,16 @@ export function createAttentioneerHost(options: CommandHostOptions) {
    * composer. Nothing reads this map but {@link askDraftsFor}.
    */
   const askDrafts = new Map<string, AskDraftHint>();
+  /**
+   * STORY 21.8 — WHAT A PLACE OR A NAME TOOK BACK FROM, by ghost id. A move's
+   * inverse needs the point the card stood on and a name's inverse needs the
+   * words it had; neither is derivable from the proposal after the record
+   * changed, so the host reads them at PROPOSAL time and keeps them here beside
+   * a proposal that was never a write. Nothing reads this map but the accept
+   * (the ONE `card.move`/`card.rename` audit) and {@link enrichedActsOf} (the
+   * previous value the undo offer carries).
+   */
+  const audits = new Map<string, PendingAudit>();
 
   /** The app's open moment, once: the inbox is discarded before any proposal. */
   async function ensureOpen(): Promise<void> {
@@ -450,6 +498,176 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     };
   }
 
+  /**
+   * STORY 21.8 — ONE CARD PLACED BY THE HOST, NEVER BY THE MODEL (ADR-0038's
+   * 2026-11-20 amendment: "put the new card under the rain gauge" is ordinary).
+   * The act names a card, optionally a card to measure from, and one of four
+   * directions; the point is computed HERE by the pure geometry helper, put on
+   * the ghost's params, and checked against the records exactly as a wire's pair
+   * is. A direction the app does not know, a missing direction, and a card or
+   * frame that is not on the map are each refused BY NAME, before any ghost.
+   *
+   * A PREPARED act (the app's own take-back) carries the point the card stood
+   * on. It never comes from a model's reply and it never skips the app's own
+   * accept: it files the same one-line rewrite ghost.
+   */
+  async function proposeMove(
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<CommandOutcome> {
+    const view = await loadView();
+    const wanted = String(payload.card);
+    const card = findCard(view, wanted);
+    if (card === null) {
+      return { ok: false, sentence: '"' + wanted + '" is not a card on this map.' };
+    }
+
+    let point: { x: number; y: number };
+    const takenX = payload.x;
+    const takenY = payload.y;
+    if (typeof takenX === "number" && typeof takenY === "number") {
+      // THE APP'S OWN PREVIOUS POINT (an undo). It is a number pair only the
+      // app can mint; validateAct refuses the keys on a model's act.
+      point = { x: Math.round(takenX), y: Math.round(takenY) };
+    } else {
+      const raw = payload.direction;
+      if (typeof raw !== "string" || raw.trim() === "") {
+        return {
+          ok: false,
+          sentence:
+            "a move needs a direction: below, above, left and right are the ones this app knows.",
+        };
+      }
+      const direction = raw.trim().toLowerCase();
+      if (!(PLACE_DIRECTIONS as readonly string[]).includes(direction)) {
+        return {
+          ok: false,
+          sentence:
+            '"' + raw + '" is not a direction I know; below, above, left and right are the ones this app has.',
+        };
+      }
+      // THE FRAME: the named other card's point, or the card's own point when
+      // no other card is named (a nudge by exactly one card).
+      let frame = { x: card.x, y: card.y };
+      if (payload.other !== undefined) {
+        const wantedOther = String(payload.other);
+        const other = findCard(view, wantedOther);
+        if (other === null) {
+          return {
+            ok: false,
+            sentence: '"' + wantedOther + '" is not a card on this map.',
+          };
+        }
+        if (other.slug === card.slug) {
+          return {
+            ok: false,
+            sentence: "a card cannot be placed relative to itself.",
+          };
+        }
+        frame = { x: other.x, y: other.y };
+      }
+      point = placedFrom(frame, direction as PlaceDirection);
+    }
+
+    const reference = card.kind === "reference";
+    const body: Record<string, unknown> = {
+      move: { family: reference ? "card" : "ask", verb: "move" },
+      target: reference
+        ? { kind: "card", slug: card.slug }
+        : { kind: "ask", slug: card.slug },
+      params: { x: point.x, y: point.y },
+      rationale: whyOf(
+        payload,
+        'moving "' + card.name + '" to ' + point.x + ', ' + point.y,
+      ),
+    };
+    const filed = await propose(
+      body,
+      (id) =>
+        'proposed moving "' + card.name + '" to ' + point.x + ', ' + point.y + '; ghost ' + id,
+    );
+    if (filed.ok && filed.id !== undefined) {
+      audits.set(filed.id, {
+        kind: "move",
+        slug: card.slug,
+        fromX: Math.round(card.x),
+        fromY: Math.round(card.y),
+        toX: point.x,
+        toY: point.y,
+      });
+    }
+    return filed;
+  }
+
+  /**
+   * STORY 21.8 — A NAME PROPOSED FOR THE PERSON TO ACCEPT (AGENTS.md's guardrail:
+   * only the user coins a name; an agent may propose one as a ghost). Nothing
+   * here renames anything: the ghost's ONE line rewrite is the person's accept,
+   * and that accept is the coining. An empty name is refused BY THE ACT LAYER
+   * before this adapter is reached; this method refuses a blank one again rather
+   * than ever writing "Untitled" over a proposal.
+   *
+   * A same-name proposal files the same one-line rewrite (the record is
+   * unchanged) and its accept logs nothing — the name pill's own no-op rule.
+   */
+  async function proposeRename(
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<CommandOutcome> {
+    const view = await loadView();
+    const wanted = String(payload.card);
+    const card = findCard(view, wanted);
+    if (card === null) {
+      return { ok: false, sentence: '"' + wanted + '" is not a card on this map.' };
+    }
+    const proposed = String(payload.name).trim();
+    if (proposed === "") {
+      // The ask family's own refusal sentence says the rule in four words; a
+      // reference's blank field is its "Untitled" sentence at the write, which a
+      // PROPOSAL must never fall back to — so both families refuse here.
+      return {
+        ok: false,
+        sentence:
+          card.kind === "ask"
+            ? askRefusal(proposed) ?? "name it first."
+            : "a name proposal needs a name; name it first.",
+      };
+    }
+    const reference = card.kind === "reference";
+    const body: Record<string, unknown> = {
+      move: { family: reference ? "card" : "ask", verb: "rename" },
+      target: reference
+        ? { kind: "card", slug: card.slug }
+        : { kind: "ask", slug: card.slug },
+      // THE KEY IS "to": the ghost grammar reserves a "name" slot for the
+      // person's coining, and this row is the one proposal that carries words
+      // for a name. The accept is the coining; the refusal changes nothing.
+      params: { to: proposed },
+      rationale: whyOf(
+        payload,
+        'proposing the name "' + proposed + '" for "' + card.name + '"',
+      ),
+    };
+    const filed = await propose(
+      body,
+      (id) =>
+        'proposed the name "' +
+        proposed +
+        '" for "' +
+        card.name +
+        '"; ghost ' +
+        id,
+    );
+    if (filed.ok && filed.id !== undefined) {
+      audits.set(filed.id, {
+        kind: "rename",
+        slug: card.slug,
+        family: reference ? "reference" : "ask",
+        from: card.name,
+        to: proposed,
+      });
+    }
+    return filed;
+  }
+
   /*
    * STORY 21.6 — THE REMOVALS THROUGH THE SAME INTAKE (ADR-0038's 2026-11-20
    * amendment). Each one re-checks the digest's names against the records it
@@ -702,6 +920,80 @@ export function createAttentioneerHost(options: CommandHostOptions) {
   }
 
   /**
+   * STORY 21.8 — ONE AUDIT LINE PER ACCEPTED PLACE OR NAME, through the SAME
+   * event constructors and the SAME append the drag and the name pill use
+   * (ADR-0038 §8: every accepted ghost is audited, and a proposal is not). It
+   * runs AFTER the record write the line describes, exactly as the app's own
+   * queue does; a same-point move and a same-name proposal write NOTHING,
+   * because the record changed nothing. The audit never fails the accept: the
+   * records landed first and the log simply says it could not follow.
+   */
+  async function auditAccepted(id: string): Promise<void> {
+    const audit = audits.get(id);
+    if (audit === undefined) return;
+    try {
+      if (audit.kind === "move") {
+        if (audit.fromX === audit.toX && audit.fromY === audit.toY) return;
+        await appendEvents(
+          workspacePath,
+          [cardMoveEvent(Date.now(), audit.slug, audit.toX, audit.toY)],
+          { readTextFile: io.readTextFile, writeTextFile: io.writeTextFile },
+        );
+        return;
+      }
+      if (audit.from === audit.to) return;
+      await appendEvents(
+        workspacePath,
+        [
+          cardRenameEvent(
+            Date.now(),
+            audit.family,
+            audit.slug,
+            audit.from,
+            audit.to,
+          ),
+        ],
+        { readTextFile: io.readTextFile, writeTextFile: io.writeTextFile },
+      );
+    } catch {
+      // The record write stands; the log could not follow (the app's own rule).
+    }
+  }
+
+  /**
+   * STORY 21.8 — THE APPLIED ACTS WITH THE VALUE EACH ONE TOOK BACK FROM. The
+   * command card stores THESE acts in the exchange, so "undo that" can offer the
+   * same act with the previous point or the previous name without inventing
+   * either. The keys are app-minted view state: validateAct refuses them from a
+   * model's payload, and no record ever carries them.
+   */
+  function enrichedActsOf(
+    acts: readonly CommandAct[],
+    actIds: readonly (readonly string[])[],
+  ): readonly CommandAct[] {
+    return acts.map((act, index) => {
+      const ids = actIds[index] ?? [];
+      if (ids.length !== 1) return act;
+      const audit = audits.get(ids[0]!);
+      if (audit === undefined) return act;
+      if (audit.kind === "rename") {
+        return {
+          ...act,
+          payload: { ...act.payload, previousName: audit.from },
+        };
+      }
+      return {
+        ...act,
+        payload: {
+          ...act.payload,
+          previousX: audit.fromX,
+          previousY: audit.fromY,
+        },
+      };
+    });
+  }
+
+  /**
    * Accept the ghosts this host filed, through the app's OWN accept (marker,
    * pin, apply, delete). Used by the driver's `--accept` to exercise the
    * normal path; the app's window uses the same session method.
@@ -711,13 +1003,18 @@ export function createAttentioneerHost(options: CommandHostOptions) {
   ): Promise<readonly { id: string; outcome: GhostAcceptResult }[]> {
     const answers: { id: string; outcome: GhostAcceptResult }[] = [];
     for (const id of ids) {
-      answers.push({ id, outcome: await session.accept(id, { ...CONTEXT }) });
+      const outcome = await session.accept(id, { ...CONTEXT });
+      answers.push({ id, outcome });
+      // STORY 21.8 — ONE audit line for a place or a name that actually changed
+      // its record; a no-op accept logs nothing.
+      if (outcome.outcome === "applied") await auditAccepted(id);
     }
     return answers;
   }
 
   const host: CommandHost & {
     askDraftsFor: typeof askDraftsFor;
+    enrichedActsOf: typeof enrichedActsOf;
     accept: typeof accept;
     session: GhostSession;
   } = {
@@ -731,7 +1028,10 @@ export function createAttentioneerHost(options: CommandHostOptions) {
     proposeUnwire,
     proposeRemoveNote,
     proposeRemoveCard,
+    proposeMove,
+    proposeRename,
     askDraftsFor,
+    enrichedActsOf,
     accept,
     session,
   };
@@ -761,6 +1061,13 @@ export type CommandApply =
        * an unsent question lands in the card's field and nowhere else.
        */
       drafts: readonly AskDraftHint[];
+      /**
+       * STORY 21.8 — THE ACTS AS THEY APPLIED, each carrying the previous value
+       * its inverse needs (view state only). The command card keeps THESE in the
+       * exchange, so "undo that" after a place or a name offers the same act with
+       * the point or the words the record had — never a guess.
+       */
+      applied: readonly CommandAct[];
     }
   | {
       ok: false;
@@ -797,7 +1104,12 @@ export async function applyCommandScript(
       sentence: acceptLine(refused.id, refused.outcome),
     };
   }
-  return { ok: true, run, drafts: host.askDraftsFor(run.ids) };
+  return {
+    ok: true,
+    run,
+    drafts: host.askDraftsFor(run.ids),
+    applied: host.enrichedActsOf(acts, run.actIds),
+  };
 }
 
 /** The one sentence an accepted ghost reports (the driver prints it). */

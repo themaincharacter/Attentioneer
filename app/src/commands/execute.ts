@@ -1,11 +1,11 @@
-import { validateAct, type CommandAct } from "./acts";
+import { validateAct, validateAppAct, type CommandAct } from "./acts";
 
 /**
  * STORY 21.1 — THE EXECUTOR, THE PORTABLE HALF (ADR-0038 §3, §5, §6).
  *
  * Runs a script of acts, in order, against a host. The host is the ONLY thing
- * this module knows about an app: seven methods, each answering one line or ONE
- * refusal sentence. That is the seam a second app implements; nothing here
+ * this module knows about an app: one method per act, each answering one line or
+ * ONE refusal sentence. That is the seam a second app implements; nothing here
  * names a record, a file, a bridge, a component or a model.
  *
  * THE SCOPE'S ONE RULE: a script is validated WHOLE before its first act runs.
@@ -66,6 +66,14 @@ export interface CommandHost {
   proposeUnwire(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
   proposeRemoveNote(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
   proposeRemoveCard(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
+  /**
+   * STORY 21.8 — the place and the name. A move names a card, optionally the
+   * card to measure from, and a direction; the host computes the point (a
+   * prepared take-back may carry the app's own previous point instead). A name
+   * is PROPOSED for the person to accept, never applied as an instruction.
+   */
+  proposeMove(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
+  proposeRename(payload: Readonly<Record<string, unknown>>): Promise<CommandOutcome>;
 }
 
 /** What running a script left behind. */
@@ -76,6 +84,13 @@ export interface CommandRun {
   lines: readonly string[];
   /** The ids of the ghosts the run filed, in order (a proposal, not a write). */
   ids: readonly string[];
+  /**
+   * STORY 21.8 — THE GHOSTS EACH ACT FILED, one entry per act in act order (a
+   * read files none; one ask act may file its card and its wires). The adapter
+   * uses this to attach the previous value an undo needs to the ACT it came
+   * from, never to guess which ghost belongs to which act.
+   */
+  actIds: readonly (readonly string[])[];
   /** ONE sentence when the run stopped; null when it finished. */
   sentence: string | null;
   /** How many acts ran (never a person-facing counter: the driver's summary). */
@@ -89,9 +104,10 @@ function refused(
   sentence: string,
   lines: readonly string[],
   ids: readonly string[],
+  actIds: readonly (readonly string[])[],
   applied: number,
 ): CommandRun {
-  return { ok: false, lines, ids, sentence, applied };
+  return { ok: false, lines, ids, actIds, sentence, applied };
 }
 
 /** Run one validated act against the host. */
@@ -118,6 +134,10 @@ async function runOne(act: CommandAct, host: CommandHost): Promise<CommandOutcom
       return host.proposeRemoveNote(payload);
     case "propose_remove_card":
       return host.proposeRemoveCard(payload);
+    case "propose_move":
+      return host.proposeMove(payload);
+    case "propose_rename":
+      return host.proposeRename(payload);
     default:
       // Unreachable: validateAct registered the name. Kept explicit so a new
       // act added to the vocabulary without a dispatch fails loudly in a test.
@@ -134,25 +154,45 @@ export async function executeScript(
   host: CommandHost,
 ): Promise<CommandRun> {
   if (!Array.isArray(raw)) {
-    return refused("a script is a list of acts.", [], [], 0);
+    return refused("a script is a list of acts.", [], [], [], 0);
   }
   const acts: CommandAct[] = [];
   for (const entry of raw) {
-    const read = validateAct(entry);
-    if (!read.ok) return refused(read.sentence, [], [], 0);
+    // STORY 21.8 — an act the APP minted for an undo is read through its own
+    // door (it may carry the previous point the model may never name). The
+    // model's reply reaches validateAct, which drops the flag, so a reply can
+    // never take this branch.
+    const prepared =
+      typeof entry === "object" && entry !== null && !Array.isArray(entry) &&
+      (entry as { prepared?: unknown }).prepared === true;
+    const read = prepared ? validateAppAct(entry) : validateAct(entry);
+    if (!read.ok) return refused(read.sentence, [], [], [], 0);
     acts.push(read.act);
   }
 
   const lines: string[] = [];
   const ids: string[] = [];
+  const actIds: string[][] = [];
   for (const act of acts) {
     const outcome = await runOne(act, host);
     if (!outcome.ok) {
-      return refused(outcome.sentence || HOST_REFUSAL, lines, ids, lines.length);
+      return refused(
+        outcome.sentence || HOST_REFUSAL,
+        lines,
+        ids,
+        actIds,
+        lines.length,
+      );
     }
     lines.push(outcome.line);
-    if (outcome.ids !== undefined) ids.push(...outcome.ids);
-    else if (outcome.id !== undefined) ids.push(outcome.id);
+    const filed =
+      outcome.ids !== undefined
+        ? [...outcome.ids]
+        : outcome.id !== undefined
+          ? [outcome.id]
+          : [];
+    actIds.push(filed);
+    ids.push(...filed);
   }
-  return { ok: true, lines, ids, sentence: null, applied: lines.length };
+  return { ok: true, lines, ids, actIds, sentence: null, applied: lines.length };
 }

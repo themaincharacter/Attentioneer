@@ -579,6 +579,10 @@ describe("an undo-shaped instruction is the last applied act's inverse, or one h
       propose_remove_note: "propose_note",
       propose_card: "propose_remove_card",
       propose_remove_card: "propose_card",
+      // STORY 21.8: a place and a name are their own inverses, using the
+      // previous value the host attaches to the applied act.
+      propose_move: "propose_move",
+      propose_rename: "propose_rename",
     });
     for (const name of ACT_NAMES) {
       if (!(name in INVERSE_ACT_OF)) continue;
@@ -630,6 +634,53 @@ describe("an undo-shaped instruction is the last applied act's inverse, or one h
         payload: { card: "rain" },
       }),
     ).toBeNull();
+    // STORY 21.8: a move's previous point and a name's previous words are not
+    // in the model's payload, so a plain act offers no inverse (never guessed).
+    expect(
+      inverseActOf({
+        act: "propose_move",
+        map: "ground",
+        payload: { card: "soil", direction: "below", other: "rain" },
+      }),
+    ).toBeNull();
+    expect(
+      inverseActOf({
+        act: "propose_rename",
+        map: "ground",
+        payload: { card: "soil", name: "the evidence gap" },
+      }),
+    ).toBeNull();
+    // The host enriches the APPLIED act with that value; only then is the
+    // take-back offered — the same act, with the previous point/name.
+    expect(
+      inverseActOf({
+        act: "propose_rename",
+        map: "ground",
+        payload: { card: "soil", name: "the evidence gap", previousName: "soil" },
+      }),
+    ).toEqual({
+      act: "propose_rename",
+      map: "ground",
+      payload: { card: "soil", name: "soil" },
+    });
+    expect(
+      inverseActOf({
+        act: "propose_move",
+        map: "ground",
+        payload: {
+          card: "soil",
+          direction: "below",
+          other: "rain",
+          previousX: 120,
+          previousY: 0,
+        },
+      }),
+    ).toEqual({
+      act: "propose_move",
+      map: "ground",
+      payload: { card: "soil", x: 120, y: 0 },
+      prepared: true,
+    });
   });
 
   test("the LAST APPLIED act decides what 'undo that' offers", () => {

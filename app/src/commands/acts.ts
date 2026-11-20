@@ -36,6 +36,27 @@
  * ghost `propose_wire` files, and no act sends a turn. Sending is the
  * person's press, today and until a story of its own decides otherwise.
  *
+ * STORY 21.8 — THE VOCABULARY LEARNS TO PLACE AND TO NAME (ADR-0038's 2026-11-20
+ * amendment: the command card is a PRIMARY way to use the app, and an agent can
+ * add, wire, remove and ask — what it could not do is TIDY). "put the new card
+ * under the rain gauge" and "call this one the evidence gap" are ordinary
+ * sentences, so there are two more proposals:
+ *
+ *   - `propose_move` names a card, optionally another card, and a direction
+ *     (below, above, left or right). THE MODEL NEVER SUPPLIES A COORDINATE: the
+ *     host computes the point from the two cards' positions with one stated
+ *     offset (canvas/geometry.ts), and the payload schema has no number at all.
+ *   - `propose_rename` proposes a NAME for the person to accept. It exists
+ *     BECAUSE only the person coins a name (AGENTS.md's guardrail); accepting the
+ *     ghost is the coining, so the description says "propose a name for the
+ *     person to accept" and never "rename". An empty name never leaves the act
+ *     layer.
+ *
+ * Both are GHOSTS like every proposal here, and both carry their inverse
+ * (rename ↔ rename with the previous name, move ↔ move with the previous
+ * point); the host remembers the previous value at proposal time, so the undo
+ * the card offers never invents one.
+ *
  * PROVISIONAL (ADR-0038's consequences): the act names, the payload keys and
  * their types (STORY 21.7 adds the `texts` list type for the cards to wire),
  * the map value being only `"ground"`, and the script's line shape (one act
@@ -210,6 +231,40 @@ export const ACT_SPECS: readonly ActSpec[] = [
     required: [{ key: "card", type: "text" }],
     optional: [{ key: "why", type: "text" }],
   },
+  // STORY 21.8 — THE VOCABULARY LEARNS TO PLACE (ADR-0038's amendment: placing
+  // is the ordinary sentence after making a card). The model names cards and a
+  // direction and NOTHING ELSE: there is no coordinate in this schema, and the
+  // host computes the point from the two cards' positions with one stated
+  // offset. A missing or unknown direction is refused BY NAME, never guessed.
+  {
+    name: "propose_move",
+    family: "propose",
+    writes: false,
+    description:
+      "Propose moving one card to sit below, above, left or right of another card (or of where it already is); the app computes the point.",
+    required: [{ key: "card", type: "text" }],
+    optional: [
+      { key: "other", type: "text" },
+      { key: "direction", type: "text" },
+      { key: "why", type: "text" },
+    ],
+  },
+  // STORY 21.8 — THE VOCABULARY LEARNS TO PROPOSE A NAME (AGENTS.md's guardrail:
+  // only the user coins a name; an agent may propose one as a ghost). This is a
+  // PROPOSAL the person accepts, so the description says exactly that and never
+  // calls it a rename; an empty name is refused at this layer, before any ghost.
+  {
+    name: "propose_rename",
+    family: "propose",
+    writes: false,
+    description:
+      "Propose a name for the person to accept; only the person coins a name, so this is a proposal and never an instruction.",
+    required: [
+      { key: "card", type: "text" },
+      { key: "name", type: "text" },
+    ],
+    optional: [{ key: "why", type: "text" }],
+  },
 ];
 
 /** The act names, in table order (the vocabulary's whole set). */
@@ -225,6 +280,16 @@ export interface CommandAct {
   act: string;
   map: CommandMap;
   payload: Record<string, unknown>;
+  /**
+   * STORY 21.8 — THE APP MINTED THIS ACT FOR AN UNDO. A move's inverse needs the
+   * point the card stood on, and the model may never name a coordinate; so the
+   * host remembers the previous point and the app builds the take-back act with
+   * THAT point after the person's apply. Only the app can set this flag:
+   * {@link validateAct} — the one door a model's reply passes — copies nothing
+   * but act, map and payload, so a model-supplied "prepared" is silently
+   * dropped and its coordinates are refused as undeclared keys.
+   */
+  prepared?: boolean;
 }
 
 /** A validation's answer: the act, or ONE sentence saying why not. */
@@ -345,6 +410,67 @@ export function validateAct(raw: unknown): ActRead {
 }
 
 /**
+ * STORY 21.8 — THE APP-MINTED MOVE, validated separately. An undo of a move
+ * needs the point the card stood on; the portable schema deliberately has no
+ * coordinate, so the app builds this act after the apply and executeScript
+ * reads it through THIS door rather than the model's. The shape is exact: one
+ * card and one finite point, nothing else. A model cannot reach it (its reply is
+ * read by validateAct, which drops the flag and refuses the keys).
+ */
+export function validateAppAct(raw: unknown): ActRead {
+  if (!isObject(raw)) {
+    return { ok: false, sentence: "an app-minted act must be a JSON object." };
+  }
+  if (raw.prepared !== true) {
+    return { ok: false, sentence: "only an app-minted take-back may name a point." };
+  }
+  if (raw.act !== "propose_move") {
+    return {
+      ok: false,
+      sentence: "only a move's take-back carries an app-minted point.",
+    };
+  }
+  if (raw.map !== "ground") {
+    return { ok: false, sentence: 'an app-minted move names the map "ground".' };
+  }
+  const payload = raw.payload;
+  if (!isObject(payload)) {
+    return { ok: false, sentence: "the app-minted move needs a payload object." };
+  }
+  for (const key of Object.keys(payload)) {
+    if (key !== "card" && key !== "x" && key !== "y") {
+      return {
+        ok: false,
+        sentence: 'the app-minted move does not take "' + key + '".',
+      };
+    }
+  }
+  const card = payload.card;
+  const x = payload.x;
+  const y = payload.y;
+  if (typeof card !== "string" || card === "" || card.trim() !== card) {
+    return { ok: false, sentence: "the app-minted move needs one card's name." };
+  }
+  if (
+    typeof x !== "number" ||
+    !Number.isFinite(x) ||
+    typeof y !== "number" ||
+    !Number.isFinite(y)
+  ) {
+    return { ok: false, sentence: "the app-minted move needs a finite point." };
+  }
+  return {
+    ok: true,
+    act: {
+      act: "propose_move",
+      map: "ground",
+      payload: { card, x, y },
+      prepared: true,
+    },
+  };
+}
+
+/**
  * STORY 21.6 — THE INVERSE PAIRING, AS DATA (ADR-0038's amendment: coverage
  * grows act by act, and "undo that" should resolve to the inverse of what the
  * last applied act did). The pairing is the vocabulary's own fact, so it lives
@@ -360,6 +486,13 @@ export function validateAct(raw: unknown): ActRead {
  * directions are the pairing's future, not a guess — the card answers them with
  * 21.5's sentence instead. PROVISIONAL: the pairing's spelling and which
  * directions can be offered from the applied act alone.
+ *
+ * STORY 21.8 — A PLACE AND A NAME ARE THEIR OWN INVERSES. The host enriches the
+ * applied act with the value it had before (previousX/previousY for a move,
+ * previousName for a name), so "undo that" after either offers the SAME act
+ * with the previous value — never a guessed point or a guessed word. The
+ * enrichment is app-minted view state (no record carries it) and a model's reply
+ * can never contain it (validateAct copies only declared payload keys).
  */
 export const INVERSE_ACT_OF: Readonly<Record<string, string>> = {
   propose_wire: "propose_unwire",
@@ -368,6 +501,8 @@ export const INVERSE_ACT_OF: Readonly<Record<string, string>> = {
   propose_remove_note: "propose_note",
   propose_card: "propose_remove_card",
   propose_remove_card: "propose_card",
+  propose_move: "propose_move",
+  propose_rename: "propose_rename",
 };
 
 /** The payload an inverse act needs from the act it takes back, or null. */
@@ -394,6 +529,24 @@ function inversePayloadOf(
     const card = text("card") ?? text("name");
     return card === null ? null : { card };
   }
+  if (inverse === "propose_rename") {
+    // STORY 21.8 — the name the card had, which the host read at proposal time.
+    // No previous name means no inverse (never an invented one).
+    const card = text("card");
+    const previous = text("previousName");
+    return card === null || previous === null ? null : { card, name: previous };
+  }
+  if (inverse === "propose_move") {
+    // STORY 21.8 — the point the card stood on. It is app-minted view state, so
+    // it is read here only as a number pair; a model-shaped payload has neither.
+    const card = text("card");
+    const x = payload.previousX;
+    const y = payload.previousY;
+    if (card === null) return null;
+    if (typeof x !== "number" || !Number.isFinite(x)) return null;
+    if (typeof y !== "number" || !Number.isFinite(y)) return null;
+    return { card, x, y };
+  }
   // propose_note needs the words and propose_card needs the point: neither is
   // in the applied act, so neither is offered (never invented).
   return null;
@@ -410,6 +563,18 @@ export function inverseActOf(act: CommandAct): CommandAct | null {
   if (inverse === undefined) return null;
   const payload = inversePayloadOf(inverse, act.payload);
   if (payload === null) return null;
+  // STORY 21.8 — a move's take-back names the point the card stood on, which
+  // the model may never name. It is validated by the app's own door, and the
+  // prepared flag is the marker execute.ts reads.
+  if (inverse === "propose_move") {
+    const read = validateAppAct({
+      act: "propose_move",
+      map: act.map,
+      payload,
+      prepared: true,
+    });
+    return read.ok ? read.act : null;
+  }
   const read = validateAct({ act: inverse, map: act.map, payload });
   return read.ok ? read.act : null;
 }

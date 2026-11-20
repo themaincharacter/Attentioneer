@@ -123,8 +123,16 @@ export interface GhostExpect {
  * names exactly one thing, and the closure proves the bytes are the base minus
  * that one thing. PROVISIONAL with the act names — the op's spelling and the
  * optional `line` are the first shape.
+ *
+ * STORY 21.8 — A GHOST CAN REWRITE ONE LINE IN PLACE, because the command card's
+ * amendment makes placing and naming ordinary things a person does by hand: a
+ * drag rewrites one card's `x|y` and the name pill rewrites one card's name. The
+ * third op names the EXACT line the base holds and the exact line that replaces
+ * it, so every other byte (malformed and hand-formatted lines included) stays
+ * untouched. It is the two record writers' own one-line rewrite, expressed as a
+ * step rather than a whole-file write. PROVISIONAL with the act names.
  */
-export type GhostStep = GhostAppendStep | GhostRemoveStep;
+export type GhostStep = GhostAppendStep | GhostRemoveStep | GhostReplaceStep;
 
 /** Append one canonical line to one file (the v1 op, unchanged). */
 export interface GhostAppendStep {
@@ -149,6 +157,25 @@ export interface GhostRemoveStep {
    * line from anyone else's record.
    */
   line?: string;
+}
+
+/**
+ * STORY 21.8 — REWRITE ONE LINE in one file: the move's `x|y` or the rename's
+ * name. Both are one line's change through the same record writer the person's
+ * drag and name pill use, so the record's other lines — and every malformed byte
+ * the app preserves — stay exactly where they are. `line` is the EXACT segment
+ * the base holds (CR included when the file is CRLF) and `with` is the line that
+ * takes its place; the deriver reads the base, never a remembered list.
+ */
+export interface GhostReplaceStep {
+  /** The one rewrite op. */
+  op: "replace";
+  /** The workspace-relative file the step rewrites. */
+  file: string;
+  /** The exact line the base holds, as bytes. */
+  line: string;
+  /** The exact line that replaces it, as bytes. */
+  with: string;
 }
 
 /**

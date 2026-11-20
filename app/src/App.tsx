@@ -1270,7 +1270,11 @@ function App() {
     void requestApply(acts)
       .then((result) => {
         if (result.ok) {
-          commitCommandExchange(appliedExchange(instruction, acts, question));
+          // STORY 21.8 — the exchange keeps the acts AS THEY APPLIED, so a move
+          // or a name carries the previous point/words its inverse needs.
+          commitCommandExchange(
+            appliedExchange(instruction, result.applied, question),
+          );
           return;
         }
         const sentence =

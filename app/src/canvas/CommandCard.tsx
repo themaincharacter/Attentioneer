@@ -597,6 +597,29 @@ export function actLine(act: CommandAct): string {
       return "remove the note on " + text("card");
     case "propose_remove_card":
       return "remove the card " + JSON.stringify(text("card"));
+    case "propose_move": {
+      // STORY 21.8 — the app's inverse is the ONE place a move names a point.
+      if (typeof payload.x === "number" && typeof payload.y === "number") {
+        return "move " + text("card") + " back to (" + payload.x + ", " + payload.y + ")";
+      }
+      const direction = text("direction");
+      const other = text("other");
+      return (
+        "move " +
+        text("card") +
+        " " +
+        direction +
+        (other === "" ? " from where it is" : " " + other)
+      );
+    }
+    case "propose_rename":
+      // Never says "rename": the words are a proposal the person accepts.
+      return (
+        "propose the name " +
+        JSON.stringify(text("name")) +
+        " for " +
+        text("card")
+      );
     default:
       // Unreachable through the validated vocabulary; the act's own name is
       // the honest fallback rather than an invented sentence.

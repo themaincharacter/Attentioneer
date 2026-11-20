@@ -16,8 +16,17 @@ import {
   parseGroundLine,
   serializeGroundLine,
   addGroundReference,
+  moveGroundReference,
+  withGroundRenamed,
 } from "../map/ground";
-import { parseAskLine, parseAsks, serializeAskLine, addAsk } from "../map/asks";
+import {
+  parseAskLine,
+  parseAsks,
+  serializeAskLine,
+  addAsk,
+  withAskMoved,
+  renameAsk,
+} from "../map/asks";
 import { noteByteLength, NOTE_MAX_BYTES } from "../map/notes";
 
 /**
@@ -589,6 +598,314 @@ function closureRemoveCard(
   return [];
 }
 
+/*
+ * STORY 21.8 — PLACING AND NAMING, THROUGH THE APP'S OWN ONE-LINE WRITERS
+ * (ADR-0038's 2026-11-20 amendment: an agent can add, wire, remove and ask, and
+ * what a person does next is TIDY — "put the new card under the rain gauge" and
+ * "call this one the evidence gap"). Each row derives exactly ONE rewrite step:
+ * the raw line the base holds, and the line the family's own pure writer
+ * produces. So the accepted bytes are exactly what the person's drag
+ * (`moveGroundReference`, `withAskMoved`) or name pill (`withGroundRenamed`,
+ * `renameAsk`) would have written, and every other byte stays put.
+ *
+ * THE POINT IS THE HOST'S, NEVER THE MODEL'S: the move row reads `x` and `y`
+ * from its params, which the adapter computes from two cards' positions with the
+ * pure geometry helper. The vocabulary's act payload has no coordinate at all.
+ *
+ * THE NAME IS A PROPOSAL: the rename row carries the words in `to` (a params key
+ * called "name" would hit the ghost grammar's guardrail slot, which is exactly
+ * right — a generic patch may not coin a name; THIS row is the one place a name
+ * rides a proposal, and the person's accept is the coining). Empty names are
+ * refused in the adapter before a ghost is ever filed.
+ *
+ * PROVISIONAL with the act names: the params keys (`x`, `y`, `to`) and the
+ * family/verb spellings here.
+ */
+
+/** The exact segment a ground card's line occupies, or null (raw, CR included). */
+function groundCardLine(before: string | null, slug: string): string | null {
+  return rawLineWhere(before, (raw) => {
+    const card = parseGroundLine(raw);
+    return card !== null && card.on === slug;
+  });
+}
+
+/** The exact segment an ask card's line occupies, or null (raw, CR included). */
+function askCardLine(before: string | null, slug: string): string | null {
+  return rawLineWhere(before, (raw) => {
+    const ask = parseAskLine(raw);
+    return ask !== null && ask.on === slug;
+  });
+}
+
+/** The CR a raw record segment carried, so a rewrite keeps the file's style. */
+function carriageOf(raw: string): string {
+  return raw.endsWith("\r") ? "\r" : "";
+}
+
+/** A move's destination, when the adapter computed a finite pair. */
+function pointOf(
+  params: Record<string, unknown>,
+): { x: number; y: number } | null {
+  const x = params.x;
+  const y = params.y;
+  if (typeof x !== "number" || !Number.isFinite(x)) return null;
+  if (typeof y !== "number" || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+/** A rename's proposed words, when the adapter handed a non-empty name. */
+function proposedNameOf(params: Record<string, unknown>): string | null {
+  const to = params.to;
+  return typeof to === "string" && to !== "" ? to : null;
+}
+
+/** One replace step for the card's exact line and its rewritten bytes. */
+function replaceStep(
+  file: string,
+  line: string,
+  withLine: string,
+): GhostStep {
+  return { op: "replace", file, line, with: withLine };
+}
+
+/** MOVE a ground reference to the host's point (the drag's own writer). */
+function deriveMoveCardSteps(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  if (target.kind !== "card") return [];
+  const point = pointOf(params);
+  if (point === null) return [];
+  const line = groundCardLine(before, target.slug);
+  if (line === null) return [];
+  const was = parseGroundLine(line.replace(/\r$/, ""));
+  if (was === null) return [];
+  const moved = moveGroundReference([was], target.slug, point.x, point.y)[0];
+  if (moved === undefined) return [];
+  return [
+    replaceStep(
+      GROUND_CARD_FILE,
+      line,
+      serializeGroundLine(moved) + carriageOf(line),
+    ),
+  ];
+}
+
+function closureMoveCard(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (target.kind !== "card") {
+    return [issue("params", "the move has no card")];
+  }
+  if (after === null) {
+    return [issue("append-only", "moving a card cannot remove the file")];
+  }
+  const point = pointOf(params);
+  if (point === null) {
+    return [issue("params", "the move has no computed point")];
+  }
+  const base = parseGround(before ?? "");
+  if (!base.references.some((reference) => reference.on === target.slug)) {
+    return [issue("append-only", "the map does not carry that card")];
+  }
+  const expected = moveGroundReference(
+    base.references,
+    target.slug,
+    point.x,
+    point.y,
+  ).map(serializeGroundLine);
+  const result = parseGround(after);
+  if (result.references.map(serializeGroundLine).join("\n") !== expected.join("\n")) {
+    return [issue("append-only", "the dry run did not move exactly this one card")];
+  }
+  if (result.malformed.join("\n") !== base.malformed.join("\n")) {
+    return [issue("append-only", "the dry run would change the file's preserved lines")];
+  }
+  return [];
+}
+
+/** MOVE an ask card to the host's point (the ask drag's own writer). */
+function deriveMoveAskSteps(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  if (target.kind !== "ask") return [];
+  const point = pointOf(params);
+  if (point === null) return [];
+  const line = askCardLine(before, target.slug);
+  if (line === null) return [];
+  const was = parseAskLine(line.replace(/\r$/, ""));
+  if (was === null) return [];
+  const moved = withAskMoved([was], target.slug, point.x, point.y)?.[0];
+  if (moved === undefined) return [];
+  return [
+    replaceStep(
+      GROUND_ASK_FILE,
+      line,
+      serializeAskLine(moved) + carriageOf(line),
+    ),
+  ];
+}
+
+function closureMoveAsk(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (target.kind !== "ask") {
+    return [issue("params", "the move has no ask card")];
+  }
+  if (after === null) {
+    return [issue("append-only", "moving an ask card cannot remove the file")];
+  }
+  const point = pointOf(params);
+  if (point === null) {
+    return [issue("params", "the move has no computed point")];
+  }
+  const base = parseAsks(before ?? "");
+  if (!base.asks.some((ask) => ask.on === target.slug)) {
+    return [issue("append-only", "the map does not carry that ask card")];
+  }
+  const moved = withAskMoved(base.asks, target.slug, point.x, point.y);
+  if (moved === null) {
+    return [issue("append-only", "the map does not carry that ask card")];
+  }
+  const expected = moved.map(serializeAskLine);
+  const result = parseAsks(after);
+  if (result.asks.map(serializeAskLine).join("\n") !== expected.join("\n")) {
+    return [issue("append-only", "the dry run did not move exactly this one ask card")];
+  }
+  if (result.malformed.join("\n") !== base.malformed.join("\n")) {
+    return [issue("append-only", "the dry run would change the file's preserved lines")];
+  }
+  return [];
+}
+
+/** RENAME a ground reference (the name pill's own writer). */
+function deriveRenameCardSteps(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  if (target.kind !== "card") return [];
+  const name = proposedNameOf(params);
+  if (name === null) return [];
+  const line = groundCardLine(before, target.slug);
+  if (line === null) return [];
+  const was = parseGroundLine(line.replace(/\r$/, ""));
+  if (was === null) return [];
+  const renamed = withGroundRenamed([was], target.slug, name)[0];
+  if (renamed === undefined) return [];
+  return [
+    replaceStep(
+      GROUND_CARD_FILE,
+      line,
+      serializeGroundLine(renamed) + carriageOf(line),
+    ),
+  ];
+}
+
+function closureRenameCard(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (target.kind !== "card") {
+    return [issue("params", "the name proposal has no card")];
+  }
+  if (after === null) {
+    return [issue("append-only", "naming a card cannot remove the file")];
+  }
+  const name = proposedNameOf(params);
+  if (name === null) {
+    return [issue("params", "the name proposal has no name")];
+  }
+  const base = parseGround(before ?? "");
+  if (!base.references.some((reference) => reference.on === target.slug)) {
+    return [issue("append-only", "the map does not carry that card")];
+  }
+  const expected = withGroundRenamed(
+    base.references,
+    target.slug,
+    name,
+  ).map(serializeGroundLine);
+  const result = parseGround(after);
+  if (result.references.map(serializeGroundLine).join("\n") !== expected.join("\n")) {
+    return [issue("append-only", "the dry run did not name exactly this one card")];
+  }
+  if (result.malformed.join("\n") !== base.malformed.join("\n")) {
+    return [issue("append-only", "the dry run would change the file's preserved lines")];
+  }
+  return [];
+}
+
+/** RENAME an ask card (its name pill's own writer). */
+function deriveRenameAskSteps(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+): GhostStep[] {
+  if (target.kind !== "ask") return [];
+  const name = proposedNameOf(params);
+  if (name === null) return [];
+  const line = askCardLine(before, target.slug);
+  if (line === null) return [];
+  const was = parseAskLine(line.replace(/\r$/, ""));
+  if (was === null) return [];
+  const renamed = renameAsk([was], target.slug, name)?.[0];
+  if (renamed === undefined) return [];
+  return [
+    replaceStep(
+      GROUND_ASK_FILE,
+      line,
+      serializeAskLine(renamed) + carriageOf(line),
+    ),
+  ];
+}
+
+function closureRenameAsk(
+  target: GhostTarget,
+  params: Record<string, unknown>,
+  before: string | null,
+  after: string | null,
+): readonly GhostIssue[] {
+  if (target.kind !== "ask") {
+    return [issue("params", "the name proposal has no ask card")];
+  }
+  if (after === null) {
+    return [issue("append-only", "naming an ask card cannot remove the file")];
+  }
+  const name = proposedNameOf(params);
+  if (name === null) {
+    return [issue("params", "the name proposal has no name")];
+  }
+  const base = parseAsks(before ?? "");
+  if (!base.asks.some((ask) => ask.on === target.slug)) {
+    return [issue("append-only", "the map does not carry that ask card")];
+  }
+  const renamed = renameAsk(base.asks, target.slug, name);
+  if (renamed === null) {
+    return [issue("append-only", "the map does not carry that ask card")];
+  }
+  const expected = renamed.map(serializeAskLine);
+  const result = parseAsks(after);
+  if (result.asks.map(serializeAskLine).join("\n") !== expected.join("\n")) {
+    return [issue("append-only", "the dry run did not name exactly this one ask card")];
+  }
+  if (result.malformed.join("\n") !== base.malformed.join("\n")) {
+    return [issue("append-only", "the dry run would change the file's preserved lines")];
+  }
+  return [];
+}
+
 /** The target rules every ground move shares: one kind, the rest refused. */
 function only(
   allowed: "spot" | "link" | "card" | "ask",
@@ -800,11 +1117,104 @@ const CARD_REMOVE_ROW: MoveDefinition = {
     "Remove one card from the map. Nothing else changes: its wires, reading, note and picture are not taken, because the app's own delete path is where that cascade lives.",
 };
 
+/*
+ * STORY 21.8 — THE PLACE AND THE NAME, one rewrite each. The destination point
+ * and the proposed name ride the ghost's PARAMS; the ghost's target is the card
+ * the move/name is about. A reference and an ask card have separate files and
+ * separate families, so the same act files one of two rows and the adapter
+ * chooses by the card it found.
+ */
+
+const CARD_MOVE_ROW: MoveDefinition = {
+  move: { family: "card", verb: "move" },
+  game: "ground",
+  files: [GROUND_CARD_FILE],
+  params: [
+    { key: "x", kind: "number" },
+    { key: "y", kind: "number" },
+  ],
+  targetCount: 1,
+  targets: only("card", [
+    { kind: "word", why: "a move is about one card on this map" },
+    { kind: "loop", why: "a move is about one card on this map" },
+    { kind: "spot", why: "a move is about one card on this map" },
+    { kind: "link", why: "a move names BOTH cards; the moving one is the target" },
+  ]),
+  steps: deriveMoveCardSteps,
+  closure: closureMoveCard,
+  boundary:
+    "Move one card to the point the app computed from two cards' positions. Nothing else changes: no card is added, removed, renamed or wired, and no reading, note or ask is touched. The point is never the model's.",
+};
+
+const ASK_MOVE_ROW: MoveDefinition = {
+  move: { family: "ask", verb: "move" },
+  game: "ground",
+  files: [GROUND_ASK_FILE],
+  params: [
+    { key: "x", kind: "number" },
+    { key: "y", kind: "number" },
+  ],
+  targetCount: 1,
+  targets: only("ask", [
+    { kind: "word", why: "a move is about one ask card on this map" },
+    { kind: "loop", why: "a move is about one ask card on this map" },
+    { kind: "spot", why: "a move is about one ask card on this map" },
+    { kind: "link", why: "a move names BOTH cards; the moving one is the target" },
+    { kind: "card", why: "an ask card is its own family; a reference card is not one" },
+  ]),
+  steps: deriveMoveAskSteps,
+  closure: closureMoveAsk,
+  boundary:
+    "Move one ask card to the point the app computed from two cards' positions. Nothing else changes: its name, its question's draft and its conversation stay exactly as they are.",
+};
+
+const CARD_RENAME_ROW: MoveDefinition = {
+  move: { family: "card", verb: "rename" },
+  game: "ground",
+  files: [GROUND_CARD_FILE],
+  // THE KEY IS "to", NOT "name": the ghost grammar reserves a "name" slot for
+  // the person's coining, and a generic patch may never fill one. This row is
+  // the ONE proposal that carries words for a name, and the person's accept is
+  // the coining — so it says "to", the same word the history's rename line uses.
+  params: [{ key: "to", kind: "text" }],
+  targetCount: 1,
+  targets: only("card", [
+    { kind: "word", why: "a name proposal is about one card on this map" },
+    { kind: "loop", why: "a name proposal is about one card on this map" },
+    { kind: "spot", why: "a name proposal is about one card on this map" },
+    { kind: "link", why: "a name proposal is about one card, never a pair" },
+  ]),
+  steps: deriveRenameCardSteps,
+  closure: closureRenameCard,
+  boundary:
+    "Propose a new name for one card. Accepting it is the person's coining; refusing it leaves the name as it was. Nothing else changes: the slug, point, reading, note and wires stay exactly as they are.",
+};
+
+const ASK_RENAME_ROW: MoveDefinition = {
+  move: { family: "ask", verb: "rename" },
+  game: "ground",
+  files: [GROUND_ASK_FILE],
+  params: [{ key: "to", kind: "text" }],
+  targetCount: 1,
+  targets: only("ask", [
+    { kind: "word", why: "a name proposal is about one ask card on this map" },
+    { kind: "loop", why: "a name proposal is about one ask card on this map" },
+    { kind: "spot", why: "a name proposal is about one ask card on this map" },
+    { kind: "link", why: "a name proposal is about one card, never a pair" },
+    { kind: "card", why: "an ask card is its own family; a reference card is not one" },
+  ]),
+  steps: deriveRenameAskSteps,
+  closure: closureRenameAsk,
+  boundary:
+    "Propose a new name for one ask card. Accepting it is the person's coining; refusing it leaves the name as it was. Nothing else changes: its slug, point, anchor and conversation stay exactly as they are.",
+};
+
 /**
  * The command card's ground rows, in the vocabulary's order. Handed to the
  * ghost session's `moves` option by `attentioneerHost.ts`; NEVER appended to
  * the live `MOVES` table (the app's expansion gate is ADR-0025's). STORY 21.6
- * appends the three removal rows — each one ghost, each one change.
+ * appends the three removal rows — each one ghost, each one change. STORY 21.8
+ * appends the place and the name (one row per card family).
  */
 export const GROUND_MOVES: readonly MoveDefinition[] = [
   CARD_ROW,
@@ -817,4 +1227,9 @@ export const GROUND_MOVES: readonly MoveDefinition[] = [
   // STORY 21.7 — the app's delete shape for an ask card, one ghost per step.
   ASK_REMOVE_ROW,
   ASK_TURNS_REMOVE_ROW,
+  // STORY 21.8 — the place and the name, one rewrite each.
+  CARD_MOVE_ROW,
+  ASK_MOVE_ROW,
+  CARD_RENAME_ROW,
+  ASK_RENAME_ROW,
 ];

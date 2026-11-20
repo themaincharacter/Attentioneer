@@ -95,6 +95,87 @@ export function artifactPlacement(
   return { x, y };
 }
 
+/**
+ * STORY 21.8 — WHERE A CARD GOES WHEN A COMMAND NAMES A DIRECTION (ADR-0038's
+ * amendment: an agent can add, wire, remove and ask, and placing is the
+ * ordinary next sentence — "put the new card under the rain gauge"). The model
+ * NEVER supplies a point: it names the card to move, optionally the card to
+ * measure from, and a direction; THIS helper computes the point from the two
+ * cards' resting boxes, so "below" means one thing on this plane.
+ *
+ * The moving card's own point enters only when no other card is named: the
+ * offset is then measured from where the card already stands, which makes a
+ * bare direction a nudge by exactly one card. PROVISIONAL: the direction set
+ * and the two gaps (ADR-0003's rendering seam; the story names both as
+ * provisional).
+ */
+export type PlaceDirection = "below" | "above" | "left" | "right";
+
+/** The directions a command may name, as data (the act layer's whole set). */
+export const PLACE_DIRECTIONS: readonly PlaceDirection[] = [
+  "below",
+  "above",
+  "left",
+  "right",
+];
+
+/** World units a horizontal placement clears a card's resting width plus a gap. */
+export const PLACE_GAP_X = GROUND_CARD_BOX.w + ARTIFACT_GAP_X;
+
+/** World units a vertical placement clears a card's resting height plus a gap. */
+export const PLACE_GAP_Y = GROUND_CARD_BOX.h + ARTIFACT_GAP_Y;
+
+/** The point one card's top-left takes when it sits in `direction` of `frame`. */
+export function placedFrom(frame: Point, direction: PlaceDirection): Point {
+  const x =
+    direction === "left"
+      ? frame.x - PLACE_GAP_X
+      : direction === "right"
+        ? frame.x + PLACE_GAP_X
+        : frame.x;
+  const y =
+    direction === "above"
+      ? frame.y - PLACE_GAP_Y
+      : direction === "below"
+        ? frame.y + PLACE_GAP_Y
+        : frame.y;
+  // The record holds whole map units (both families' writers round), so the
+  // computed point is rounded HERE, where "the app computed it" is still true.
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+/** The place for `_card` below `other` (the story's `belowOf(card, other)`). */
+export function belowOf(_card: Point, other: Point): Point {
+  return placedFrom(other, "below");
+}
+
+/** The place for `_card` above `other`. */
+export function aboveOf(_card: Point, other: Point): Point {
+  return placedFrom(other, "above");
+}
+
+/** The place for `_card` to the left of `other`. */
+export function leftOf(_card: Point, other: Point): Point {
+  return placedFrom(other, "left");
+}
+
+/** The place for `_card` to the right of `other`. */
+export function rightOf(_card: Point, other: Point): Point {
+  return placedFrom(other, "right");
+}
+
+/** One direction's helper, so a caller names the direction once as data. */
+export function placedInDirection(
+  card: Point,
+  other: Point,
+  direction: PlaceDirection,
+): Point {
+  if (direction === "below") return belowOf(card, other);
+  if (direction === "above") return aboveOf(card, other);
+  if (direction === "left") return leftOf(card, other);
+  return rightOf(card, other);
+}
+
 /** The box's center, given its top-left position on the plane. */
 export function centerOf(pos: Point, box: Box): Point {
   return { x: pos.x + box.w / 2, y: pos.y + box.h / 2 };

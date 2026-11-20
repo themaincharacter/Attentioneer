@@ -23,6 +23,7 @@ import {
   isParamKind,
   moveOf,
   MOVES,
+  replacedLine,
   withoutLine,
   type DryRun,
   type DryRunFile,
@@ -58,6 +59,13 @@ import type { GhostSnapshot } from "./snapshot";
  * MINUS exactly the one line the deriver named (or minus the file, for a
  * note). The reconcile stays append-only; a removal is never reconstructed
  * from nothing.
+ *
+ * STORY 21.8 — A STEP MAY REWRITE ONE LINE IN PLACE (ADR-0038's amendment: an
+ * agent can place and propose a name, the two things a person does most after
+ * making a card). The dry run proves the rewrite is EXACTLY one line's bytes:
+ * the named line must be in the base, every other byte is untouched, and the
+ * move's or rename's own closure re-parses the result. A rewrite is never
+ * reconciled from nothing either: applied-but-unmarked refuses by the pin.
  *
  * It cannot check meaning, same-thing-ness, prose quality or "small" (ADR-0025
  * decision 1). A ghost that passes is still a claim the person judges.
@@ -405,8 +413,12 @@ function reconstructedBases(current: string, line: string): string[] {
  * without re-inventing the bytes it took, and a guess is not a reconcile. So a
  * removal that landed without its marker is REFUSED by the pin on the retry
  * (the file no longer hashes to the base it was built on) — the person can see
- * the removal already happened and propose nothing more. Failing closed is
- * the honest half of the crash story here.
+ * the removal already happened and propose nothing more. Failure closes the
+ * honest half of the crash story here.
+ *
+ * STORY 21.8 — A REWRITE IS NEVER RECONCILED either, for the same reason: the
+ * line it replaced is gone from the base, so a retry after a landed rewrite is
+ * refused by the pin rather than re-invented.
  */
 function reconciled(
   steps: readonly GhostStep[],
@@ -632,8 +644,9 @@ export function validateGhost(
   }
   const pinDigest = expect.expect.files[file];
 
-  // The dry run: apply the derived steps to the snapshot's bytes. Two ops, one
-  // rule each — append one line, or remove one line (or the file itself).
+  // The dry run: apply the derived steps to the snapshot's bytes. Three ops,
+  // one rule each — append one line, remove one line (or the file itself), or
+  // rewrite one line in place (STORY 21.8's move and rename).
   const runFiles: DryRunFile[] = [];
   let current = snapshot.files[file] ?? null;
   for (const step of steps) {
@@ -656,13 +669,24 @@ export function validateGhost(
         }
         after = without;
       }
+    } else if (step.op === "replace") {
+      const replaced = replacedLine(current, step.line, step.with);
+      if (replaced === undefined) {
+        return refused([
+          issue(
+            "append-only",
+            `the dry run would rewrite "${step.line}", which ${file} does not hold`,
+          ),
+        ]);
+      }
+      after = replaced;
     } else {
       return refused([
         issue(
           "append-only",
-          `this build knows appends and removals; the step op "${String(
+          `this build knows appends, removals and one-line rewrites; the step op "${String(
             (step as { op?: unknown }).op,
-          )}" is neither`,
+          )}" is none of them`,
         ),
       ]);
     }
