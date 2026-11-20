@@ -709,8 +709,11 @@ export function SessionCard({
         drag?.publish({ slug: session.on, x: landed.x, y: landed.y });
       },
       isArmed: () => isGestureArmed(interactionMode),
-      // The card's verbs, fields and the link handle are already the helper's
-      // own exclusions; a session card has no selection surface to protect.
+      // STORY 16.32 — the user's one rule: a COLLAPSED session card drags by
+      // its body or its pill; an EXPANDED one drags only by its pill, so a
+      // press on the transcript is text to select. The card's verbs, fields
+      // and the link handle are already the helper's own exclusions.
+      expanded: () => open,
       onClick: (onPill) => {
         // A press on the name pill is the handle and opens nothing; a press
         // that never moved on the body is the card's door.

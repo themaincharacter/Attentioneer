@@ -149,6 +149,8 @@ function dragOnce(moves: number) {
   const cleanup = attachGroundCardDrag(el as unknown as HTMLElement, {
     at: () => ({ x: CARD.x, y: CARD.y }),
     zoom: () => 1,
+    // The measured card is collapsed: its body is a crop, so it drags.
+    expanded: () => false,
     onPreview: (at) => {
       if (at === null) return;
       frames += 1;
@@ -237,6 +239,7 @@ describe("one drag, measured (story 16.25)", () => {
     const cleanup = attachGroundCardDrag(el as unknown as HTMLElement, {
       at: () => ({ x: CARD.x, y: CARD.y }),
       zoom: () => 1,
+      expanded: () => false,
       onPreview: (at) => {
         if (at === null) return;
         frameGroundCard(el as unknown as HTMLElement, at);

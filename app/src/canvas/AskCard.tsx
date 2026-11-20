@@ -971,8 +971,11 @@ export function AskCard({
         drag?.publish({ slug: ask.on, x: landed.x, y: landed.y });
       },
       isArmed: () => isGestureArmed(interactionMode),
-      // The composer's field and every verb are already the helper's own
-      // exclusions; an ask card has no selection surface to protect.
+      // STORY 16.32 — the user's one rule: a COLLAPSED ask card drags by its
+      // body or its pill; an EXPANDED one drags only by its pill, so a press
+      // on the thread is text to select. The composer's field and every verb
+      // are already the helper's own exclusions.
+      expanded: () => open,
       onClick: (onPill) => {
         // A press on the name pill is the handle and opens nothing; a press
         // that never moved on the body is the card's door.

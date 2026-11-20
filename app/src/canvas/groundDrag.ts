@@ -29,6 +29,36 @@ import type { Point } from "./geometry";
 /** Screen pixels of movement before a press on a reference becomes a drag. */
 export const GROUND_DRAG_THRESHOLD = 4;
 
+/**
+ * STORY 16.32 — WHO OWNS THE PRESS. Two gestures wanted the same press, and
+ * the person's ruling settles it: "prioritize drag unless a card is expanded
+ * then prioritize selection inside that expanded card."
+ *
+ * A COLLAPSED card is a crop — a name and a cut reading — so a press on it
+ * (body or name pill) starts a MOVE and never a selection. An EXPANDED card is
+ * something being READ: a press on its body starts TEXT SELECTION and never a
+ * move, while its name pill stays the one HANDLE (the pill is the handle in
+ * every state). The plane, the pills, the wires and the empty canvas are
+ * untouched.
+ *
+ * PURE, and the ONLY copy of the rule: every card family hands in its own
+ * expanded state, so a reference, an ask and a session card cannot answer the
+ * press differently. The drag wiring below asks this BEFORE it takes the
+ * pointer, so a bailing press is left to the browser.
+ */
+export interface GroundPressFacts {
+  /** The card is open: its body is read, not cropped. */
+  readonly expanded: boolean;
+  /** The press landed on the name pill, the handle in every state. */
+  readonly onPill: boolean;
+}
+
+/** The user's rule: an expanded card's body selects; everything else drags. */
+export function pressingThisStartsADrag(facts: GroundPressFacts): boolean {
+  if (!facts.expanded) return true;
+  return facts.onPill;
+}
+
 /** One in-flight drag: where it started and where the pointer is now. */
 export interface GroundDragState {
   /** The reference's world point when the press landed. */
@@ -104,10 +134,9 @@ export function dropGroundDrag(state: GroundDragState): readonly Point[] {
  * The door rule stays the caller's: a press that crosses the threshold is a
  * drag and calls `onDrop` ONCE; a press that never moved calls `onClick` (with
  * whether it landed on the name pill), so every card's owner decides what its
- * door is. `ignores` is the
- * caller's list of surfaces a press must never drag (a button, a field, an open
- * card's selection), and `isArmed` is the gesture gate: while a tool is armed
- * every press stands still.
+ * door is. `expanded` lets the ONE predicate (`pressingThisStartsADrag`)
+ * decide who gets the press, and `isArmed` is the gesture gate: while a tool
+ * is armed every press stands still.
  *
  * The returned function is the effect's cleanup: the listener leaves with the
  * card. PROVISIONAL: the wiring style (raw listeners, like the rest of the
@@ -130,8 +159,12 @@ export interface GroundCardDragOptions {
   readonly onClick?: (onPill: boolean) => void;
   /** An armed gesture stands every press still (ADR-0016's gate). */
   readonly isArmed?: () => boolean;
-  /** A surface this card's press never drags (its buttons, fields, selection). */
-  readonly ignores?: (target: HTMLElement) => boolean;
+  /**
+   * STORY 16.32 — IS THIS CARD EXPANDED? Read at press, because the open face
+   * is view state that can change under the same element. It is the one fact
+   * the predicate above lacks; the pill is read from the target itself.
+   */
+  readonly expanded: () => boolean;
 }
 
 /**
@@ -151,15 +184,24 @@ export function attachGroundCardDrag(
     // not also start a move.
     if (target.closest(".ground-link-handle") !== null) return;
     // The card's press stands still for the plane: this raw listener runs
-    // before d3's and stops the press here, so a drag never pans.
+    // before d3's and stops the press here, so a drag never pans — and a
+    // selection is never eaten by the pan's own preventDefault.
     e.stopPropagation();
     if (target.closest("button, textarea, input") !== null) return;
-    if (options.ignores?.(target) === true) return;
     if (options.isArmed?.() === true) return;
 
     // A press on the name pill is the HANDLE, not the door: it rides this same
     // rule, and a click that never moved on it opens nothing.
     const onPill = target.closest(".ground-pill") !== null;
+
+    // STORY 16.32 — THE PRESS THAT IS NOT A DRAG IS NOT TAKEN AT ALL. An
+    // expanded card's body is text to select; bailing HERE means no drag
+    // state, no window listeners and no pointer claim, so the browser's
+    // selection and the reading's scroll are never touched. The press still
+    // stopped above, so the plane never pans over the reading either.
+    if (!pressingThisStartsADrag({ expanded: options.expanded(), onPill })) {
+      return;
+    }
 
     let drag = beginGroundDrag(
       options.at(),

@@ -302,6 +302,15 @@ const EXPLORER_IO: ExplorerIo = { listDirEntries };
  * it read. Nothing is written until the drop: the same threshold, one record
  * line, one `card.move`, the same no-op rule.
  *
+ * STORY 16.32 SETTLES WHO GETS THE PRESS. The user's ruling: "prioritize drag
+ * unless a card is expanded then prioritize selection inside that expanded
+ * card." A COLLAPSED card drags by its body or its pill; an EXPANDED card
+ * selects by its body (its reading is text, not a surface to carry) and drags
+ * only by its pill, which is the handle in every state. The rule is ONE pure
+ * predicate in `groundDrag.ts` (`pressingThisStartsADrag`), and the shared
+ * wiring bails before it takes the pointer, so a press it does not own never
+ * touches selection or scrolling. Nothing about 16.31's capture changed.
+ *
  * Nothing counts, sums, scores or nudges; every string here is either the
  * person's words or a fact the map already holds.
  */
@@ -2096,11 +2105,12 @@ function GroundCard({
         drag?.publish({ slug: reference.on, x: landed.x, y: landed.y });
       },
       isArmed: () => isGestureArmed(interactionMode),
-      // An open card's reading is a SELECTION surface (story 16.12): a press
-      // there begins text selection, never a move. Buttons, fields and the
-      // link handle are already the helper's own exclusions.
-      ignores: (target) =>
-        open && target.closest(".ground-reading") !== null,
+      // STORY 16.32 — THE USER'S RULING, in the one predicate: a COLLAPSED
+      // card drags by its body or its pill; an EXPANDED card selects by its
+      // body and drags ONLY by its pill. The reading is inside the body, so a
+      // press there is text to select and never a drag. Buttons, fields and
+      // the link handle are already the helper's own exclusions.
+      expanded: () => open,
       // STORY 16.21 — a press on the NAME is the handle, so it opens nothing;
       // a press on the body still opens the card (a drag never does).
       onClick: (onPill) => {
@@ -2794,6 +2804,10 @@ function GroundCard({
           // the reading itself keeps rendering unchanged. STORY 16.19: this
           // is the SELECTION surface the question widget is opened from — the
           // ref is read on mouse-up and nothing about the element changed.
+          // STORY 16.32: on an EXPANDED card this is NOT a drag surface at all
+          // — the card hands `expanded` to the one predicate, which bails
+          // before the drag takes the pointer, so the browser's selection and
+          // this box's scroll are never touched.
           <div className="ground-reading" ref={readingRef}>
             {bodyText}
           </div>

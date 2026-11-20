@@ -90,6 +90,7 @@ function source(rel: string): string {
 }
 const HOOK = source("canvas/useGround.ts");
 const LAYER = source("canvas/GroundLayer.tsx");
+const DRAG = source("canvas/groundDrag.ts");
 const CARD = source("canvas/AskCard.tsx");
 const WIDGET = source("canvas/SelectionAsk.tsx");
 const APP = source("App.tsx");
@@ -545,13 +546,14 @@ describe("the widget: one field, one ask verb, one dismiss", () => {
   });
 
   test("it does not fight the card's reading scroll, link drag or card drag", () => {
-    // The reading already owns its press as a selection surface, so the card
-    // never starts a drag there; the widget only listens on mouse-up. STORY
-    // 16.23 moved the press rule into the shared drag wiring, where the open
-    // card's reading is still the caller's exclusion.
-    expect(LAYER).toContain(
-      'open && target.closest(".ground-reading") !== null',
-    );
+    // STORY 16.32 — the user's ruling decides who gets the press: a press on an
+    // EXPANDED card's body is text to select, so the card hands its open state
+    // to the ONE predicate and the drag wiring bails before taking the pointer.
+    // The old per-caller reading exclusion is gone; the selection capture
+    // itself is untouched — the widget still only listens on mouse-up.
+    expect(LAYER).toContain("expanded: () => open");
+    expect(LAYER).not.toContain('target.closest(".ground-reading") !== null');
+    expect(DRAG).toContain("pressingThisStartsADrag(");
     expect(LAYER).toContain('window.addEventListener("mouseup", onMouseUp)');
     // The widget stops its own presses and wheel before the plane hears them.
     expect(WIDGET).toContain('el.addEventListener("mousedown", stop)');
