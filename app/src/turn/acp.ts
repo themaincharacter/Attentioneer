@@ -65,6 +65,12 @@ export const ACP_METHODS = {
   sessionCancel: "session/cancel",
   sessionUpdate: "session/update",
   requestPermission: "session/request_permission",
+  /**
+   * STORY 22.5 — THE PROTOCOL'S OWN SELECTION CALL (PROVISIONAL). A session's
+   * answer names the tool's options; this one sets a select to one of the
+   * values the tool itself offered. The value is OPAQUE and crosses verbatim.
+   */
+  sessionSetConfigOption: "session/set_config_option",
 } as const;
 
 /**
@@ -540,6 +546,34 @@ export class AcpTransport {
       mcpServers,
     });
     return readResumeResult(result, sessionId);
+  }
+
+  /**
+   * STORY 22.5 — CHOOSE ONE OF THE TOOL'S OWN VALUES (PROVISIONAL). The
+   * protocol's selection call, spoken AFTER the session step and BEFORE the
+   * prompt: the session's answer named the options, the caller decided which
+   * select and which value, and this sends exactly those two strings.
+   *
+   * THE VALUE IS OPAQUE. It is the tool's own string — observed once as a
+   * JSON-encoded array — and this method neither parses nor re-encodes it: it
+   * travels byte-for-byte inside the request's JSON, so a value the tool
+   * recognises is the value the tool receives. The option id is the tool's too;
+   * this method knows no configuration's name.
+   *
+   * A refusal is the server's own error (an `AcpFailure` carrying its
+   * sentence), never a silent success: a caller that cannot set the option must
+   * say so rather than let the run continue on a model nobody chose.
+   */
+  async setConfigOption(
+    sessionId: string,
+    optionId: string,
+    value: string,
+  ): Promise<void> {
+    await this.request(ACP_METHODS.sessionSetConfigOption, {
+      sessionId,
+      configId: optionId,
+      value,
+    });
   }
 
   /**

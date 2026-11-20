@@ -70,11 +70,13 @@ import {
 import {
   SESSION_BUSY_SENTENCE,
   SESSION_MISSING_REFUSAL,
+  SESSION_MODEL_REFUSAL,
   SESSION_NO_TOOL_REFUSAL,
   SESSION_TRANSCRIPT_REFUSAL,
   addSession,
   appendSessionEntries,
   bindSessionBoundary as bindSessionBoundaryRecord,
+  bindSessionModel as bindSessionModelRecord,
   bindSessionProject as bindSessionProjectRecord,
   bindSessionTool as bindSessionToolRecord,
   loadSessionTranscript,
@@ -128,7 +130,7 @@ import type {
   AcpProgressEntry,
   RunScope,
 } from "../turn/acpEntries";
-import type { RunResume } from "../turn/protocol";
+import type { RunModel, RunResume } from "../turn/protocol";
 import { artifactPlacement, besidePlacement, type Point } from "./geometry";
 import { utf8ByteLength } from "../lib/textBytes";
 import type { SidecarStart } from "../turn/sidecar";
@@ -139,10 +141,14 @@ import { shippedAcpSpec, type AcpSpec } from "../turn/acpSpecs";
 // writes nothing except the fact a passing test produces.
 import {
   loadToolRowFacts,
+  rowFactOf,
   rowWithFacts,
   patchToolRowFact,
+  patchToolRowModels,
+  recordSessionModels,
   type AcpRowFact,
 } from "../turn/acpRowStore";
+import { acpRunModelOf } from "../turn/acpModels";
 import { ROW_TEST_SENTENCES, runRowTest } from "../turn/acpRowTest";
 import {
   startSetupChild,
@@ -879,6 +885,18 @@ export interface GroundView {
     boundary: "read" | "write" | null,
   ) => Promise<GroundAddResult>;
   /**
+   * STORY 22.5 — RECORD which of the TOOL'S OWN models this card asks for
+   * (PROVISIONAL): ONE field's change ("model"), one queued write. `null`
+   * returns the card to the tool's own default and removes the field, so the
+   * line goes back to the bytes it had before any model was chosen. A value
+   * the tool has not named here is refused with one sentence: the record only
+   * holds a choice the tool itself offered.
+   */
+  setSessionModel: (
+    slug: string,
+    model: string | null,
+  ) => Promise<GroundAddResult>;
+  /**
    * STORY 18.3 — RUN one session card with the person's task (story 19.3: the
    * task is what the packet's first block carries, so a run cannot start
    * without one): the row's 18.2 lifecycle, with every progress entry appended
@@ -1078,6 +1096,7 @@ type GroundLoaded = Omit<
   | "bindSessionTool"
   | "bindSessionProject"
   | "setSessionBoundary"
+  | "setSessionModel"
   | "runSession"
   | "followUpSession"
   | "stopSession"
@@ -3342,6 +3361,12 @@ export interface SessionRunDone {
   entries: readonly SessionEntry[];
   /** One sentence when the transcript could not be written; null when it could. */
   notice: string | null;
+  /**
+   * STORY 22.5 — THE SESSION STEP'S OWN OPTIONS, as the tool answered them
+   * (PROVISIONAL). Absent means the answer carried no list; the caller records
+   * the tool's model choices from it and never reads them to shape the run.
+   */
+  configOptions?: unknown[];
 }
 
 /** A live run: the seam's handle (for the stop) and its one settle promise. */
@@ -3403,6 +3428,12 @@ export interface SessionRunOptions extends SessionRunPlumbing {
    * never lands somewhere else.
    */
   resume?: RunResume;
+  /**
+   * STORY 22.5 — THE MODEL THIS RUN ASKS FOR (PROVISIONAL). The tool's own
+   * option id and opaque value, resolved from the recorded options; absent
+   * means the run keeps the tool's own default.
+   */
+  model?: RunModel;
 }
 
 /**
@@ -3434,6 +3465,12 @@ export function beginSessionRun(
   // the bytes the card declared before the press and the bytes on the wire are
   // ONE string. Nothing is trimmed, normalized or re-composed here.
   const packet = assembleSessionPacket(options.task, options.context ?? []);
+  /**
+   * STORY 22.5 — THE TOOL'S OWN OPTIONS, as its session step answered. The seam
+   * hands them over through a callback so the ENDING stays exactly the shape it
+   * always had; this cell carries them into `done` for the fact layer.
+   */
+  let answeredOptions: unknown[] | undefined;
 
   const record = (line: SessionEntry | null): void => {
     if (line === null) return;
@@ -3472,6 +3509,9 @@ export function beginSessionRun(
       : { transport: options.transport }),
     ...(options.start === undefined ? {} : { start: options.start }),
     onEntry: (entry: AcpProgressEntry) => record(sessionEntryOf(entry, now())),
+    onOptions: (configOptions) => {
+      answeredOptions = configOptions;
+    },
     ...(options.onPermission === undefined
       ? {}
       : { onPermission: options.onPermission }),
@@ -3482,6 +3522,9 @@ export function beginSessionRun(
     // STORY 21.1 — a continuation's id and folder ride the same way; a fresh
     // run's request keeps its old bytes.
     ...(options.resume === undefined ? {} : { resume: options.resume }),
+    // STORY 22.5 — the card's recorded model rides only when it has one. It is
+    // the tool's own pair, resolved from the recorded options, never invented.
+    ...(options.model === undefined ? {} : { model: options.model }),
   });
 
   const done: Promise<SessionRunDone> = handle.ended.then(
@@ -3494,7 +3537,15 @@ export function beginSessionRun(
       record(ended);
       // The last append must land before the caller reads.
       await chain;
-      return { ending, sentence, entries: [...written], notice };
+      return {
+        ending,
+        sentence,
+        entries: [...written],
+        notice,
+        // STORY 22.5 — the session step's options come back with the run; the
+        // caller records them, this seam only carries them.
+        ...(answeredOptions === undefined ? {} : { configOptions: answeredOptions }),
+      };
     },
   );
 
@@ -3541,6 +3592,12 @@ export function startGatedSessionRun(
      * and the run's cwd becomes the session's own.
      */
     resume?: RunResume;
+    /**
+     * STORY 22.5 — THE MODEL THIS RUN ASKS FOR (PROVISIONAL), already resolved
+     * from the card's record against the options this machine's tool named. It
+     * rides through untouched: the gate checks no model and judges none.
+     */
+    model?: RunModel;
   },
   options: SessionRunPlumbing = {},
 ): GatedSessionRun {
@@ -3606,6 +3663,7 @@ export function startGatedSessionRun(
       ...(cwd === undefined ? {} : { cwd }),
       ...(scope === undefined ? {} : { scope }),
       ...(input.resume === undefined ? {} : { resume: input.resume }),
+      ...(input.model === undefined ? {} : { model: input.model }),
     }),
   };
 }
@@ -3870,6 +3928,26 @@ export async function setSessionBoundaryCard(
   io: SessionBindingIo = SESSION_BINDING_IO,
 ): Promise<SessionCard[] | null> {
   const next = bindSessionBoundaryRecord(sessions, slug, boundary);
+  if (next === null) return null;
+  await io.saveSessions(workspacePath, next, malformedSessions);
+  return next;
+}
+
+/**
+ * STORY 22.5 — RECORD (or clear, with `null`) which of the tool's own models
+ * this card asks for: ONE field's change, ONE write. The binding, the boundary,
+ * the point and the transcript are untouched; a slug this file does not carry
+ * answers `null` rather than an appended card.
+ */
+export async function setSessionModelCard(
+  workspacePath: string,
+  sessions: readonly SessionCard[],
+  malformedSessions: readonly string[],
+  slug: string,
+  model: string | null,
+  io: SessionBindingIo = SESSION_BINDING_IO,
+): Promise<SessionCard[] | null> {
+  const next = bindSessionModelRecord(sessions, slug, model);
   if (next === null) return null;
   await io.saveSessions(workspacePath, next, malformedSessions);
   return next;
@@ -6362,6 +6440,61 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
   );
 
   /**
+   * STORY 22.5 — RECORD which of the tool's own models this card asks for.
+   * ONE field's change, one queued write; the tool row, the point, the binding
+   * and the transcript are untouched. The value must be one the tool named on
+   * this machine (the recorded fact): anything else is refused with one
+   * sentence, because the record may only hold a choice the tool offered.
+   */
+  const setSessionModel = useCallback(
+    (slug: string, model: string | null): Promise<GroundAddResult> => {
+      const session = sessionsRef.current.find((entry) => entry.on === slug);
+      if (session === undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_MISSING_REFUSAL });
+      }
+      if (sessionRunsRef.current[slug] !== undefined) {
+        return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
+      }
+      if (
+        model !== null &&
+        acpRunModelOf(
+          rowFactOf(toolRowFactsRef.current, session.tool)?.models ?? [],
+          model,
+        ) === null
+      ) {
+        return Promise.resolve({ ok: false, message: SESSION_MODEL_REFUSAL });
+      }
+      let outcome: GroundAddResult = {
+        ok: false,
+        message: "nothing was written.",
+      };
+      return queueRef.current
+        .push(async () => {
+          const next = await setSessionModelCard(
+            workspacePath,
+            sessionsRef.current,
+            malformedSessionsRef.current,
+            slug,
+            model,
+          );
+          if (next === null) {
+            outcome = { ok: false, message: SESSION_MISSING_REFUSAL };
+            return;
+          }
+          sessionsRef.current = next;
+          setState(snapshot());
+          outcome = { ok: true };
+        })
+        .then(() => outcome)
+        .catch(() => ({
+          ok: false,
+          message: "cannot write the map folder.",
+        }));
+    },
+    [workspacePath],
+  );
+
+  /**
    * STORY 18.3 — START one session card's run: the row's 18.2 lifecycle starts
    * here, and EVERY progress entry is appended to the transcript the moment it
    * arrives (whole lines, in arrival order), so the card watches the run from
@@ -6394,6 +6527,21 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       if (sessionRunsRef.current[slug] !== undefined) {
         return Promise.resolve({ ok: false, message: SESSION_BUSY_SENTENCE });
       }
+      // STORY 22.5 — THE CARD'S MODEL, RESOLVED AGAINST WHAT THE TOOL NAMED
+      // HERE. The record holds an opaque value; the option id it belongs to
+      // comes from the recorded options (the fact layer). If this machine's
+      // tool has not named that value, there is nothing honest to send, so the
+      // press answers one sentence and starts nothing.
+      const model =
+        session.model === undefined
+          ? undefined
+          : acpRunModelOf(
+              rowFactOf(toolRowFactsRef.current, session.tool)?.models ?? [],
+              session.model,
+            );
+      if (session.model !== undefined && model === null) {
+        return Promise.resolve({ ok: false, message: SESSION_MODEL_REFUSAL });
+      }
       const started = startGatedSessionRun(
         workspacePath,
         {
@@ -6403,6 +6551,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           row: shippedAcpSpec(session.tool),
           readings: readingsRef.current,
           ...(resume === undefined ? {} : { resume }),
+          ...(model === undefined || model === null ? {} : { model }),
         },
         {
           // The view follows each entry as the run reports it. The file is the
@@ -6466,6 +6615,24 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             [slug]: transcript.entries,
           };
           setState(snapshot());
+          // STORY 22.5 — WHAT THE TOOL SAID IT OFFERS IS A FACT ABOUT THIS
+          // MACHINE. A session started, so its answer may name model choices;
+          // they are recorded here, on the run's own ending path, whether the
+          // turn completed or not. The transcript above is untouched, and a
+          // fact this machine cannot keep changes nothing about the run.
+          try {
+            const recorded = await recordSessionModels(
+              session.tool,
+              done.configOptions,
+            );
+            if (recorded !== null) {
+              toolRowFactsRef.current = recorded;
+              setState(snapshot());
+            }
+          } catch {
+            // The tool's offerings are a convenience of the face; failing to
+            // keep them never rewrites the run.
+          }
           // STORY 22.4 — THE RESULT BECOMES A CARD BY ITSELF. The run's ending
           // is the trigger: when the last run left words — completed, or a
           // partial that still holds text — the distil flow runs with NO press,
@@ -6563,6 +6730,23 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
       const row = rowWithFacts(shipped, toolRowFactsRef.current);
       return runRowTest(row)
         .then(async (outcome): Promise<GroundAddResult> => {
+          // STORY 22.5 — THE PROBE STARTED A SESSION, SO ITS ANSWER MAY NAME
+          // THE TOOL'S MODEL CHOICES. They are recorded even when the test
+          // itself fails: they are a fact about the tool, not a verdict on the
+          // probe. `undefined` claims nothing and leaves an earlier list alone.
+          let held = rowFactOf(toolRowFactsRef.current, row.id)?.models;
+          if (outcome.models !== undefined) {
+            try {
+              toolRowFactsRef.current = await patchToolRowModels(
+                row.id,
+                outcome.models,
+              );
+              held = outcome.models.length === 0 ? undefined : outcome.models;
+              setState(snapshot());
+            } catch {
+              // Nothing about the probe's own answer changes.
+            }
+          }
           if (outcome.kind === "untested") {
             // THE STATE STAYS UNTESTED and the config is untouched: the face
             // says the ending's own sentence instead of claiming anything.
@@ -6574,6 +6758,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
               id: row.id,
               verified: true,
               seen: outcome.seen,
+              ...(held === undefined || held.length === 0 ? {} : { models: held }),
             });
           } catch {
             return { ok: false, message: ROW_TEST_SENTENCES.notStored };
@@ -8557,6 +8742,7 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
     bindSessionTool,
     bindSessionProject,
     setSessionBoundary,
+    setSessionModel,
     runSession,
     followUpSession,
     stopSession,

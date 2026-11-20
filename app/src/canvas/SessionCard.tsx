@@ -48,6 +48,7 @@ import {
   acpStatusSentence,
   type AcpRowStatus,
 } from "../turn/acpSpecs";
+import type { AcpModelChoice } from "../turn/acpModels";
 import {
   SETUP_CODE_LABEL,
   SETUP_CODE_PLACEHOLDER,
@@ -79,6 +80,17 @@ const SESSION_PILL_RULES: PillNameRules = {
  */
 export const SESSION_TASK_LABEL = "the task";
 export const SESSION_TASK_PLACEHOLDER = "write the task";
+
+/**
+ * STORY 22.5 — THE MODEL PICKER'S QUIET WORDS (PROVISIONAL). The picker offers
+ * the TOOL's own display names (never a value string) with the tool's default
+ * first; when the tool named no model choice here, the face says one line and
+ * offers no picker at all.
+ */
+export const SESSION_MODEL_LABEL = "the model this run asks for";
+export const SESSION_MODEL_DEFAULT = "the tool's own default";
+export const SESSION_MODEL_OWN_SETTING =
+  "this tool's model is its own setting.";
 
 /**
  * STORY 21.1 — THE FOLLOW-UP'S QUIET FIELD (PROVISIONAL wording). The second
@@ -312,6 +324,8 @@ export function SessionCard({
   toolName,
   declaration,
   toolStatus = null,
+  models = null,
+  onChooseModel,
   onTestRow,
   signIn = null,
   tools = [],
@@ -367,6 +381,20 @@ export function SessionCard({
    * does not ship, and rendered on the EXPANDED face only.
    */
   toolStatus?: AcpRowStatus | null;
+  /**
+   * STORY 22.5 — THE TOOL'S OWN MODEL CHOICES on this machine (PROVISIONAL),
+   * as the fact layer recorded them: the tool's display names beside its opaque
+   * values. Null/absent means the tool named no model choice here (or has not
+   * been asked yet), and the face says one quiet line instead of offering a
+   * picker. Only the expanded face ever shows this.
+   */
+  models?: readonly AcpModelChoice[] | null;
+  /**
+   * STORY 22.5 — RECORD the person's choice, or with null clear it and return
+   * to the tool's own default. The value handed on is the TOOL's own string;
+   * the card never shapes or parses one.
+   */
+  onChooseModel?: (model: string | null) => Promise<GroundAddResult>;
   /**
    * STORY 22.1 — TEST this card's row: ONE tiny task through the same run lane
    * an ordinary run uses, no transcript and no record. A completed turn with
@@ -879,6 +907,25 @@ export function SessionCard({
     if (!result.ok) setProblem(result.message);
   }
 
+  /**
+   * STORY 22.5 — THE MODEL'S ONE WRITE. The option's DOM value is its INDEX in
+   * the recorded list, never the tool's opaque value: the value bytes never
+   * appear in this card's markup, and the choice is read back from the list
+   * this card actually holds. "" is the tool's own default, and it REMOVES the
+   * record's field.
+   */
+  async function usePickedModel(value: string): Promise<void> {
+    if (busy || onChooseModel === undefined || models === null) return;
+    const at = value === "" ? -1 : Number(value);
+    const choice = Number.isInteger(at) && at >= 0 ? models[at] : undefined;
+    if (value !== "" && choice === undefined) return;
+    setBusy(true);
+    setProblem(null);
+    const result = await onChooseModel(choice === undefined ? null : choice.value);
+    setBusy(false);
+    if (!result.ok) setProblem(result.message);
+  }
+
   async function usePickedTool(): Promise<void> {
     if (picked === null || onChooseTool === undefined || busy) return;
     setBusy(true);
@@ -899,6 +946,18 @@ export function SessionCard({
     projectFolder !== null && session.boundary !== undefined
       ? acpScopeDeclaration(projectFolder, session.boundary)
       : null;
+
+  /**
+   * STORY 22.5 — WHICH RECORDED CHOICE THE PICKER SHOWS. The record holds the
+   * tool's opaque value; the select's own values are indices, so the list is
+   * searched for that value's place. A value the tool no longer names has no
+   * place, and the picker shows the tool's default rather than a wrong name.
+   */
+  const selectedModel = (() => {
+    if (session.model === undefined || models === null) return "";
+    const at = models.findIndex((choice) => choice.value === session.model);
+    return at < 0 ? "" : String(at);
+  })();
 
   // STORY 22.1b — THE ADDRESS THE CHILD WANTS OPEN, if its newest line holds
   // one. Only a live child's line is read: an ended sign-in's line belongs to
@@ -1012,6 +1071,37 @@ export function SessionCard({
         <div className="session-card-tool-state">
           {acpStatusSentence(toolStatus)}
         </div>
+      )}
+      {/* STORY 22.5 — THE MODEL, BESIDE THE ROW'S STATE AND ON THE EXPANDED FACE
+          ONLY. When this machine's tool named its model choices, the picker
+          offers them by DISPLAY NAME (the tool's default first, and the tool's
+          opaque values never rendered); the choice is ONE record field, so the
+          next run — and its continuation — asks for it before the turn. When the
+          tool named none, one quiet line says where its model lives instead:
+          with the tool. No picker, no ambient nudge, nothing invented. */}
+      {open && toolName !== null && (
+        models !== null && models.length > 0 && onChooseModel !== undefined ? (
+          <div className="session-card-model-choice">
+            <select
+              className="session-card-pick"
+              aria-label={SESSION_MODEL_LABEL}
+              value={selectedModel}
+              disabled={busy || running}
+              onChange={(e) => void usePickedModel(e.target.value)}
+            >
+              <option value="">{SESSION_MODEL_DEFAULT}</option>
+              {models.map((choice, index) => (
+                <option key={index} value={String(index)}>
+                  {choice.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : models === null ? (
+          <div className="session-card-model-note">
+            {SESSION_MODEL_OWN_SETTING}
+          </div>
+        ) : null
       )}
       {/* STORY 22.1b — THE TOOL'S OWN SIGN-IN, beside the row's state line on
           the EXPANDED face only. While the child is alive: the running line,

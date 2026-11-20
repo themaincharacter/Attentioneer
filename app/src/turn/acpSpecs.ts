@@ -534,6 +534,32 @@ export function acpScopeDeclaration(
 }
 
 /**
+ * STORY 22.5 — WHICH OF ITS MODELS THE TOOL WILL ANSWER ON (PURE, PROVISIONAL
+ * wording). The pre-run declaration gains this one sentence ONLY when the
+ * person chose one of the tool's own models; it names the tool's DISPLAY NAME
+ * and never the value, because the value is an opaque string no person chose to
+ * read. When no choice is recorded the declaration keeps the lines it always
+ * had, so a card that never picked a model says exactly what it said before.
+ */
+export function acpModelDeclaration(name: string): string {
+  return "the tool answers on: " + name;
+}
+
+/**
+ * THE PRE-RUN DECLARATION, WITH THE MODEL WHEN ONE WAS CHOSEN (PURE). The key
+ * sentence is the row's; the model sentence is appended as a second sentence
+ * only when a display name was found, so a card that never chose a model (or
+ * whose recorded value the tool no longer names) says exactly what it did
+ * before this story.
+ */
+export function acpDeclarationWithModel(
+  base: string,
+  modelName: string | null,
+): string {
+  return modelName === null ? base : base + ". " + acpModelDeclaration(modelName);
+}
+
+/**
  * The sentence for a declared key that is not in the store (18.2). The WINDOW
  * says it (it is the side that reads the key store); the sidecar only ever
  * receives values, so it never has to say this.

@@ -284,6 +284,25 @@ export interface RunRequest {
    * lane refuses a resume whose folder is not the run's `cwd`.
    */
   resume?: RunResume;
+  /**
+   * STORY 22.5 — THE MODEL THE CARD'S RECORD ASKS THE TOOL FOR (PROVISIONAL).
+   * The option id and value are the TOOL's own strings: the id names the config
+   * option the person picked from the tool's list, the value is that list's
+   * opaque selection. Absent means no choice was made, and the request keeps
+   * the bytes it always had — the tool answers on its own default.
+   */
+  model?: RunModel;
+}
+
+/**
+ * STORY 22.5 — ONE MODEL CHOICE ON THE WIRE (PROVISIONAL). `optionId` comes from
+ * the options the tool named (the recorded fact), never from a constant here;
+ * `value` is the tool's own string and crosses VERBATIM — this wire never
+ * parses it, so a JSON-encoded value arrives at the sidecar exactly as written.
+ */
+export interface RunModel {
+  optionId: string;
+  value: string;
 }
 
 /**
@@ -438,6 +457,14 @@ export interface RunEndLine {
   run: number;
   ending: AcpEnding;
   sentence: string | null;
+  /**
+   * STORY 22.5 — WHAT THE SESSION STEP SAID THE TOOL OFFERS (PROVISIONAL). The
+   * `configOptions` list the tool's own session answer carried, verbatim, so
+   * the window can record it as a fact about this machine. Absent means the
+   * answer carried no list (nothing is claimed); an empty array is a list that
+   * named no options.
+   */
+  configOptions?: unknown[];
 }
 
 /** What the window may read from the sidecar's stdout. */
@@ -597,7 +624,12 @@ export function runRequestLine(
   tool: RunTool,
   env: Readonly<Record<string, string>>,
   prompt: string,
-  extra: { cwd?: string; scope?: RunScope; resume?: RunResume } = {},
+  extra: {
+    cwd?: string;
+    scope?: RunScope;
+    resume?: RunResume;
+    model?: RunModel;
+  } = {},
 ): string {
   return JSON.stringify({
     id,
@@ -622,6 +654,12 @@ export function runRequestLine(
             cwd: extra.resume.cwd,
           },
         }),
+    // STORY 22.5 — the chosen model rides ONLY when one was chosen, so a card
+    // with none sends exactly the bytes it always did. Both strings are the
+    // tool's own; the value is never inspected here.
+    ...(extra.model === undefined
+      ? {}
+      : { model: { optionId: extra.model.optionId, value: extra.model.value } }),
   });
 }
 
@@ -685,8 +723,16 @@ export function runEndLine(
   run: number,
   ending: AcpEnding,
   sentence: string | null,
+  configOptions?: readonly unknown[],
 ): string {
-  return JSON.stringify({ id, kind: "run-end", run, ending, sentence });
+  return JSON.stringify({
+    id,
+    kind: "run-end",
+    run,
+    ending,
+    sentence,
+    ...(configOptions === undefined ? {} : { configOptions: [...configOptions] }),
+  });
 }
 
 /**
@@ -1199,12 +1245,21 @@ export function parseSidecarLine(raw: string): SidecarLine | null {
     if (value.sentence !== null && typeof value.sentence !== "string") {
       return null;
     }
+    // STORY 22.5 — the options list rides only when the run saw one. It is
+    // carried WHOLE and unread here: the window decides what the tool's own
+    // objects mean, and this wire never repairs a shape it did not expect.
+    if (value.configOptions !== undefined && !Array.isArray(value.configOptions)) {
+      return null;
+    }
     return {
       id: value.id,
       kind: "run-end",
       run: value.run,
       ending: value.ending,
       sentence: value.sentence,
+      ...(value.configOptions === undefined
+        ? {}
+        : { configOptions: value.configOptions }),
     };
   }
   return null;
@@ -1354,6 +1409,17 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
       env[name] = secret;
     }
     if (!isNonEmptyString(value.prompt)) return null;
+    // STORY 22.5 — A MODEL CHOICE CARRIES THE TOOL'S TWO STRINGS AND NOTHING
+    // ELSE. Both must be non-empty; the VALUE is opaque, so this wire never
+    // parses it (a JSON-encoded value is just a string here). A choice without
+    // its option id names no option and is refused rather than repaired.
+    let model: RunModel | undefined;
+    if (value.model !== undefined) {
+      if (!isRecord(value.model)) return null;
+      if (!isNonEmptyString(value.model.optionId)) return null;
+      if (!isNonEmptyString(value.model.value)) return null;
+      model = { optionId: value.model.optionId, value: value.model.value };
+    }
     return {
       id: value.id,
       kind: "run",
@@ -1368,6 +1434,7 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
       ...(value.cwd === undefined ? {} : { cwd: value.cwd }),
       ...(scope === undefined ? {} : { scope }),
       ...(resume === undefined ? {} : { resume }),
+      ...(model === undefined ? {} : { model }),
     };
   }
   if (value.kind !== "turn") return null;

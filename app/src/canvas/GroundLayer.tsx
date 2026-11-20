@@ -74,9 +74,11 @@ import {
 import {
   ACP_SPECS,
   acpDeclaration,
+  acpDeclarationWithModel,
   acpRowLabel,
   acpRowStatus,
 } from "../turn/acpSpecs";
+import { acpModelNameOf } from "../turn/acpModels";
 import {
   rowWithFacts,
   rowFactOf,
@@ -665,6 +667,16 @@ interface GroundLayerProps {
     slug: string,
     boundary: "read" | "write" | null,
   ) => Promise<GroundAddResult>;
+  /**
+   * STORY 22.5 — RECORD (or clear, with null) which of the tool's own models
+   * this card asks for (PROVISIONAL): ONE record field, written by the hook's
+   * one queue. The choices offered are the tool's, read from the per-machine
+   * fact; this layer never invents one.
+   */
+  onChooseSessionModel?: (
+    slug: string,
+    model: string | null,
+  ) => Promise<GroundAddResult>;
   /** STORY 18.4 — each card's PENDING permission ask, as view state. */
   sessionPermission?: Readonly<Record<string, AcpPermissionAsk>>;
   /**
@@ -854,6 +866,7 @@ export function GroundLayer({
   onChooseSessionTool,
   onBindSessionProject,
   onSetSessionBoundary,
+  onChooseSessionModel,
   onAnswerSessionPermission,
   onMakeSessionResult,
   onTestSessionRow,
@@ -1479,6 +1492,16 @@ export function GroundLayer({
           row === null
             ? null
             : acpRowStatus(true, row.verified, rowFact?.seen ?? null);
+        // STORY 22.5 — THE TOOL'S OWN MODEL CHOICES, from the per-machine fact
+        // (never invented here), and the DISPLAY name of the one this record
+        // asks for. A recorded value the tool no longer names has no name, so
+        // the declaration says nothing it cannot stand behind; the run's own
+        // press answers the honest refusal.
+        const modelChoices = rowFact?.models ?? null;
+        const modelName =
+          session.model === undefined || modelChoices === null
+            ? null
+            : acpModelNameOf(modelChoices, session.model);
         // STORY 19.2 — the bound project card's NAME (never a path on the face)
         // and, when the reading really is a folder, the full path the scope
         // declaration says aloud once the person has declared a boundary.
@@ -1522,7 +1545,20 @@ export function GroundLayer({
             projects={sessionProjects}
             // 18.2's declaration for the NEXT run: which key it will receive,
             // by provider ROW, or that it receives none. No key, ever.
-            declaration={row === null ? null : acpDeclaration(row)}
+            // STORY 22.5 — and, when the person picked one of the tool's
+            // models, one more sentence naming it: the declaration says which
+            // model the turn will answer on BEFORE the run starts.
+            declaration={
+              row === null
+                ? null
+                : acpDeclarationWithModel(acpDeclaration(row), modelName)
+            }
+            models={modelChoices}
+            onChooseModel={
+              onChooseSessionModel === undefined
+                ? undefined
+                : (model) => onChooseSessionModel(session.on, model)
+            }
             tools={sessionTools}
             entries={sessionEntries[session.on] ?? []}
             contextCards={contextView.cards}

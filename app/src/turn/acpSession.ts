@@ -2,6 +2,7 @@ import {
   runCancelLine,
   runPermissionReplyLine,
   runRequestLine,
+  type RunModel,
   type RunResume,
   type RunTool,
 } from "./protocol";
@@ -101,6 +102,14 @@ export interface SessionRunWiring {
   /** Every progress entry as it arrives, in order. */
   onEntry?: (entry: AcpProgressEntry) => void;
   /**
+   * STORY 22.5 — THE SESSION STEP'S OWN OPTIONS, when its answer carried a list
+   * (PROVISIONAL). A callback rather than a field on the ending: the ending is
+   * the run's vocabulary and stays exactly what it was, while the tool's
+   * offerings are a fact the caller records. Called once, before the ending
+   * settles.
+   */
+  onOptions?: (configOptions: unknown[]) => void;
+  /**
    * STORY 18.4 — a server's permission request, as it arrives. The person's
    * surface shows it and answers with the handle's `answerPermission`. Nothing
    * answers it here: an unwatched run waits for its budget.
@@ -124,6 +133,12 @@ export interface SessionRunWiring {
    * pair, and the lane refuses it unless the run's cwd IS that folder.
    */
   resume?: RunResume;
+  /**
+   * STORY 22.5 — THE MODEL THIS RUN ASKS FOR (PROVISIONAL). The tool's own
+   * option id and value string, both taken from the recorded options and sent
+   * back verbatim; absent means the run keeps the tool's own default.
+   */
+  model?: RunModel;
 }
 
 /** One counter for the window's runs and their cancels: ids never collide. */
@@ -248,6 +263,16 @@ export function startSessionRun(
         return;
       }
       if (line.kind === "run-end") {
+        // STORY 22.5 — the session step's options reach the window BEFORE the
+        // ending settles, so a caller may record them and still hear the run's
+        // own finish first. An answer with no list says nothing at all.
+        if (line.configOptions !== undefined) {
+          try {
+            wiring.onOptions?.(line.configOptions);
+          } catch {
+            // A caller that cannot keep the fact does not change the ending.
+          }
+        }
         finish(line.ending, line.sentence);
         return;
       }
@@ -274,6 +299,8 @@ export function startSessionRun(
           // STORY 21.1 — the continuation's pair rides ONLY when the card asked
           // for one, so a fresh run's line is the bytes it always was.
           ...(wiring.resume === undefined ? {} : { resume: wiring.resume }),
+          // STORY 22.5 — a chosen model rides ONLY when the card records one.
+          ...(wiring.model === undefined ? {} : { model: wiring.model }),
         }),
       );
     } catch {

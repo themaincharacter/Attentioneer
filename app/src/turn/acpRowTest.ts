@@ -50,6 +50,10 @@ import {
 import type { AcpEnding } from "./acpEntries";
 import type { AcpRowSeen, AcpSpec } from "./acpSpecs";
 import { rowSeenOf } from "./acpRowStore";
+import {
+  acpModelChoicesOfAnswer,
+  type AcpModelChoice,
+} from "./acpModels";
 
 /** The one tiny task a row test asks (PROVISIONAL). */
 export const ROW_TEST_PROMPT =
@@ -75,10 +79,26 @@ export const ROW_TEST_SENTENCES = {
     "the test answered, but this machine could not keep the result, so the row is still untested here.",
 } as const;
 
+/**
+ * STORY 22.5 — WHAT THE TEST'S SESSION STEP NAMED (PROVISIONAL). A probe starts
+ * a session like any run, so its answer carries the tool's options; the caller
+ * records the model choices beside the test's fact. `null` means the answer
+ * carried no options list at all and nothing is claimed; `[]` means it carried
+ * one and named no model option, so a stale picker goes away.
+ */
 /** How one test settled: what it saw, or the sentence the face says instead. */
 export type RowTestOutcome =
-  | { kind: "tested"; seen: AcpRowSeen }
-  | { kind: "untested"; ending: AcpEnding; sentence: string };
+  | {
+      kind: "tested";
+      seen: AcpRowSeen;
+      models?: AcpModelChoice[];
+    }
+  | {
+      kind: "untested";
+      ending: AcpEnding;
+      sentence: string;
+      models?: AcpModelChoice[];
+    };
 
 /**
  * THE ROW AS THE TEST RUN SEES IT (PURE): the shipped row with one field
@@ -100,6 +120,12 @@ export async function runRowTest(
   wiring: SessionRunWiring = {},
 ): Promise<RowTestOutcome> {
   let answer = "";
+  /**
+   * STORY 22.5 — WHAT THE PROBE'S SESSION STEP NAMED (PROVISIONAL). The seam
+   * hands the tool's own options over through a callback, so the ending's shape
+   * is untouched and only the tool's offerings are kept.
+   */
+  let answeredOptions: unknown[] | undefined;
   // The ask can only arrive after the run has asked for its key and started
   // the child — both awaited inside the seam — so this cell is filled before
   // the seam could ever call back into it.
@@ -119,6 +145,9 @@ export async function runRowTest(
     onPermission: (ask) => {
       probe.handle?.answerPermission(ask.id, "refuse");
     },
+    onOptions: (configOptions) => {
+      answeredOptions = configOptions;
+    },
     // The words are collected here and NOWHERE else: a test has no transcript.
     onEntry: (entry) => {
       if (entry.kind === "update" && entry.updateKind === "agent_message_chunk") {
@@ -128,13 +157,24 @@ export async function runRowTest(
   });
   probe.handle = handle;
   const ended = await handle.ended;
+  // STORY 22.5 — the session step's own options travel with whatever ending the
+  // test reached; the caller stores them as the tool's offering on this machine
+  // and nothing about the test's own verdict changes.
+  const models = acpModelChoicesOfAnswer(answeredOptions);
   if (ended.ending === "completed") {
     const seen = rowSeenOf(answer);
-    if (seen.line !== "") return { kind: "tested", seen };
+    if (seen.line !== "") {
+      return {
+        kind: "tested",
+        seen,
+        ...(models === null ? {} : { models }),
+      };
+    }
     return {
       kind: "untested",
       ending: ended.ending,
       sentence: ROW_TEST_SENTENCES.empty,
+      ...(models === null ? {} : { models }),
     };
   }
   if (ended.ending === "stopped") {
@@ -142,11 +182,13 @@ export async function runRowTest(
       kind: "untested",
       ending: ended.ending,
       sentence: ROW_TEST_SENTENCES.stopped,
+      ...(models === null ? {} : { models }),
     };
   }
   return {
     kind: "untested",
     ending: ended.ending,
     sentence: ended.sentence ?? ROW_TEST_SENTENCES.noAnswer,
+    ...(models === null ? {} : { models }),
   };
 }

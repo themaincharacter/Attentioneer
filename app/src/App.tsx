@@ -4698,6 +4698,9 @@ function App() {
                without one the card runs exactly as it always has. */
             onBindSessionProject={ground.bindSessionProject}
             onSetSessionBoundary={ground.setSessionBoundary}
+            /* STORY 22.5 — the tool names its models and the person picks one:
+               ONE record field, written the moment a choice is made. */
+            onChooseSessionModel={ground.setSessionModel}
             /* STORY 18.5 — a session card is removable through the same one
                toast every other card uses (immediate delete + Restore). */
             onRemoveSession={ground.removeSession}

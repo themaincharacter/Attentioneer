@@ -326,6 +326,10 @@ export function createRunLane(options: RunLaneOptions): RunLane {
       // STORY 21.1 — the run continues the session the request named, in the
       // folder just checked; the lifecycle is otherwise the same one process.
       ...(request.resume === undefined ? {} : { resume: request.resume }),
+      // STORY 22.5 — the chosen model rides through to the run, which speaks
+      // the protocol's selection call after the session step. Both strings are
+      // the tool's own; the lane reads neither.
+      ...(request.model === undefined ? {} : { model: request.model }),
     });
     const entry: LiveRun = {
       id: request.id,
@@ -344,7 +348,15 @@ export function createRunLane(options: RunLaneOptions): RunLane {
       entry.permission.current = null;
       waiting?.resolve({ optionId: null });
       options.say(
-        runEndLine(request.id, request.run, result.ending, result.sentence),
+        runEndLine(
+          request.id,
+          request.run,
+          result.ending,
+          result.sentence,
+          // STORY 22.5 — the session step's own options come down with the
+          // ending so the window can record what this machine's tool offers.
+          result.configOptions ?? undefined,
+        ),
       );
     });
   };

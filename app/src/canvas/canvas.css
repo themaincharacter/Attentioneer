@@ -8330,6 +8330,24 @@ body {
   flex-wrap: wrap;
 }
 
+/* STORY 22.5 — THE MODEL, beside the row's state line on the expanded face
+   only. The select is the card's shared pick shape; the quiet line is the same
+   italic aside the row's state uses, so a tool that keeps its model to itself
+   says so without a second visual language. */
+.session-card-model-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.session-card-model-note {
+  font-size: 10.5px;
+  line-height: 1.4;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
 .session-card-bound-hint {
   font-size: 10.5px;
   line-height: 1.4;

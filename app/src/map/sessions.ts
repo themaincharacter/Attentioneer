@@ -16,6 +16,7 @@ import { SESSION_RECORD_FILE, SESSION_TRANSCRIPTS_DIR, mapDir } from "./records"
  *
  *   on: <slug> | name: <the person's words> | x: <int> | y: <int> | tool: <row-id>
  *     [| project: <project-card-slug>] [| boundary: read|write]
+ *     [| model: <the tool's own opaque value>]
  *
  * STORY 19.2 — A CARD MAY BE BOUND TO A PROJECT AND DECLARE A BOUNDARY
  * (PROVISIONAL). Both fields are OPTIONAL and sit at the line's tail, so an old
@@ -27,6 +28,14 @@ import { SESSION_RECORD_FILE, SESSION_TRANSCRIPTS_DIR, mapDir } from "./records"
  * is the person's declaration of what a run of this card may do in that folder;
  * absent means "not declared", which behaves exactly as a card with no binding:
  * a fresh temp folder, and every ask reaches the person.
+ *
+ * STORY 22.5 — A CARD MAY RECORD WHICH MODEL IT ASKS FOR (PROVISIONAL). The
+ * field is the TOOL's own opaque value string (one observed value was a
+ * JSON-encoded array), chosen from the choices the tool named; it is the line's
+ * LAST optional tail field, so a line without it is exactly the bytes it always
+ * was and every older line parses unchanged. Absent means the tool's own
+ * default. The value is opaque: this record stores it, compares it and writes
+ * it back byte-for-byte — it is never parsed here.
  *
  *   map/sessions/<slug>.jsonl   one JSON line per progress entry, in ARRIVAL ORDER
  *
@@ -143,6 +152,14 @@ export interface SessionCard {
    * folder is made, and every ask reaches the person.
    */
   boundary?: "read" | "write";
+  /**
+   * STORY 22.5 — WHICH OF THE TOOL'S MODELS THIS CARD ASKS FOR (PROVISIONAL).
+   * The tool's own value string, opaque and stored verbatim; it came from the
+   * options the tool named on this machine (the fact layer), never from a list
+   * this app invented. Absent means the tool's own default, and an absent field
+   * writes no bytes.
+   */
+  model?: string;
 }
 
 /** A read of `map/sessions.txt`: what parsed, and what is kept but unreadable. */
@@ -279,7 +296,7 @@ export function sessionTranscriptPath(
  * line are the same bytes they always were.
  */
 const SESSION_LINE =
-  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+) \| tool: (\S+)(?: \| project: (\S+))?(?: \| boundary: (read|write))?$/;
+  /^on: (\S+) \| name: (.+) \| x: (-?\d+) \| y: (-?\d+) \| tool: (\S+)(?: \| project: (\S+))?(?: \| boundary: (read|write))?(?: \| model: (.+))?$/;
 
 /**
  * Parse one line. Anything out of shape — a missing key, a decimal coordinate,
@@ -294,12 +311,15 @@ const SESSION_LINE =
 export function parseSessionLine(line: string): SessionCard | null {
   const match = SESSION_LINE.exec(line);
   if (!match) return null;
-  const [, on, name, x, y, tool, project, boundary] = match;
+  const [, on, name, x, y, tool, project, boundary, model] = match;
   if (on === "" || name.trim() === "" || tool === "") return null;
   if (project === undefined && boundary !== undefined) return null;
   const card: SessionCard = { on, name, x: Number(x), y: Number(y), tool };
   if (project !== undefined) card.project = project;
   if (boundary === "read" || boundary === "write") card.boundary = boundary;
+  // STORY 22.5 — the model's value is OPAQUE, so it is kept exactly as the
+  // line held it: spaces included, and no trimming beyond the field's edges.
+  if (model !== undefined && model !== "") card.model = model;
   return card;
 }
 
@@ -308,6 +328,9 @@ export function serializeSessionLine(session: SessionCard): string {
   let line = `on: ${session.on} | name: ${session.name} | x: ${session.x} | y: ${session.y} | tool: ${session.tool}`;
   if (session.project !== undefined) line += " | project: " + session.project;
   if (session.boundary !== undefined) line += " | boundary: " + session.boundary;
+  // STORY 22.5 — emitted ONLY when the card records one, so clearing it (the
+  // tool's own default) returns the line to exactly its old bytes.
+  if (session.model !== undefined) line += " | model: " + session.model;
   return line;
 }
 
@@ -955,6 +978,9 @@ export function bindSessionProject(
       next.project = project;
       if (session.boundary !== undefined) next.boundary = session.boundary;
     }
+    // STORY 22.5 — the model is not a statement about the folder, so a binding
+    // change leaves it exactly where it was.
+    if (session.model !== undefined) next.model = session.model;
     return next;
   });
 }
@@ -987,6 +1013,43 @@ export function bindSessionBoundary(
     };
     if (session.project !== undefined) next.project = session.project;
     if (boundary !== null) next.boundary = boundary;
+    // STORY 22.5 — a boundary says what a run may do; the model says which one
+    // answers. Neither erases the other.
+    if (session.model !== undefined) next.model = session.model;
+    return next;
+  });
+}
+
+/**
+ * STORY 22.5 — RECORD WHICH OF THE TOOL'S MODELS THIS CARD ASKS FOR
+ * (PROVISIONAL): ONE field's change, or its removal when the person picks the
+ * tool's own default (`null`). The value is the tool's own string, stored
+ * VERBATIM — this writer never parses it, so whatever the tool named is what
+ * the next run sends back. PURE: the caller writes the file once.
+ *
+ * A model is not a statement about a folder or a tool row, so the binding, the
+ * boundary, the point and the transcript are untouched. Clearing is a real
+ * change: the field goes away and the line returns to the bytes it had before
+ * any model was chosen.
+ */
+export function bindSessionModel(
+  sessions: readonly SessionCard[],
+  slug: string,
+  model: string | null,
+): SessionCard[] | null {
+  if (!sessions.some((session) => session.on === slug)) return null;
+  return sessions.map((session) => {
+    if (session.on !== slug) return session;
+    const next: SessionCard = {
+      on: session.on,
+      name: session.name,
+      x: session.x,
+      y: session.y,
+      tool: session.tool,
+    };
+    if (session.project !== undefined) next.project = session.project;
+    if (session.boundary !== undefined) next.boundary = session.boundary;
+    if (model !== null && model !== "") next.model = model;
     return next;
   });
 }
@@ -1292,6 +1355,17 @@ export const SESSION_RESUME_REFUSALS = {
  */
 export const SESSION_RESUME_OTHER_FOLDER =
   "this session cannot be continued: this card is now bound to a different folder.";
+
+/**
+ * STORY 22.5 — THE MODEL THIS CARD RECORDS IS NOT ONE THE TOOL NAMED
+ * (PROVISIONAL). A model value is only meaningful against the list the tool
+ * itself stated; if this machine's tool has not named the recorded value (or
+ * has named a different set since), there is nothing honest to send, so the
+ * press answers one sentence and starts nothing rather than running on a model
+ * nobody chose. It says what is absent, and claims nothing more.
+ */
+export const SESSION_MODEL_REFUSAL =
+  "the model this card records is not one the tool has named here, so the run was not started";
 
 /**
  * The one sentence a result that is not there answers (PROVISIONAL). Nothing is

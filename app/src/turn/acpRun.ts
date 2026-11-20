@@ -41,6 +41,16 @@
  * is one ordinary spawn that happens to reach an existing memory. A resume
  * whose cwd is absent or is another folder is refused BEFORE any spawn.
  *
+ * STORY 22.5 — THE RUN MAY ASK FOR A MODEL THE PERSON PICKED (PROVISIONAL).
+ * The card's record may carry one of the tool's own model VALUES (`model`),
+ * and the tool's own option id comes with it from the recorded options. When
+ * it does, the run speaks `session/set_config_option` AFTER the session step
+ * (new or resumed) and BEFORE the prompt, so the turn answers on the chosen
+ * model rather than the tool's default. A set the tool refuses ends the run
+ * with the tool's own sentence: a failed choice never becomes a quiet default.
+ * The session step's `configOptions` come back with the result, verbatim, so
+ * the caller can record what this machine's tool offers.
+ *
  * 18.3b: WHERE THIS FILE RUNS NOW. Story 18.3 proved the card under Bun and
  * then could not run it in the shipped app: this module needs `node:fs` and a
  * spawner, and the window is a WebView with neither, so pressing RUN there was
@@ -226,6 +236,16 @@ export interface AcpRunResult {
   declaration: string;
   /** The child's exit code once it was killed and reaped; null if never spawned. */
   childExitCode: number | null;
+  /**
+   * STORY 22.5 — THE SESSION STEP'S OWN OPTIONS, AS THEY ARRIVED
+   * (PROVISIONAL). `session/new` and `session/resume` both answer with the
+   * tool's `configOptions`; the run keeps that list so the caller can record
+   * what the tool offers on this machine. It is the answer VERBATIM, never
+   * interpreted here — the caller reads the model option out of it. `null` means
+   * the answer carried no list at all; a run that never reached its session
+   * step also has null.
+   */
+  configOptions: unknown[] | null;
 }
 
 /** The caller's side of a run: watch, stop, close. */
@@ -298,6 +318,16 @@ export interface AcpRunOptions {
    * the child lives and dies.
    */
   resume?: { sessionId: string; cwd: string };
+  /**
+   * STORY 22.5 — THE MODEL THE CARD'S RECORD ASKS FOR (PROVISIONAL). The pair is
+   * the TOOL's: the id of the config option a person picked from the tool's own
+   * list, and that list's value string. The id came from the recorded options
+   * (the fact layer) — this run never hard-codes one — and the value is opaque,
+   * so it rides to the server untouched. The set is spoken AFTER the session
+   * step (the option only exists on a session) and BEFORE the prompt, so the
+   * turn answers on the chosen model rather than the tool's default.
+   */
+  model?: { optionId: string; value: string };
   /** Shorten the row's budget (a caller's own deadline; tests use it too). */
   timeoutMs?: number;
   /**
@@ -484,6 +514,12 @@ export function startAcpRun(
   let directory: string | null = null;
   let childExitCode: number | null = null;
   let answerText = "";
+  /**
+   * STORY 22.5 — WHAT THE SESSION STEP ANSWERED ABOUT THE TOOL'S OPTIONS
+   * (PROVISIONAL). Filled once, from `session/new` or `session/resume`, and
+   * handed back with the result; the caller records what the tool offers.
+   */
+  let sessionConfigOptions: unknown[] | null = null;
   let cancelled = false;
   let timedOut = false;
   let settled = false;
@@ -572,6 +608,7 @@ export function startAcpRun(
       directory,
       declaration,
       childExitCode,
+      configOptions: sessionConfigOptions,
     });
   }
 
@@ -833,6 +870,12 @@ export function startAcpRun(
               made,
             );
       createdSession = session.sessionId;
+      // STORY 22.5 — THE ANSWER'S OWN OPTIONS ARE KEPT VERBATIM. The session
+      // step is where the tool says which models and settings it offers; the
+      // run hands that list back rather than interpreting it, so the fact layer
+      // records the tool's words and the card picks from them.
+      sessionConfigOptions =
+        session.configOptions === undefined ? null : session.configOptions;
     } catch (error) {
       await finishFromFailure(error);
       return;
@@ -843,6 +886,27 @@ export function startAcpRun(
     // keeps the pair a later continuation needs. Same entry kind, same place in
     // the stream; the folder is what makes it resumable.
     emit({ kind: "session", sessionId, cwd: made });
+
+    // STORY 22.5 — THE MODEL IS CHOSEN BEFORE THE TURN, NEVER AFTER. The option
+    // exists only on a session, so this speaks after the session step and
+    // before the prompt; a resume takes the same road, because a continued
+    // conversation must answer on the model the card records. The id and the
+    // value are the tool's own strings, sent unchanged. A refusal is the
+    // server's own sentence and ENDS the run: nothing pretends the model
+    // changed, and no prompt is sent on a model nobody chose.
+    if (options.model !== undefined) {
+      try {
+        await transport.setConfigOption(
+          sessionId,
+          options.model.optionId,
+          options.model.value,
+        );
+      } catch (error) {
+        await finishFromFailure(error);
+        return;
+      }
+      if (settled) return;
+    }
 
     try {
       // STORY 22.2 — THE TURN IS WAITED FOR WITH THE RUN'S OWN BUDGET. The

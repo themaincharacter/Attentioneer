@@ -50,6 +50,17 @@
  *                 code the page showed), confirms it with a SHA-256 digest (so
  *                 the bytes that arrived are proven WITHOUT printing them back)
  *                 and exits zero. It is what the setup lane is proven against.
+ *   models        STORY 22.5: the resume family, except every session answer
+ *                 also carries the tool's own `configOptions` (a model select
+ *                 with GROUPED options and an opaque JSON-encoded value, plus
+ *                 one other category the client must ignore). `session/
+ *                 set_config_option` is answered with the same options and
+ *                 every request is logged, in order, to `<report>.calls`, so a
+ *                 test can prove the set is spoken BEFORE the prompt and that
+ *                 the value arrived byte-for-byte.
+ *   models-fail   STORY 22.5: the same, except `session/set_config_option` is
+ *                 refused with the server's own one-sentence error, so a run
+ *                 that cannot get the model it asked for must say so.
  *   resume        STORY 21.1: a session family with a STORE that outlives the
  *                 process (a small JSON file beside the report). session/new
  *                 makes a numbered id and records the exact cwd; session/resume
@@ -113,6 +124,51 @@ const storePath =
     : reportPath === null
       ? null
       : reportPath + ".store";
+
+/**
+ * STORY 22.5 — THE TOOL'S OWN OPTIONS, as one real session answered them: a
+ * model select whose values are OPAQUE strings (one looks like a JSON array, on
+ * purpose), grouped under display names, beside another category the client
+ * must not mistake for a model. The names are the fixture's, never a product's.
+ */
+const MODEL_FAST = '["route-a","fast"]';
+const MODEL_SLOW = '["route-a","slow"]';
+const MODEL_OPTIONS = [
+  {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue: MODEL_FAST,
+    options: [
+      {
+        group: "route-a",
+        name: "Route A",
+        options: [{ value: MODEL_FAST, name: "Fast" }],
+      },
+      {
+        group: "route-b",
+        name: "Route B",
+        options: [
+          { value: MODEL_SLOW, name: "Slow" },
+          { value: '["route-b","pro"]', name: "Pro" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "reasoning_effort",
+    name: "Reasoning effort",
+    category: "thought_level",
+    type: "select",
+    currentValue: "high",
+    options: [{ value: "off", name: "Off" }, { value: "high", name: "High" }],
+  },
+];
+
+/** The modes that answer sessions from the store, and the ones that name models. */
+const STORED_FAMILY = mode === "resume" || mode === "models" || mode === "models-fail";
+const NAMES_MODELS = mode === "models" || mode === "models-fail";
 
 function loadSessions(): StoredSessions {
   if (storePath === null) return { next: 1, sessions: {} };
@@ -427,8 +483,29 @@ function cancel(): void {
   for (const waiter of active.cancelWaiters.splice(0)) waiter();
 }
 
+/**
+ * STORY 22.5 — THE REQUEST LOG, IN ARRIVAL ORDER. A test needs to prove the
+ * selection call is spoken BEFORE the prompt and that the exact value bytes
+ * arrived; this writes each request method and its params to
+ * `<report>.calls` (one JSON line each) for the model modes only.
+ */
+const calls: { method: string; params: unknown }[] = [];
+
+function recordCall(method: string, params: unknown): void {
+  if (!NAMES_MODELS || reportPath === null) return;
+  calls.push({ method, params });
+  try {
+    writeFileSync(reportPath + ".calls", JSON.stringify(calls));
+  } catch {
+    // A test that cannot read the log says so; the protocol is unaffected.
+  }
+}
+
 function handle(message: Record<string, unknown>): void {
   if (mode === "silent") return;
+  if (typeof message.method === "string") {
+    recordCall(message.method, message.params);
+  }
 
   // A response to the fake server's permission request: an answer, not a call.
   if (message.method === undefined && typeof message.id === "number") {
@@ -453,7 +530,7 @@ function handle(message: Record<string, unknown>): void {
     return;
   }
   if (message.method === "session/new") {
-    if (mode === "resume") {
+    if (STORED_FAMILY) {
       // A fresh session in the family's store: a numbered id and the folder it
       // was recorded in. The next spawn finds it by exactly that pair.
       const params = isRecord(message.params) ? message.params : {};
@@ -463,7 +540,10 @@ function handle(message: Record<string, unknown>): void {
       stored.sessions[created] = { cwd, prompts: [] };
       saveSessions();
       sessionId = created;
-      respond(message.id as number, { sessionId: created, configOptions: [] });
+      respond(message.id as number, {
+        sessionId: created,
+        configOptions: NAMES_MODELS ? MODEL_OPTIONS : [],
+      });
       return;
     }
     sessionId = "fake-session";
@@ -494,7 +574,23 @@ function handle(message: Record<string, unknown>): void {
       return;
     }
     sessionId = wanted;
-    respond(message.id as number, { sessionId: wanted });
+    // STORY 22.5 — a resume answer carries the same options the new answer did,
+    // so a continuation can be asked for a model too.
+    respond(message.id as number, {
+      sessionId: wanted,
+      ...(NAMES_MODELS ? { configOptions: MODEL_OPTIONS } : {}),
+    });
+    return;
+  }
+  if (message.method === "session/set_config_option") {
+    // STORY 22.5 — the protocol's own selection call. The failure mode is the
+    // server's one-sentence refusal, which the client must carry as the run's
+    // ending rather than ignore.
+    if (mode === "models-fail") {
+      fail(message.id as number, -32602, "the tool has no such model here");
+      return;
+    }
+    respond(message.id as number, { configOptions: MODEL_OPTIONS });
     return;
   }
   if (message.method === "session/prompt") {
@@ -510,7 +606,7 @@ function handle(message: Record<string, unknown>): void {
       );
       return;
     }
-    if (mode === "resume") {
+    if (STORED_FAMILY) {
       const params = isRecord(message.params) ? message.params : {};
       const prompt = Array.isArray(params.prompt) ? params.prompt : [];
       const first = prompt[0];

@@ -7,7 +7,8 @@
  * this row" and what came back — and a fact belongs in the config file, not in
  * the row data.
  *
- * WHAT IS STORED: an array of `{ id, verified, seen }` facts and NOTHING
+ * WHAT IS STORED: an array of `{ id, verified, seen }` facts — plus, since
+ * story 22.5, the optional `models` list a session's answer named. NOTHING
  * else. `seen` is the ISO date of the test and the FIRST LINE of what it
  * answered, clipped (turn/acpSpecs.ts's `acpSeenLine`). A test that fails
  * writes nothing at all: the state stays untested, and no half-fact is left
@@ -26,7 +27,15 @@
  * (a name, a command, anything a row once carried) can never ride into the
  * file; a row's facts are exactly id, verified and seen.
  *
- * PROVISIONAL: the config key's name, the array shape, and the clip length.
+ * STORY 22.5 — THE TOOL'S MODEL CHOICES ARE A FACT TOO (PROVISIONAL). A
+ * session's answer states the options the tool offers; one of them may be its
+ * model select, whose choices are what the card's picker offers. That list is
+ * captured whenever a session starts (a run or the test probe) and written
+ * through its OWN patch (`patchToolRowModels`), so recording it can never
+ * claim a test or change what a test saw.
+ *
+ * PROVISIONAL: the config key's name, the array shape, the clip length and the
+ * `models` list's fields.
  */
 
 import { loadAppConfig, saveAppConfig, type AppConfig } from "../lib/appConfig";
@@ -35,6 +44,11 @@ import {
   type AcpRowSeen,
   type AcpSpec,
 } from "./acpSpecs";
+import {
+  acpModelChoicesOfAnswer,
+  readAcpModelChoiceList,
+  type AcpModelChoice,
+} from "./acpModels";
 
 /** The config key the tool-row facts live under. */
 export const TOOL_ROWS_CONFIG_KEY = "toolRows";
@@ -51,6 +65,16 @@ export interface AcpRowFact {
   verified: boolean;
   /** What that test answered, or null when no test has passed here. */
   seen: AcpRowSeen | null;
+  /**
+   * STORY 22.5 — WHAT THIS MACHINE'S TOOL SAID IT OFFERS (PROVISIONAL). The
+   * tool's own model choices, captured from the options a session answer
+   * carried (`session/new` or `session/resume`, a run or the test probe): each
+   * keeps the option's id, the tool's display name and its opaque value. It is
+   * a fact about this machine's tool, NOT map content; absent means nothing was
+   * captured, which the card says as one quiet line. An EMPTY list is not
+   * stored: the field goes away, and the card is back to that quiet line.
+   */
+  models?: AcpModelChoice[];
 }
 
 /**
@@ -90,7 +114,13 @@ function readFact(value: unknown): AcpRowFact | null {
   }
   // Only `true` is a yes; anything else (a string "true", a number, absent)
   // reads as the honest false.
-  return { id, verified: value.verified === true, seen };
+  const fact: AcpRowFact = { id, verified: value.verified === true, seen };
+  // STORY 22.5 — the tool's own offerings, built field by field like the rest.
+  // A list that reads as empty is the field's ABSENCE, so a stale picker cannot
+  // outlive the tool that named it.
+  const models = readAcpModelChoiceList(value.models);
+  if (models.length > 0) fact.models = models;
+  return fact;
 }
 
 /**
@@ -188,6 +218,61 @@ export async function saveToolRowFacts(
   const stored = storedToolRowFacts(facts);
   await io.save({ [TOOL_ROWS_CONFIG_KEY]: stored });
   return stored;
+}
+
+/**
+ * STORY 22.5 — THE TOOL'S OWN OPTIONS PATCHED INTO ONE ROW'S FACT
+ * (PROVISIONAL). Called whenever a session starts and its answer named a model
+ * option (a run, or the test probe). It touches ONLY `models`: the row's
+ * tested mark and what a test saw stay exactly as they were, because a run is
+ * not a test and never claims one. An EMPTY list removes the field, so a tool
+ * that stopped naming a model stops having a picker. This is a fact about this
+ * machine's tool, never map content.
+ */
+export async function patchToolRowModels(
+  id: string,
+  models: readonly AcpModelChoice[],
+  io: ToolRowStoreIo = TOOL_ROW_STORE_IO,
+): Promise<AcpRowFact[]> {
+  const trimmed = id.trim();
+  if (trimmed === "") return loadToolRowFacts(io);
+  const current = await loadToolRowFacts(io);
+  const existing = rowFactOf(current, trimmed);
+  const fact: AcpRowFact = {
+    id: trimmed,
+    verified: existing?.verified ?? false,
+    seen: existing?.seen ?? null,
+  };
+  const choices = readAcpModelChoiceList(models);
+  if (choices.length > 0) fact.models = choices;
+  const next = storedToolRowFacts([fact]);
+  const stored = next[0];
+  if (stored === undefined) return current;
+  const at = current.findIndex((entry) => entry.id === stored.id);
+  const nextFacts =
+    at < 0
+      ? [...current, stored]
+      : current.map((entry, index) => (index === at ? stored : entry));
+  return saveToolRowFacts(nextFacts, io);
+}
+
+/**
+ * STORY 22.5 — RECORD WHAT ONE SESSION ANSWER NAMED, WHEN IT NAMED ANYTHING
+ * (PROVISIONAL). A run and the test probe both start a session, so both hand
+ * its answer here. The answer's absence claims nothing and writes nothing (an
+ * earlier list stands); a list that named a model choice is stored; a list that
+ * named none REMOVES an earlier list, because the tool no longer offers that
+ * choice here. `null` is "nothing was written"; otherwise this is the fact list
+ * the caller's own view should keep.
+ */
+export async function recordSessionModels(
+  id: string,
+  configOptions: unknown[] | undefined,
+  io: ToolRowStoreIo = TOOL_ROW_STORE_IO,
+): Promise<AcpRowFact[] | null> {
+  const models = acpModelChoicesOfAnswer(configOptions);
+  if (models === null) return null;
+  return patchToolRowModels(id, models, io);
 }
 
 /**
