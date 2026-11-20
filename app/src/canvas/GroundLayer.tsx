@@ -807,6 +807,14 @@ interface GroundLayerProps {
    */
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
   /**
+   * STORY 20.3 — the plane's own pointer-to-world conversion and the create
+   * bubble a wire drag released on empty paper asks for (the one seam in
+   * canvas/linkDrag.ts). Optional so a render test needs no plane and no
+   * bubble; the app always passes both.
+   */
+  toWorld?: (clientX: number, clientY: number) => Point | null;
+  onCreateFromLink?: (from: string, at: Point) => void;
+  /**
    * STORY 17.9 — every readable ground link, in FILE ORDER. An ask card's
    * context is the links whose TARGET is that card; the records arrive loaded,
    * and nothing here writes or repairs a wire.
@@ -911,6 +919,8 @@ export function GroundLayer({
   onPull,
   onDismissPull,
   onLink,
+  toWorld,
+  onCreateFromLink,
   links = [],
   workspacePath = "",
   onNarrate,
@@ -1342,6 +1352,8 @@ export function GroundLayer({
           onPull={onPull}
           onDismissPull={onDismissPull}
           onLink={onLink}
+          toWorld={toWorld}
+          onCreateFromLink={onCreateFromLink}
           workspacePath={workspacePath}
           onNarrate={onNarrate}
           previewLines={previewLines}
@@ -1482,6 +1494,8 @@ export function GroundLayer({
                 : (x, y) => onMoveAsk(ask.on, x, y)
             }
             onLink={onLink}
+            toWorld={toWorld}
+            onCreateFromLink={onCreateFromLink}
             interactionMode={interactionMode}
             onNarrate={onNarrate}
             drag={drag}
@@ -1713,6 +1727,8 @@ export function GroundLayer({
                 : (x, y) => onMoveSession(session.on, x, y)
             }
             onLink={onLink}
+            toWorld={toWorld}
+            onCreateFromLink={onCreateFromLink}
             interactionMode={interactionMode}
             onNarrate={onNarrate}
             drag={drag}
@@ -1821,6 +1837,8 @@ function GroundCard({
   onPull,
   onDismissPull,
   onLink,
+  toWorld,
+  onCreateFromLink,
   workspacePath,
   onNarrate,
   previewLines,
@@ -1899,6 +1917,9 @@ function GroundCard({
   onPull?: (on: string) => Promise<GroundAddResult>;
   onDismissPull?: (on: string) => void;
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
+  /** STORY 20.3: the plane conversion and the hooked-create opener (see linkDrag.ts). */
+  toWorld?: (clientX: number, clientY: number) => Point | null;
+  onCreateFromLink?: (from: string, at: Point) => void;
   /**
    * The workspace root, for the ONE cross-map read (story 16.7) and the
    * image's own file (story 16.15). The ask card reads its own source through
@@ -1997,6 +2018,8 @@ function GroundCard({
         interactionMode,
         onLink,
         onNarrate,
+        toWorld,
+        onCreateFromLink,
       });
     }
     el.addEventListener("mousedown", handleLinkPress);

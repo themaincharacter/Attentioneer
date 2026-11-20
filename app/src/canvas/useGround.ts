@@ -470,6 +470,8 @@ export type GroundAddResult =
       /**
        * STORY 17.5 — the slug of the card a FORK just made, so the layer can
        * open it (a fork opens its new card). Absent on every other move.
+       * STORY 20.3 — every creation the bubble can make reports it too, so a
+       * wire drag released on empty plane can wire exactly what it made.
        */
       created?: string;
       /**
@@ -5035,7 +5037,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
           };
           statesRef.current = states;
           setState(snapshot());
-          outcome = { ok: true };
+          // STORY 20.3: the new slug comes back for a hooked creation's wire.
+          outcome = { ok: true, created: addition.reference.on };
           // Story 16.10: the card appeared and its source was read — one
           // authored move, two lines, no content (the form and size only).
           queueHistory(() => {
@@ -5115,7 +5118,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             [written.reference.on]: "current" as ReadingState,
           };
           setState(snapshot());
-          outcome = { ok: true };
+          // STORY 20.3: the new slug comes back for a hooked creation's wire.
+          outcome = { ok: true, created: written.reference.on };
           // One structural event, like any card: a project card took no
           // reading, so no reading.take line is invented for it.
           queueHistory(() => [
@@ -5207,7 +5211,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             [written.reading.on]: "current" as ReadingState,
           };
           setState(snapshot());
-          outcome = { ok: true };
+          // STORY 20.3: the new slug comes back for a hooked creation's wire.
+          outcome = { ok: true, created: written.reading.on };
           // Story 16.10: the card appeared and its page was read — the form and
           // the move, never the address, the title or a word of the text.
           queueHistory(() => {
@@ -5294,7 +5299,8 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
             [written.reading.on]: "current" as ReadingState,
           };
           setState(snapshot());
-          outcome = { ok: true };
+          // STORY 20.3: the new slug comes back for a hooked creation's wire.
+          outcome = { ok: true, created: written.reading.on };
           // Story 16.10: the card appeared and its look was read — the form and
           // the move, never the address, the title or a word of any text.
           queueHistory(() => {

@@ -512,6 +512,8 @@ export function AskCard({
   onRemove,
   onMove,
   onLink,
+  toWorld,
+  onCreateFromLink,
   zoom = 1,
   autoAsk,
   onAutoAsked,
@@ -668,6 +670,9 @@ export function AskCard({
    * layer.
    */
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
+  /** STORY 20.3: the plane conversion and the hooked-create opener (linkDrag.ts). */
+  toWorld?: (clientX: number, clientY: number) => Point | null;
+  onCreateFromLink?: (from: string, at: Point) => void;
   /**
    * STORY 16.19 — THE QUESTION A SELECTION ASKED, handed to this card by the
    * layer that just made it. The user's correction made the selection open a
@@ -880,11 +885,24 @@ export function AskCard({
       if (e.button !== 0) return;
       if (!(e.target as HTMLElement).closest(".ground-link-handle")) return;
       e.stopPropagation();
-      startGroundLinkDrag(e, ask.on, { interactionMode, onLink, onNarrate });
+      startGroundLinkDrag(e, ask.on, {
+        interactionMode,
+        onLink,
+        onNarrate,
+        toWorld,
+        onCreateFromLink,
+      });
     }
     el.addEventListener("mousedown", handleMouseDown);
     return () => el.removeEventListener("mousedown", handleMouseDown);
-  }, [ask.on, interactionMode, onLink, onNarrate]);
+  }, [
+    ask.on,
+    interactionMode,
+    onLink,
+    onNarrate,
+    toWorld,
+    onCreateFromLink,
+  ]);
 
   /**
    * STORY 16.25 — PUT THE FRAME BACK ON THE RECORD'S OWN POINT and let the

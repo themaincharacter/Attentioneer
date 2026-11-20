@@ -118,7 +118,8 @@ import {
 } from "./canvas/osDrop";
 import { listenOsDrop, type OsDrop } from "./canvas/osDropWindow";
 import { ASK_UNTITLED_NAME } from "./map/asks";
-import { useGround } from "./canvas/useGround";
+import { useGround, type GroundAddResult } from "./canvas/useGround";
+import { newWireClaim } from "./canvas/hookedWire";
 import { SketchToolbar } from "./canvas/SketchToolbar";
 import { LanguageGameBar } from "./canvas/LanguageGameBar";
 import { LanguageGameFill } from "./canvas/LanguageGameFill";
@@ -664,7 +665,21 @@ function App() {
   // 16.1). STORY 17.10: the double-click now opens the CONCEPT MAP'S BUBBLE
   // (canvas/PlaneMenu.tsx) with the ground's doors, so this form opens only
   // after a reference door was chosen, already on that intent.
-  const [groundAt, setGroundAt] = useState<Point | null>(null);
+  //
+  // STORY 20.3 — a wire drag released on empty paper opens this SAME bubble,
+  // and the point carries the card the drag began from as its hookup. The
+  // hookup lives and dies with the bubble: closing it IS the cancel, because
+  // no card and no wire were written yet. PROVISIONAL: the hookup rides on the
+  // point (one bubble, one promise).
+  const [groundAt, setGroundAt] = useState<(Point & { hookup?: string }) | null>(
+    null,
+  );
+  /**
+   * STORY 20.3 — the ONE wire an opened bubble may owe: its first landed card
+   * spends the claim, so a second creation from the same bubble cannot wire
+   * twice.
+   */
+  const groundHookupClaimRef = useRef(newWireClaim());
   /** Which reference door the ground bubble opened from (story 17.10). */
   const [groundIntent, setGroundIntent] = useState<GroundIntent>("file");
   /**
@@ -3975,6 +3990,42 @@ function App() {
 
   const closePlaneMenu = useCallback(() => setMenuAt(null), []);
   const closeGroundBubble = useCallback(() => setGroundAt(null), []);
+
+  /**
+   * STORY 20.3 — A WIRE DRAG RELEASED ON EMPTY PLANE: open the ground bubble
+   * there, already hooked to the card the drag began from. Nothing is written
+   * here. The bubble's own create lands the card the person authors, and
+   * wireHookedCreate gives it the one wire the gesture promised.
+   */
+  const openHookedCreate = useCallback((from: string, at: Point) => {
+    groundHookupClaimRef.current = newWireClaim();
+    setMenuAt(null);
+    setGroundMenuAt(null);
+    setGroundIntent("file");
+    setGroundAt({ x: at.x, y: at.y, hookup: from });
+  }, []);
+
+  /**
+   * STORY 20.3 — THE CREATED CARD'S ONE WIRE. Whatever door of the bubble made
+   * it — a file, a folder, a page, a video, a session — a landed card takes
+   * exactly ONE pair from the drag's source, through the layer's existing link
+   * write (addGroundLink, its one history line, its mirror). No family is
+   * named here and none is asked: this is generic by construction. A bubble
+   * opened by a double-click carries no hookup and owes nothing.
+   */
+  const wireHookedCreate = useCallback(
+    async (made: GroundAddResult): Promise<GroundAddResult> => {
+      const wire = groundHookupClaimRef.current.take(
+        groundAt?.hookup ?? null,
+        made,
+      );
+      if (wire === null) return made;
+      await ground.link(wire.from, wire.to);
+      return made;
+    },
+    [ground, groundAt],
+  );
+
   const dismissDropNotice = useCallback(() => setDropNotice(null), []);
   const closeGroundMenu = useCallback(() => setGroundMenuAt(null), []);
 
@@ -4011,9 +4062,11 @@ function App() {
       if (groundAt === null) {
         return { ok: false, message: "nothing was written." };
       }
-      return ground.create(name, groundAt.x, groundAt.y, from);
+      return wireHookedCreate(
+        await ground.create(name, groundAt.x, groundAt.y, from),
+      );
     },
-    [ground, groundAt],
+    [ground, groundAt, wireHookedCreate],
   );
 
   /**
@@ -4027,9 +4080,11 @@ function App() {
       if (groundAt === null) {
         return { ok: false, message: "nothing was written." };
       }
-      return ground.createFolder(name, groundAt.x, groundAt.y, folder);
+      return wireHookedCreate(
+        await ground.createFolder(name, groundAt.x, groundAt.y, folder),
+      );
     },
-    [ground, groundAt],
+    [ground, groundAt, wireHookedCreate],
   );
 
   /**
@@ -4042,9 +4097,11 @@ function App() {
       if (groundAt === null) {
         return { ok: false, message: "nothing was written." };
       }
-      return ground.createPage(name, groundAt.x, groundAt.y, url);
+      return wireHookedCreate(
+        await ground.createPage(name, groundAt.x, groundAt.y, url),
+      );
     },
-    [ground, groundAt],
+    [ground, groundAt, wireHookedCreate],
   );
 
   /**
@@ -4057,9 +4114,11 @@ function App() {
       if (groundAt === null) {
         return { ok: false, message: "nothing was written." };
       }
-      return ground.createSession(name, tool, groundAt.x, groundAt.y);
+      return wireHookedCreate(
+        await ground.createSession(name, tool, groundAt.x, groundAt.y),
+      );
     },
-    [ground, groundAt],
+    [ground, groundAt, wireHookedCreate],
   );
 
   /**
@@ -4072,9 +4131,11 @@ function App() {
       if (groundAt === null) {
         return { ok: false, message: "nothing was written." };
       }
-      return ground.createVideo(name, groundAt.x, groundAt.y, url);
+      return wireHookedCreate(
+        await ground.createVideo(name, groundAt.x, groundAt.y, url),
+      );
     },
-    [ground, groundAt],
+    [ground, groundAt, wireHookedCreate],
   );
 
   /**
@@ -4734,6 +4795,12 @@ function App() {
             onPull={ground.pull}
             onDismissPull={ground.dismissPull}
             onLink={ground.link}
+            /* STORY 20.3 — A WIRE DRAG RELEASED ON EMPTY PAPER opens the
+               create bubble there, already hooked to the drag's source: the
+               plane's own conversion gives the point, and the bubble's create
+               is what the one wire follows. */
+            toWorld={toWorld}
+            onCreateFromLink={openHookedCreate}
             links={ground.links}
             workspacePath={workspace.path}
             onNarrate={narrate}

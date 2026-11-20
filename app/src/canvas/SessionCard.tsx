@@ -359,6 +359,8 @@ export function SessionCard({
   onRename,
   onMove,
   onLink,
+  toWorld,
+  onCreateFromLink,
   interactionMode = "idle",
   onNarrate,
   drag,
@@ -535,6 +537,9 @@ export function SessionCard({
    * same small edge handle the other cards have.
    */
   onLink?: (from: string, to: string) => Promise<GroundAddResult>;
+  /** STORY 20.3: the plane conversion and the hooked-create opener (linkDrag.ts). */
+  toWorld?: (clientX: number, clientY: number) => Point | null;
+  onCreateFromLink?: (from: string, at: Point) => void;
   /** The gesture gate, so a wiring drag never starts under an armed tool. */
   interactionMode?: GestureMode;
   /** The one sentence a wiring drag speaks; absent in a render test. */
@@ -619,11 +624,20 @@ export function SessionCard({
         interactionMode,
         onLink,
         onNarrate,
+        toWorld,
+        onCreateFromLink,
       });
     }
     el.addEventListener("mousedown", handleMouseDown);
     return () => el.removeEventListener("mousedown", handleMouseDown);
-  }, [session.on, interactionMode, onLink, onNarrate]);
+  }, [
+    session.on,
+    interactionMode,
+    onLink,
+    onNarrate,
+    toWorld,
+    onCreateFromLink,
+  ]);
 
   /**
    * STORY 16.25 — PUT THE FRAME BACK ON THE RECORD'S OWN POINT and let the
