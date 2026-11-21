@@ -5710,12 +5710,15 @@ body {
   color: var(--ink-soft);
 }
 
-/* STORY 16.15 — the creation bubble's THREE INTENTS: a file, a page, a video.
-   A plain quiet row of words; the chosen one darkens. The intent decides which
-   extractor runs, and nothing else in the bubble guesses a source's kind. */
+/* STORY 16.15 — the creation bubble's INTENT ROW: a plain quiet row of words;
+   the chosen one darkens. The intent decides which extractor runs, and nothing
+   else in the bubble guesses a source's kind. STORY 21.13 adds the ask, which
+   needs no source at all; the row WRAPS so six doors stay inside the bubble's
+   stated width instead of stretching it. */
 .ground-bubble-intents {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   margin: 2px 0 1px;
 }
 

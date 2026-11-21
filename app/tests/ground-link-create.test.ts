@@ -354,14 +354,19 @@ describe("any card starts the drag and any card the bubble makes ends it", () =>
     expect(withoutComments(HOOKED)).not.toMatch(
       /\b(ask|session|folder|page|video|reference)\b/i,
     );
-    // …and the app hands EVERY bubble door through the same one wrapper.
-    const wired = withoutComments(blockOf(APP, "const wireHookedCreate", 900));
+    // …and the app hands EVERY bubble door through the same one wrapper. (The
+    // slice ends at the next const: a byte count stopped being the wrapper once
+    // story 21.13's door joined the list below it.)
+    const wireFrom = APP.indexOf("const wireHookedCreate");
+    const wireTo = APP.indexOf("const dismissDropNotice");
+    const wired = withoutComments(APP.slice(wireFrom, wireTo));
     expect(wired).not.toMatch(
       /\b(intent|ask|session|folder|page|video|reference)\b/i,
     );
-    // Each door of the bubble ends in the same wrapper: five, one shape.
+    // Each door of the bubble ends in the same wrapper: six, one shape. The
+    // sixth is STORY 21.13's ask door, which lands exactly as the other five do.
     const calls = APP.match(/return wireHookedCreate\(/g) ?? [];
-    expect(calls).toHaveLength(5);
+    expect(calls).toHaveLength(6);
     // The drag's create request carries the source card and nothing
     // family-specific; the release rule itself is one pure function. (The
     // card SELECTOR still names the three families, as it always has.)

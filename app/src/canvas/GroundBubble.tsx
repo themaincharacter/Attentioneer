@@ -45,6 +45,13 @@ import { counterScale } from "./veilRules";
  * gate's content lists plus a raw mousedown stop, so its presses never pan the
  * plane, start a word gesture or count as another double-click.
  *
+ * STORY 21.13 — THE ASK DOOR: this bubble can make the card the map is built
+ * around. Choosing "an ask" names the card first (the row's one rule) and makes
+ * an EMPTY ask card at the point: no question, no turn, no send, no conversation
+ * file — an unasked question is not a record. When the bubble was opened by a
+ * wire released on empty paper, the card also takes that gesture's one wire;
+ * the bubble itself names no link, so the hookup stays the app's single path.
+ *
  * STORY 17 (shortlist item 8): the bubble carries `ground-popover`, the
  * second, smaller prose scale, so the creation surface reads as its own small
  * popover instead of a shrunken card. Its title stays the quiet meta label.
@@ -55,14 +62,25 @@ import { counterScale } from "./veilRules";
  */
 
 /**
- * What the person means to point the reference at (story 16.15).
+ * What the person means to make at this point (story 16.15, then the session
+ * card and the ask card).
  * PROVISIONAL: `folder` is the PROJECT CARD — a reference whose pointer is a
  * folder elsewhere on this machine, with no reading taken from it.
  */
-export type GroundIntent = "file" | "folder" | "page" | "video" | "session";
+export type GroundIntent =
+  | "ask"
+  | "file"
+  | "folder"
+  | "page"
+  | "video"
+  | "session";
 
 /** The intent row's words, in order. PROVISIONAL. */
 const INTENTS: readonly { intent: GroundIntent; label: string }[] = [
+  // STORY 21.13 — THE ASK COMES FIRST: this map is built around the ask card,
+  // and a wire released on empty paper is already asking "connect this to
+  // something new". The label keeps the row's grammar ("a file", "a session").
+  { intent: "ask", label: "an ask" },
   { intent: "file", label: "a file" },
   { intent: "folder", label: "a folder" },
   { intent: "page", label: "a page" },
@@ -82,9 +100,18 @@ interface GroundBubbleProps {
    * now opens the concept map's bubble (canvas/PlaneMenu.tsx) with a door list;
    * choosing a REFERENCE door opens THIS form already on that intent, so the
    * person does not pick the same thing twice. Absent (or "file") keeps the
-   * old order: a name, then a file. PROVISIONAL: the door order is the spec's.
+   * old order: a name, then a file. STORY 21.13 makes the ASK door one of those
+   * doors: choosing it opens THIS form on "ask", where the name comes first and
+   * there is no second thing to pick. PROVISIONAL: the door order is the spec's.
    */
   initialIntent?: GroundIntent;
+  /**
+   * STORY 21.13 — MAKE AN EMPTY ASK CARD at this point under the person's own
+   * name: no question, no turn, no conversation file (an unasked question is
+   * not a record). The point is the bubble's own, so the app's wrapper supplies
+   * it. Optional so a render test (and an older caller) needs no ground hook.
+   */
+  onAddAsk?: (name: string) => Promise<GroundAddResult>;
   /** Add the reference (the app's one write path); a refusal is a sentence. */
   onAdd: (name: string, from: string) => Promise<GroundAddResult>;
   /**
@@ -127,6 +154,7 @@ export function GroundBubble({
   x,
   y,
   initialIntent = "file",
+  onAddAsk,
   onAdd,
   onAddFolder,
   onAddPage,
@@ -290,6 +318,34 @@ export function GroundBubble({
     nameRef.current?.focus();
   }
 
+  /**
+   * STORY 21.13 — commit an ASK CARD: the person's name and nothing else. The
+   * card is born EMPTY (the ask's own creation path writes one record line; a
+   * conversation only exists once something was asked), so this press makes no
+   * turn, starts no send and writes no conversation file. A blank name is this
+   * bubble's own refusal — never an invented "Untitled ask".
+   */
+  async function commitAsk() {
+    if (doneRef.current || busy || onAddAsk === undefined) return;
+    const trimmed = name.trim();
+    if (trimmed === "") {
+      setProblem("name it first.");
+      nameRef.current?.focus();
+      return;
+    }
+    setBusy(true);
+    setProblem(null);
+    const result = await onAddAsk(trimmed);
+    if (result.ok) {
+      doneRef.current = true;
+      onClose();
+      return;
+    }
+    setBusy(false);
+    setProblem(result.message);
+    nameRef.current?.focus();
+  }
+
   async function chooseFile() {
     if (doneRef.current || busy || intent !== "file") return;
     if (name.trim() === "") {
@@ -358,12 +414,16 @@ export function GroundBubble({
     nameRef.current?.focus();
   }
 
+  // STORY 21.13: an ask needs no source beyond its name — the card is empty by
+  // design, and the name is the whole of what the person has to supply.
   const hasSource =
-    intent === "session"
-      ? tool !== ""
-      : intent === "file" || intent === "folder"
-        ? from !== null
-        : url.trim() !== "";
+    intent === "ask"
+      ? true
+      : intent === "session"
+        ? tool !== ""
+        : intent === "file" || intent === "folder"
+          ? from !== null
+          : url.trim() !== "";
   const canAdd = !busy && name.trim() !== "" && hasSource;
   const addressIntent = intent === "page" || intent === "video";
   // STORY 22.1 — THE ROWS THIS PICKER OFFERS ARE THE ROWS THIS MACHINE KNOWS:
@@ -392,9 +452,14 @@ export function GroundBubble({
       onDoubleClick={(e) => e.stopPropagation()}
     >
       {/* The title names what the person is about to make: a reference by
-          default, a session when the third door is open (story 18.3). */}
+          default, a session when that door is open (story 18.3), an ask when
+          story 21.13's door is the one chosen. */}
       <div className="ground-bubble-title">
-        {intent === "session" ? "session" : "reference"}
+        {intent === "ask"
+          ? "ask"
+          : intent === "session"
+            ? "session"
+            : "reference"}
       </div>
       <div className="ground-bubble-intents" role="group" aria-label="what to add">
         {INTENTS.map((option) => {
@@ -409,7 +474,9 @@ export function GroundBubble({
                   ? onAddPage !== undefined
                   : option.intent === "video"
                     ? onAddVideo !== undefined
-                    : onAddSession !== undefined;
+                    : option.intent === "ask"
+                      ? onAddAsk !== undefined
+                      : onAddSession !== undefined;
           if (!offered) return null;
           return (
             <button
@@ -435,7 +502,11 @@ export function GroundBubble({
         value={name}
         placeholder="name it…"
         aria-label={
-          intent === "session" ? "name the session card" : "name the reference"
+          intent === "ask"
+            ? "name the ask card"
+            : intent === "session"
+              ? "name the session card"
+              : "name the reference"
         }
         disabled={busy}
         onChange={(e) => {
@@ -445,14 +516,15 @@ export function GroundBubble({
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           e.preventDefault();
-          if (intent === "session") void commitSession();
+          if (intent === "ask") void commitAsk();
+          else if (intent === "session") void commitSession();
           else if (addressIntent) void commitAddress();
           else if (from !== null) void commit(from);
           else if (intent === "folder") void chooseFolder();
           else void chooseFile();
         }}
       />
-      {intent === "session" ? (
+      {intent === "ask" ? null : intent === "session" ? (
         /* STORY 18.3 — THE TOOL ROW. Only the rows this build ships are
            offered; the record names the row's id, and its key (if it ever
            declares one) is read at run time and never kept here. STORY 18.6
@@ -537,6 +609,10 @@ export function GroundBubble({
           className="ground-bubble-add"
           disabled={!canAdd}
           onClick={() => {
+            if (intent === "ask") {
+              void commitAsk();
+              return;
+            }
             if (intent === "session") {
               void commitSession();
               return;

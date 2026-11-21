@@ -133,7 +133,6 @@ import {
   pasteUrl,
   pasteWorldPoint,
 } from "./canvas/linkPaste";
-import { ASK_UNTITLED_NAME } from "./map/asks";
 import { useGround, type GroundAddResult } from "./canvas/useGround";
 import {
   COMMAND_FAILED_SENTENCE,
@@ -766,7 +765,7 @@ function App() {
    * twice.
    */
   const groundHookupClaimRef = useRef(newWireClaim());
-  /** Which reference door the ground bubble opened from (story 17.10). */
+  /** Which door the ground bubble opened from (story 17.10, ask added 21.13). */
   const [groundIntent, setGroundIntent] = useState<GroundIntent>("file");
   /**
    * STORY 17.10 — THE GROUND DOUBLE-CLICK'S BUBBLE, at the point. This is the
@@ -4682,22 +4681,12 @@ function App() {
   const dismissDropNotice = useCallback(() => setDropNotice(null), []);
   const closeGroundMenu = useCallback(() => setGroundMenuAt(null), []);
 
-  /** STORY 17.10 — the ASK door: an empty peer card at the point, then OPEN. */
-  const chooseGroundAsk = useCallback(async () => {
-    const spot = groundMenuAt;
-    if (spot === null) return;
-    setGroundMenuAt(null);
-    const result = await ground.createEmptyAsk(
-      ASK_UNTITLED_NAME,
-      spot.x,
-      spot.y,
-    );
-    if (result.ok && result.created !== undefined) {
-      setRevealAsk({ slug: result.created });
-    }
-  }, [groundMenuAt, ground.createEmptyAsk]);
-
-  /** STORY 17.10 — a reference/session door: the existing form, on that door. */
+  /**
+   * STORY 17.10 — any door of the double-click bubble: the existing form, on
+   * that door. STORY 21.13 makes ASK one of them, so the name is asked FIRST
+   * here too (the bubble's own rule refuses a blank one); the card is made by
+   * the bubble's create, which is also where 20.3's wire finds it.
+   */
   const chooseGroundDoor = useCallback(
     (intent: GroundIntent) => {
       const spot = groundMenuAt;
@@ -4717,6 +4706,26 @@ function App() {
       }
       return wireHookedCreate(
         await ground.create(name, groundAt.x, groundAt.y, from),
+      );
+    },
+    [ground, groundAt, wireHookedCreate],
+  );
+
+  /**
+   * STORY 21.13 — the ground bubble's ASK door: an EMPTY ask card at the point,
+   * under the person's own name. The card's one creation road is the ask's own
+   * (useGround.createEmptyAsk): one record line, no question, no turn, no
+   * conversation file. When the bubble was opened by 20.3's wire release, the
+   * same wrapper writes the gesture's one wire; a double-clicked bubble carries
+   * no hookup, so it owes and writes none.
+   */
+  const addGroundAsk = useCallback(
+    async (name: string) => {
+      if (groundAt === null) {
+        return { ok: false, message: "nothing was written." };
+      }
+      return wireHookedCreate(
+        await ground.createEmptyAsk(name, groundAt.x, groundAt.y),
       );
     },
     [ground, groundAt, wireHookedCreate],
@@ -5923,9 +5932,10 @@ function App() {
             MAP'S component (canvas/PlaneMenu.tsx) — the same dot, stems,
             inverse-camera placement, Esc/away-press and raw-mousedown guard —
             handed the ground's doors: ask first (the new thing), then the
-            existing reference doors, then session. Choosing a reference door
-            opens the SAME form as before, already on that intent; choosing ask
-            makes an empty peer card at the point and opens it. */}
+            existing reference doors, then session. Choosing ANY door opens the
+            SAME form as before, already on that intent — the ask included,
+            where STORY 21.13 has the name asked first and the form make the
+            empty card. */}
         {level === "ground" && groundMenuAt !== null && (
           <PlaneMenu
             x={groundMenuAt.x}
@@ -5936,7 +5946,10 @@ function App() {
                 label: "ask",
                 title: "ask a question here",
                 seat: "above",
-                onPress: () => void chooseGroundAsk(),
+                // STORY 21.13 — the ask is a DOOR INTO THE BUBBLE, exactly like
+                // the reference doors: its name is asked first, and the form's
+                // ask intent makes the empty card.
+                onPress: () => chooseGroundDoor("ask"),
               },
               {
                 id: "file",
@@ -5985,6 +5998,10 @@ function App() {
             y={groundAt.y}
             initialIntent={groundIntent}
             onAdd={addGroundAt}
+            /* STORY 21.13 — THE ASK DOOR: an empty ask card at the point, in
+               the person's own name. 20.3's wire rides the same wrapper every
+               other door uses. */
+            onAddAsk={addGroundAsk}
             onAddFolder={addGroundFolderAt}
             onAddPage={addGroundPageAt}
             onAddVideo={addGroundVideoAt}
