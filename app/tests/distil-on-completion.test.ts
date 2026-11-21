@@ -20,8 +20,11 @@ import {
   sessionDistilWords,
 } from "../src/canvas/contactRules";
 import {
+  SESSION_CURATOR_COPY_KEPT_SENTENCE,
   SESSION_CURATOR_FAILED_SENTENCE,
+  SESSION_CURATOR_KEPT_SENTENCE,
   SESSION_CURATOR_NO_MANAGER_SENTENCE,
+  keepRunOutcome,
   sessionDistilBrief,
   writeCuratedRunCard,
   type DistilledCardWriter,
@@ -65,7 +68,8 @@ import { parsePrismLine, serializePrismLine } from "../src/map/prisms";
  * session card, wired and named (which model distilled which), with NO press.
  * A partial's words are distilled the same way and the card names the ending;
  * the rule's copy stays strict. When the curator declines, ONE quiet line says
- * so and offers ONE verb — keep the result as a card (18.4's rule copy). The
+ * so and offers ONE verb — keep this as a card — whose own press tries the
+ * curator again and falls back to 18.4's copy, saying which card it got. The
  * raw result is never touched.
  *
  * This file pins the rules underneath: the brief has no press in it, the run's
@@ -439,42 +443,86 @@ describe("a distil that made no card says so once and offers the copy", () => {
     previewLines: 6,
     onOpen: () => {},
     onClose: () => {},
-    onMakeResult: async () => ({ ok: true as const }),
+    onKeepResult: async () => ({ ok: true as const }),
   };
 
-  test("the one sentence and the fallback verb render together", () => {
+  test("the one sentence and the one verb render together", () => {
     const html = renderToStaticMarkup(
       createElement(SessionCard, {
         ...base,
         entries: COMPLETED,
-        distilNotice: SESSION_CURATOR_FAILED_SENTENCE,
+        keepNotice: SESSION_CURATOR_FAILED_SENTENCE,
       }),
     );
     expect(html).toContain(SESSION_CURATOR_FAILED_SENTENCE);
     expect(html).toContain(SESSION_RESULT_KEEP_VERB);
-    // Not as an equal choice: the rule's old wording is not on the face.
+    // Not as an equal choice: the old pair of words is not on the face.
     expect(html).not.toContain("make a card from this");
+    expect(html).not.toContain("distil this into a card");
     const noManager = renderToStaticMarkup(
       createElement(SessionCard, {
         ...base,
         entries: COMPLETED,
-        distilNotice: SESSION_CURATOR_NO_MANAGER_SENTENCE,
+        keepNotice: SESSION_CURATOR_NO_MANAGER_SENTENCE,
       }),
     );
     expect(noManager).toContain(SESSION_CURATOR_NO_MANAGER_SENTENCE);
     expect(noManager).toContain(SESSION_RESULT_KEEP_VERB);
   });
 
-  test("the fallback verb presses the untouched rule copy", () => {
+  test("the one verb presses the hook's curator-first chain", () => {
     const card = source("canvas/SessionCard.tsx");
-    const start = card.indexOf("distilNotice !== null");
-    const fallback = card.slice(start, card.indexOf("STORY 19.4 — THE ARTIFACT PATH", start));
+    const start = card.indexOf("keepNotice !== null");
+    const fallback = card.slice(start, card.indexOf("STORY 18.5", start));
     expect(fallback).toContain("SESSION_RESULT_KEEP_VERB");
-    expect(fallback).toContain("onClick={() => void makeResult()}");
+    expect(fallback).toContain("onClick={() => void keepResult()}");
     expect(fallback).toContain('lastEnded.ending === "completed"');
     // The layer hands the card the notice from the run's view state.
     const layer = source("canvas/GroundLayer.tsx");
-    expect(layer).toContain("distilNotice={sessionDistilNotice[session.on] ?? null}");
+    expect(layer).toContain("keepNotice={sessionKeepNotice[session.on] ?? null}");
+  });
+
+  test("a press falls back to the copy and says which card it got", async () => {
+    // ONE press, TWO attempts in order: the curator, then 18.4's copy.
+    const calls: string[] = [];
+    const said: string[] = [];
+    const card = { ok: true as const };
+    expect(
+      await keepRunOutcome({
+        distil: async () => {
+          calls.push("curator");
+          return card;
+        },
+        copy: async () => {
+          calls.push("copy");
+          return card;
+        },
+        say: (message) => said.push(message),
+      }),
+    ).toBe(card);
+    expect(calls).toEqual(["curator"]);
+    expect(said).toEqual([SESSION_CURATOR_KEPT_SENTENCE]);
+    // An unusable answer and a decline take the SAME fallback road.
+    for (const message of [
+      "the curator's answer was not a card the app can use, so no card was made.",
+      "nothing worth keeping.",
+    ]) {
+      calls.length = 0;
+      said.length = 0;
+      await keepRunOutcome({
+        distil: async () => {
+          calls.push("curator");
+          return { ok: false as const, message };
+        },
+        copy: async () => {
+          calls.push("copy");
+          return card;
+        },
+        say: (saidMessage) => said.push(saidMessage),
+      });
+      expect(calls).toEqual(["curator", "copy"]);
+      expect(said).toEqual([SESSION_CURATOR_COPY_KEPT_SENTENCE]);
+    }
   });
 
   test("the copy it offers is the 18.4 idiom: the exact bytes, unchanged", async () => {

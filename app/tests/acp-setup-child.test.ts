@@ -838,7 +838,7 @@ describe("the sign-in is a row field, and the card draws it only when it is ther
     // The field clears when the child starts or ends, so a stale code is never
     // shown again.
     expect(card).toContain("[signIn?.running]");
-    // The press is offered while the child is alive, beside test this row.
+    // The press is offered while the child is alive, beside test.
     const html = cardHtml({ signIn: runningSignIn("a line") });
     expect(html).toContain(SETUP_VERBS.sendCode);
   });

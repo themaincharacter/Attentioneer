@@ -81,6 +81,7 @@ import { assembleSessionPacket } from "../src/turn/packet";
 import { acpDeclaration } from "../src/turn/acpSpecs";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
 import { CONTENT_CLASSES } from "../src/canvas/gates";
+import { SESSION_RESULT_KEEP_VERB } from "../src/canvas/contactRules";
 
 /**
  * Epic 18 story 3 — THE SESSION CARD, proven at the record, at the run and at
@@ -1491,7 +1492,8 @@ describe("the session seam's rules", () => {
     expect(APP).toContain(
       "onAnswerSessionPermission={ground.answerSessionPermission}",
     );
-    expect(APP).toContain("onMakeSessionResult={ground.makeCardFromRun}");
+    // STORY 22.6: one result press, the hook's curator-first chain.
+    expect(APP).toContain("onKeepSessionResult={ground.keepRunResult}");
     expect(HOOK).toContain("handle.answerPermission(ask.id, choice)");
     expect(HOOK).toContain("writeResultCard(");
     expect(LAYER).toContain("<SessionCardView");
@@ -1753,7 +1755,7 @@ describe("a finished run's text becomes a card", () => {
     expect(readdirSync(join(base, "map")).sort()).toEqual([]);
   });
 
-  test("the fallback copy verb is offered only in a distil notice, never beside the distil verb", () => {
+  test("one verb keeps a completed run, and a partial offers none", () => {
     const props = {
       session: SESSION,
       toolName: "DeepSeek Harness (ACP)",
@@ -1765,30 +1767,31 @@ describe("a finished run's text becomes a card", () => {
       previewLines: 6,
       onOpen: () => {},
       onClose: () => {},
-      onMakeResult: async () => ({ ok: true as const }),
+      onKeepResult: async () => ({ ok: true as const }),
     };
-    // STORY 22.4: the rule copy is no longer an equal second choice. With no
-    // notice it is nowhere on the face, even after a completed run.
+    // STORY 22.6: the old pair is gone. With no completed run there is no verb.
     expect(renderToStaticMarkup(createElement(SessionCard, props))).not.toContain(
-      "keep the result as a card",
+      SESSION_RESULT_KEEP_VERB,
     );
-    expect(
-      renderToStaticMarkup(
-        createElement(SessionCard, { ...props, entries }),
-      ),
-    ).not.toContain("keep the result as a card");
-    // The automatic distil's one sentence brings the fallback verb with it.
-    const fallback = renderToStaticMarkup(
+    // A completed run offers the ONE verb that tries the curator and falls back.
+    const completed = renderToStaticMarkup(
+      createElement(SessionCard, { ...props, entries }),
+    );
+    expect(completed).toContain(SESSION_RESULT_KEEP_VERB);
+    expect(completed).not.toContain("distil this into a card");
+    expect(completed).not.toContain("keep the result as a card");
+    // Its outcome line, when the press has spoken, sits beside the same verb.
+    const said = renderToStaticMarkup(
       createElement(SessionCard, {
         ...props,
         entries,
-        distilNotice: "nothing here the map can use.",
+        keepNotice: "the curator made this card.",
       }),
     );
-    expect(fallback).toContain("nothing here the map can use.");
-    expect(fallback).toContain("keep the result as a card");
-    // A PARTIAL shows the sentence but offers no copy: a partial is never a
-    // result, so the rule's verb stays unavailable for it.
+    expect(said).toContain("the curator made this card.");
+    expect(said).toContain(SESSION_RESULT_KEEP_VERB);
+    // A PARTIAL shows its sentence but offers no verb: a partial is never a
+    // result, so both paths stay unavailable for it.
     const partial = renderToStaticMarkup(
       createElement(SessionCard, {
         ...props,
@@ -1797,11 +1800,31 @@ describe("a finished run's text becomes a card", () => {
           { kind: "text", text: "half an answer" },
           { kind: "ended", ending: "stopped", t: "2" },
         ] satisfies SessionEntry[],
-        distilNotice: "nothing here the map can use.",
+        keepNotice: "the curator made no card for this one.",
       }),
     );
-    expect(partial).toContain("nothing here the map can use.");
-    expect(partial).not.toContain("keep the result as a card");
+    expect(partial).toContain("the curator made no card for this one.");
+    expect(partial).not.toContain(SESSION_RESULT_KEEP_VERB);
+  });
+
+  test("the tool row's button says test, and the failed-test sentence still says what was tested", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionCard, {
+        session: SESSION,
+        toolName: "DeepSeek Harness (ACP)",
+        declaration: acpDeclaration(ACP_SPECS[0]!),
+        tools: [],
+        entries: [],
+        running: false,
+        open: true,
+        previewLines: 6,
+        onOpen: () => {},
+        onClose: () => {},
+        onTestRow: async () => ({ ok: false, message: "the row did not answer." }),
+      }),
+    );
+    expect(html).toContain(">test<");
+    expect(html).not.toContain("test this row");
   });
 });
 

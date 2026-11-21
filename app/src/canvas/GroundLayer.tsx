@@ -727,17 +727,21 @@ interface GroundLayerProps {
   /** STORY 18.4 — each card's PENDING permission ask, as view state. */
   sessionPermission?: Readonly<Record<string, AcpPermissionAsk>>;
   /**
-   * STORY 22.4 — each session card's ONE QUIET LINE when its automatic distil
-   * made no card (PROVISIONAL view state). Null/absent is silence.
+   * STORY 22.4/22.6 — each session card's ONE RESULT LINE (PROVISIONAL view
+   * state): the automatic distil's sentence when it made no card, and a press's
+   * honest outcome when it did. Null/absent is silence.
    */
-  sessionDistilNotice?: Readonly<Record<string, string>>;
+  sessionKeepNotice?: Readonly<Record<string, string>>;
   /** Answer the pending ask with the person's one verb. */
   onAnswerSessionPermission?: (
     slug: string,
     choice: AcpPermissionChoice,
   ) => Promise<void>;
-  /** Make the last completed run's text into a copy card. */
-  onMakeSessionResult?: (slug: string) => Promise<GroundAddResult>;
+  /**
+   * STORY 22.6 — KEEP a completed run as a card: the curator first, the rule's
+   * copy as the fallback, one press and one outcome line.
+   */
+  onKeepSessionResult?: (slug: string) => Promise<GroundAddResult>;
   /**
    * STORY 22.1 — each tool row's PER-MACHINE fact, from the app config
    * (PROVISIONAL). The layer lays them over the shipped rows by id, so the
@@ -763,11 +767,6 @@ interface GroundLayerProps {
   onStartSessionSignIn?: (slug: string) => Promise<GroundAddResult>;
   onSendSessionSignInCode?: (slug: string, code: string) => void;
   onStopSessionSignIn?: (slug: string) => void;
-  /**
-   * STORY 19.4 — DISTIL the last completed run's result into an artifact card:
-   * one curator call, the same writer the ask card's artifact uses.
-   */
-  onDistilSessionResult?: (slug: string) => Promise<GroundAddResult>;
   /**
    * STORY 17.7b — WHETHER THE ONE SETTINGS SELECTION RESOLVES. The ask card
    * says "nothing configured" BEFORE the send and offers only the settings
@@ -911,7 +910,7 @@ export function GroundLayer({
   sessionEntries = {},
   sessionRunning = [],
   sessionPermission = {},
-  sessionDistilNotice = {},
+  sessionKeepNotice = {},
   sessionSignIn = {},
   toolRowFacts = [],
   onCreateAsk,
@@ -932,12 +931,11 @@ export function GroundLayer({
   onSetSessionBoundary,
   onChooseSessionModel,
   onAnswerSessionPermission,
-  onMakeSessionResult,
+  onKeepSessionResult,
   onTestSessionRow,
   onStartSessionSignIn,
   onSendSessionSignInCode,
   onStopSessionSignIn,
-  onDistilSessionResult,
   onRemoveSession,
   onRenameSession,
   onMoveAsk,
@@ -1696,10 +1694,13 @@ export function GroundLayer({
                 ? undefined
                 : () => void onAnswerSessionPermission(session.on, "refuse")
             }
-            onMakeResult={
-              onMakeSessionResult === undefined
+            // STORY 22.6 — ONE RESULT VERB, ONE PRESS: the chain is the hook's
+            // (curator first, 18.4's copy as its fallback) and the layer only
+            // forwards the press.
+            onKeepResult={
+              onKeepSessionResult === undefined
                 ? undefined
-                : () => onMakeSessionResult(session.on)
+                : () => onKeepSessionResult(session.on)
             }
             // STORY 22.1 — the row's state line and its one verb, both on the
             // expanded face the person is looking at (never a closed-card line).
@@ -1742,14 +1743,8 @@ export function GroundLayer({
                     },
                   }
             }
-            // STORY 19.4 — the artifact path, beside the rule's copy.
-            onDistilResult={
-              onDistilSessionResult === undefined
-                ? undefined
-                : () => onDistilSessionResult(session.on)
-            }
             distilWords={distilWords}
-            distilNotice={sessionDistilNotice[session.on] ?? null}
+            keepNotice={sessionKeepNotice[session.on] ?? null}
             onRemove={
               onRemoveSession === undefined
                 ? undefined

@@ -12,8 +12,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fileURLToPath } from "node:url";
 import {
+  SESSION_CURATOR_COPY_KEPT_SENTENCE,
   SESSION_CURATOR_FAILED_SENTENCE,
+  SESSION_CURATOR_KEPT_SENTENCE,
   SESSION_DISTIL_NO_TASK_SENTENCE,
+  keepRunOutcome,
   sessionDistilBrief,
   writeCuratedRunCard,
   type DistilledCardWriter,
@@ -847,7 +850,7 @@ describe("a decline, a bad block or a failed call writes nothing and leaves the 
  * 7. The verb, its declaration, and the rule's copy untouched.
  * ------------------------------------------------------------------ */
 
-describe("the card's two card verbs", () => {
+describe("the card's one result verb", () => {
   const props = {
     session: SESSION as SessionCardRecord,
     toolName: "Local agent",
@@ -859,20 +862,21 @@ describe("the card's two card verbs", () => {
     previewLines: 6,
     onOpen: () => {},
     onClose: () => {},
-    onMakeResult: async () => ({ ok: true as const }),
-    onDistilResult: async () => ({ ok: true as const }),
+    onKeepResult: async () => ({ ok: true as const }),
   };
 
-  test("the distil verb is one primary verb; the copy is a fallback, never a peer", () => {
+  test("one verb, offered only on a completed run", () => {
     const closed = renderToStaticMarkup(createElement(SessionCard, props));
+    expect(closed).not.toContain(SESSION_RESULT_KEEP_VERB);
     expect(closed).not.toContain("distil this into a card");
     const open = renderToStaticMarkup(
       createElement(SessionCard, { ...props, entries: ENTRIES }),
     );
-    // STORY 22.4 — after the automatic distil succeeded the face says nothing
-    // about a copy: there is ONE card verb, the manual re-press.
-    expect(open).toContain("distil this into a card");
-    expect(open).not.toContain(SESSION_RESULT_KEEP_VERB);
+    // STORY 22.6 — the curator and the rule's copy are ONE press now; the old
+    // equal pair of words is gone from the face.
+    expect(open).toContain(SESSION_RESULT_KEEP_VERB);
+    expect(open).not.toContain("distil this into a card");
+    expect(open).not.toContain("keep the result as a card");
     // The calls are declared BEFORE the run, in the card's own quiet lines.
     const words = [
       "the task model answers: Local agent",
@@ -889,19 +893,99 @@ describe("the card's two card verbs", () => {
     expect(declared).toContain(words[1]!);
   });
 
-  test("the rule's copy is untouched underneath its fallback wording", () => {
+  test("the press is one prop; the layer owns the curator-first chain", () => {
     const card = source("canvas/SessionCard.tsx");
-    // The verb the person reads now belongs to the notice, and the old equal
-    // choice is gone from the face.
-    expect(card).toContain("SESSION_RESULT_KEEP_VERB");
+    expect(card).toContain("onKeepResult()");
+    expect(card).toContain("keepNotice !== null");
+    expect(card).not.toContain("onMakeResult");
+    expect(card).not.toContain("onDistilResult");
     expect(card).not.toContain("make a card from this");
-    // It still calls the untouched writer through its own prop, inside the
-    // distil notice's block only.
-    expect(card).toContain("onMakeResult()");
-    expect(card).toContain("distilNotice !== null");
-    // And the hook's copy path is unchanged: writeResultCard on a selection.
+    // The hook's chain: the curator first, the untouched copy second.
     const hook = source("canvas/useGround.ts");
+    const start = hook.indexOf("const keepRunResult = useCallback");
+    const end = hook.indexOf("const keepRunResult = useCallback") + 1400;
+    const chain = hook.slice(start, end);
+    expect(chain.indexOf("distil: () => distilRunResult(slug)")).toBeGreaterThan(
+      -1,
+    );
+    expect(chain.indexOf("copy: () => makeCardFromRun(slug)")).toBeGreaterThan(
+      chain.indexOf("distil: () => distilRunResult(slug)"),
+    );
+    // And the copy path itself is unchanged: writeResultCard on a selection.
     expect(hook).toContain("await writeResultCard(");
+  });
+
+  test("the one press tries the curator first and stops when it made a card", async () => {
+    const calls: string[] = [];
+    const said: string[] = [];
+    const result = await keepRunOutcome({
+      distil: async () => {
+        calls.push("curator");
+        return { ok: true as const };
+      },
+      copy: async () => {
+        calls.push("copy");
+        return { ok: true as const };
+      },
+      say: (message) => said.push(message),
+    });
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual(["curator"]);
+    expect(said).toEqual([SESSION_CURATOR_KEPT_SENTENCE]);
+    expect(SESSION_CURATOR_KEPT_SENTENCE).toContain("curator");
+  });
+
+  test("an unusable curator answer still writes the rule's copy and says so", async () => {
+    const calls: string[] = [];
+    const said: string[] = [];
+    const result = await keepRunOutcome({
+      distil: async () => {
+        calls.push("curator");
+        return { ok: false as const, message: CURATOR_MALFORMED_SENTENCE };
+      },
+      copy: async () => {
+        calls.push("copy");
+        return { ok: true as const };
+      },
+      say: (message) => said.push(message),
+    });
+    // The fallback is the same one press, in order, and it names the copy.
+    expect(calls).toEqual(["curator", "copy"]);
+    expect(result).toEqual({ ok: true });
+    expect(said).toEqual([SESSION_CURATOR_COPY_KEPT_SENTENCE]);
+    expect(SESSION_CURATOR_COPY_KEPT_SENTENCE).toContain("curator");
+    expect(SESSION_CURATOR_COPY_KEPT_SENTENCE).toContain("rule's copy");
+  });
+
+  test("a decline falls back the same way", async () => {
+    const calls: string[] = [];
+    const said: string[] = [];
+    const result = await keepRunOutcome({
+      distil: async () => {
+        calls.push("curator");
+        return { ok: false as const, message: "nothing worth keeping." };
+      },
+      copy: async () => {
+        calls.push("copy");
+        return { ok: true as const };
+      },
+      say: (message) => said.push(message),
+    });
+    expect(calls).toEqual(["curator", "copy"]);
+    expect(result).toEqual({ ok: true });
+    expect(said).toEqual([SESSION_CURATOR_COPY_KEPT_SENTENCE]);
+  });
+
+  test("when even the copy refuses, its own sentence stands", async () => {
+    const said: string[] = [];
+    const refused = { ok: false as const, message: "a partial is no result." };
+    const result = await keepRunOutcome({
+      distil: async () => ({ ok: false as const, message: "no card." }),
+      copy: async () => refused,
+      say: (message) => said.push(message),
+    });
+    expect(result).toEqual(refused);
+    expect(said).toEqual(["a partial is no result."]);
   });
 
   test("the declaration reuses the ask's wording constants", () => {
@@ -935,10 +1019,11 @@ describe("the card's two card verbs", () => {
     const layer = source("canvas/GroundLayer.tsx");
     expect(layer).toContain("sessionDistilWords({");
     expect(layer).toContain("manager: calls.manager");
-    expect(layer).toContain("onDistilResult={");
-    // The App wires the hook's own verb, beside the copy's.
+    // STORY 22.6: one result prop, the hook's curator-first chain.
+    expect(layer).toContain("onKeepResult={");
+    expect(layer).not.toContain("onDistilResult={");
     const app = source("App.tsx");
-    expect(app).toContain("onDistilSessionResult={ground.distilRunResult}");
-    expect(app).toContain("onMakeSessionResult={ground.makeCardFromRun}");
+    expect(app).toContain("onKeepSessionResult={ground.keepRunResult}");
+    expect(app).not.toContain("onDistilSessionResult");
   });
 });

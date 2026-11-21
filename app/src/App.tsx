@@ -5526,14 +5526,17 @@ function App() {
             sessionEntries={ground.sessionEntries}
             sessionRunning={ground.sessionRunning}
             sessionPermission={ground.sessionPermission}
-            sessionDistilNotice={ground.sessionDistilNotice}
+            sessionKeepNotice={ground.sessionKeepNotice}
             onRunSession={ground.runSession}
             /* STORY 21.1 — a follow-up into the card's last delegate session:
                the same hook, a fresh spawn, killed on every exit path. */
             onFollowUpSession={ground.followUpSession}
             onStopSession={ground.stopSession}
             onAnswerSessionPermission={ground.answerSessionPermission}
-            onMakeSessionResult={ground.makeCardFromRun}
+            /* STORY 22.6 — the card's ONE result press: the hook's chain tries
+               the curator and falls back to 18.4's copy, so no completed run
+               dead-ends and the outcome line names which card was made. */
+            onKeepSessionResult={ground.keepRunResult}
             /* STORY 22.1 — a tool row's per-machine fact and its one verb: a
                tiny task through the existing run lane, and (only when it
                answers) the fact the face and the picker's label both read. */
@@ -5546,9 +5549,6 @@ function App() {
             onStartSessionSignIn={ground.startSessionSignIn}
             onSendSessionSignInCode={ground.sendSessionSignInCode}
             onStopSessionSignIn={ground.stopSessionSignIn}
-            /* STORY 19.4 — the artifact path: one curator call distils the
-               completed run's result into a card, wired back to the card. */
-            onDistilSessionResult={ground.distilRunResult}
             onChooseSessionTool={ground.bindSessionTool}
             /* STORY 19.2 — a session card may be bound to a project card (a
                folder on this machine) and told what a run may do there. The

@@ -180,15 +180,24 @@ export function sessionDisclosureVerb(
  *
  * STORY 22.1b — THE CARD HOSTS THE TOOL'S OWN SIGN-IN (PROVISIONAL). When the
  * bound row declares a sign-in argv, the expanded face offers ONE more verb
- * beside "test this row". While the setup child is alive the card says the
+ * beside "test". While the setup child is alive the card says the
  * running line, shows the child's newest line cropped (and, when that line
  * holds an http(s) address, the "open the page" verb — the person finishes the
  * sign-in in their own browser), and offers one small field for the code the
  * page shows with "send the code" and "stop" beside it. The code is EPHEMERAL:
  * it goes to the child's stdin and nowhere else, and the field clears the
  * moment it is sent. On an exit the card says ONE sentence, and it never claims
- * the sign-in worked: the person's own press of "test this row" is still the
+ * the sign-in worked: the person's own press of "test" is still the
  * proof. A row that declares no sign-in shows no verb and no line.
+ *
+ * STORY 22.6 — ONE VERB KEEPS A RESULT. A completed run's face offers ONE
+ * press, "keep this as a card": the layer tries the curator first and falls
+ * back to 18.4's rule copy whenever the curator's answer cannot be used — a
+ * decline, a malformed block, a failed or absent answer. The one outcome line
+ * names which card was made, and the card never decides the chain itself. A
+ * partial offers no verb: a partial is still no result. The tool row's press
+ * says "test", and the sentence that explains a failed test still names the
+ * row it tested.
  *
  * STORY 18.5 MAKES IT REMOVABLE: the expanded card offers remove, the same
  * immediate delete + Restore toast every other card uses. A live run is never
@@ -351,10 +360,9 @@ export function SessionCard({
   permission = null,
   onAllowOnce,
   onRefuse,
-  onMakeResult,
-  onDistilResult,
+  onKeepResult,
   distilWords = [],
-  distilNotice = null,
+  keepNotice = null,
   onRemove,
   onRename,
   onMove,
@@ -489,15 +497,14 @@ export function SessionCard({
   /** The person's two verbs. Allow-once is offered only when it exists. */
   onAllowOnce?: () => void;
   onRefuse?: () => void;
-  /** Make the last completed run's text into a card (a copy, never a link). */
-  onMakeResult?: () => Promise<GroundAddResult>;
   /**
-   * STORY 19.4 — DISTIL the last completed run's result into an artifact card:
-   * ONE curator model call, the reused module, the same writer. Absent in a
-   * render test; a press with no task in the transcript refuses in one sentence
-   * and makes no call.
+   * STORY 22.6 — KEEP THE LAST COMPLETED RUN AS A CARD, in ONE press. The layer
+   * owns the chain: the curator is tried first and 18.4's rule copy catches
+   * every answer that is not a card — a decline, an unusable block, a failed or
+   * absent answer. The outcome line names which card was made. Absent in a
+   * render test.
    */
-  onDistilResult?: () => Promise<GroundAddResult>;
+  onKeepResult?: () => Promise<GroundAddResult>;
   /**
    * STORY 22.4 — THE RUN'S CALLS, DECLARED BEFORE THE RUN: the task model
    * answers, then the manager model distils the result (or the honest
@@ -506,12 +513,13 @@ export function SessionCard({
    */
   distilWords?: readonly string[];
   /**
-   * STORY 22.4 — THE AUTOMATIC DISTIL'S ONE QUIET LINE, when it made no card
-   * (PROVISIONAL view state from the layer). A decline, an unusable card, a
-   * failed call or no manager leaves exactly this sentence; the rule's copy is
-   * offered beside it as the fallback verb. Null is silence: a card was made.
+   * STORY 22.6 — THE ONE PRESS'S HONEST OUTCOME LINE (PROVISIONAL view state
+   * from the layer). It names which card was made — the curator's or the rule's
+   * copy — and, when the copy caught a curator answer that could not be used,
+   * says so in one sentence. Null is silence: the automatic distil made its
+   * card and no press has spoken since.
    */
-  distilNotice?: string | null;
+  keepNotice?: string | null;
   /**
    * STORY 16.22 — RENAME this card: the shared name pill IS the rename field.
    * The name is the person's and the slug is identity (the transcript's file
@@ -839,14 +847,18 @@ export function SessionCard({
     }
   }
 
-  async function makeResult(): Promise<void> {
-    if (busy || onMakeResult === undefined) return;
+  /**
+   * STORY 22.6 — THE CARD'S ONE RESULT PRESS. It forwards to the layer's ONE
+   * chain (curator, then 18.4's copy when the curator's answer cannot be used),
+   * so the card never decides which path a press took. The outcome sentence is
+   * the layer's view state; only a press that could not run at all shows here.
+   */
+  async function keepResult(): Promise<void> {
+    if (busy || onKeepResult === undefined) return;
     setBusy(true);
     setProblem(null);
-    const result = await onMakeResult();
+    const result = await onKeepResult();
     setBusy(false);
-    // A run with no text (or one that did not finish) writes NOTHING and says
-    // one sentence; a made card leaves this card at once.
     if (!result.ok) setProblem(result.message);
   }
 
@@ -881,21 +893,6 @@ export function SessionCard({
     signIn.sendCode?.(code);
     setProblem(null);
     setCode("");
-  }
-
-  /**
-   * STORY 22.4 — the distil re-press. The automatic ending makes this call by
-   * itself; this verb is what remains for a person trying again after a
-   * decline or a failure. A refusal is the LAYER's one quiet line (the
-   * `distilNotice` prop), shown with the rule copy's fallback verb, so the
-   * card never says the same sentence twice.
-   */
-  async function distilResult(): Promise<void> {
-    if (busy || onDistilResult === undefined) return;
-    setBusy(true);
-    setProblem(null);
-    await onDistilResult();
-    setBusy(false);
   }
 
   /**
@@ -1546,10 +1543,10 @@ export function SessionCard({
                 disabled={busy}
                 onClick={() => void testRow()}
               >
-                test this row
+                test
               </button>
             )}
-            {/* STORY 22.1b — THE SIGN-IN VERB, beside "test this row". It is
+            {/* STORY 22.1b — THE SIGN-IN VERB, beside "test". It is
                 shown whenever the card was handed a sign-in view (the row
                 declares one) and is disabled while the child is alive, so one
                 card never hosts two sign-ins. Starting it changes NO state
@@ -1564,43 +1561,41 @@ export function SessionCard({
                 {SETUP_VERBS.signIn}
               </button>
             )}
-            {/* STORY 22.4 — THE QUIET FALLBACK. When the automatic distil made
-                no card — a decline, an unusable card, a failed call, no
-                manager — its ONE sentence sits here with the rule copy's verb.
-                A LONG card is not one of these (the ruling of 2026-11-21):
-                length never refuses. The copy is unchanged (18.4) and refuses
-                a partial outright, so a partial shows the sentence without the
-                verb. */}
-            {distilNotice !== null && (
+            {/* STORY 22.6 — ONE VERB, ONE PRESS. A completed run can be kept
+                as a card; the layer tries the curator first and falls back to
+                18.4's rule copy whenever that answer cannot be used. The line
+                above the verb is the press's own outcome and names which card
+                was made. A PARTIAL offers no verb (18.4's rule kept): a partial
+                is never a result, so only its sentence may show. The copy stays
+                byte-for-byte the card 18.4 wrote; the curator's card is the
+                same artifact it always was. */}
+            {keepNotice !== null && (
               <div className="session-distil-fallback">
-                <span className="session-distil-said">{distilNotice}</span>
+                <span className="session-distil-said">{keepNotice}</span>
                 {lastEnded !== null && lastEnded.ending === "completed" && (
                   <button
                     type="button"
                     className="session-card-make"
-                    disabled={busy || onMakeResult === undefined}
-                    onClick={() => void makeResult()}
+                    disabled={busy || onKeepResult === undefined}
+                    onClick={() => void keepResult()}
                   >
                     {SESSION_RESULT_KEEP_VERB}
                   </button>
                 )}
               </div>
             )}
-            {/* STORY 19.4 — THE ARTIFACT PATH, beside the rule's copy: one
-                curator call turns the completed run's result into a card with
-                a claim and its caveats, wired back to this card. The raw result
-                stays in the transcript and the rule's copy stays one press
-                away; a decline is a legal answer and says so in one sentence. */}
-            {entries.some((entry) => entry.kind === "ended") && (
-              <button
-                type="button"
-                className="session-card-distil"
-                disabled={busy || onDistilResult === undefined}
-                onClick={() => void distilResult()}
-              >
-                distil this into a card
-              </button>
-            )}
+            {keepNotice === null &&
+              lastEnded !== null &&
+              lastEnded.ending === "completed" && (
+                <button
+                  type="button"
+                  className="session-card-make"
+                  disabled={busy || onKeepResult === undefined}
+                  onClick={() => void keepResult()}
+                >
+                  {SESSION_RESULT_KEEP_VERB}
+                </button>
+              )}
             {/* STORY 18.5 — the card's remove, beside close: immediate,
                 reversible through the one toast. A live run is never cut by a
                 delete — the verb waits. */}

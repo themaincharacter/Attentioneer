@@ -402,12 +402,12 @@ export function sessionDistilWords(facts: {
 }
 
 /**
- * STORY 22.4 — THE ONE VERB A RUN WHOSE DISTIL MADE NO CARD OFFERS
- * (PROVISIONAL wording): the rule's copy, still byte-for-byte the 18.4 path,
- * but said as what it is now — a fallback after a decline or a failure, never
- * a second equal choice beside the distil press.
+ * STORY 22.6 — THE SESSION CARD'S ONE RESULT VERB (PROVISIONAL wording). One
+ * press tries the curator and falls back to 18.4's rule copy, so the old pair
+ * of words is gone: this does not say "distil" or "result", it says what the
+ * person gets — a card.
  */
-export const SESSION_RESULT_KEEP_VERB = "keep the result as a card";
+export const SESSION_RESULT_KEEP_VERB = "keep this as a card";
 
 /**
  * THE PARTIAL'S ONE QUIET LINE (Epic 15 story 7b). A stopped, broken or

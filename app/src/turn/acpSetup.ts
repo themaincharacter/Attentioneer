@@ -13,7 +13,7 @@
  * and the person does the interactive part in their own browser. So this module
  * never says "run", never states an ending as a result, and never claims the
  * sign-in SUCCEEDED: only the tool can know that, and the app's proof stays the
- * person's own press of "test this row".
+ * person's own press of "test".
  *
  * THE CODE IS EPHEMERAL. Nothing in this module accepts, keeps or returns the
  * person's code: it lives in the card's field for as long as it takes to cross
@@ -45,7 +45,7 @@ export const SETUP_CODE_PLACEHOLDER = "paste the code the page shows";
 /**
  * The sentences a sign-in says (PROVISIONAL wording). Each one names what the
  * APP knows and nothing more: the child is alive, it has exited (the person's
- * own press of "test this row" is still what proves the row), the person
+ * own press of "test" is still what proves the row), the person
  * stopped it, or the field has no code in it yet. No sentence claims a sign-in
  * worked, and none says "verified".
  */
@@ -53,7 +53,7 @@ export const SETUP_SENTENCES = {
   /** Only while the child is alive. */
   running: "the sign-in is running; paste the code the page shows.",
   /** The child exited by itself with code zero — no claim beyond that. */
-  done: "the sign-in is done; press test this row to see.",
+  done: "the sign-in is done; press test to see.",
   /** The person stopped it. */
   stopped: "the sign-in was stopped.",
   /** A send with a blank field starts nothing and says why. */

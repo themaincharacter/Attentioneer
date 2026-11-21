@@ -12,6 +12,7 @@ import {
 } from "../map/sessions";
 import type { CuratorRead } from "../turn/curator";
 import { taskOfSent } from "../turn/packet";
+import type { GroundAddResult } from "./useGround";
 
 /**
  * STORY 19.4 — THE CURATOR DISTILS A RUN'S RESULT (ADR-0037 §10's planned
@@ -26,8 +27,9 @@ import { taskOfSent } from "../turn/packet";
  * of 2026-11-21, no length cap on the card it returns.
  *
  * STORY 22.4 — THE CALL IS AUTOMATIC. A run's ending makes this call by itself
- * (useGround's settle path), so the person never chooses between two verbs;
- * the card's one verb is the manual re-press after a decline or a failure.
+ * (useGround's settle path), so the person never chooses between two verbs.
+ * STORY 22.6 — the card's ONE verb also starts here first, and a non-card
+ * answer of any kind falls through to 18.4's rule copy (keepRunOutcome below).
  * A run that did NOT finish but left words is read the same way, and the
  * artifact names the ending; the rule copy above still refuses a partial,
  * because a partial is never a result.
@@ -85,6 +87,53 @@ export const SESSION_CURATOR_FAILED_SENTENCE =
  */
 export const SESSION_CURATOR_NO_MANAGER_SENTENCE =
   "no manager model is configured, so no card was made.";
+
+/**
+ * STORY 22.6 — THE TWO HONEST OUTCOMES OF THE ONE PRESS (PROVISIONAL wording).
+ * A press always names the card it got: the curator's, or the rule's copy when
+ * the curator's answer could not be used. The copy line is ONE sentence and
+ * never claims a card the curator did not make.
+ */
+export const SESSION_CURATOR_KEPT_SENTENCE = "the curator made this card.";
+export const SESSION_CURATOR_COPY_KEPT_SENTENCE =
+  "the curator's answer could not be used, so the rule's copy was kept instead.";
+
+/** The one press's two attempts, in the order it makes them. */
+export interface SessionKeepIo {
+  /** The curator's attempt: one model call, one card or one refusal. */
+  distil: () => Promise<GroundAddResult>;
+  /** 18.4's rule copy, byte-for-byte the card that path already wrote. */
+  copy: () => Promise<GroundAddResult>;
+  /**
+   * Put the ONE outcome sentence on the card's face. A press that got a card
+   * says which one; a press that got none says the copy's own sentence.
+   */
+  say: (message: string) => void;
+}
+
+/**
+ * ONE PRESS, TWO ATTEMPTS (story 22.6): the curator first, 18.4's copy as the
+ * fallback. The curator answers with a card, a decline, an unusable block or
+ * nothing at all; only a card ends the chain. Any other answer falls back, so a
+ * completed run's press never dead-ends. When even the copy refuses, its
+ * sentence stands (a partial is still no result), and nothing claims otherwise.
+ */
+export async function keepRunOutcome(
+  io: SessionKeepIo,
+): Promise<GroundAddResult> {
+  const curated = await io.distil();
+  if (curated.ok) {
+    io.say(SESSION_CURATOR_KEPT_SENTENCE);
+    return curated;
+  }
+  const copied = await io.copy();
+  if (copied.ok) {
+    io.say(SESSION_CURATOR_COPY_KEPT_SENTENCE);
+    return copied;
+  }
+  io.say(copied.message);
+  return copied;
+}
 
 /**
  * WHAT A DISTIL NEEDS TO HAVE (PURE): the task the run was sent, and the words

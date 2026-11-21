@@ -700,7 +700,7 @@ describe("the card says the row's state on its expanded face, and offers one ver
       onTestRow: async () => ({ ok: true as const }),
     });
     expect(html).toContain("this row has never been tested here.");
-    expect(html).toContain("test this row");
+    expect(html).toContain(">test<");
     expect(html).toContain(">run<");
   });
 
@@ -733,7 +733,7 @@ describe("the card says the row's state on its expanded face, and offers one ver
       onTestRow: async () => ({ ok: true as const }),
     });
     expect(html).not.toContain("this row has never been tested here.");
-    expect(html).not.toContain("test this row");
+    expect(html).not.toContain("session-card-test");
   });
 
   test("a card whose row is gone has neither the line nor the verb", () => {
@@ -743,7 +743,7 @@ describe("the card says the row's state on its expanded face, and offers one ver
       onTestRow: async () => ({ ok: true as const }),
     });
     expect(html).not.toContain("this row has never been tested here.");
-    expect(html).not.toContain("test this row");
+    expect(html).not.toContain("session-card-test");
   });
 
   test("a press while the card's run is live answers the existing busy sentence", () => {
@@ -754,7 +754,7 @@ describe("the card says the row's state on its expanded face, and offers one ver
       toolStatus: acpRowStatus(true, false, null),
       onTestRow: async () => ({ ok: true as const }),
     });
-    expect(html).toContain("test this row");
+    expect(html).toContain(">test<");
     expect(rowTestGate({ liveRun: true, row: row() })).toEqual({
       kind: "refused",
       message: SESSION_BUSY_SENTENCE,
@@ -776,7 +776,7 @@ describe("the card says the row's state on its expanded face, and offers one ver
     expect(hook).toContain("ROW_TEST_SENTENCES.notStored");
     // The card's verb lives inside the expanded face's actions, beside run.
     const card = readFileSync(join(APP, "src/canvas/SessionCard.tsx"), "utf8");
-    expect(card).toContain("test this row");
+    expect(card).toContain("session-card-test");
     expect(card).toContain("session-card-tool-state");
   });
 });
