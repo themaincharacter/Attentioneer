@@ -7327,6 +7327,42 @@ body {
   padding-top: 2px;
 }
 
+/* A ROW'S DOCUMENTED HEADER, SAID QUIETLY (story 23.4): the endpoint documents
+   a header the row does not carry, and one press may add it. A conflict takes
+   the same line and no press: the row is the person's. */
+.providers-header-offer {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 2px;
+}
+
+.providers-header-offer-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #6f6a5f;
+}
+
+.providers-header-offer-add {
+  font: inherit;
+  font-size: 10.5px;
+  color: #3b3d42;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.providers-header-offer-add:disabled {
+  color: #a39c8d;
+  cursor: default;
+}
+
 /* THE SHIPPED SPECS' ROWS (story 15.12). These classes had no rules at all, so
    the name, the command and the note collapsed into one run of text —
    "Claude Codeclaudeversion and print mode…". A flex row with a gap gives

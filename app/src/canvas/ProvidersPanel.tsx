@@ -61,6 +61,12 @@ import {
   type ProviderCatalogFill,
 } from "../turn/providerCatalog";
 import {
+  HEADER_OFFER_SENTENCES,
+  documentedHeaderOffer,
+  withDocumentedHeaders,
+  type DocumentedHeaderOffer,
+} from "../turn/providerHeaderOffer";
+import {
   DEFAULT_LOCAL_IDLE_MINUTES,
   LOCAL_SPECS,
   type LocalSpec,
@@ -161,6 +167,71 @@ import { probeSpec } from "../turn/cliBridge";
  * beside the field. It is not a secret store and does not pretend to be one.
  */
 export const HEADER_STORE_SENTENCE = "these values are stored in plain text";
+
+/**
+ * THE QUIET LINE A ROW MAYBE DESERVES (story 23.4). It says that the row's own
+ * endpoint documents a header the row does not carry, names that header (never
+ * its value), and offers ONE press. A conflicting value gets the same kind of
+ * line but NO press: the row is the person's, and this panel does not edit it
+ * unasked. Nothing renders when the offer is empty.
+ */
+export function DocumentedHeaderOfferLine({
+  offer,
+  disabled = false,
+  onTake,
+}: {
+  offer: DocumentedHeaderOffer;
+  disabled?: boolean;
+  onTake: (name: string) => void;
+}) {
+  return (
+    <div className="providers-header-offer" role="status">
+      {offer.add.map((name) => (
+        <div className="providers-header-offer-line" key={name}>
+          <span>{HEADER_OFFER_SENTENCES.missing(name)}</span>
+          <button
+            type="button"
+            className="providers-header-offer-add"
+            disabled={disabled}
+            onClick={() => onTake(name)}
+          >
+            {HEADER_OFFER_SENTENCES.add}
+          </button>
+        </div>
+      ))}
+      {offer.conflicts.map((name) => (
+        <div className="providers-header-offer-line" key={name}>
+          <span>{HEADER_OFFER_SENTENCES.conflict(name)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * THE ROW'S OFFER (story 23.4): detection is the pure module's, and this is
+ * only where it meets a row. A row with nothing to be told renders NOTHING —
+ * no empty box, no "all good" line.
+ */
+export function DocumentedHeaderOfferForRow({
+  row,
+  disabled = false,
+  onTake,
+}: {
+  row: HttpProviderRow;
+  disabled?: boolean;
+  onTake: (name: string) => void;
+}) {
+  const offer = documentedHeaderOffer(row);
+  if (offer === null) return null;
+  return (
+    <DocumentedHeaderOfferLine
+      offer={offer}
+      disabled={disabled}
+      onTake={onTake}
+    />
+  );
+}
 
 export const ADD_KEY_SENTENCES = {
   kept: "the key is kept; it will not be shown again",
@@ -766,11 +837,70 @@ export function ProvidersPanel({
     }
   }
 
+  /**
+   * THE EXISTING ENDPOINT EDITOR PATH, in one function (story 15.17, reused by
+   * story 23.4). The editor's own fields are passed in; the row's models are
+   * carried verbatim; the write is validateProviderRow and then the one queued
+   * config write. A documented header's press calls THIS, so it arrives by the
+   * same path a typed line takes — there is no second writer.
+   */
+  async function saveHttpRow(
+    row: HttpProviderRow,
+    nextName: string,
+    nextBaseUrl: string,
+    nextHeaders: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    if (settings === null || busy) return;
+    const otherIds = settings.providers
+      .map((provider) => provider.id)
+      .filter((id) => id !== row.id);
+    const draft: ProviderDraft = {
+      id: row.id,
+      name: nextName,
+      baseUrl: nextBaseUrl,
+      headers: nextHeaders,
+      models: row.models.map((model) => ({
+        id: model.id,
+        name: model.name,
+        tools: model.capabilities.tools,
+        vision: model.capabilities.vision,
+        contextWindow: model.capabilities.contextWindow,
+      })),
+    };
+    const read = validateProviderRow(draft, otherIds);
+    if (read.kind === "refused") {
+      setSentence(read.sentence);
+      return;
+    }
+    setSentence(null);
+    if (await write(withProvider(settings, read.row))) {
+      // A row whose URL just changed has no checklist and no test sentence
+      // yet: both were about the OLD endpoint, so they are dropped rather
+      // than shown against the new one. The test verb is still there to ask.
+      clearFetched(row.id);
+      setTestNotes((current) => {
+        const next = { ...current };
+        delete next[row.id];
+        return next;
+      });
+      setEditing(null);
+    }
+  }
+
   async function saveEdit(row: ProviderRow): Promise<void> {
     if (settings === null || busy) return;
     const otherIds = settings.providers
       .map((provider) => provider.id)
       .filter((id) => id !== row.id);
+    if (row.kind === "http") {
+      const headers = headersFromText(editHeaders);
+      if (headers.kind === "refused") {
+        setSentence(headers.sentence);
+        return;
+      }
+      await saveHttpRow(row, editName, editBaseUrl, headers.headers);
+      return;
+    }
     let read;
     if (row.kind === "local") {
       read = validateLocalProviderRow(
@@ -789,7 +919,7 @@ export function ProvidersPanel({
         },
         otherIds,
       );
-    } else if (row.kind === "cli") {
+    } else {
       read = validateCliProviderRow(
         {
           id: row.id,
@@ -804,26 +934,6 @@ export function ProvidersPanel({
         },
         otherIds,
       );
-    } else {
-      const headers = headersFromText(editHeaders);
-      if (headers.kind === "refused") {
-        setSentence(headers.sentence);
-        return;
-      }
-      const draft: ProviderDraft = {
-        id: row.id,
-        name: editName,
-        baseUrl: editBaseUrl,
-        headers: headers.headers,
-        models: row.models.map((model) => ({
-          id: model.id,
-          name: model.name,
-          tools: model.capabilities.tools,
-          vision: model.capabilities.vision,
-          contextWindow: model.capabilities.contextWindow,
-        })),
-      };
-      read = validateProviderRow(draft, otherIds);
     }
     if (read.kind === "refused") {
       setSentence(read.sentence);
@@ -831,9 +941,6 @@ export function ProvidersPanel({
     }
     setSentence(null);
     if (await write(withProvider(settings, read.row))) {
-      // A row whose URL just changed has no checklist and no test sentence
-      // yet: both were about the OLD endpoint, so they are dropped rather
-      // than shown against the new one. The test verb is still there to ask.
       clearFetched(row.id);
       setTestNotes((current) => {
         const next = { ...current };
@@ -842,6 +949,22 @@ export function ProvidersPanel({
       });
       setEditing(null);
     }
+  }
+
+  /**
+   * TAKE ONE DOCUMENTED HEADER (story 23.4). The press is the only write: the
+   * row is rebuilt with the catalogue's own value, then saved through the
+   * EXISTING endpoint editor path above, so validation, the reserved rule and
+   * the queued config write are the ones a typed header already takes. On
+   * success the row carries the name, and the offer line is gone by itself.
+   */
+  async function takeDocumentedHeader(
+    row: HttpProviderRow,
+    name: string,
+  ): Promise<void> {
+    if (settings === null || busy) return;
+    const next = withDocumentedHeaders(row, [name]);
+    await saveHttpRow(next, row.name, row.baseUrl, next.headers ?? {});
   }
 
   async function addModel(
@@ -1431,6 +1554,19 @@ export function ProvidersPanel({
                   ))}
                 </ul>
               </div>
+            )}
+
+            {/* THE QUIET LINE (story 23.4): this endpoint documents a header
+                this row does not carry — or names with another value, which is
+                said and left alone. Only an http row can match a catalogue
+                entry, and while it is being edited the header field is already
+                the person's answer. */}
+            {provider.kind === "http" && editing !== provider.id && (
+              <DocumentedHeaderOfferForRow
+                row={provider}
+                disabled={busy}
+                onTake={(name) => void takeDocumentedHeader(provider, name)}
+              />
             )}
 
             {provider.kind === "cli" && rowProbes[provider.id] !== undefined && (
