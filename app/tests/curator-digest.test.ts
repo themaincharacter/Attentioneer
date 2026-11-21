@@ -10,15 +10,10 @@ import {
   type MapDigestInput,
 } from "../src/turn/curatorDigest";
 import {
-  CURATOR_CAP_CLAIM_CHARS,
-  CURATOR_CAP_CLAIM_SENTENCES,
-  CURATOR_CAP_FIELD_CHARS,
-  CURATOR_CAP_FIELD_ITEMS,
-  CURATOR_CAP_TITLE_CHARS,
   CURATOR_FENCE,
-  CURATOR_OVERLONG_SENTENCE,
+  CURATOR_MALFORMED_SENTENCE,
   buildCuratorMessages,
-  cardOverLength,
+  curatorCardText,
   curatorPrompt,
   readCuratorAnswer,
   type CuratorCard,
@@ -37,8 +32,11 @@ import { askTurnCardNote } from "../src/canvas/useGround";
  *     reading body (the builder has no text input, and the hook hands it none);
  *   - the digest is bounded by a card count and a byte cap, drops WHOLE entries
  *     and says so in one qualitative sentence;
- *   - each per-field cap is ENFORCED by the parser: over it is malformed, one
- *     sentence, no card;
+ *   - a LONG card is accepted whole and its bytes are kept (the ruling of
+ *     2026-11-21 removed the caps);
+ *   - a malformed block is still refused with the malformed sentence;
+ *   - the cap constants and their sentence are gone, so they cannot creep back;
+ *   - the prompt asks for brevity as AIMS and never threatens refusal;
  *   - a short card still parses, and the decline stays legal.
  */
 
@@ -153,10 +151,14 @@ describe("the map digest rides the prompt and carries no reading body", () => {
     expect(source("turn/curator.ts")).not.toContain("readingText");
   });
 
-  test("the prompt states the brevity limits and the decline stance", () => {
+  test("the prompt states brevity as aims and the decline stance", () => {
     const prompt = curatorPrompt({ question: QUESTION, reply: REPLY, digest: mapDigest(fixtures()) });
-    expect(prompt).toContain("at most two sentences");
-    expect(prompt).toContain("at most three short items");
+    // THE RULING OF 2026-11-21: brevity is an AIM in the prompt, not a limit.
+    expect(prompt).toContain("a title of a few words");
+    expect(prompt).toContain("the claim in one or two sentences");
+    expect(prompt).toContain("every other field as up to three short items");
+    expect(prompt).toContain("the tightest honest form, never a restatement");
+    expect(prompt).toContain("GLANCE");
     expect(prompt).toContain("Do NOT restate the question");
     expect(prompt).toContain("Do NOT open with a preamble");
     expect(prompt).toContain("Do NOT end with a hedge");
@@ -166,6 +168,9 @@ describe("the map digest rides the prompt and carries no reading body", () => {
     expect(prompt).toContain("there is no language game here yet, so the digest below is the only guide");
     expect(prompt).toContain("DECLINE IS THE DEFAULT");
     expect(prompt).toContain("ONE sentence saying why");
+    // It no longer threatens refusal for length: the caps are gone.
+    expect(prompt).not.toContain("refused");
+    expect(prompt).not.toContain("over any of them");
   });
 
   test("the digest is bounded and says so when it omits, whole entries only", () => {
@@ -223,41 +228,65 @@ function cardBlock(card: Partial<CuratorCard> = {}): string {
   return "here is the card.\n\n```" + CURATOR_FENCE + "\n" + JSON.stringify(body, null, 2) + "\n```\n";
 }
 
-describe("a long card is a bug: the per-field caps are enforced", () => {
-  const over: Array<[string, Partial<CuratorCard>]> = [
-    ["title", { title: "z".repeat(CURATOR_CAP_TITLE_CHARS + 1) }],
-    ["a two-line title", { title: "the tide\nturns at six" }],
-    [
-      "claim sentences",
-      { claim: "One. Two. Three. " + "x".repeat(0) },
-    ],
-    ["claim chars", { claim: "a".repeat(CURATOR_CAP_CLAIM_CHARS + 1) }],
-    ["rests on items", { restsOn: "a; b; c; d" }],
-    ["rests on chars", { restsOn: "a".repeat(CURATOR_CAP_FIELD_CHARS + 1) }],
-    ["does not cover items", { doesNotCover: "a\nb\nc\nd" }],
-    ["uncertainty items", { uncertainty: "one; two; three; four" }],
-  ];
+const LONG_CARD: CuratorCard = {
+  title: "A long card is still a card",
+  claim: "One claim. Two claims. Three claims. Four claims. Five claims.",
+  restsOn: Array.from({ length: 10 }, (_, index) => "rests on item " + index).join("; "),
+  doesNotCover: Array.from({ length: 10 }, (_, index) => "not covered " + index).join("\n"),
+  uncertainty: Array.from({ length: 10 }, (_, index) => "doubt " + index).join("; "),
+};
 
-  for (const [label, patch] of over) {
-    test("an over-long " + label + " is malformed, with one sentence and no card", () => {
-      const card = { ...CARD, ...patch };
-      expect(cardOverLength(card)).toBe(true);
-      const read = readCuratorAnswer(cardBlock(patch), REPLY);
-      expect(read.kind).toBe("invalid");
-      if (read.kind === "invalid") {
-        expect(read.sentence).toBe(CURATOR_OVERLONG_SENTENCE);
-      }
-      expect(CURATOR_OVERLONG_SENTENCE).toContain("length");
-      expect(CURATOR_OVERLONG_SENTENCE).toContain("no card was made");
-    });
-  }
+describe("a long but well-shaped card is accepted; a malformed block is refused", () => {
+  test("five claim sentences and ten-item fields are a card, and every byte is kept", () => {
+    // THE RULING OF 2026-11-21: "remove the cap all together". Length is not a
+    // shape failure, so the parser accepts the card and never truncates it.
+    const read = readCuratorAnswer(cardBlock(LONG_CARD), REPLY);
+    expect(read.kind).toBe("card");
+    if (read.kind !== "card") return;
+    expect(read.card).toEqual(LONG_CARD);
+    expect(read.text).toBe(curatorCardText(LONG_CARD));
+    // No silent truncation: the whole claim and every long field ride.
+    expect(read.text).toContain(LONG_CARD.claim);
+    for (const field of [LONG_CARD.restsOn, LONG_CARD.doesNotCover, LONG_CARD.uncertainty]) {
+      expect(read.text).toContain(field);
+    }
+  });
 
-  test("a short card inside every cap still parses", () => {
-    expect(cardOverLength(CARD)).toBe(false);
-    expect(CURATOR_CAP_CLAIM_SENTENCES).toBe(2);
-    expect(CURATOR_CAP_FIELD_ITEMS).toBe(3);
+  test("a short card still parses", () => {
     const read = readCuratorAnswer(cardBlock(), REPLY);
     expect(read.kind).toBe("card");
+  });
+
+  test("a missing key, a wrong type or two blocks is still the malformed sentence", () => {
+    const fence = (body: string) => "\n\n```" + CURATOR_FENCE + "\n" + body + "\n```\n";
+    const cases = [
+      fence('{"title":"only a title"}'),
+      fence(JSON.stringify({ ...CARD, claim: 7 })),
+      fence(JSON.stringify({ ...CARD, "rests on": ["a"] })),
+      fence(JSON.stringify({ ...CARD })) + fence(JSON.stringify({ ...CARD })),
+    ];
+    for (const answer of cases) {
+      const read = readCuratorAnswer(answer, REPLY);
+      expect(read.kind).toBe("invalid");
+      if (read.kind === "invalid") {
+        expect(read.sentence).toBe(CURATOR_MALFORMED_SENTENCE);
+      }
+    }
+  });
+
+  test("the cap constants and their sentence are gone from the source", () => {
+    const cur = source("turn/curator.ts");
+    for (const gone of [
+      "CURATOR_CAP_TITLE_CHARS",
+      "CURATOR_CAP_CLAIM_SENTENCES",
+      "CURATOR_CAP_CLAIM_CHARS",
+      "CURATOR_CAP_FIELD_ITEMS",
+      "CURATOR_CAP_FIELD_CHARS",
+      "CURATOR_OVERLONG_SENTENCE",
+      "cardOverLength",
+    ]) {
+      expect(cur).not.toContain(gone);
+    }
   });
 });
 

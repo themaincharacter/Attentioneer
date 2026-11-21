@@ -53,7 +53,6 @@ import type { GroundReference } from "../src/map/ground";
 import {
   CURATOR_FENCE,
   CURATOR_MALFORMED_SENTENCE,
-  CURATOR_OVERLONG_SENTENCE,
   buildCuratorMessages,
   readCuratorAnswer,
   type CuratorCard,
@@ -91,8 +90,9 @@ import { runRunContact, type RunContactDeps } from "../src/contacts/run";
  *     "curator", written only when the request actually left;
  *   - the artifact is the SAME distilled form an ask card's artifact is, with
  *     the session slug as its provenance and the wire back to the card;
- *   - a decline, an unusable block, an over-long card or a failed call writes
- *     NO card and leaves the transcript's entries untouched;
+ *   - a decline, an unusable block or a failed call writes NO card and leaves
+ *     the transcript's entries untouched; a LONG card is still a card (the
+ *     ruling of 2026-11-21);
  *   - the rule's copy path is untouched underneath its fallback verb.
  */
 
@@ -742,7 +742,7 @@ describe("the artifact is the distilled form, wired back to the session card", (
 });
 
 /* ------------------------------------------------------------------ *
- * 6. Decline, invalid, over-long and a failed call: no card, no edits.
+ * 6. Decline, invalid and a failed call: no card, no edits.
  * ------------------------------------------------------------------ */
 
 describe("a decline, a bad block or a failed call writes nothing and leaves the result", () => {
@@ -762,19 +762,22 @@ describe("a decline, a bad block or a failed call writes nothing and leaves the 
     expect(wrote).toBe(false);
   });
 
-  test("an unusable block and an over-long card keep their stated sentences", async () => {
+  test("an unusable block keeps its sentence; a long card is still a card", async () => {
     const broken = readCuratorAnswer("prose\n\n```json\n{}\n```\n", REPLY);
     expect(broken.kind).toBe("invalid");
-    const overlong = readCuratorAnswer(
-      cardBlock({ claim: "z".repeat(400) }),
-      REPLY,
-    );
-    expect(overlong.kind).toBe("invalid");
-    if (overlong.kind === "invalid") {
-      expect(overlong.sentence).toBe(CURATOR_OVERLONG_SENTENCE);
-    }
     if (broken.kind === "invalid") {
       expect(broken.sentence).toBe(CURATOR_MALFORMED_SENTENCE);
+    }
+    // THE RULING OF 2026-11-21: length no longer refuses. A five-sentence claim
+    // is parsed as a card and its bytes are kept (the writer's own test above
+    // proves the same bytes reach the reading).
+    const long = readCuratorAnswer(
+      cardBlock({ claim: "One. Two. Three. Four. Five." }),
+      REPLY,
+    );
+    expect(long.kind).toBe("card");
+    if (long.kind === "card") {
+      expect(long.text).toContain("One. Two. Three. Four. Five.");
     }
     let wrote = false;
     const writer = async () => {
@@ -784,10 +787,6 @@ describe("a decline, a bad block or a failed call writes nothing and leaves the 
     expect(await writeCuratedRunCard(inputFor(broken), { writeCard: writer })).toEqual({
       kind: "none",
       sentence: CURATOR_MALFORMED_SENTENCE,
-    });
-    expect(await writeCuratedRunCard(inputFor(overlong), { writeCard: writer })).toEqual({
-      kind: "none",
-      sentence: CURATOR_OVERLONG_SENTENCE,
     });
     expect(wrote).toBe(false);
   });

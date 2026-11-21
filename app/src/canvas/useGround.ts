@@ -7150,9 +7150,10 @@ export function useGround(workspacePath: string, turn?: TurnPort): GroundView {
    * role "curator" — the ask's pattern, one card family over.
    *
    * FAILURE IS ASYMMETRIC (ADR-0037 decision 8): the result stands. A decline
-   * keeps the curator's own first sentence; an unusable or over-long card keeps
-   * the curator module's stated sentence; a failed call says the curator did not
-   * answer. The transcript's entries are never written by this path at all.
+   * keeps the curator's own first sentence; an unusable card keeps the curator
+   * module's stated sentence; a failed call says the curator did not answer. A
+   * long card is accepted whole (the ruling of 2026-11-21). The transcript's
+   * entries are never written by this path at all.
    */
   const distilRunResult = useCallback(
     (slug: string): Promise<GroundAddResult> => {

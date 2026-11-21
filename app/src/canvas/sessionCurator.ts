@@ -21,8 +21,9 @@ import { taskOfSent } from "../turn/packet";
  * a completed run's words, whole, as a selection card. This module is the
  * SECOND path, the artifact: one CURATOR model call turns the run's result into
  * a card with a claim and its caveats. The curator itself is REUSED AS-IS
- * (turn/curator.ts): the same three inputs, the same caps, the same parse, the
- * same decline rule and the same sentences.
+ * (turn/curator.ts): the same three inputs, the same SHAPE check, the same
+ * parse, the same decline rule and the same sentences — and, since the ruling
+ * of 2026-11-21, no length cap on the card it returns.
  *
  * STORY 22.4 — THE CALL IS AUTOMATIC. A run's ending makes this call by itself
  * (useGround's settle path), so the person never chooses between two verbs;
@@ -45,8 +46,9 @@ import { taskOfSent } from "../turn/packet";
  * no argument that could carry one.
  *
  * FAILURE IS ASYMMETRIC AND NEVER LOSES WORK (ADR-0037 decision 8). A decline,
- * an unusable block, an over-long card or a failed call writes NO card and
- * answers ONE sentence; the transcript's entries are never touched, so the raw
+ * an unusable block or a failed call writes NO card and answers ONE sentence; a
+ * card that merely runs LONG is not a failure (the ruling of 2026-11-21), so it
+ * is written whole. The transcript's entries are never touched, so the raw
  * result is exactly where it was, one press from the card's transcript.
  *
  * PURE apart from the ONE writer bridge it is handed (`writeCard`), which is
@@ -200,10 +202,11 @@ export interface SessionCuratorInput {
 /**
  * WRITE THE ARTIFACT — or write nothing and answer the ONE sentence. The
  * decision is the parse's (turn/curator.ts): a card is written only for
- * `kind: "card"`; a decline keeps its own first sentence, a malformed or
- * over-long answer keeps the curator module's stated sentence, and a failed
- * call keeps the asymmetry's. In every refusal path the transcript is never
- * read past its entries and never written: the result stands.
+ * `kind: "card"`; a decline keeps its own first sentence, a malformed answer
+ * keeps the curator module's stated sentence, and a failed call keeps the
+ * asymmetry's. A long but well-shaped card is a card and is written whole. In
+ * every refusal path the transcript is never read past its entries and never
+ * written: the result stands.
  */
 export async function writeCuratedRunCard(
   input: SessionCuratorInput,

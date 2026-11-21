@@ -1565,10 +1565,12 @@ export function SessionCard({
               </button>
             )}
             {/* STORY 22.4 — THE QUIET FALLBACK. When the automatic distil made
-                no card — a decline, an unusable or over-long card, a failed
-                call, no manager — its ONE sentence sits here with the rule
-                copy's verb. The copy is unchanged (18.4) and refuses a partial
-                outright, so a partial shows the sentence without the verb. */}
+                no card — a decline, an unusable card, a failed call, no
+                manager — its ONE sentence sits here with the rule copy's verb.
+                A LONG card is not one of these (the ruling of 2026-11-21):
+                length never refuses. The copy is unchanged (18.4) and refuses
+                a partial outright, so a partial shows the sentence without the
+                verb. */}
             {distilNotice !== null && (
               <div className="session-distil-fallback">
                 <span className="session-distil-said">{distilNotice}</span>
