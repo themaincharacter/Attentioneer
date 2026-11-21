@@ -34,6 +34,7 @@ const ASK_CARD = source("canvas/AskCard.tsx");
 const SESSION_CARD = source("canvas/SessionCard.tsx");
 const DRAG = source("canvas/groundDrag.ts");
 const PILL = source("canvas/CardNamePill.tsx");
+const CSS = source("canvas/canvas.css");
 
 /** The three card families are peers: one press rule, never a variant. */
 const FAMILIES = [
@@ -281,5 +282,36 @@ describe("nothing else about the drag changed", () => {
 
   test("the ground map still renders no concept family and no counters", () => {
     expect(renderedMapContent("ground")).toEqual([]);
+  });
+});
+
+/**
+ * STORY 22.7 — THE SURFACE SIDE OF THE SAME PRESS RULE. 16.32 says who OWNS the
+ * press; this says the collapsed face may therefore never BEGIN a selection.
+ * The rule and its assertion live here, beside the predicate, so the two halves
+ * of "the drag owns a collapsed press" stay read together.
+ */
+describe("a collapsed face never begins a selection", () => {
+  test("the collapsed body carries no-select, prefixed for the WebKit window", () => {
+    expect(CSS).toMatch(
+      /\.ground-body-collapsed \{[^}]*user-select: none;[^}]*\}/s,
+    );
+    expect(CSS).toMatch(
+      /\.ground-body-collapsed \{[^}]*-webkit-user-select: none;[^}]*\}/s,
+    );
+    // The SAME open state the predicate reads chooses the class: only a
+    // collapsed card wears it.
+    expect(LAYER).toContain('open ? "" : " ground-body-collapsed"');
+  });
+
+  test("the expanded reading still selects — 16.31 and 16.32 untouched", () => {
+    expect(CSS).toMatch(
+      /\.ground-reference\.expanded \.ground-body \.ground-reading \{[^}]*user-select: text;/s,
+    );
+    // The no-select rule names the collapsed body alone; the expanded face
+    // carries no no-select rule of its own.
+    expect(CSS).not.toMatch(
+      /\.ground-reference\.expanded[^{}]*\{[^}]*user-select: none;/s,
+    );
   });
 });

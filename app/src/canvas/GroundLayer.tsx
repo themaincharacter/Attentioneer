@@ -48,6 +48,11 @@ import { sessionDistilWords, type AskCallsFacts, type AskWorkPhase } from "./con
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
 import { openFolderOutward, openPageOutward } from "./outward";
+import {
+  followReadingLink,
+  readingLinkSegments,
+  READING_LINK_CLASS,
+} from "./readingLinks";
 import { attachGroundCardDrag } from "./groundDrag";
 import {
   frameGroundCard,
@@ -1852,6 +1857,48 @@ export function GroundPulled({
 }
 
 /**
+ * STORY 22.7 — ONE READING, WITH ITS ADDRESSES OPENABLE. The stored bytes are
+ * drawn exactly as before (the `pre-wrap` prose the card has always shown),
+ * except that an http(s) address becomes the house's one link look and opens in
+ * the default browser through the SAME guarded door the page card's "open the
+ * page" verb uses. A collapsed card keeps every byte plain: the face is a drag
+ * surface, so a press there may never be a selection and there is nothing to
+ * click. A non-http string is text and only text.
+ *
+ * `open` is the card's own view state; the click goes straight to
+ * `followReadingLink`, whose own seam takes the opener a test injects.
+ */
+export function GroundReadingText({
+  text,
+  open,
+}: {
+  text: string;
+  open: boolean;
+}) {
+  if (!open) return <>{text}</>;
+  const segments = readingLinkSegments(text);
+  if (!segments.some((segment) => segment.kind === "link")) return <>{text}</>;
+  return (
+    <>
+      {segments.map((segment, at) =>
+        segment.kind === "link" ? (
+          <a
+            key={at}
+            className={READING_LINK_CLASS}
+            href={segment.url}
+            onClick={(event) => followReadingLink(event, segment.url)}
+          >
+            {segment.text}
+          </a>
+        ) : (
+          <span key={at}>{segment.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/**
  * ONE reference's card. It owns its press handling because a drag is per-card
  * state; the layer only hands it records and the person's verbs.
  */
@@ -2075,6 +2122,26 @@ function GroundCard({
     el.addEventListener("mousedown", handleLinkPress);
     return () => el.removeEventListener("mousedown", handleLinkPress);
   });
+
+  // STORY 22.7 — A LINK'S PRESS IS THE LINK'S, NOT THE CARD'S. The body is a
+  // CHILD of the card's drag surface, so stopping the press here — before it
+  // bubbles to the raw wiring above — is what keeps a click on a link from
+  // becoming a drag or a selection. The click then opens the page through the
+  // link's own handler; nothing else about the card's press changes.
+  useEffect(() => {
+    if (!open) return;
+    const el = bodyRef.current;
+    if (el === null) return;
+    function onLinkPress(e: MouseEvent): void {
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement).closest("a.ground-reading-link") === null) {
+        return;
+      }
+      e.stopPropagation();
+    }
+    el.addEventListener("mousedown", onLinkPress);
+    return () => el.removeEventListener("mousedown", onLinkPress);
+  }, [open]);
 
   /**
    * STORY 16.25 — PUT THE FRAME BACK ON THE RECORD'S OWN POINT, and let the
@@ -2730,7 +2797,10 @@ function GroundCard({
       {kindLine !== null && (
         <div className="ground-kind">{kindLine}</div>
       )}
-      <div className="ground-body" ref={bodyRef}>
+      <div
+        className={`ground-body${open ? "" : " ground-body-collapsed"}`}
+        ref={bodyRef}
+      >
         {/* STORY 20.2 (PROVISIONAL) — THE EXPLORER: a quiet block on an
             EXPANDED project card, ABOVE the kept reading. It is live
             navigation over the folder (one on-demand listing per press), while
@@ -2850,7 +2920,7 @@ function GroundCard({
           // before the drag takes the pointer, so the browser's selection and
           // this box's scroll are never touched.
           <div className="ground-reading" ref={readingRef}>
-            {bodyText}
+            <GroundReadingText text={bodyText} open={open} />
           </div>
         ) : showNeeds && needsLine !== null ? (
           // STORY 16.15: an image or a video has no reading and never pretends

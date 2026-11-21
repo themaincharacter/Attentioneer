@@ -5534,7 +5534,13 @@ body {
   border: 1px solid var(--ink-rule);
   border-radius: 8px;
   box-shadow: 0 1px 5px rgba(40, 35, 25, 0.06);
+  /* STORY 22.7 — the card never begins a selection. The UNPREFIXED rule was
+     already here; the WebKit window needs the prefixed one too, or a drag on
+     the collapsed crop still paints a native highlight under the hand. The
+     expanded reading re-enables selection further down, and that is the only
+     place the face lets it back in. */
   user-select: none;
+  -webkit-user-select: none;
   animation: fade-in var(--motion-base) var(--ease-out);
   /* A drag moves the card: the grab cursor says the press can, and the live
      frame is quiet (no shadow, no scale) — one write follows the release. */
@@ -5640,8 +5646,11 @@ body {
   outline: none;
   cursor: text;
   /* The card forbids selection (a drag must never select its text); the one
-     exception is the name being typed, where selection is the affordance. */
+     exception is the name being typed, where selection is the affordance.
+     STORY 22.7: both forms, so a renamed card still lets the person select the
+     old name now that the card carries the WebKit prefix too. */
   user-select: text;
+  -webkit-user-select: text;
 }
 
 /* STORY 16.13 (shortlist items 3 and 10): the card's SECOND line — what this
@@ -5762,6 +5771,16 @@ body {
   overflow: hidden;
 }
 
+/* STORY 22.7 — A COLLAPSED FACE NEVER SELECTS. 16.32 gave the press to the
+   drag on a collapsed card; this is the surface side of that one rule, stated
+   beside the expanded reading that deliberately lets selection back in. The
+   class is on the body ONLY when the card is collapsed, so the expanded face
+   carries no no-select rule at all. */
+.ground-body-collapsed {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .ground-reference.expanded .ground-body .ground-reading {
   display: block;
   -webkit-line-clamp: unset;
@@ -5772,6 +5791,20 @@ body {
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
+}
+
+/* STORY 22.7 — A LINK IN AN EXPANDED READING SAYS IT IS OPENABLE. The house's
+   one link look: the reading's own ink, one underline, the strong ink under
+   the hand. It adds no verb and no second surface — the words are the target. */
+.ground-reading-link {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ground-reading-link:hover {
+  color: var(--ink-strong);
 }
 
 /* STORY 20.2 (PROVISIONAL) — THE EXPLORER: a quiet block on an expanded
@@ -5982,6 +6015,10 @@ body {
   line-height: var(--prose-leading);
   color: var(--ink);
   white-space: pre-wrap;
+  /* The editor is a field before it is a card: its own selection survives the
+     card's no-select, in both forms (story 22.7's WebKit prefix included). */
+  user-select: text;
+  -webkit-user-select: text;
   resize: none;
 }
 
