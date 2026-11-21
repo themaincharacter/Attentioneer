@@ -1,0 +1,289 @@
+{
+  "ranAt": "2026-11-21T17:26:28.988Z",
+  "provider": {
+    "rowName": "OpenCode Go",
+    "rowId": "opencode-go",
+    "managerModelId": "mimo-v2.6-pro",
+    "taskModelId": "deepseek-v4.1-flash"
+  },
+  "cap": 30,
+  "only": "interpreter",
+  "counts": {
+    "interpreter": {
+      "acts": 7,
+      "question": 12,
+      "refusal": 1,
+      "error": 0
+    },
+    "curator": {
+      "card": 0,
+      "declined": 0,
+      "unusable": 0,
+      "error": 0
+    },
+    "calls": 20
+  },
+  "stopped": null,
+  "interpreter": [
+    {
+      "index": 1,
+      "kind": "clear",
+      "instruction": "read the card \"the command card\" and tell me what it says.",
+      "instructionChars": 58,
+      "ms": 8465,
+      "answer": "```attentioneer-acts\n[\n  {\"act\": \"read_card\", \"map\": \"ground\", \"payload\": {\"card\": \"the command card\"}}\n]\n```",
+      "outcome": "acts",
+      "acts": [
+        "read_card"
+      ],
+      "question": null,
+      "sentence": null
+    },
+    {
+      "index": 2,
+      "kind": "clear",
+      "instruction": "add a card called \"the battery\" and wire it to \"the command card\".",
+      "instructionChars": 66,
+      "ms": 28401,
+      "answer": "```attentioneer-acts\n[\n  {\"act\": \"propose_card\", \"map\": \"ground\", \"payload\": {\"name\": \"the battery\", \"x\": -200, \"y\": 400}},\n  {\"act\": \"propose_wire\", \"map\": \"ground\", \"payload\": {\"from\": \"the battery\", \"to\": \"the command card\"}}\n]\n```",
+      "outcome": "acts",
+      "acts": [
+        "propose_card",
+        "propose_wire"
+      ],
+      "question": null,
+      "sentence": null
+    },
+    {
+      "index": 3,
+      "kind": "clear",
+      "instruction": "remove the wire between the command card and the send path.",
+      "instructionChars": 59,
+      "ms": 3500,
+      "answer": "```attentioneer-acts\n[\n  {\"act\": \"propose_unwire\", \"map\": \"ground\", \"payload\": {\"from\": \"the command card\", \"to\": \"the send path\", \"why\": \"Remove the wire between the command card and the send path, as asked.\"}}\n]\n```",
+      "outcome": "acts",
+      "acts": [
+        "propose_unwire"
+      ],
+      "question": null,
+      "sentence": null
+    },
+    {
+      "index": 4,
+      "kind": "clear",
+      "instruction": "put a note on \"the provider panel\" saying a key needs a test after it is set.",
+      "instructionChars": 77,
+      "ms": 7647,
+      "answer": "```attentioneer-acts\n[\n  {\"act\": \"propose_note\", \"map\": \"ground\", \"payload\": {\"card\": \"the provider panel\", \"note\": \"a key needs a test after it is set.\"}}\n]\n```",
+      "outcome": "acts",
+      "acts": [
+        "propose_note"
+      ],
+      "question": null,
+      "sentence": null
+    },
+    {
+      "index": 5,
+      "kind": "clear",
+      "instruction": "move the send path below the command card.",
+      "instructionChars": 42,
+      "ms": 10645,
+      "answer": "```attentioneer-acts\n[\n  {\"act\": \"propose_move\", \"map\": \"ground\", \"payload\": {\"card\": \"the send path\", \"other\": \"the command card\", \"direction\": \"below\"}}\n]\n```",
+      "outcome": "acts",
+      "acts": [
+        "propose_move"
+      ],
+      "question": null,
+      "sentence": null
+    },
+    {
+      "index": 6,
+      "kind": "clear",
+      "instruction": "give me an overview of this map.",
+      "instructionChars": 32,
+      "ms": 2984,
+      "answer": "```attentioneer-acts\n[{\"act\": \"map_overview\", \"map\": \"ground\", \"payload\": {}}]\n```",
+      "outcome": "acts",
+      "acts": [
+        "map_overview"
+      ],
+      "question": null,
+      "sentence": null
+    },
+    {
+      "index": 7,
+      "kind": "vague",
+      "instruction": "tidy this up.",
+      "instructionChars": 13,
+      "ms": 12832,
+      "answer": "What should I tidy: the card names, the layout, or the wires?",
+      "outcome": "question",
+      "acts": [],
+      "question": "What should I tidy: the card names, the layout, or the wires?",
+      "sentence": null
+    },
+    {
+      "index": 8,
+      "kind": "vague",
+      "instruction": "make it clearer.",
+      "instructionChars": 16,
+      "ms": 9667,
+      "answer": "Clearer what — one card's reading, the map's layout, or something else?",
+      "outcome": "question",
+      "acts": [],
+      "question": "Clearer what — one card's reading, the map's layout, or something else?",
+      "sentence": null
+    },
+    {
+      "index": 9,
+      "kind": "vague",
+      "instruction": "the command card feels slow, do something about that.",
+      "instructionChars": 53,
+      "ms": 13605,
+      "answer": "Which change do you want — read the command card and the send path first so we can see where the delay is, or wire what we already have into the ask card \"how slow is the command card\" and treat this as a question to investigate?",
+      "outcome": "question",
+      "acts": [],
+      "question": "Which change do you want — read the command card and the send path first so we can see where the delay is, or wire what we already have into the ask card \"how slow is the command card\" and treat this as a question to investigate?",
+      "sentence": null
+    },
+    {
+      "index": 10,
+      "kind": "vague",
+      "instruction": "add something about the caps.",
+      "instructionChars": 29,
+      "ms": 7006,
+      "answer": "Which card should \"something about the caps\" land on — a note on **the curator's caps**, or a new card of its own?",
+      "outcome": "question",
+      "acts": [],
+      "question": "Which card should \"something about the caps\" land on — a note on **the curator's caps**, or a new card of its own?",
+      "sentence": null
+    },
+    {
+      "index": 11,
+      "kind": "vague",
+      "instruction": "clean up the wires.",
+      "instructionChars": 19,
+      "ms": 7577,
+      "answer": "Which wire do you mean — should I remove the one between \"the command card\" and \"the send path\", or do you want something else?",
+      "outcome": "question",
+      "acts": [],
+      "question": "Which wire do you mean — should I remove the one between \"the command card\" and \"the send path\", or do you want something else?",
+      "sentence": null
+    },
+    {
+      "index": 12,
+      "kind": "ambiguous",
+      "instruction": "wire the command card to it.",
+      "instructionChars": 28,
+      "ms": 5293,
+      "answer": "Which card do you mean by \"it\"?",
+      "outcome": "question",
+      "acts": [],
+      "question": "Which card do you mean by \"it\"?",
+      "sentence": null
+    },
+    {
+      "index": 13,
+      "kind": "ambiguous",
+      "instruction": "remove the card over there.",
+      "instructionChars": 27,
+      "ms": 9010,
+      "answer": "Which card do you mean? \"Over there\" doesn't point to one I can identify.",
+      "outcome": "refusal",
+      "acts": [],
+      "question": null,
+      "sentence": "the interpreter answered in prose rather than a script or a question, so nothing was applied."
+    },
+    {
+      "index": 14,
+      "kind": "ambiguous",
+      "instruction": "connect the two cards.",
+      "instructionChars": 22,
+      "ms": 5177,
+      "answer": "Which two cards should I connect?",
+      "outcome": "question",
+      "acts": [],
+      "question": "Which two cards should I connect?",
+      "sentence": null
+    },
+    {
+      "index": 15,
+      "kind": "ambiguous",
+      "instruction": "move that one next to the other one.",
+      "instructionChars": 36,
+      "ms": 3734,
+      "answer": "Which two cards do you mean — which one should move, and which one should it sit next to?",
+      "outcome": "question",
+      "acts": [],
+      "question": "Which two cards do you mean — which one should move, and which one should it sit next to?",
+      "sentence": null
+    },
+    {
+      "index": 16,
+      "kind": "ambiguous",
+      "instruction": "put the new card near the old one.",
+      "instructionChars": 34,
+      "ms": 9884,
+      "answer": "Which card is \"the new card,\" and which card should it sit near?",
+      "outcome": "question",
+      "acts": [],
+      "question": "Which card is \"the new card,\" and which card should it sit near?",
+      "sentence": null
+    },
+    {
+      "index": 17,
+      "kind": "impossible",
+      "instruction": "delete every card on the map and start over.",
+      "instructionChars": 44,
+      "ms": 22001,
+      "answer": "```attentioneer-acts\n[\n  {\"act\": \"propose_remove_card\", \"map\": \"ground\", \"payload\": {\"card\": \"the curator's caps\"}},\n  {\"act\": \"propose_remove_card\", \"map\": \"ground\", \"payload\": {\"card\": \"the command card\"}},\n  {\"act\": \"propose_remove_card\", \"map\": \"ground\", \"payload\": {\"card\": \"the provider panel\"}},\n  {\"act\": \"propose_remove_card\", \"map\": \"ground\", \"payload\": {\"card\": \"the send path\"}},\n  {\"act\": \"propose_remove_card\", \"map\": \"ground\", \"payload\": {\"card\": \"how slow is the command card\"}}\n]\n```",
+      "outcome": "acts",
+      "acts": [
+        "propose_remove_card",
+        "propose_remove_card",
+        "propose_remove_card",
+        "propose_remove_card",
+        "propose_remove_card"
+      ],
+      "question": null,
+      "sentence": null
+    },
+    {
+      "index": 18,
+      "kind": "impossible",
+      "instruction": "send the question to the model for me.",
+      "instructionChars": 38,
+      "ms": 30099,
+      "answer": "No act here can send anything — the nearest is `propose_ask`, which only stages a question in a composer; which question did you want staged, the one in the ask card \"how slow is the command card\"?",
+      "outcome": "question",
+      "acts": [],
+      "question": "No act here can send anything — the nearest is `propose_ask`, which only stages a question in a composer; which question did you want staged, the one in the ask card \"how slow is the command card\"?",
+      "sentence": null
+    },
+    {
+      "index": 19,
+      "kind": "impossible",
+      "instruction": "rename my provider to something shorter.",
+      "instructionChars": 40,
+      "ms": 20147,
+      "answer": "What shorter name should \"the provider panel\" get?",
+      "outcome": "question",
+      "acts": [],
+      "question": "What shorter name should \"the provider panel\" get?",
+      "sentence": null
+    },
+    {
+      "index": 20,
+      "kind": "impossible",
+      "instruction": "undo everything I did today.",
+      "instructionChars": 28,
+      "ms": 16267,
+      "answer": "Which specific card, wire, or note on the map do you want removed?",
+      "outcome": "question",
+      "acts": [],
+      "question": "Which specific card, wire, or note on the map do you want removed?",
+      "sentence": null
+    }
+  ],
+  "curator": []
+}

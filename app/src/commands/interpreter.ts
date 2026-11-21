@@ -69,6 +69,16 @@ import type { TurnMessage } from "../turn/protocol";
  * offer what the app cannot do. NO WRITE ACT EXISTS FOR THOSE MAPS: not a
  * proposal, not a draft (their acts need their own design).
  *
+ * STORY 23.3 — A GOOD QUESTION IS NOT REFUSED FOR ITS PUNCTUATION. The
+ * 2026-11-21T17-04-11Z battery found that three of the interpreter's four
+ * refusals were GOOD QUESTIONS the app threw away for their punctuation: one
+ * ended in ")" and others carried a second sentence, and the old "one line
+ * ending in ?" test took the words literally. {@link isInterpreterQuestion} is
+ * that test now, as ONE pure predicate with its numbers named: a "?" somewhere,
+ * a "?" as the last real character once trailing punctuation is set aside, at
+ * most two sentences and at most 300 characters. A paragraph is still prose,
+ * and a tagged act block still wins over any prose around it.
+ *
  * PROVISIONAL (the stories' own lists): the fence's language tag, every
  * sentence below, the shape of the digest text, the question-length bound, the
  * history's bounds and wording, and whether a question is stored anywhere (the
@@ -100,10 +110,36 @@ export const INTERPRETER_EMPTY_SENTENCE =
   "the interpreter did not answer, so nothing was applied.";
 
 /**
- * The largest a clarifying question may be, in characters (PROVISIONAL). The
- * prompt asks for ONE short question; a long prose answer is not that.
+ * The largest a clarifying question may be, in characters (PROVISIONAL, STORY
+ * 23.3). The prompt asks for ONE short question; a paragraph is not that. The
+ * 2026-11-21T17-04-11Z battery's real questions fitted well inside it, and a
+ * second sentence of ordinary qualification fits too.
  */
-export const INTERPRETER_QUESTION_MAX_CHARS = 280;
+export const INTERPRETER_QUESTION_MAX_CHARS = 300;
+
+/**
+ * The most sentences a question may carry (PROVISIONAL, STORY 23.3). An
+ * ordinary qualifier is part of the question; a paragraph is not.
+ */
+export const INTERPRETER_QUESTION_MAX_SENTENCES = 2;
+
+/**
+ * The punctuation that may sit AFTER the question mark (PROVISIONAL, STORY
+ * 23.3): the closing marks a model puts at the end of its sentence. They are
+ * set aside when looking for the answer's last real character, so an answer
+ * that ends `?)` or `?"` still ended in a question. Anything else after the
+ * mark — a word, say — means the answer did NOT end with a question.
+ */
+const TRAILING_QUESTION_PUNCTUATION: ReadonlySet<string> = new Set([
+  ")",
+  "]",
+  '"',
+  "'",
+  "”",
+  "’",
+  ".",
+  ":",
+]);
 
 /** What the prompt is built from: the person's words and the bounded digest. */
 export interface InterpreterInput {
@@ -440,18 +476,57 @@ function flat(text: string): string {
 }
 
 /**
- * A no-block answer is a QUESTION only when it can be one: one line, one short
- * question, ended with "?". Anything else is prose, and prose is not a script
- * — the app answers its own sentence rather than dressing prose as a question.
- * PROVISIONAL: the bound and the "?" rule are first choices.
+ * How many sentences a flat answer carries (STORY 23.3). A terminator counts
+ * when what follows it starts a new sentence — a capital, a digit, a quote, a
+ * bracket — or when nothing follows it. The one exception is a full stop: a
+ * full stop followed by a lower-case word is an abbreviation or a decimal, not
+ * a sentence break, and the battery's own questions use "e.g.".
+ * PROVISIONAL: this is a first-choice heuristic, not a grammar.
  */
-function questionOf(answer: string): string | null {
+function sentenceCountOf(text: string): number {
+  const terminators = /[.!?]+["'”’)\]]*(?=\s|$)/g;
+  let count = 0;
+  for (;;) {
+    const match = terminators.exec(text);
+    if (match === null) return count;
+    const after = text.slice(match.index + match[0].length).trimStart();
+    if (after === "") {
+      count += 1;
+      continue;
+    }
+    const startsSentence = /^[A-Z0-9"“'‘([]/.test(after);
+    if (match[0]![0] !== "." || startsSentence) count += 1;
+  }
+}
+
+/**
+ * A no-block answer is a QUESTION only when it really is one (STORY 23.3).
+ * No fenced block (the caller has already looked) AND all of:
+ *   1. it contains a "?" somewhere;
+ *   2. it ENDS with a "?" once trailing punctuation is set aside;
+ *   3. at most two sentences and at most 300 characters.
+ * Anything else is prose, and prose is not a script — the app answers its own
+ * refusal sentence rather than dressing prose as a question.
+ * PROVISIONAL: the three numbers and the accepted trailing punctuation.
+ */
+export function isInterpreterQuestion(answer: string): boolean {
   const line = flat(answer);
-  if (line === "" || line.length > INTERPRETER_QUESTION_MAX_CHARS) return null;
-  if (!line.endsWith("?")) return null;
-  // ONE sentence: no second terminator in the question's interior.
-  if (/[.!?]\s+\S/.test(line.slice(0, -1))) return null;
-  return line;
+  if (line === "") return false;
+  if (Array.from(line).length > INTERPRETER_QUESTION_MAX_CHARS) return false;
+  if (!line.includes("?")) return false;
+  // The last REAL character: the ordinary closing punctuation after the mark
+  // is not part of what the answer says.
+  let end = line.length;
+  while (end > 0 && TRAILING_QUESTION_PUNCTUATION.has(line[end - 1]!)) {
+    end -= 1;
+  }
+  if (end === 0 || line[end - 1] !== "?") return false;
+  return sentenceCountOf(line) <= INTERPRETER_QUESTION_MAX_SENTENCES;
+}
+
+/** The question, flattened to one line; null when the answer is prose. */
+function questionOf(answer: string): string | null {
+  return isInterpreterQuestion(answer) ? flat(answer) : null;
 }
 
 /**

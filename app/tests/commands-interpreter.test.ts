@@ -5,9 +5,12 @@ import { ACT_SPECS } from "../src/commands/acts";
 import {
   INTERPRETER_FENCE,
   INTERPRETER_NO_QUESTION_SENTENCE,
+  INTERPRETER_QUESTION_MAX_CHARS,
+  INTERPRETER_QUESTION_MAX_SENTENCES,
   buildInterpreterMessages,
   buildInterpreterPrompt,
   interpreterCatalogue,
+  isInterpreterQuestion,
   parseInterpreterAnswer,
 } from "../src/commands/interpreter";
 import {
@@ -347,6 +350,97 @@ describe("the prompt reads the catalogue and carries the instruction verbatim", 
         content: buildInterpreterPrompt({ instruction: INSTRUCTION, digest: "" }),
       },
     ]);
+  });
+});
+
+describe("a good question is not refused for its punctuation (STORY 23.3)", () => {
+  // The 2026-11-21T17-04-11Z battery's own answers, VERBATIM. The first ended
+  // in ")" behind its question mark; the second carried a second sentence.
+  const BATTERY_ENDED_IN_PARENTHESIS =
+    'Would you like me to add an ask card to investigate the slowness, or make a specific change (e.g. rewiring "the command card")?';
+  const BATTERY_SECOND_SENTENCE =
+    'What would you like added about the caps — a note on "the curator\'s caps," a new card, or something else? And what should it say?';
+
+  test("the battery's two real questions come back as questions, whole", () => {
+    expect(parseInterpreterAnswer(BATTERY_ENDED_IN_PARENTHESIS)).toEqual({
+      kind: "question",
+      question: BATTERY_ENDED_IN_PARENTHESIS,
+    });
+    expect(parseInterpreterAnswer(BATTERY_SECOND_SENTENCE)).toEqual({
+      kind: "question",
+      question: BATTERY_SECOND_SENTENCE,
+    });
+  });
+
+  test("the numbers are named: two sentences, 300 characters", () => {
+    expect(INTERPRETER_QUESTION_MAX_SENTENCES).toBe(2);
+    expect(INTERPRETER_QUESTION_MAX_CHARS).toBe(300);
+  });
+
+  test("ordinary closing punctuation after the question mark still passes", () => {
+    for (const tail of [')', ']', '"', "'", "”", "’", ".", ":"]) {
+      const answer = "Do you mean the wire or the note?" + tail;
+      expect(parseInterpreterAnswer(answer).kind).toBe("question");
+    }
+  });
+
+  test("a second sentence passes; a third sentence refuses", () => {
+    expect(parseInterpreterAnswer("Do you mean the wire? Or the note?").kind).toBe(
+      "question",
+    );
+    const third = parseInterpreterAnswer(
+      "Do you mean the wire? Or the note? Or both of them?",
+    );
+    expect(third).toEqual({
+      kind: "problem",
+      sentence: INTERPRETER_NO_QUESTION_SENTENCE,
+    });
+  });
+
+  test("300 characters pass; 301 refuse", () => {
+    const justUnder = "Is it " + "x".repeat(293) + "?";
+    const justOver = "Is it " + "x".repeat(294) + "?";
+    expect(Array.from(justUnder).length).toBe(INTERPRETER_QUESTION_MAX_CHARS);
+    expect(Array.from(justOver).length).toBe(
+      INTERPRETER_QUESTION_MAX_CHARS + 1,
+    );
+    expect(parseInterpreterAnswer(justUnder).kind).toBe("question");
+    expect(parseInterpreterAnswer(justOver)).toEqual({
+      kind: "problem",
+      sentence: INTERPRETER_NO_QUESTION_SENTENCE,
+    });
+  });
+
+  test("prose is still prose: no question mark, or a stray one mid-text", () => {
+    expect(parseInterpreterAnswer("I wired rain to soil and added the note.")).toEqual(
+      {
+        kind: "problem",
+        sentence: INTERPRETER_NO_QUESTION_SENTENCE,
+      },
+    );
+    const stray = 'Is it "the send path"? the wire is already there.';
+    expect(isInterpreterQuestion(stray)).toBe(false);
+    expect(parseInterpreterAnswer(stray)).toEqual({
+      kind: "problem",
+      sentence: INTERPRETER_NO_QUESTION_SENTENCE,
+    });
+  });
+
+  test("the act block still wins, whatever prose surrounds it", () => {
+    const script = block([
+      { act: "read_wires", map: "ground", payload: {} },
+    ]);
+    // A question BEFORE the block, and a question AFTER it, are both prose
+    // around a script: the tagged block is the answer.
+    for (const answer of [
+      "Should I wire rain to soil?\n\n" + script,
+      script + "\nWhich card did you mean?",
+    ]) {
+      const read = parseInterpreterAnswer(answer);
+      expect(read.kind).toBe("acts");
+      if (read.kind !== "acts") continue;
+      expect(read.acts.map((act) => act.act)).toEqual(["read_wires"]);
+    }
   });
 });
 
