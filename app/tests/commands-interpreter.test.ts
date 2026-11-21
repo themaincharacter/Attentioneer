@@ -7,6 +7,7 @@ import {
   INTERPRETER_NO_QUESTION_SENTENCE,
   INTERPRETER_QUESTION_MAX_CHARS,
   INTERPRETER_QUESTION_MAX_SENTENCES,
+  INTERPRETER_QUESTION_MAX_TAIL_CHARS,
   buildInterpreterMessages,
   buildInterpreterPrompt,
   interpreterCatalogue,
@@ -411,19 +412,13 @@ describe("a good question is not refused for its punctuation (STORY 23.3)", () =
     });
   });
 
-  test("prose is still prose: no question mark, or a stray one mid-text", () => {
+  test("prose is still prose: no question mark anywhere refuses", () => {
     expect(parseInterpreterAnswer("I wired rain to soil and added the note.")).toEqual(
       {
         kind: "problem",
         sentence: INTERPRETER_NO_QUESTION_SENTENCE,
       },
     );
-    const stray = 'Is it "the send path"? the wire is already there.';
-    expect(isInterpreterQuestion(stray)).toBe(false);
-    expect(parseInterpreterAnswer(stray)).toEqual({
-      kind: "problem",
-      sentence: INTERPRETER_NO_QUESTION_SENTENCE,
-    });
   });
 
   test("the act block still wins, whatever prose surrounds it", () => {
@@ -441,6 +436,122 @@ describe("a good question is not refused for its punctuation (STORY 23.3)", () =
       if (read.kind !== "acts") continue;
       expect(read.acts.map((act) => act.act)).toEqual(["read_wires"]);
     }
+  });
+});
+
+describe("a question may carry a reason after it (STORY 23.3b)", () => {
+  // The spec's own example and the 2026-11-21T17-04-11Z row 12: a question
+  // followed by a bracketed or quoted reason. 23.3's terminal-"?" test refused
+  // both, and its builder was right to flag it; row 13 of the
+  // 2026-11-21T17-26-28Z re-run is the same shape. Row 14 is the other row the
+  // story names, and its tail is long enough that it still refuses.
+  const SPEC_EXAMPLE =
+    'Should I rename the card "the send path"? (that is the one I mean)';
+  const RERUN_ROW_12 =
+    'To which card should "the command card" be wired — "the curator\'s caps", "the provider panel", or "the send path"? (It is already wired to "the send path".)';
+  const RERUN_ROW_13 =
+    'Which card do you mean? "Over there" doesn\'t point to one I can identify.';
+  const RERUN_ROW_14 =
+    'Which two cards? The map has five ("the curator\'s caps", "the command card", "the provider panel", "the send path", "how slow is the command card"), and "the command card" and "the send path" are already wired to each other.';
+
+  function tailOf(answer: string): string {
+    return answer.slice(answer.lastIndexOf("?") + 1).trim();
+  }
+
+  test("the spec's own example comes back as a question, whole", () => {
+    expect(parseInterpreterAnswer(SPEC_EXAMPLE)).toEqual({
+      kind: "question",
+      question: SPEC_EXAMPLE,
+    });
+  });
+
+  test("a bracket reason and a quote reason after the mark pass", () => {
+    for (const answer of [RERUN_ROW_12, RERUN_ROW_13]) {
+      expect(Array.from(tailOf(answer)).length).toBeLessThanOrEqual(
+        INTERPRETER_QUESTION_MAX_TAIL_CHARS,
+      );
+      expect(parseInterpreterAnswer(answer)).toEqual({
+        kind: "question",
+        question: answer,
+      });
+    }
+  });
+
+  test("a question mark at the end still passes", () => {
+    expect(parseInterpreterAnswer("Do you mean the wire?").kind).toBe("question");
+  });
+
+  test("the tail bound is named: 80 characters after the last question mark", () => {
+    expect(INTERPRETER_QUESTION_MAX_TAIL_CHARS).toBe(80);
+  });
+
+  test("an 80-character tail passes; 81 characters refuse", () => {
+    const head = "Should I wire the send path to the command card? ";
+    const atLimit = head + "y".repeat(INTERPRETER_QUESTION_MAX_TAIL_CHARS);
+    const overLimit =
+      head + "y".repeat(INTERPRETER_QUESTION_MAX_TAIL_CHARS + 1);
+    expect(Array.from(tailOf(atLimit)).length).toBe(
+      INTERPRETER_QUESTION_MAX_TAIL_CHARS,
+    );
+    expect(Array.from(tailOf(overLimit)).length).toBe(
+      INTERPRETER_QUESTION_MAX_TAIL_CHARS + 1,
+    );
+    expect(parseInterpreterAnswer(atLimit).kind).toBe("question");
+    expect(parseInterpreterAnswer(overLimit)).toEqual({
+      kind: "problem",
+      sentence: INTERPRETER_NO_QUESTION_SENTENCE,
+    });
+  });
+
+  test("a 200-character tail still refuses: prose is not a question", () => {
+    const longTailAnswer = "Which card do you mean? " + "x".repeat(199) + ".";
+    expect(Array.from(tailOf(longTailAnswer)).length).toBe(200);
+    expect(Array.from(longTailAnswer).length).toBeLessThanOrEqual(
+      INTERPRETER_QUESTION_MAX_CHARS,
+    );
+    expect(parseInterpreterAnswer(longTailAnswer)).toEqual({
+      kind: "problem",
+      sentence: INTERPRETER_NO_QUESTION_SENTENCE,
+    });
+  });
+
+  test("the 17-04-11Z row 14 shape still refuses: its tail is a paragraph", () => {
+    // The other re-run row the story names. Its own tail runs past the bound,
+    // so the rule is about the tail's length, not the sentence count.
+    expect(Array.from(RERUN_ROW_14).length).toBeLessThanOrEqual(
+      INTERPRETER_QUESTION_MAX_CHARS,
+    );
+    expect(Array.from(tailOf(RERUN_ROW_14)).length).toBeGreaterThan(
+      INTERPRETER_QUESTION_MAX_TAIL_CHARS,
+    );
+    expect(parseInterpreterAnswer(RERUN_ROW_14)).toEqual({
+      kind: "problem",
+      sentence: INTERPRETER_NO_QUESTION_SENTENCE,
+    });
+  });
+
+  test("the two 17-04-11Z answers 23.3 fixed still pass (no regression)", () => {
+    const batteryAnswered = [
+      'Would you like me to add an ask card to investigate the slowness, or make a specific change (e.g. rewiring "the command card")?',
+      'What would you like added about the caps — a note on "the curator\'s caps," a new card, or something else? And what should it say?',
+    ];
+    for (const answer of batteryAnswered) {
+      expect(parseInterpreterAnswer(answer)).toEqual({
+        kind: "question",
+        question: answer,
+      });
+    }
+  });
+
+  test("a short clause after the mark reads as a reason now", () => {
+    // 23.3's stray-prose example: 26 characters after the mark, so it is the
+    // same shape as the re-run's row 13 — a question carrying a reason. The
+    // rule accepts it deliberately; a long tail is what keeps prose out.
+    const stray = 'Is it "the send path"? the wire is already there.';
+    expect(parseInterpreterAnswer(stray)).toEqual({
+      kind: "question",
+      question: stray,
+    });
   });
 });
 

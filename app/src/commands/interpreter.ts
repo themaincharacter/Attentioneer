@@ -74,10 +74,19 @@ import type { TurnMessage } from "../turn/protocol";
  * refusals were GOOD QUESTIONS the app threw away for their punctuation: one
  * ended in ")" and others carried a second sentence, and the old "one line
  * ending in ?" test took the words literally. {@link isInterpreterQuestion} is
- * that test now, as ONE pure predicate with its numbers named: a "?" somewhere,
- * a "?" as the last real character once trailing punctuation is set aside, at
- * most two sentences and at most 300 characters. A paragraph is still prose,
- * and a tagged act block still wins over any prose around it.
+ * that test now, as ONE pure predicate with its numbers named. A paragraph is
+ * still prose, and a tagged act block still wins over any prose around it.
+ *
+ * STORY 23.3b — A QUESTION MAY CARRY A REASON AFTER IT. 23.3's builder was
+ * right to flag its own rule: requiring the "?" to be the LAST real character
+ * still refused a question with a reason behind it — the spec's own example,
+ * "? (that is the one I mean)", and the 2026-11-21T17-26-28Z re-run's row 13,
+ * "? "Over there" doesn't point to one I can identify." The terminal-? test
+ * is gone. Now the text after the LAST "?" may be at most
+ * {@link INTERPRETER_QUESTION_MAX_TAIL_CHARS} characters once trimmed — a
+ * reason, a name, a bracket or a clause, never a paragraph. 23.3's two numbers
+ * (two sentences, 300 characters) stand; PROVISIONAL is still the word for
+ * every number here.
  *
  * PROVISIONAL (the stories' own lists): the fence's language tag, every
  * sentence below, the shape of the digest text, the question-length bound, the
@@ -124,22 +133,15 @@ export const INTERPRETER_QUESTION_MAX_CHARS = 300;
 export const INTERPRETER_QUESTION_MAX_SENTENCES = 2;
 
 /**
- * The punctuation that may sit AFTER the question mark (PROVISIONAL, STORY
- * 23.3): the closing marks a model puts at the end of its sentence. They are
- * set aside when looking for the answer's last real character, so an answer
- * that ends `?)` or `?"` still ended in a question. Anything else after the
- * mark — a word, say — means the answer did NOT end with a question.
+ * The most characters that may follow the LAST "?" in a question (PROVISIONAL,
+ * STORY 23.3b). 23.3 required the mark itself to be the last real character, so
+ * a question with a reason behind it was thrown away as prose — the
+ * 2026-11-21T17-04-11Z spec's own example, "? (that is the one I mean)", and
+ * the 17-26-28Z re-run's row 13; 23.3's builder flagged that. A reason, a name,
+ * a bracket or a clause is short; a paragraph's tail is not, and a
+ * 200-character tail still refuses.
  */
-const TRAILING_QUESTION_PUNCTUATION: ReadonlySet<string> = new Set([
-  ")",
-  "]",
-  '"',
-  "'",
-  "”",
-  "’",
-  ".",
-  ":",
-]);
+export const INTERPRETER_QUESTION_MAX_TAIL_CHARS = 80;
 
 /** What the prompt is built from: the person's words and the bounded digest. */
 export interface InterpreterInput {
@@ -500,27 +502,27 @@ function sentenceCountOf(text: string): number {
 }
 
 /**
- * A no-block answer is a QUESTION only when it really is one (STORY 23.3).
- * No fenced block (the caller has already looked) AND all of:
+ * A no-block answer is a QUESTION only when it really is one (STORY 23.3, as
+ * amended by 23.3b). No fenced block (the caller has already looked) AND all
+ * of:
  *   1. it contains a "?" somewhere;
- *   2. it ENDS with a "?" once trailing punctuation is set aside;
+ *   2. the text after the LAST "?" is at most 80 characters once trimmed — a
+ *      reason, a name, a bracket or a clause, not a paragraph;
  *   3. at most two sentences and at most 300 characters.
  * Anything else is prose, and prose is not a script — the app answers its own
  * refusal sentence rather than dressing prose as a question.
- * PROVISIONAL: the three numbers and the accepted trailing punctuation.
+ * PROVISIONAL: the four numbers.
  */
 export function isInterpreterQuestion(answer: string): boolean {
   const line = flat(answer);
   if (line === "") return false;
   if (Array.from(line).length > INTERPRETER_QUESTION_MAX_CHARS) return false;
-  if (!line.includes("?")) return false;
-  // The last REAL character: the ordinary closing punctuation after the mark
-  // is not part of what the answer says.
-  let end = line.length;
-  while (end > 0 && TRAILING_QUESTION_PUNCTUATION.has(line[end - 1]!)) {
-    end -= 1;
+  const mark = line.lastIndexOf("?");
+  if (mark === -1) return false;
+  const tail = line.slice(mark + 1).trim();
+  if (Array.from(tail).length > INTERPRETER_QUESTION_MAX_TAIL_CHARS) {
+    return false;
   }
-  if (end === 0 || line[end - 1] !== "?") return false;
   return sentenceCountOf(line) <= INTERPRETER_QUESTION_MAX_SENTENCES;
 }
 
