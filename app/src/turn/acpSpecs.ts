@@ -47,9 +47,22 @@
  * argv is never a shell string, exactly like `args`, and no key, code or token
  * ever lives here.
  *
- * PROVISIONAL: the field names, the env entry shape, the `verified` mark, the
- * default budget, the label suffix, the continuation mark, the sign-in argv and
- * every sentence in ACP_SENTENCES.
+ * STORY 22.8 — A ROW MAY SET A VALUE OF ITS OWN (PROVISIONAL). Some tools need
+ * one runtime variable in effect before their argv means anything (a launcher
+ * that otherwise starts its desktop window instead of its server). That is a
+ * fact about the tool, so it is an `env` entry with a `value` and no provider
+ * row: the entry is merged OVER the environment the child already has, never
+ * substituted for it, and the run lane reads no product's name. A value entry
+ * is a behaviour flag and NEVER a credential: `sk-`, "token", "secret",
+ * "password" and a BEGIN line are refused at the write, in one sentence, and a
+ * reserved name (PATH, HOME — the names a child already inherits) is refused
+ * for the same reason: an entry adds a flag, it never rewrites the child's
+ * world.
+ *
+ * PROVISIONAL: the field names, the env entry shape (a key entry or a value
+ * entry, never both), the `verified` mark, the default budget, the label
+ * suffix, the continuation mark, the sign-in argv and every sentence in
+ * ACP_SENTENCES.
  */
 
 import { uniqueProviderId, type Refusal, type RowRead } from "./providers";
@@ -61,15 +74,24 @@ export const ACP_CWD_POLICY = "session" as const;
 export const DEFAULT_ACP_TIMEOUT_MINUTES = 10;
 
 /**
- * One environment variable a run may receive: the NAME in the child, and the
- * provider ROW whose stored key fills it. The key itself is never here — it is
- * read at run time, held in memory for the spawn, and never logged.
+ * ONE ENVIRONMENT ENTRY A RUN MAY RECEIVE: the NAME in the child, and exactly
+ * ONE of two sources — the provider ROW whose stored key fills it, or a VALUE
+ * the row sets itself (story 22.8; PROVISIONAL). A key is never here — it is
+ * read at run time, held in memory for the spawn, and never logged; a value is
+ * a behaviour flag, never a credential, and the write refuses one that looks
+ * like a key.
  */
 export interface AcpEnvEntry {
   /** The variable name the child sees, e.g. DEEPSEEK_API_KEY. */
   name: string;
   /** The provider row id whose stored key becomes the value. */
-  key: string;
+  key?: string;
+  /**
+   * STORY 22.8 — a literal value the row sets itself, merged OVER the
+   * environment the child already has. Absent for a key entry; a row entry
+   * carries a key or a value, never both.
+   */
+  value?: string;
 }
 
 /** How one ACP tool is started and bounded. All argv arrays. */
@@ -168,6 +190,30 @@ export const ACP_SENTENCES = {
     "an environment entry needs a name a process can carry, such as DEEPSEEK_API_KEY",
   envKey:
     "an environment entry must name the provider row whose key it may receive",
+  /**
+   * STORY 22.8 — AN ENTRY IS ONE THING OR THE OTHER (PROVISIONAL). A key entry
+   * names a provider row; a value entry sets a behaviour flag. Both at once
+   * would be a credential with no record of where it came from; neither is an
+   * entry that says nothing.
+   */
+  envShape:
+    "an environment entry either names the provider row whose key it receives or sets a value of its own, never both and never neither",
+  /** A value entry is text; anything else is not a value this row may set. */
+  envValue:
+    "an environment entry's own value must be text, and a blank one sets nothing",
+  /**
+   * STORY 22.8 — A VALUE IS A BEHAVIOUR FLAG, NOT A KEY. The check is about
+   * SHAPE, not a store: a row that carried a key here would put a credential in
+   * the row data, where nothing reads it back and nothing can revoke it.
+   */
+  envCredential:
+    "an environment entry holds a behaviour flag, never a credential: a key reaches a child only from a provider row",
+  /**
+   * STORY 22.8 — THE NAMES A CHILD ALREADY INHERITS. Overwriting one would not
+   * add a flag, it would take PATH or HOME away from the child.
+   */
+  reservedEnv:
+    "an environment entry cannot set PATH or HOME, which the child already inherits",
   duplicateName: "two environment entries fill the same variable",
   timeout: "an ACP row's budget must be at least one minute",
   duplicateId: "an ACP row with that id already exists",
@@ -210,6 +256,21 @@ export function isAbsoluteCommand(command: string): boolean {
 
 /** The name a process may carry: a shell-style identifier, nothing exotic. */
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * STORY 22.8 — THE NAMES A CHILD ALREADY HAS (PROVISIONAL). Exactly the pair
+ * the run lane inherits (turn/acpRun.ts's `ACP_INHERITED_ENV`); a test pins the
+ * two lists together. A row's entry may not set either one.
+ */
+export const ACP_RESERVED_ENV = ["PATH", "HOME"] as const;
+
+/**
+ * STORY 22.8 — DOES THIS VALUE LOOK LIKE A KEY? A narrow, explicit shape, not a
+ * guess about a provider: the prefixes and the words a credential announces
+ * itself with, so a row can carry a runtime flag and never a secret.
+ */
+const CREDENTIAL_VALUE =
+  /(^\s*sk-|bearer\s|token|secret|password|passwd|api[_-]?key|private[_-]?key|-----begin)/i;
 
 function textOf(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -263,19 +324,60 @@ export function validateAcpSpec(
     return refused(ACP_SENTENCES.badCwdPolicy);
   }
 
+  // STORY 22.8 — A KEY ENTRY OR A VALUE ENTRY, AND NOTHING IN BETWEEN
+  // (PROVISIONAL). The name is checked for every entry and for the same reasons;
+  // a name a child already inherits is refused rather than allowed to shadow
+  // PATH or HOME, and a value that looks like a credential is refused because a
+  // row's env is a place for flags, not secrets.
   const env: AcpEnvEntry[] = [];
   const seen = new Set<string>();
   for (const candidate of draft.env ?? []) {
     const entryName = textOf(candidate.name).trim();
-    const key = textOf(candidate.key).trim();
     if (!ENV_NAME.test(entryName)) return refused(ACP_SENTENCES.envName);
-    if (key === "") return refused(ACP_SENTENCES.envKey);
-    if (!providerIds.includes(key)) {
-      return refused(acpUnknownProviderSentence(key));
+    if ((ACP_RESERVED_ENV as readonly string[]).includes(entryName)) {
+      return refused(ACP_SENTENCES.reservedEnv);
+    }
+    const rawKey: unknown = candidate.key;
+    const rawValue: unknown = candidate.value;
+    // A VALUE THAT IS NOT TEXT cannot be stored as one; a key that is not text
+    // is the same kind of wrong shape, said with the entry's own sentence.
+    if (rawValue !== undefined && typeof rawValue !== "string") {
+      return refused(ACP_SENTENCES.envValue);
+    }
+    if (rawKey !== undefined && typeof rawKey !== "string") {
+      return refused(ACP_SENTENCES.envShape);
+    }
+    const keyText = rawKey === undefined ? "" : rawKey.trim();
+    const valueText = rawValue === undefined ? "" : rawValue;
+    const namesKey = keyText !== "";
+    // A key that is present but empty names no row, which is its own sentence.
+    if (rawKey !== undefined && keyText === "" && rawValue === undefined) {
+      return refused(ACP_SENTENCES.envKey);
+    }
+    if (namesKey && rawValue !== undefined) {
+      return refused(ACP_SENTENCES.envShape);
+    }
+    if (!namesKey && rawValue === undefined) {
+      return refused(ACP_SENTENCES.envShape);
+    }
+    if (namesKey) {
+      const key = keyText;
+      if (!providerIds.includes(key)) {
+        return refused(acpUnknownProviderSentence(key));
+      }
+      if (seen.has(entryName)) return refused(ACP_SENTENCES.duplicateName);
+      seen.add(entryName);
+      env.push({ name: entryName, key });
+      continue;
+    }
+    const value = valueText.trim();
+    if (value === "") return refused(ACP_SENTENCES.envValue);
+    if (CREDENTIAL_VALUE.test(value)) {
+      return refused(ACP_SENTENCES.envCredential);
     }
     if (seen.has(entryName)) return refused(ACP_SENTENCES.duplicateName);
     seen.add(entryName);
-    env.push({ name: entryName, key });
+    env.push({ name: entryName, value });
   }
 
   const stated = draft.timeoutMinutes ?? DEFAULT_ACP_TIMEOUT_MINUTES;
@@ -329,10 +431,19 @@ export function validateAcpSpec(
 /**
  * The shipped list. Data, and the only place an ACP product is named at all.
  * PROVISIONAL and UNVERIFIED, both rows: the first is this machine's observed
- * absolute shim (the spike's `dsh --profile acp`); the second is a documented
- * entry point nobody here ran. Each argv is the pair its tool documents, and
- * neither row declares an env entry — the spike's first break was credentials,
- * so a run fails honestly instead of pretending it can run.
+ * launcher and its own ACP entry point; the second is a documented entry point
+ * nobody here ran. Each argv is the pair its tool documents, and neither row
+ * declares a KEY entry — the spike's first break was credentials, so a run
+ * fails honestly instead of pretending it can run.
+ *
+ * STORY 22.8 — THE FIRST ROW NAMES THE LAUNCHER ITSELF, AND SETS ITS RUNTIME
+ * FLAG AS DATA. A launcher that is a desktop program starts its desktop window
+ * unless its own runtime variable is in effect, and that window is not an ACP
+ * server: it answers nothing, says a graphics line on stderr and exits zero. The
+ * variable therefore rides in this row's `env` (a value entry, merged over the
+ * inherited environment), and the hand-written wrapper this machine used to
+ * point at is no longer needed. The row is still data: nothing in any code
+ * module names the flag or the program.
  *
  * STORY 18.6 — A SECOND TOOL IS THIS ENTRY. The lane, the card, the picker and
  * the records take a row by its id and its argv; not one of them knows a
@@ -345,17 +456,30 @@ export const ACP_SPECS: readonly AcpSpec[] = [
     id: "dsh-acp",
     name: "DeepSeek Harness (ACP)",
     verified: false,
+    // The launcher itself; its argv uses the Windows forms of its own paths
+    // because it is a Windows program. The first argument pair is the tool's ACP
+    // entry point inside its installed resources.
     command:
-      "/home/kickapookid/bin/dsh-acp.sh",
-    args: ["--profile", "acp", "--patch", "/home/kickapookid/bin/dsh-account-route.yml"],
+      "/mnt/c/Users/thema/AppData/Local/Programs/DeepSeek Harness/DeepSeek Harness.exe",
+    args: [
+      "--expose-internals",
+      "C:\\Users\\thema\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\app.asar\\dsh\\node_modules\\@deepseek-ai\\dsh-desktop-host\\lib\\cli.js",
+      "--profile",
+      "acp",
+      "--patch",
+      "/home/kickapookid/bin/dsh-account-route.yml",
+    ],
     cwdPolicy: ACP_CWD_POLICY,
-    env: [],
+    // STORY 22.8 — THE LAUNCHER'S OWN RUNTIME FLAG, AS DATA. Merged over the
+    // child's inherited environment, so PATH and HOME still arrive: this adds
+    // one variable, it never replaces the world the child starts in.
+    env: [{ name: "ELECTRON_RUN_AS_NODE", value: "1" }],
     timeoutMinutes: DEFAULT_ACP_TIMEOUT_MINUTES,
     // STORY 21.1 — the server advertises session/resume and answered it live
     // (spike, 2026-11-19), so this row can continue a session.
     resume: "protocol",
     notes:
-      "UNVERIFIED — the spike (18.1) reached this absolute dsh.cmd with --profile acp and created a session; no env entry is declared: without an overlay a prompt is refused naming its missing key. On this machine the args carry a small overlay (one-time setup) that selects the tool’s own signed-in account route, and a full run completed through the app’s own lane on 2026-11-19. The server also advertises session/resume and answered it live (spike, 2026-11-19), so a card using this row can continue its last session. On this machine the command names a small wrapper (the tool’s own launcher is a Windows shim and the app runs in WSL) that sets the launcher’s own runtime flag and runs the same entry. Edit the command for another install.",
+      "UNVERIFIED — the spike (18.1) created a session against this launcher's own --profile acp entry; no key entry is declared: without an overlay a prompt is refused naming its missing key. On this machine the args carry a small overlay (one-time setup) that selects the tool’s own signed-in account route, and a full run completed through the app’s own lane on 2026-11-19. The server also advertises session/resume and answered it live (spike, 2026-11-19), so a card using this row can continue its last session. A launcher that is a desktop program needs its runtime flag before its argv means anything, so this row sets it in env (a flag, never a key) — the hand-written wrapper this machine used before is no longer required. Edit the command and the argv for another install.",
   },
   {
     kind: "acp",
@@ -489,7 +613,31 @@ export function acpStatusSentence(status: AcpRowStatus): string {
  * window-safe module because the CARD says it while the SIDECAR does the spawn.
  */
 export function acpDeclaration(spec: AcpSpec): string {
-  return acpResolvedDeclaration(spec.env.map((entry) => entry.key));
+  // STORY 22.8 — A VALUE ENTRY IS NOT A KEY, so it is not in this sentence: the
+  // declaration says what key a run receives, and a behaviour flag receives
+  // none. A row with no key entry still says exactly what it said before.
+  const keys: string[] = [];
+  for (const entry of spec.env) {
+    if (entry.key !== undefined) keys.push(entry.key);
+  }
+  return acpResolvedDeclaration(keys);
+}
+
+/**
+ * STORY 22.8 — THE VALUES A ROW SETS ITSELF, ready for a spawn or a wire
+ * (PURE). One entry per value entry, in the row's own order; a row with none
+ * answers an empty list, which is what keeps such a row byte-identical.
+ */
+export function acpValueEntries(
+  spec: AcpSpec,
+): { name: string; value: string }[] {
+  const values: { name: string; value: string }[] = [];
+  for (const entry of spec.env) {
+    if (entry.value !== undefined) {
+      values.push({ name: entry.name, value: entry.value });
+    }
+  }
+  return values;
 }
 
 /**

@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  ACP_RESERVED_ENV,
   ACP_SENTENCES,
   ACP_SPECS,
   acpDeclaration,
@@ -20,11 +21,17 @@ import {
   validateAcpSpec,
   type AcpSpec,
 } from "../src/turn/acpSpecs";
+import { runToolOf } from "../src/turn/acpSession";
+import { parseRequestLine, runRequestLine } from "../src/turn/protocol";
+import { runSpecOf } from "../sidecar/runs";
 import {
   ACP_CHILD_WORDS_MAX,
+  ACP_INHERITED_ENV,
   ACP_PROMPT_OUTLAST_MS,
   ACP_RUN_SENTENCES,
   acpChildExitSentence,
+  acpExitCodeOf,
+  acpImmediateExitSentence,
   acpInheritedEnvironment,
   acpIsTransportTeardown,
   acpPromptTimeoutMs,
@@ -319,20 +326,111 @@ describe("the ACP row is data, and a key is never one of its fields", () => {
     ).toEqual({ kind: "refused", sentence: ACP_SENTENCES.timeout });
   });
 
-  test("the shipped DSH row is UNVERIFIED, argv-only and grants no key", () => {
+  test("a row's own flag is data, and a reserved name or a credential is refused", () => {
+    const base = {
+      name: "Mine",
+      command: "/opt/acp/server",
+      args: ["--profile", "acp"],
+    };
+    const accepted = validateAcpSpec({
+      ...base,
+      env: [{ name: "TOOL_RUNTIME_FLAG", value: "1" }],
+    });
+    expect(accepted.kind).toBe("row");
+    if (accepted.kind !== "row") throw new Error("unreachable");
+    // A value entry carries a name and a value, and no provider row.
+    expect(accepted.row.env).toEqual([
+      { name: "TOOL_RUNTIME_FLAG", value: "1" },
+    ]);
+    expect(Object.keys(accepted.row.env[0]!).sort()).toEqual(["name", "value"]);
+
+    // The names a child already inherits are not a row's to set.
+    for (const reserved of ["PATH", "HOME"]) {
+      expect(
+        validateAcpSpec({ ...base, env: [{ name: reserved, value: "x" }] }),
+      ).toEqual({ kind: "refused", sentence: ACP_SENTENCES.reservedEnv });
+    }
+    // The reserved pair is exactly the run's inherited list, not a copy.
+    expect([...ACP_RESERVED_ENV]).toEqual([...ACP_INHERITED_ENV]);
+
+    // A credential is not a flag, whatever it is spelled like.
+    for (const value of [
+      "sk-live-abc123",
+      "Bearer abc",
+      "my token is here",
+      "the secret",
+      "password=hunter2",
+      "api_key",
+      "-----BEGIN KEY-----",
+    ]) {
+      expect(
+        validateAcpSpec({ ...base, env: [{ name: "TOOL_FLAG", value }] }),
+      ).toEqual({ kind: "refused", sentence: ACP_SENTENCES.envCredential });
+    }
+
+    // A value that is not text, a blank value, both sources, neither source.
+    expect(
+      validateAcpSpec({
+        ...base,
+        env: [{ name: "TOOL_FLAG", value: 1 as unknown as string }],
+      }),
+    ).toEqual({ kind: "refused", sentence: ACP_SENTENCES.envValue });
+    expect(
+      validateAcpSpec({ ...base, env: [{ name: "TOOL_FLAG", value: "  " }] }),
+    ).toEqual({ kind: "refused", sentence: ACP_SENTENCES.envValue });
+    expect(
+      validateAcpSpec(
+        {
+          ...base,
+          env: [{ name: "TOOL_FLAG", key: "deepseek", value: "1" }],
+        },
+        [],
+        ["deepseek"],
+      ),
+    ).toEqual({ kind: "refused", sentence: ACP_SENTENCES.envShape });
+    expect(
+      validateAcpSpec({ ...base, env: [{ name: "TOOL_FLAG" }] }),
+    ).toEqual({ kind: "refused", sentence: ACP_SENTENCES.envShape });
+
+    // Two entries never fill one variable, whichever road each takes.
+    expect(
+      validateAcpSpec(
+        {
+          ...base,
+          env: [
+            { name: "DEEPSEEK_API_KEY", key: "deepseek" },
+            { name: "DEEPSEEK_API_KEY", value: "1" },
+          ],
+        },
+        [],
+        ["deepseek"],
+      ),
+    ).toEqual({ kind: "refused", sentence: ACP_SENTENCES.duplicateName });
+  });
+
+  test("the shipped first row is UNVERIFIED, grants no key, and sets its runtime flag", () => {
     const dsh = shippedAcpSpec("dsh-acp");
     expect(dsh).not.toBeNull();
     if (dsh === null) throw new Error("unreachable");
-    expect(dsh.args).toEqual([
+    // STORY 22.8 — the launcher's own entry point, then the overlay this
+    // machine uses. The row names the program directly: no hand-written wrapper.
+    expect(dsh.args[0]).toBe("--expose-internals");
+    expect(dsh.args.slice(-4)).toEqual([
       "--profile",
       "acp",
       "--patch",
       "/home/kickapookid/bin/dsh-account-route.yml",
     ]);
-    expect(dsh.env).toEqual([]);
+    expect(isAbsoluteCommand(dsh.command)).toBe(true);
+    expect(dsh.command.endsWith("dsh-acp.sh")).toBe(false);
+    // THE FLAG IS DATA, MERGED OVER THE INHERITED ENVIRONMENT: one value entry,
+    // and it is not a key entry (the row still grants no key).
+    expect(dsh.env).toEqual([{ name: "ELECTRON_RUN_AS_NODE", value: "1" }]);
+    expect(ACP_RESERVED_ENV).not.toContain("ELECTRON_RUN_AS_NODE");
     expect(dsh.cwdPolicy).toBe("session");
     expect(dsh.notes).toContain("UNVERIFIED");
     expect(dsh.notes).toContain("missing key");
+    expect(dsh.notes).toContain("no longer required");
     expect(shippedAcpSpec("something-else")).toBeNull();
 
     // The shipped row is a valid row; its honesty is the empty env list.
@@ -754,6 +852,192 @@ describe("one headless run, every ending", () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * STORY 22.8 — THE FLAG IS ROW DATA, AND A CHILD THAT EXITS AT ONCE IS SAID.
+ * ------------------------------------------------------------------ */
+
+describe("a row's runtime flag is merged over the child's environment", () => {
+  test("the flag rides beside PATH, HOME and the granted key, replacing nothing", async () => {
+    const granted = "sk-granted-4c1";
+    const run = begin(
+      "normal",
+      {
+        readKey: async () => granted,
+        environment: {
+          PATH: "/usr/bin",
+          HOME: "/home/person",
+          DEEPSEEK_API_KEY: "sk-parent-9a2",
+          ATTENTIONEER_OTHER: "not-for-the-child",
+        },
+      },
+      {
+        env: [
+          { name: "DEEPSEEK_API_KEY", key: "deepseek" },
+          { name: "TOOL_RUNTIME_FLAG", value: "1" },
+        ],
+      },
+    );
+    const result = await run.handle.result;
+    expect(result.ending).toBe("completed");
+
+    // THE MERGE, proven by the spawn AND by the child's own report: the
+    // inherited pair, the granted key, and the row's flag — nothing else.
+    const merged = {
+      PATH: "/usr/bin",
+      HOME: "/home/person",
+      DEEPSEEK_API_KEY: granted,
+      TOOL_RUNTIME_FLAG: "1",
+    };
+    expect(run.spawned.env).toEqual(merged);
+    expect(run.report().env).toEqual(merged);
+
+    // The declaration still names the key and never the flag: a flag is not a
+    // grant, so it is not something the card may say it handed over.
+    expect(startedEntry(result.entries).declaration).toBe(
+      "this run will receive the key named deepseek",
+    );
+    expect(startedEntry(result.entries).declaration).not.toContain(
+      "TOOL_RUNTIME_FLAG",
+    );
+    expect(await gone(run.report().pid)).toBe(true);
+  });
+
+  test("a value entry is not a grant: no key is read for it", async () => {
+    let reads = 0;
+    const run = begin(
+      "normal",
+      {
+        readKey: async () => {
+          reads += 1;
+          return "";
+        },
+      },
+      { env: [{ name: "TOOL_RUNTIME_FLAG", value: "on" }] },
+    );
+    const result = await run.handle.result;
+
+    expect(result.ending).toBe("completed");
+    expect(reads).toBe(0);
+    expect(run.spawned.env).toEqual({
+      PATH: "/usr/bin",
+      HOME: "/home/person",
+      TOOL_RUNTIME_FLAG: "on",
+    });
+    expect(startedEntry(result.entries).declaration).toBe(
+      "this run will receive no key: no environment entry names a provider row",
+    );
+  });
+
+  test("a row with no env composes and sends exactly what it did before", () => {
+    const row = spec();
+    // The child's environment is the inherited pair, in that order, and no more.
+    expect(
+      acpRunEnvironment(row, new Map(), {
+        PATH: "/usr/bin",
+        HOME: "/home/person",
+      }),
+    ).toEqual({ PATH: "/usr/bin", HOME: "/home/person" });
+    // The wire's tool carries NO env field at all: absent, never an empty one.
+    expect(runToolOf(row)).toEqual({
+      command: BUN,
+      args: [FAKE, "normal"],
+      timeoutMinutes: 1,
+    });
+    const line = runRequestLine(7, 7, runToolOf(row), {}, "go");
+    expect(Object.keys((JSON.parse(line) as { tool: object }).tool)).toEqual([
+      "command",
+      "args",
+      "timeoutMinutes",
+    ]);
+  });
+
+  test("the flag crosses the wire with the tool and reaches the lane's row", () => {
+    const flagged = spec({
+      env: [{ name: "TOOL_RUNTIME_FLAG", value: "1" }],
+    });
+    // The window sends it with the TOOL, not inside the key map.
+    const line = runRequestLine(7, 7, runToolOf(flagged), {}, "go");
+    const parsed = parseRequestLine(line);
+    expect(parsed?.kind).toBe("run");
+    if (parsed === null || parsed.kind !== "run") throw new Error("unreachable");
+    expect(parsed.tool.env).toEqual({ TOOL_RUNTIME_FLAG: "1" });
+    expect(parsed.env).toEqual({});
+    // The lane turns it back into the row it composes from: a value entry, not
+    // a grant, so no provider row is named on this side either.
+    const laneRow = runSpecOf(parsed);
+    expect(laneRow.env).toEqual([{ name: "TOOL_RUNTIME_FLAG", value: "1" }]);
+    expect(laneRow.env.every((entry) => entry.key === undefined)).toBe(true);
+    // A tool with no flags still arrives as a row with an empty env list.
+    expect(runSpecOf({ ...parsed, tool: { command: BUN, args: [], timeoutMinutes: 1 } }).env).toEqual([]);
+  });
+});
+
+describe("a child that exits before the handshake is said plainly", () => {
+  test("the sentence names the code, the last stderr line and what to try", async () => {
+    const run = begin("exit-at-once");
+    const result = await run.handle.result;
+
+    expect(result.ending).toBe("failed");
+    expect(result.answer).toBeNull();
+    expect(result.partial).toBeNull();
+    expect(result.sessionId).toBeNull();
+    expect(result.childExitCode).toBe(0);
+    expect(result.sentence).toContain(
+      "the tool started and exited at once (code 0)",
+    );
+    expect(result.sentence).toContain("before it answered");
+    expect(result.sentence).toContain(
+      "the thing to try is its ACP entry point rather than its desktop window",
+    );
+    // THE GRAPHICS LINE STAYS: the sentence is additional, never a replacement.
+    expect(result.sentence).toContain("Gpu Cache Creation failed: -2");
+    // The newest line, never the first one the child wrote.
+    expect(result.sentence).not.toContain("started a desktop window");
+    // Exactly ONE ending, and it is the last entry.
+    expect(result.entries.filter((entry) => entry.kind === "ended")).toHaveLength(
+      1,
+    );
+    expect(result.entries[result.entries.length - 1]?.kind).toBe("ended");
+  });
+
+  test("a child that answered the handshake keeps the old sentence", async () => {
+    const run = begin("die-after-handshake");
+    const result = await run.handle.result;
+
+    expect(result.ending).toBe("failed");
+    expect(result.sentence).toContain("the server exited (code 4)");
+    expect(result.sentence).not.toContain("exited at once");
+    expect(result.sentence).not.toContain("ACP entry point");
+  });
+
+  test("the sentence is pure, bounded, and says a code it does not have", () => {
+    expect(acpExitCodeOf("the server exited (code 4)")).toBe(4);
+    expect(acpExitCodeOf("the server exited (code -1)")).toBe(-1);
+    expect(acpExitCodeOf("the transport closed")).toBeNull();
+    expect(acpExitCodeOf("the server exited")).toBeNull();
+
+    const bare = acpImmediateExitSentence(null, "");
+    expect(bare).toBe(
+      "the tool started and exited at once before it answered, so the thing to try is its ACP entry point rather than its desktop window",
+    );
+    expect(bare).not.toContain("last words");
+
+    const withTail = acpImmediateExitSentence(0, "a\nb");
+    expect(withTail).toContain("(code 0)");
+    expect(withTail).toContain("its last words were: a b");
+
+    const long = acpImmediateExitSentence(0, "z".repeat(600));
+    expect(long.endsWith("…")).toBe(true);
+    // The tail is bounded by the aside's own limit, never by the sentence's.
+    const aside = "its last words were: ";
+    expect(
+      long.slice(long.indexOf(aside) + aside.length).length,
+    ).toBeLessThanOrEqual(ACP_CHILD_WORDS_MAX);
+    // The run's own endings never carry the tail.
+    expect(ACP_RUN_SENTENCES.timedOut).not.toContain("exited at once");
+  });
+});
+
+/* ------------------------------------------------------------------ *
  * The env rule, proven by the child's own report; the key never travels.
  * ------------------------------------------------------------------ */
 
@@ -877,9 +1161,12 @@ describe("a run touches the map not at all and logs no line", () => {
     expect(source).not.toContain("console.");
     expect(source).not.toContain("writeFile");
     expect(source).not.toContain("renderedMapContent");
-    // The env entries are argv-free and carry no value field: only a row id.
+    // STORY 22.8 — an env entry still has no place for a key VALUE: it names a
+    // provider row, or sets the row's own behaviour flag. The one word that
+    // names a credential appears only in the refusal that keeps one out.
     const specs = readFileSync(join(APP, "src/turn/acpSpecs.ts"), "utf8");
     expect(specs).not.toContain("apiKey");
-    expect(specs).not.toContain("secret");
+    expect(specs).toContain("envCredential");
+    expect(specs).toContain("ACP_RESERVED_ENV");
   });
 });

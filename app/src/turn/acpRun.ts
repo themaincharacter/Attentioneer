@@ -51,6 +51,15 @@
  * The session step's `configOptions` come back with the result, verbatim, so
  * the caller can record what this machine's tool offers.
  *
+ * STORY 22.8 — A CHILD THAT EXITS AT ONCE IS SAID PLAINLY (PROVISIONAL). A
+ * launcher that starts its desktop window instead of its server answers nothing
+ * on the ACP stream and exits zero, leaving one graphics line on stderr. That
+ * child never spoke `initialize`, and the run says so in one sentence: the exit
+ * code, the last stderr line, and the thing to try (the tool's ACP entry point,
+ * not its desktop window). A child that ANSWERED the handshake and died later
+ * keeps the sentence it always had; the tail stays in both. The row's own flags
+ * reach the child through the ONE environment rule below, merged over it.
+ *
  * 18.3b: WHERE THIS FILE RUNS NOW. Story 18.3 proved the card under Bun and
  * then could not run it in the shipped app: this module needs `node:fs` and a
  * spawner, and the window is a WebView with neither, so pressing RUN there was
@@ -219,6 +228,42 @@ export function acpChildExitSentence(sentence: string, tail: string): string {
       ? words
       : words.slice(0, Math.max(1, room - 1)).trimEnd() + "…";
   return sentence + "; its last words were: " + bounded;
+}
+
+/**
+ * STORY 22.8 — THE EXIT CODE A TEARDOWN SENTENCE NAMES (PURE). The transport's
+ * watcher states `the server exited (code N)`; when the child is already gone
+ * that number is the console's fact, and the immediate-exit sentence keeps it
+ * rather than inventing one. Anything else answers null, which the sentence
+ * says in words instead of a made-up number.
+ */
+export function acpExitCodeOf(sentence: string): number | null {
+  const match = /^the server exited \(code (-?\d+)\)$/.exec(sentence);
+  return match === null ? null : Number(match[1]);
+}
+
+/**
+ * STORY 22.8 — A CHILD THAT EXITED BEFORE IT ANSWERED (PURE, PROVISIONAL
+ * wording). One sentence, and it says the three things a person can act on: the
+ * tool started and left at once, the exit code, and that the thing to try is the
+ * tool's ACP entry point rather than its desktop window. The child's newest
+ * stderr line rides after it through the same bounded aside story 22.3 built
+ * (`acpChildExitSentence`), so a graphics line the launcher wrote stays visible
+ * instead of being the only thing said. A null code is said in words.
+ */
+export function acpImmediateExitSentence(
+  code: number | null,
+  tail: string,
+): string {
+  const started =
+    code === null
+      ? "the tool started and exited at once"
+      : "the tool started and exited at once (code " + code + ")";
+  return acpChildExitSentence(
+    started +
+      " before it answered, so the thing to try is its ACP entry point rather than its desktop window",
+    tail,
+  );
 }
 
 /**
@@ -406,8 +451,9 @@ export function acpInheritedEnvironment(
 }
 
 /**
- * Compose the child's environment: PATH/HOME plus the run's key values, and
- * nothing else. A key reaches a child by ONE of two roads, never both:
+ * Compose the child's environment: PATH/HOME, the run's key values, and the
+ * row's own FLAGS (story 22.8), and nothing else. A key reaches a child by ONE
+ * of two roads, never both:
  *
  *   - a ROW declares an env entry naming a provider row, and the value was
  *     read from the store (18.2's rule, unchanged); or
@@ -418,6 +464,12 @@ export function acpInheritedEnvironment(
  * Either way an absent value is simply not set, and nothing else in
  * `environment` can ride along: a key this process holds is invisible unless
  * one of those two roads names it.
+ *
+ * STORY 22.8 — A ROW'S VALUE ENTRY IS MERGED OVER THAT BASE, NEVER A REPLACEMENT
+ * FOR IT. The child keeps PATH and HOME and every key it was granted, and gains
+ * the row's flags beside them; a flag that names PATH or HOME is skipped here as
+ * well as refused at the row's write, so a hand-built row cannot take the
+ * child's world away.
  */
 export function acpRunEnvironment(
   spec: AcpSpec,
@@ -427,11 +479,19 @@ export function acpRunEnvironment(
 ): Record<string, string> {
   const env = acpInheritedEnvironment(environment);
   for (const entry of spec.env) {
+    if (entry.key === undefined) continue;
     const value = keys.get(entry.key);
     if (value !== undefined && value !== "") env[entry.name] = value;
   }
   for (const [name, value] of Object.entries(resolved ?? {})) {
     if (value !== "") env[name] = value;
+  }
+  // STORY 22.8 — THE ROW'S OWN FLAGS, ADDED OVER THE BASE. A reserved name is
+  // not a flag; it is the child's world, so it is skipped here too.
+  for (const entry of spec.env) {
+    if (entry.value === undefined) continue;
+    if (entry.name === "PATH" || entry.name === "HOME") continue;
+    env[entry.name] = entry.value;
   }
   return env;
 }
@@ -562,6 +622,13 @@ export function startAcpRun(
    * handed back with the result; the caller records what the tool offers.
    */
   let sessionConfigOptions: unknown[] | null = null;
+  /**
+   * STORY 22.8 — DID THIS CHILD ANSWER THE HANDSHAKE? A child that never did is
+   * a different fact from one that answered and died later: the first never
+   * became an ACP server at all (it was probably the tool's desktop window), and
+   * only that fact earns the immediate-exit sentence.
+   */
+  let handshakeAnswered = false;
   let cancelled = false;
   let timedOut = false;
   let settled = false;
@@ -689,8 +756,20 @@ export function startAcpRun(
         );
       }
       if (cancelled) return finish("stopped", null, "cancelled");
-      // NO run-side ending is pending: the child really died on its own. The
-      // sentence stays honest and gains the one line the child last wrote.
+      // STORY 22.8 — NO run-side ending is pending: the child really died on its
+      // own. A child that never answered the handshake was never this protocol's
+      // server, so the run says what that usually means and what to try; the
+      // bounded last line still rides along. A child that DID answer and died
+      // later keeps exactly the sentence it always had.
+      if (!handshakeAnswered) {
+        return finish(
+          "failed",
+          acpImmediateExitSentence(
+            transport?.exited ?? acpExitCodeOf(sentence),
+            transport?.stderrTail ?? "",
+          ),
+        );
+      }
       return finish(
         "failed",
         acpChildExitSentence(sentence, transport?.stderrTail ?? ""),
@@ -805,6 +884,9 @@ export function startAcpRun(
     const keys = new Map<string, string>();
     if (resolved === undefined) {
       for (const entry of spec.env) {
+        // STORY 22.8 — a value entry is a flag, not a grant: nothing is read
+        // for it here, and it reaches the child through the composition below.
+        if (entry.key === undefined) continue;
         let value = "";
         try {
           value = await options.readKey(entry.key);
@@ -902,6 +984,9 @@ export function startAcpRun(
         options.clientName ?? "attentioneer",
         options.clientVersion ?? "0.0.0",
       );
+      // STORY 22.8 — FROM HERE ON the child is an ACP server that answered, so
+      // a later death is the old story: its own ending, its own sentence.
+      handshakeAnswered = true;
       // STORY 21.1 — ONE BRANCH, AND ONLY ONE: a continuation asks the server
       // for the session it already recorded (the id and folder it named), and
       // a fresh run makes a new one. Everything after this line — the prompt

@@ -232,10 +232,16 @@ export interface RunLane {
 
 /**
  * The row this lane runs: the wire's tool and nothing else. The env entries are
- * empty on purpose — the grant already arrived as a resolved map, and naming a
- * provider row here would be a second, quieter road for a key.
+ * the tool's own FLAGS (story 22.8) and no key grant: the grant already arrived
+ * as a resolved map, and naming a provider row here would be a second, quieter
+ * road for a key. A tool that sends no flags gets an empty list, which is the
+ * env composition the lane has always had.
  */
 export function runSpecOf(request: RunRequest): AcpSpec {
+  const env = Object.entries(request.tool.env ?? {}).map(([name, value]) => ({
+    name,
+    value,
+  }));
   return {
     kind: "acp",
     id: "sidecar-run",
@@ -245,7 +251,7 @@ export function runSpecOf(request: RunRequest): AcpSpec {
     command: request.tool.command,
     args: [...request.tool.args],
     cwdPolicy: "session",
-    env: [],
+    env,
     timeoutMinutes: request.tool.timeoutMinutes,
     notes: "",
   };

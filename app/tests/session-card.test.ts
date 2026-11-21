@@ -905,10 +905,11 @@ describe("a run's transcript, appended as it arrives", () => {
   });
 
   test("the shipped row has NO key, and its run fails for want of one instead of hanging", async () => {
-    // The shipped row is the one the card offers, unedited: no env entry, so
-    // the declaration already says it will receive no key.
+    // The shipped row is the one the card offers, unedited: no KEY entry, so
+    // the declaration already says it will receive no key. (Story 22.8 gives it
+    // a value entry — a runtime flag, which is not a grant.)
     const shipped = ACP_SPECS[0]!;
-    expect(shipped.env).toEqual([]);
+    expect(shipped.env.filter((entry) => entry.key !== undefined)).toEqual([]);
     expect(acpDeclaration(shipped)).toContain("no key");
 
     // The fake reproduces the spike's 18.1 finding byte for byte, because that

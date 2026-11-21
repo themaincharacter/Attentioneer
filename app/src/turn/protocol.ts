@@ -244,6 +244,16 @@ export interface RunTool {
   /** The argv that makes it an ACP server, one entry each. */
   args: string[];
   /**
+   * STORY 22.8 — THE TOOL'S OWN RUNTIME FLAGS, as the row declares them
+   * (PROVISIONAL). A row may need one variable in effect before its argv means
+   * anything; these entries are merged OVER the child's inherited environment by
+   * the run, never substituted for it. They are behaviour flags, never
+   * credentials: a row's keys arrive through the request's `env` map, which is
+   * the only road a key takes. Absent means the row sets none, and then a run's
+   * line is byte-for-byte what it always was.
+   */
+  env?: Record<string, string>;
+  /**
    * The budget, in MINUTES. It is a positive number rather than an integer so a
    * test can state a short one; a row still refuses anything under a minute.
    */
@@ -638,6 +648,11 @@ export function runRequestLine(
     tool: {
       command: tool.command,
       args: [...tool.args],
+      // STORY 22.8 — the row's own flags ride with the TOOL when it declares
+      // any, so a row that declares none sends exactly the old bytes.
+      ...(tool.env === undefined || Object.keys(tool.env).length === 0
+        ? {}
+        : { env: { ...tool.env } }),
       timeoutMinutes: tool.timeoutMinutes,
     },
     env: { ...env },
@@ -1420,6 +1435,22 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
       if (!isNonEmptyString(value.model.value)) return null;
       model = { optionId: value.model.optionId, value: value.model.value };
     }
+    // STORY 22.8 — THE TOOL'S FLAGS ARE DATA, AND THE WIRE READS THEM STRICTLY.
+    // Every name is a name a process can carry, every value is text, and a name
+    // the child already inherits (PATH, HOME) is refused here as well as at the
+    // row's write: a flag adds a variable, it never rewrites the child's world.
+    let toolEnv: Record<string, string> | undefined;
+    if (value.tool.env !== undefined) {
+      if (!isRecord(value.tool.env)) return null;
+      const flags: Record<string, string> = {};
+      for (const [name, flag] of Object.entries(value.tool.env)) {
+        if (!isEnvName(name)) return null;
+        if (name === "PATH" || name === "HOME") return null;
+        if (typeof flag !== "string" || flag === "") return null;
+        flags[name] = flag;
+      }
+      if (Object.keys(flags).length > 0) toolEnv = flags;
+    }
     return {
       id: value.id,
       kind: "run",
@@ -1427,6 +1458,7 @@ export function parseRequestLine(raw: string): SidecarRequest | null {
       tool: {
         command: value.tool.command,
         args: [...value.tool.args],
+        ...(toolEnv === undefined ? {} : { env: toolEnv }),
         timeoutMinutes: value.tool.timeoutMinutes,
       },
       env,

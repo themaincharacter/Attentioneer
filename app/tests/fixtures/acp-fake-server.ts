@@ -33,6 +33,12 @@
  *   drip          handshake and session, then one update every 100 ms until
  *                 cancelled — the shape a run has when the sidecar's stdout
  *                 closes underneath it (18.3b's closed-pipe kill probe).
+ *   exit-at-once  STORY 22.8: the child is not an ACP server at all. It writes
+ *                 two stderr lines (a launcher's own chatter, then a graphics
+ *                 line the way a desktop shell writes one) and exits ZERO
+ *                 without ever reading the handshake or writing a frame — the
+ *                 shape a launcher has when it starts its desktop window
+ *                 instead of its server.
  *   die-after-handshake  STORY 22.3: handshake and session answer, then the
  *                 child writes TWO stderr lines (the newest long enough to be
  *                 clipped) and exits 4 on its own, without ever settling the
@@ -86,6 +92,21 @@ const framingIndex = argv.indexOf("--framing");
 const framing = framingIndex >= 0 ? argv[framingIndex + 1] : "ndjson";
 if (framing !== "ndjson" && framing !== "content-length") {
   throw new Error("unknown framing: " + framing);
+}
+
+// STORY 22.8 — A CHILD THAT EXITS AT ONCE. It says nothing on the protocol and
+// one graphics line on stderr, then exits zero: what a launcher does when it
+// starts its desktop window instead of its ACP server. The short wait lets the
+// client's handshake reach the pipe first, so this is the child going away, not
+// a write into nothing.
+if (mode === "exit-at-once") {
+  process.stderr.write("started a desktop window instead of a server" + "\n");
+  process.stderr.write(
+    "[35668:1121/091102.605:ERROR:gpu\\ipc\\host\\gpu_disk_cache.cc:737] Gpu Cache Creation failed: -2" +
+      "\n",
+  );
+  await Bun.sleep(60);
+  process.exit(0);
 }
 
 const reportIndex = argv.indexOf("--report");

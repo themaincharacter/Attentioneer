@@ -134,6 +134,9 @@ export function startSetupChild(
     // declared entry, in memory, into a map that rides the payload.
     const env: Record<string, string> = {};
     for (const entry of row.env) {
+      // STORY 22.8 — a value entry is the row's own flag, not a grant: no key
+      // is read for it, and this lane's env map stays keys only.
+      if (entry.key === undefined) continue;
       let value = "";
       try {
         value = await readKey(entry.key);

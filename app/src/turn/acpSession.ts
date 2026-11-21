@@ -8,7 +8,11 @@ import {
 } from "./protocol";
 import { createSidecarTransport, startSidecar } from "./sidecar";
 import { errorSentence, type TurnTransport } from "./turn";
-import { acpMissingKeySentence, type AcpSpec } from "./acpSpecs";
+import {
+  acpMissingKeySentence,
+  acpValueEntries,
+  type AcpSpec,
+} from "./acpSpecs";
 import type {
   AcpEnding,
   AcpPermissionAsk,
@@ -144,11 +148,21 @@ export interface SessionRunWiring {
 /** One counter for the window's runs and their cancels: ids never collide. */
 let nextRunId = 1;
 
-/** The wire's tool, built from the row. Argv only; no key is ever here. */
+/**
+ * The wire's tool, built from the row. Argv and the row's own runtime flags;
+ * no key is ever here. STORY 22.8: a row that sets a flag of its own (a
+ * launcher's runtime variable) sends it with the TOOL, so the lane merges it
+ * over the child's inherited environment — the key map below stays keys only,
+ * because a flag is not a grant and the declaration must never name it.
+ */
 export function runToolOf(row: AcpSpec): RunTool {
+  const flags = acpValueEntries(row);
+  const env: Record<string, string> = {};
+  for (const entry of flags) env[entry.name] = entry.value;
   return {
     command: row.command,
     args: [...row.args],
+    ...(flags.length === 0 ? {} : { env }),
     timeoutMinutes: row.timeoutMinutes,
   };
 }
@@ -212,6 +226,9 @@ export function startSessionRun(
     // declared entry, in memory, into a map that rides the payload.
     const env: Record<string, string> = {};
     for (const entry of row.env) {
+      // STORY 22.8 — a value entry is a flag, not a grant: it carries no
+      // provider row, so nothing is read for it and it rides with the tool.
+      if (entry.key === undefined) continue;
       let value = "";
       try {
         value = await readKey(entry.key);
