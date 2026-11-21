@@ -29,6 +29,17 @@ import { oneLine, type TurnMessage } from "./protocol";
  * answer is one sentence and no card. Without a language game the digest is the
  * only guide, and the prompt says exactly that.
  *
+ * THE THREE ITEM-SHAPED FIELDS ACCEPT WHAT A MODEL ACTUALLY WRITES (story
+ * 23.2). The battery run of 2026-11-21T17-04-11Z (notes/model-check-…Z.md)
+ * found 3 of 10 curator answers unusable and EVERY ONE a SHAPE failure: the
+ * model wrote JSON arrays for "rests on", "does not cover" and "uncertainty",
+ * because the prompt said "up to three short items". Those three fields now
+ * accept a non-empty string OR an array of non-empty strings. An array is
+ * NORMALISED here — joined with "; " — so the card carries text, never JSON.
+ * "title" and "claim" stay STRINGS ONLY: a title is a phrase and a claim is a
+ * sentence, so a list there is still malformed. This is a SHAPE fix, not a
+ * length rule; no cap comes back with it.
+ *
  * WHY THE SAME DISCIPLINE AS THE GHOST BLOCK: the curator is a model and can
  * be wrong, so its answer is PARSED, never trusted. One fenced block with a
  * stated schema; a malformed block yields ONE sentence and NO card. The fence
@@ -246,18 +257,20 @@ export function curatorPrompt(input: CuratorInput): string {
     "",
     "- a title of a few words;",
     "- the claim in one or two sentences;",
-    "- every other field as up to three short items.",
+    '- every other field as up to three short items, written as ONE string with "; " between items.',
     "",
     "Do NOT restate the question. Do NOT open with a preamble. Do NOT end with a hedge.",
     "",
     "Write one fenced code block whose language tag is " + CURATOR_FENCE + ".",
-    "The block carries ONE JSON object with exactly these five keys, each a non-empty string:",
+    'The block carries ONE JSON object with exactly these five keys. "title" and "claim" are one non-empty string each. "rests on", "does not cover" and "uncertainty" take one non-empty string in the preferred form, or an array of non-empty strings if that is clearer:',
     "",
     '- "title": the card\'s name, a phrase of a few words.',
     '- "claim": what the reply established, in one or two sentences.',
     '- "rests on": what the claim rests on, as up to three short items.',
     '- "does not cover": what the answer does not establish, as up to three short items.',
     '- "uncertainty": every doubt, contradiction, scope limit or "this may not apply" the reply carried, as up to three short items.',
+    "",
+    'THE PREFERRED FORM for "rests on", "does not cover" and "uncertainty" is ONE string per field, with the items separated by a semicolon and a space (for example "one run; one provider"). An array of strings is accepted too and is joined with the same separator, so either form makes a card. "title" and "claim" are strings only: a list there is not a card.',
     "",
     'If the reply carried none of those, write "none stated" in "uncertainty".',
     "If the reply carried any of them, the card MUST carry them: a card that drops a caveat is not usable.",
@@ -328,31 +341,62 @@ function declineSentence(answer: string): string {
   return line === "" ? CURATOR_DECLINED_SENTENCE : line;
 }
 
+/**
+ * THE THREE FIELDS THAT MAY BE A LIST (story 23.2): the battery run above wrote
+ * arrays for exactly these, and a card is not thrown away for it. The join is
+ * "; " — the prompt states the same separator — and every non-blank item rides
+ * in the model's own order, so nothing the model meant is dropped. "title" and
+ * "claim" are NOT here: a title is a phrase and a claim is a sentence, and a
+ * list in either slot is still malformed.
+ */
+const LISTISH_FIELDS: ReadonlySet<string> = new Set([
+  "rests on",
+  "does not cover",
+  "uncertainty",
+]);
+
+/**
+ * ONE field's text: a non-empty string, or — for {@link LISTISH_FIELDS} — an
+ * array of non-empty strings, joined here into the text the card carries. A
+ * blank item carries nothing and is dropped (a blank entry is not an item); a
+ * non-string item, an empty array, or an array with no non-blank item is a
+ * shape failure, not a quiet omission.
+ */
+function fieldText(value: unknown, key: string): string | null {
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text === "" ? null : text;
+  }
+  if (!LISTISH_FIELDS.has(key) || !Array.isArray(value)) return null;
+  const items: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") return null;
+    const text = item.trim();
+    if (text !== "") items.push(text);
+  }
+  return items.length === 0 ? null : items.join("; ");
+}
+
 /** The five fields from a parsed object, or null when the shape is wrong. */
 function cardOf(value: Record<string, unknown>): CuratorCard | null {
   if (Object.keys(value).length !== CURATOR_SCHEMA_KEYS.length) return null;
-  for (const key of CURATOR_SCHEMA_KEYS) {
-    if (typeof value[key] !== "string") return null;
-  }
-  const card: CuratorCard = {
-    title: (value.title as string).trim(),
-    claim: (value.claim as string).trim(),
-    restsOn: (value["rests on"] as string).trim(),
-    doesNotCover: (value["does not cover"] as string).trim(),
-    uncertainty: (value.uncertainty as string).trim(),
-  };
+  const title = fieldText(value.title, "title");
+  const claim = fieldText(value.claim, "claim");
+  const restsOn = fieldText(value["rests on"], "rests on");
+  const doesNotCover = fieldText(value["does not cover"], "does not cover");
+  const uncertainty = fieldText(value.uncertainty, "uncertainty");
   // Every slot says something: the prompt asks for "none stated" rather than a
-  // blank, so a blank is a shape failure, not a quiet omission.
+  // blank, so a blank (or an empty list) is a shape failure, not an omission.
   if (
-    card.title === "" ||
-    card.claim === "" ||
-    card.restsOn === "" ||
-    card.doesNotCover === "" ||
-    card.uncertainty === ""
+    title === null ||
+    claim === null ||
+    restsOn === null ||
+    doesNotCover === null ||
+    uncertainty === null
   ) {
     return null;
   }
-  return card;
+  return { title, claim, restsOn, doesNotCover, uncertainty };
 }
 
 /**

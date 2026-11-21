@@ -262,7 +262,8 @@ describe("a long but well-shaped card is accepted; a malformed block is refused"
     const cases = [
       fence('{"title":"only a title"}'),
       fence(JSON.stringify({ ...CARD, claim: 7 })),
-      fence(JSON.stringify({ ...CARD, "rests on": ["a"] })),
+      fence(JSON.stringify({ ...CARD, title: ["a"] })),
+      fence(JSON.stringify({ ...CARD, "rests on": ["a", 2] })),
       fence(JSON.stringify({ ...CARD })) + fence(JSON.stringify({ ...CARD })),
     ];
     for (const answer of cases) {

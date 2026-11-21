@@ -269,6 +269,135 @@ describe("the curator's answer is parsed, never trusted", () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * 2b. The two forms the prompt names (story 23.2).
+ * ------------------------------------------------------------------ */
+
+describe("the three item-shaped fields accept a string or an array of strings", () => {
+  // The fence is built without literal backticks so this block reads the same
+  // as the battery's answers, which are JSON the model wrote itself.
+  const FENCE = String.fromCharCode(96).repeat(3);
+  function cardBody(overrides: Record<string, unknown>): string {
+    const body = {
+      title: CARD.title,
+      claim: CARD.claim,
+      "rests on": CARD.restsOn,
+      "does not cover": CARD.doesNotCover,
+      uncertainty: CARD.uncertainty,
+      ...overrides,
+    };
+    return "here is the card.\n\n" + FENCE + CURATOR_FENCE + "\n" + JSON.stringify(body) + "\n" + FENCE + "\n";
+  }
+
+  test("an array is joined into the one string the card carries", () => {
+    // THE BATTERY RUN OF 2026-11-21T17-04-11Z: the model wrote arrays because
+    // the prompt said "up to three short items". That answer is a card now.
+    const read = readCuratorAnswer(
+      cardBody({
+        "rests on": ["one run on one provider", "the reply's own timings"],
+        "does not cover": ["other models", "a loaded network"],
+        uncertainty: ["the run may not hold elsewhere", "the connection may be slow"],
+      }),
+      REPLY,
+    );
+    expect(read.kind).toBe("card");
+    if (read.kind !== "card") return;
+    expect(read.card.restsOn).toBe("one run on one provider; the reply's own timings");
+    expect(read.card.doesNotCover).toBe("other models; a loaded network");
+    expect(read.card.uncertainty).toBe(
+      "the run may not hold elsewhere; the connection may be slow",
+    );
+    // The card carries TEXT, never JSON: every item is there, in order, once.
+    expect(read.text).toContain(
+      "rests on: one run on one provider; the reply's own timings",
+    );
+    expect(read.text).toContain("does not cover: other models; a loaded network");
+    expect(read.text).toContain(
+      "uncertainty: the run may not hold elsewhere; the connection may be slow",
+    );
+    expect(read.text).not.toContain("[");
+    expect(read.text).not.toContain("\"");
+  });
+
+  test("blank items are dropped; every non-blank item still rides", () => {
+    const read = readCuratorAnswer(
+      cardBody({ "rests on": ["  one run  ", "", "   ", "one provider"] }),
+      REPLY,
+    );
+    expect(read.kind).toBe("card");
+    if (read.kind !== "card") return;
+    expect(read.card.restsOn).toBe("one run; one provider");
+  });
+
+  test("empty arrays and non-string items are malformed, with the one sentence", () => {
+    const cases: Record<string, unknown>[] = [
+      { "rests on": [] },
+      { "does not cover": [] },
+      { uncertainty: [] },
+      { uncertainty: ["   ", ""] },
+      { "rests on": [1] },
+      { "rests on": ["a", 2] },
+      { "does not cover": ["a", null] },
+    ];
+    for (const overrides of cases) {
+      const read = readCuratorAnswer(cardBody(overrides), REPLY);
+      expect(read.kind).toBe("invalid");
+      if (read.kind === "invalid") {
+        expect(read.sentence).toBe(CURATOR_MALFORMED_SENTENCE);
+      }
+    }
+  });
+
+  test("title and claim stay strings only: a list there is still malformed", () => {
+    for (const overrides of [
+      { title: ["the tide turns at six"] },
+      { claim: ["the tide turns at six", "the gate may stay shut"] },
+    ]) {
+      const read = readCuratorAnswer(cardBody(overrides), REPLY);
+      expect(read.kind).toBe("invalid");
+      if (read.kind === "invalid") {
+        expect(read.sentence).toBe(CURATOR_MALFORMED_SENTENCE);
+      }
+    }
+  });
+
+  test("the caveat rule reads the JOINED uncertainty, array form or not", () => {
+    const doubt = "the gate may not open at six";
+    const read = readCuratorAnswer(
+      cardBody({ uncertainty: ["none stated"] }),
+      doubt,
+    );
+    expect(read.kind).toBe("invalid");
+    if (read.kind === "invalid") {
+      expect(read.sentence).toBe(CURATOR_MALFORMED_SENTENCE);
+    }
+  });
+});
+
+describe("the prompt asks for one form and accepts the other, without disagreeing", () => {
+  test("the preferred form is one string with semicolons; an array is accepted", () => {
+    const prompt = curatorPrompt({ question: QUESTION, reply: REPLY, digest: "" });
+    expect(prompt).toContain("THE PREFERRED FORM");
+    expect(prompt).toContain("ONE string per field");
+    expect(prompt).toContain("separated by a semicolon and a space");
+    expect(prompt).toContain("An array of strings is accepted too");
+    // The brevity aims state the same one-string form: two instructions, one
+    // answer, never a list on one line and a string on the next.
+    expect(prompt).toContain('every other field as up to three short items, written as ONE string with "; " between items');
+    expect(prompt).toContain('"title" and "claim" are strings only');
+  });
+
+  test("the source says the array is normalised, and names the run that found it", () => {
+    const cur = source("turn/curator.ts");
+    expect(cur).toContain("2026-11-21T17-04-11Z");
+    expect(cur).toContain("NORMALISED");
+    expect(cur).toContain("joined with \"; \"");
+    // Still no length caps with the shape fix.
+    expect(cur).not.toContain("CURATOR_CAP_");
+    expect(cur).not.toContain("CURATOR_OVERLONG_SENTENCE");
+  });
+});
+
+/* ------------------------------------------------------------------ *
  * 3. Caveats preserved by rule, conservatively.
  * ------------------------------------------------------------------ */
 
