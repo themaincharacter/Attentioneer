@@ -11,6 +11,7 @@
     "spike:acp": "bun scripts/acp-spike.ts",
     "catalog:refresh": "bun scripts/models-dev-catalog.ts",
     "commands": "bun scripts/commands.ts",
+    "check:model": "bun scripts/check-model.ts",
     "tauri": "tauri"
   },
   "dependencies": {
