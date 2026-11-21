@@ -34,7 +34,8 @@ import {
   COMMAND_INVITATION,
   COMMAND_NON_GROUND_SENTENCE,
   COMMAND_ONE_PRESS,
-  COMMAND_READING_SENTENCE,
+  COMMAND_READING_MAP_SENTENCE,
+  COMMAND_PROPOSING_SENTENCE,
   COMMAND_REFUSE_VERB,
   COMMAND_REFUSED_SENTENCE,
   COMMAND_SECOND_QUESTION_SENTENCE,
@@ -648,10 +649,15 @@ describe("the card steers no map content and is belt-and-braces content", () => 
   });
 
   test("the waiting line is a sentence, not a spinner, meter or count", () => {
-    const html = render({ busy: "reading" });
-    expect(html).toContain(COMMAND_READING_SENTENCE);
-    expect(html).not.toContain("spinner");
-    expect(html).not.toContain("progress");
+    const reading = render({ busy: "reading" });
+    expect(reading).toContain(COMMAND_READING_MAP_SENTENCE);
+    expect(reading).not.toContain("spinner");
+    expect(reading).not.toContain("progress");
+    // STORY 21.12 — the second phase says the model is choosing, and the first
+    // phase's words do not linger beside it.
+    const proposing = render({ busy: "proposing" });
+    expect(proposing).toContain(COMMAND_PROPOSING_SENTENCE);
+    expect(proposing).not.toContain(COMMAND_READING_MAP_SENTENCE);
   });
 
   test("the applied face keeps the same plain list and one quiet sentence", () => {

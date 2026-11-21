@@ -145,12 +145,14 @@ import {
   clarifiedInstruction,
   commandAnchor,
   actLine,
+  commandSendDisabled,
   commandTurnOf,
   failedExchange,
   failureReport,
   historyTurns,
   lastAppliedExchangeOf,
   nothingExchange,
+  readInstructionInPhases,
   refusedExchange,
   undoExchangeOf,
   undoOfferOf,
@@ -1265,6 +1267,10 @@ function App() {
     async (
       instruction: string,
       promptInstruction: string | null,
+      // STORY 21.12 — the card's second phase starts when the request LEAVES.
+      // Everything before it (settings, the row, the route) is the first
+      // phase's work; everything after it is the model's.
+      announceSending: () => void,
     ): Promise<InterpreterRead> => {
       if (workspace === null) {
         return { kind: "problem", sentence: COMMAND_NO_WORKSPACE_SENTENCE };
@@ -1297,7 +1303,12 @@ function App() {
             history: historyTurns(commandThread),
           },
           on: commandAnchor(level),
-          sendMessages: (messages) => turnPort.sendMessages(route, messages),
+          sendMessages: (messages) => {
+            // STORY 21.12 — the request is going out: the card moves from
+            // reading the map to proposing the acts, before the model answers.
+            announceSending();
+            return turnPort.sendMessages(route, messages);
+          },
           recordMove: (move) => appendCommandMove(workspace.path, move),
         });
         return turn.read;
@@ -1434,30 +1445,41 @@ function App() {
         );
         return;
       }
-      setCommandBusy("reading");
       setCommandAnswer("");
-      try {
-        const read = await requestInterpretation(instruction, promptInstruction);
-        const turn = commandTurnOf(instruction, read, question);
-        if (turn.kind === "done") {
-          commitCommandExchange(turn.exchange);
-          return;
-        }
-        setCommandView(turn.view);
-      } finally {
-        setCommandBusy(null);
+      // STORY 21.12 — THE PRESS IS ACKNOWLEDGED IN THE PRESS'S OWN TICK. The
+      // first phase is set before this function's first await, and the second
+      // begins at the send seam; the sequence's finally clears the line on
+      // acts, a question, a refusal and a failure alike.
+      const read = await readInstructionInPhases(
+        (announceSending) =>
+          requestInterpretation(
+            instruction,
+            promptInstruction,
+            announceSending,
+          ),
+        setCommandBusy,
+      );
+      const turn = commandTurnOf(instruction, read, question);
+      if (turn.kind === "done") {
+        commitCommandExchange(turn.exchange);
+        return;
       }
+      setCommandView(turn.view);
     },
     [commitCommandExchange, requestInterpretation, commandThread.exchanges],
   );
 
-  /** The person pressed read: one instruction, verbatim, then the field clears. */
+  /**
+   * The person pressed read: one instruction, verbatim, then the field clears.
+   * STORY 21.12 — ONE CALL PER PRESS: the press is refused by the very rule the
+   * verb wears while a command is in flight, so a second press starts nothing.
+   */
   const interpretCommand = useCallback(() => {
     const instruction = commandInstruction;
-    if (instruction.trim() === "") return;
+    if (commandSendDisabled(instruction, commandBusy)) return;
     setCommandInstruction("");
     void runCommand(instruction, null, null);
-  }, [commandInstruction, runCommand]);
+  }, [commandBusy, commandInstruction, runCommand]);
 
   /**
    * THE ONE CLARIFYING QUESTION, ANSWERED ONCE (STORY 21.5 §4). The answer

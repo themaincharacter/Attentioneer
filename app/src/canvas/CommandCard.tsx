@@ -150,8 +150,29 @@ export const COMMAND_REFUSED_SENTENCE = "nothing was applied.";
  */
 export const COMMAND_APPLIED_SENTENCE = "those acts ran.";
 
-/** The quiet line while the interpreter reads the instruction (PROVISIONAL). */
-export const COMMAND_READING_SENTENCE = "reading the instruction…";
+/**
+ * STORY 21.12 — THE PRESS IS ACKNOWLEDGED IN WORDS, IN TWO PHASES AT MOST.
+ *
+ * Every command is ONE model round trip: the app builds a bounded digest of the
+ * map, sends the instruction with the act catalogue, and waits. The acts are
+ * instant; the interpretation is not, and a card that says nothing while it
+ * waits reads as a hang. So the card says what it is DOING — "reading the map"
+ * while the digest and the request are prepared and sent, "proposing the acts"
+ * while the model is choosing — and nothing else: no percentage, no elapsed
+ * time, no spinner, no step count. It says THAT work is happening, never how
+ * much, because the app cannot see inside the call and will not pretend it can.
+ *
+ * THE SAME WORDS STAY ON A SLOW CALL. There is deliberately no "still working"
+ * escalation and no timer: claiming progress we cannot measure would not help
+ * anyone's patience, and a line that changes on a clock is a lie with a delay.
+ *
+ * PROVISIONAL: the two wordings. The apply line below belongs to the ACCEPT
+ * press, not to the command's own wait; it is unchanged from story 21.3.
+ */
+export const COMMAND_READING_MAP_SENTENCE = "reading the map";
+
+/** The quiet line while the model is choosing the acts (STORY 21.12, PROVISIONAL). */
+export const COMMAND_PROPOSING_SENTENCE = "proposing the acts";
 
 /** The quiet line while the script's ghosts are applied (PROVISIONAL). */
 export const COMMAND_APPLYING_SENTENCE = "applying the acts…";
@@ -291,8 +312,14 @@ export const COMMAND_LAST_LABEL = "you said: ";
 export const COMMAND_ASKED_LABEL = "it asked: ";
 export const COMMAND_ANSWERED_LABEL = "you answered: ";
 
-/** What the card is waiting on, or null when it is not waiting (view state). */
-export type CommandBusy = "reading" | "applying" | null;
+/**
+ * What the card is waiting on, or null when it is not waiting (view state).
+ * STORY 21.12 gives the COMMAND's wait its two phases: "reading" (the map and
+ * the request) then "proposing" (the model choosing). "applying" is the
+ * ACCEPT press's own wait, unchanged from story 21.3 and not a phase of the
+ * command's interpretation.
+ */
+export type CommandBusy = "reading" | "proposing" | "applying" | null;
 
 /** The one question the card asked and the person's answer to it. */
 export interface CommandQuestion {
@@ -781,6 +808,66 @@ export function commandTurnOf(
   };
 }
 
+/**
+ * THE WAIT'S ONE LINE, OR NOTHING (STORY 21.12 rules 1 and 2). The card draws
+ * one line of words per wait and never a meter. The command's own wait has two
+ * phases: "reading the map" and "proposing the acts"; "applying" is the accept
+ * press's separate wait, still one quiet line and still no numbers.
+ */
+export function commandWorkingLine(busy: CommandBusy): string | null {
+  switch (busy) {
+    case "reading":
+      return COMMAND_READING_MAP_SENTENCE;
+    case "proposing":
+      return COMMAND_PROPOSING_SENTENCE;
+    case "applying":
+      return COMMAND_APPLYING_SENTENCE;
+    case null:
+      return null;
+  }
+}
+
+/**
+ * MAY THE SEND VERB PRESS? (STORY 21.12 rule 3, the busy rule from STORY 21.3,
+ * reused rather than reinvented.) This ONE predicate is the verb's disabled
+ * state and the app's press guard, so a second press during flight starts
+ * nothing: the field is cleared and disabled, and the app refuses the press by
+ * the same rule the button wears.
+ */
+export function commandSendDisabled(
+  instruction: string,
+  busy: CommandBusy,
+): boolean {
+  return busy !== null || instruction.trim() === "";
+}
+
+/**
+ * ONE COMMAND'S TWO PHASES, AS ONE SEQUENCE (STORY 21.12 rule 1).
+ *
+ * THE FIRST PHASE IS SET BEFORE THE FIRST AWAIT, in the press's own tick, so no
+ * frame passes with the card looking idle. The caller's send seam is handed the
+ * moment of departure: it calls `announceSending` the instant the request
+ * leaves, which moves the line to the second phase — now the MODEL is the thing
+ * that is working, and the card says so.
+ *
+ * IT CLEARS IN A FINALLY, so every ending clears it: acts, a question, a
+ * refusal, a failure and a throw alike. The line never survives the answer.
+ *
+ * The lines carry no digits and no progress: a slow call keeps exactly the same
+ * words (the constants above say why).
+ */
+export async function readInstructionInPhases(
+  send: (announceSending: () => void) => Promise<InterpreterRead>,
+  onPhase: (busy: CommandBusy) => void,
+): Promise<InterpreterRead> {
+  onPhase("reading");
+  try {
+    return await send(() => onPhase("proposing"));
+  } finally {
+    onPhase(null);
+  }
+}
+
 export interface CommandCardProps {
   /** The map on screen. The card is present on every map (ADR-0038 §1). */
   level: Level;
@@ -986,11 +1073,6 @@ export function clarifiedInstruction(
   );
 }
 
-/** The composer's disabled state: nothing to read, or already waiting. */
-function readDisabled(instruction: string, busy: CommandBusy): boolean {
-  return busy !== null || instruction.trim() === "";
-}
-
 /** The answer's disabled state: nothing to answer, or already waiting. */
 function answerDisabled(answer: string, busy: CommandBusy): boolean {
   return busy !== null || answer.trim() === "";
@@ -1119,6 +1201,9 @@ export function CommandCard({
   }
 
   const waiting = busy !== null;
+  // STORY 21.12 — one line of words for whatever the card is waiting on, or
+  // nothing at all when it is idle. The apply press keeps its own line.
+  const workingLine = commandWorkingLine(busy);
 
   return (
     <section
@@ -1249,11 +1334,9 @@ export function CommandCard({
           </div>
         )}
 
-        {busy !== null && (
+        {workingLine !== null && (
           <div className="command-card-working" role="status">
-            {busy === "reading"
-              ? COMMAND_READING_SENTENCE
-              : COMMAND_APPLYING_SENTENCE}
+            {workingLine}
           </div>
         )}
       </div>
@@ -1276,7 +1359,7 @@ export function CommandCard({
         <button
           type="button"
           className="command-card-read"
-          disabled={readDisabled(instruction, busy)}
+          disabled={commandSendDisabled(instruction, busy)}
           onClick={onInterpret}
         >
           {COMMAND_READ_VERB}
