@@ -129,6 +129,13 @@ interface CanvasPlaneProps {
   camera: Camera;
   intents: CameraIntents;
   /**
+   * ADR-0043 (story 24-1): WHICH MAP is running ("concept" | "dynamics" |
+   * "ground"), rendered as the plane's data-map attribute so each map's own
+   * material can style its surface without touching the others. The plane
+   * behaves identically whatever the value: this is a styling hook only.
+   */
+  mapId?: string;
+  /**
    * Called with the plane-space point under a double-click on empty plane.
    * The app opens its word/lack creation menu at that point.
    */
@@ -246,6 +253,7 @@ interface CanvasPlaneProps {
 export function CanvasPlane({
   camera,
   intents,
+  mapId,
   onPlaneDoubleClick,
   gestureMode = "idle",
   // DEPRECATED (hidden 2026-11-16 per user review): the hint named the ring
@@ -697,6 +705,7 @@ export function CanvasPlane({
         ref={planeRef}
         className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}${boxArmed ? " veil-armed" : ""}${drawArmed ? " draw-armed" : ""}${selectArmed ? " select-armed" : ""}${picking ? " ring-picking" : ""}`}
         style={gridStyle}
+        data-map={mapId}
         onDoubleClick={handleDoubleClick}
       >
         <div

@@ -52,6 +52,18 @@
   /* The one other colour on the map: the existing warm state accent. */
   --state-accent: #a0522d;
 
+  /* THE LIVE LADDER (ADR-0043, story 24-1): the ground map's ONE accent — the
+     colour of a CONNECTION (terminals, the conduit's core, the one-shot flash).
+     Same ladder mechanics as the ink: one hue, named strengths. It may appear
+     only where something is connected or connecting — never on text, never on
+     a surface. PROVISIONAL: the hue (the person's "what colour is shock"
+     question is open in notes/design-directions/README.md). */
+  --live-rgb: 160 82 45;
+  --live-strong: rgb(var(--live-rgb) / 1);
+  --live: rgb(var(--live-rgb) / 0.8);
+  --live-soft: rgb(var(--live-rgb) / 0.55);
+  --live-wash: rgb(var(--live-rgb) / 0.14);
+
   /* THE TWO PROSE SCALES (story 17, shortlist item 8). A card's reading and
      note read at the PROSE scale; a popover or small panel reads at the
      COMPACT one — smaller, tighter, its headings level with its body. */
@@ -125,6 +137,23 @@ body {
   cursor: grab;
   touch-action: none;
   user-select: none;
+}
+
+/* STORY 24-1 (ADR-0043) — THE GROUND MAP'S BENCH. The ground map's surface is
+   a warm working surface the cards rest ON: tone plus a faint PLATE grid where
+   the other maps keep the dot grid. Scoped by the plane's data-map attribute,
+   so the concept and dynamics maps are untouched (ADR-0043's out-list). The
+   grid layers keep the dots' own camera behaviour — background-position and
+   -size are set inline in CanvasPlane and apply to every layer — so the bench
+   pans and zooms with the map. PROVISIONAL: the tone and the grain's rung. */
+.plane[data-map="ground"] {
+  background-color: #e6dccb;
+  background-image: linear-gradient(
+      to right,
+      var(--ink-chip) 1px,
+      transparent 1px
+    ),
+    linear-gradient(to bottom, var(--ink-chip) 1px, transparent 1px);
 }
 
 .plane.dragging {
@@ -5613,11 +5642,16 @@ body {
   z-index: 1;
   box-sizing: border-box;
   max-width: 260px;
-  padding: 3px 9px 4px;
-  background: rgba(255, 253, 248, 0.94);
-  border: 1px solid var(--ink-rule);
-  border-radius: 999px;
+  padding: 3px 10px 4px;
+  /* STORY 24-1 (ADR-0043) — THE NAME IS A STAMPED LABEL: a tag's small corner
+     radius, one stronger hairline, and a whisper of tracking, on the bench's
+     own warm paper. The name keeps the person's own case — it is their coined
+     word. PROVISIONAL: the tag paper and the tracking. */
+  background: rgba(247, 241, 229, 0.96);
+  border: 1px solid var(--ink-faint);
+  border-radius: 3px;
   box-shadow: 0 1px 4px rgba(40, 35, 25, 0.07);
+  letter-spacing: 0.03em;
   transform: scale(var(--pill-scale, 1));
   transform-origin: left bottom;
   white-space: nowrap;
@@ -5881,6 +5915,10 @@ body {
   align-items: flex-end;
   justify-content: flex-end;
   pointer-events: none;
+  /* STORY 24-1 (ADR-0043): the fold is the card's PLATE LIP — one hairline
+     where the paper folds. The fade below stays the fold's sign, so a card
+     that fits its threshold draws neither. */
+  border-top: 1px solid var(--ink-rule);
 }
 
 .ground-fade {

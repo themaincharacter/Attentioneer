@@ -5179,6 +5179,7 @@ function App() {
       <CanvasPlane
         camera={camera}
         intents={intents}
+        mapId={level}
         onPlaneDoubleClick={handlePlaneDoubleClick}
         gestureMode={gestureMode}
         onNarrate={narrate}
