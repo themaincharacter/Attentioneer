@@ -1076,116 +1076,10 @@ export function SessionCard({
         }
       />
       <div className="session-card-kind">{sessionKindLine(toolName)}</div>
-      {/* STORY 22.1 — THE ROW'S STATE, in one quiet line right under the kind
-          line, and on the EXPANDED face only: a closed card would wear it as an
-          ambient nudge, which this app does not do. The sentence comes from the
-          data (the row and the stored fact): the command's absence, the honest
-          never-tested line, or the date and the words a test answered. */}
-      {open && toolStatus !== null && (
-        <div className="session-card-tool-state">
-          {acpStatusSentence(toolStatus)}
-        </div>
-      )}
-      {/* STORY 22.5 — THE MODEL, BESIDE THE ROW'S STATE AND ON THE EXPANDED FACE
-          ONLY. When this machine's tool named its model choices, the picker
-          offers them by DISPLAY NAME (the tool's default first, and the tool's
-          opaque values never rendered); the choice is ONE record field, so the
-          next run — and its continuation — asks for it before the turn. When the
-          tool named none, one quiet line says where its model lives instead:
-          with the tool. No picker, no ambient nudge, nothing invented. */}
-      {open && toolName !== null && (
-        models !== null && models.length > 0 && onChooseModel !== undefined ? (
-          <div className="session-card-model-choice">
-            <select
-              className="session-card-pick"
-              aria-label={SESSION_MODEL_LABEL}
-              value={selectedModel}
-              disabled={busy || running}
-              onChange={(e) => void usePickedModel(e.target.value)}
-            >
-              <option value="">{SESSION_MODEL_DEFAULT}</option>
-              {models.map((choice, index) => (
-                <option key={index} value={String(index)}>
-                  {choice.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : models === null ? (
-          <div className="session-card-model-note">
-            {SESSION_MODEL_OWN_SETTING}
-          </div>
-        ) : null
-      )}
-      {/* STORY 22.1b — THE TOOL'S OWN SIGN-IN, beside the row's state line on
-          the EXPANDED face only. While the child is alive: the running line,
-          its newest line cropped, the "open the page" verb when that line holds
-          an address, and the one small field the person's code goes into. Once
-          it ends: ONE sentence, never a claim that the sign-in worked. A row
-          that declares no sign-in passes no signIn, so nothing is drawn. */}
-      {open && signIn !== null && (
-        <div className="session-card-sign-in">
-          {signIn.running ? (
-            <>
-              <div className="session-card-sign-in-line" role="status">
-                {SETUP_SENTENCES.running}
-              </div>
-              {signIn.line !== null && setupLineCrop(signIn.line) !== "" && (
-                <div className="session-card-sign-in-child">
-                  {setupLineCrop(signIn.line)}
-                </div>
-              )}
-              {signInUrl !== null && (
-                <button
-                  type="button"
-                  className="session-card-sign-in-page"
-                  disabled={signIn.openPage === undefined}
-                  onClick={() => signIn.openPage?.(signInUrl)}
-                >
-                  {SETUP_VERBS.openPage}
-                </button>
-              )}
-              <div className="session-card-sign-in-code">
-                <input
-                  type="text"
-                  className="session-card-sign-in-field"
-                  aria-label={SETUP_CODE_LABEL}
-                  placeholder={SETUP_CODE_PLACEHOLDER}
-                  value={code}
-                  onChange={(e) => {
-                    setCode(e.target.value);
-                    if (problem !== null) setProblem(null);
-                  }}
-                />
-                <button
-                  type="button"
-                  className="session-card-sign-in-send"
-                  disabled={signIn.sendCode === undefined}
-                  onClick={() => sendSignInCode()}
-                >
-                  {SETUP_VERBS.sendCode}
-                </button>
-                <button
-                  type="button"
-                  className="session-card-sign-in-stop"
-                  disabled={signIn.stop === undefined}
-                  onClick={() => signIn.stop?.()}
-                >
-                  {SETUP_VERBS.stop}
-                </button>
-              </div>
-            </>
-          ) : signIn.ended !== null ? (
-            <div className="session-card-sign-in-line" role="status">
-              {setupEndSentence(
-                signIn.ended.ending,
-                signIn.ended.line,
-                signIn.ended.sentence,
-              )}
-            </div>
-          ) : null}
-        </div>
-      )}
+      {/* STORY 24-5 — the row's state, the model and the sign-in MOVED behind
+          the one disclosure below ("what will be sent"): the face is the
+          transcript's. */}
+  
       {/* STORY 19.2 — THE BINDING, QUIETLY: the bound project card's NAME and
           never its folder path. What the run may do there is declared in the
           expanded face, where the person can see and change it. */}
@@ -1258,40 +1152,6 @@ export function SessionCard({
               {sessionEndingLine(lastEnded.ending, lastEnded.sentence ?? null)}
             </div>
           )}
-          {/* A CARD WHOSE ROW IS GONE says so and offers the rows this build
-              ships again. One field's change, and the card is usable again. */}
-          {toolName === null && (
-            <div className="session-card-missing" role="status">
-              <div className="session-card-missing-sentence">
-                {SESSION_MISSING_TOOL_SENTENCE}
-              </div>
-              {tools.length > 0 && onChooseTool !== undefined && (
-                <div className="session-card-picker">
-                  <select
-                    className="session-card-pick"
-                    aria-label="run this card with"
-                    value={picked ?? tools[0]!.id}
-                    disabled={busy || running}
-                    onChange={(e) => setPicked(e.target.value)}
-                  >
-                    {tools.map((choice) => (
-                      <option key={choice.id} value={choice.id}>
-                        {choice.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="session-card-bind"
-                    disabled={busy || running}
-                    onClick={() => void usePickedTool()}
-                  >
-                    use this tool
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
           {/* STORY 18.4 — THE PENDING PERMISSION, and the person's TWO verbs.
               The server's options are NEVER presented as choices: only
               allow-once and refuse exist here, so an "always" offer on the wire
@@ -1335,49 +1195,6 @@ export function SessionCard({
               </div>
             </div>
           )}
-          {/* STORY 19.2 — THE BINDING AND THE BOUNDARY. A project is a card, so
-              the picker offers NAMES only; the boundary is the person's
-              declaration, and its absence is the safe default: every ask
-              reaches them and the run starts in a fresh folder. Both are ONE
-              record field each, written the moment they are chosen. */}
-          {(onChooseProject !== undefined || onChooseBoundary !== undefined) && (
-            <div className="session-card-binding-choice">
-              {onChooseProject !== undefined && (
-                <select
-                  className="session-card-pick"
-                  aria-label="run this card in a project"
-                  value={session.project ?? ""}
-                  disabled={busy || running}
-                  onChange={(e) => void usePickedProject(e.target.value)}
-                >
-                  <option value="">no project</option>
-                  {projects.map((choice) => (
-                    <option key={choice.id} value={choice.id}>
-                      {choice.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {onChooseBoundary !== undefined && (
-                <select
-                  className="session-card-pick"
-                  aria-label="what this run may do there"
-                  value={session.boundary ?? ""}
-                  disabled={busy || running || session.project === undefined}
-                  onChange={(e) => void usePickedBoundary(e.target.value)}
-                >
-                  <option value="">{SESSION_BOUNDARY_LABELS.undeclared}</option>
-                  <option value="read">{SESSION_BOUNDARY_LABELS.read}</option>
-                  <option value="write">{SESSION_BOUNDARY_LABELS.write}</option>
-                </select>
-              )}
-              {session.boundary === undefined && (
-                <div className="session-card-bound-hint">
-                  {SESSION_BOUNDARY_UNDECLARED_SENTENCE}
-                </div>
-              )}
-            </div>
-          )}
           {/* STORY 19.3 — THE TASK. The person writes what this run should do.
               It is EPHEMERAL (no record field): the only thing that survives a
               reopen is the send itself, recorded in the transcript. Empty means
@@ -1399,94 +1216,6 @@ export function SessionCard({
               {SESSION_CONTEXT_DANGLING}
             </div>
           )}
-          {/* STORY 21.1 — THE SECOND COMPOSER, BELOW THE TASK: continue the
-              card's last delegate session. It appears only when the transcript
-              records a session AND the exact folder it was recorded in; when
-              the row does not continue sessions the block says so in one quiet
-              sentence and offers NO verb (nothing to press, nothing refused
-              after the fact). The follow-up's packet is the task and the bound
-              alone: the session already owns the context. */}
-          {resume !== null && (
-            <div className="session-card-follow-up">
-              <div className="session-card-follow-up-label">
-                {SESSION_FOLLOW_UP_LABEL}
-              </div>
-              {canResume ? (
-                <>
-                  <textarea
-                    className="session-card-task session-card-follow-up-task"
-                    aria-label={SESSION_FOLLOW_UP_LABEL}
-                    placeholder={SESSION_FOLLOW_UP_PLACEHOLDER}
-                    value={followUp}
-                    disabled={busy || running}
-                    onChange={(e) => {
-                      setFollowUp(e.target.value);
-                      if (problem !== null) setProblem(null);
-                    }}
-                  />
-                  {/* THE SAME ONE QUIET DISCLOSURE the task has: these are the
-                      bytes that WILL go, composed by the send's own assembler. */}
-                  {followUpPacket !== null && (
-                    <details className="ask-card-declaration session-card-sent session-card-follow-up-sent">
-                      <summary className="ask-card-declaration-verb">
-                        {ASK_DECLARATION_VERB}
-                      </summary>
-                      <div className="ask-card-declaration-body">
-                        <PacketSurface
-                          declaration={followUpPacket.declaration}
-                          messages={followUpPacket.messages}
-                        />
-                      </div>
-                    </details>
-                  )}
-                  <button
-                    type="button"
-                    className="session-card-follow-up-verb"
-                    disabled={
-                      busy ||
-                      running ||
-                      onFollowUp === undefined ||
-                      followUp.trim() === ""
-                    }
-                    onClick={() => void continueSession()}
-                  >
-                    continue
-                  </button>
-                </>
-              ) : (
-                <div className="session-card-follow-up-refusal">
-                  {SESSION_RESUME_REFUSALS.rowCannot}
-                </div>
-              )}
-            </div>
-          )}
-          {/* THE DECLARATION FOR THE NEXT RUN: 18.2's one sentence, computed
-              from the row alone. It names a provider ROW, never a key. */}
-          {declaration !== null && (
-            <div className="session-card-declaration">{declaration}</div>
-          )}
-          {/* STORY 22.4 — THE CALLS, NAMED BEFORE THE RUN: the task model
-              answers, then the manager model distils the result into a card
-              (or, with no manager, the card will be made by a rule). The distil
-              is automatic, so no condition line claims a press. */}
-          {distilWords.length > 0 && (
-            <div className="session-distil-declaration">
-              {distilWords.map((line, index) => (
-                <div className="session-distil-line" key={index}>
-                  {line}
-                </div>
-              ))}
-            </div>
-          )}
-          {/* STORY 19.2 — THE BOUND RUN'S BLAST RADIUS, in one sentence: the
-              folder's full path and what the person said the run may do there.
-              Shown only when both are true, so an unbound or undeclared card
-              says exactly what it always did. */}
-          {scopeDeclaration !== null && (
-            <div className="session-card-declaration session-card-scope">
-              {scopeDeclaration}
-            </div>
-          )}
           {/* STORY 19.3 — ONE QUIET DISCLOSURE, the ask card's own shape: the
               declaration line (every block with its exact size and the total)
               and the exact bytes, one press away. Before the press it is "what
@@ -1494,19 +1223,306 @@ export function SessionCard({
               transcript's recorded `sent` entry, so a reopen is the same
               bytes. The bytes are NEVER normalized: the pre-send packet's text,
               the wire's prompt and the recorded entry are one string. */}
-          {readbackMessages !== null && (
-            <details className="ask-card-declaration session-card-sent">
-              <summary className="ask-card-declaration-verb">
-                {sessionDisclosureVerb(sentEntry !== null, typed)}
-              </summary>
-              <div className="ask-card-declaration-body">
+          {/* STORY 24-5 — ONE DISCLOSURE, the ask card's own shape, now the
+              run's ONLY door: what this run is and what will go. The row, the
+              model, the sign-in, the bindings, the declarations and the
+              continuation all live behind this one quiet verb, so the face
+              above stays the transcript's. The bytes stay exactly what they
+              were: the pre-send packet's text or the recorded `sent` entry. */}
+          <details className="ask-card-declaration session-card-sent">
+            <summary className="ask-card-declaration-verb">
+              {sessionDisclosureVerb(sentEntry !== null, typed)}
+            </summary>
+            <div className="ask-card-declaration-body">
+              {/* THE DECLARATION FOR THE NEXT RUN: 18.2's one sentence,
+                  computed from the row alone. It names a provider ROW, never a
+                  key. */}
+              {declaration !== null && (
+                <div className="session-card-declaration">{declaration}</div>
+              )}
+              {/* STORY 22.4 — THE CALLS, NAMED BEFORE THE RUN: the task model
+                  answers, then the manager model distils the result into a
+                  card (or, with no manager, the card will be made by a rule).
+                  The distil is automatic, so no condition line claims a
+                  press. */}
+              {distilWords.length > 0 && (
+                <div className="session-distil-declaration">
+                  {distilWords.map((line, index) => (
+                    <div className="session-distil-line" key={index}>
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* STORY 19.2 — THE BOUND RUN'S BLAST RADIUS, in one sentence:
+                  the folder's full path and what the person said the run may
+                  do there. */}
+              {scopeDeclaration !== null && (
+                <div className="session-card-declaration session-card-scope">
+                  {scopeDeclaration}
+                </div>
+              )}
+              {/* STORY 22.1 — THE ROW'S STATE: the command's absence, the
+                  honest never-tested line, or the date and the words a test
+                  answered. */}
+              {toolStatus !== null && (
+                <div className="session-card-tool-state">
+                  {acpStatusSentence(toolStatus)}
+                </div>
+              )}
+              {/* STORY 22.5 — THE MODEL: the tool's own display names, or the
+                  one quiet line saying the model is the tool's own setting. */}
+              {toolName !== null &&
+                (models !== null &&
+                models.length > 0 &&
+                onChooseModel !== undefined ? (
+                  <div className="session-card-model-choice">
+                    <select
+                      className="session-card-pick"
+                      aria-label={SESSION_MODEL_LABEL}
+                      value={selectedModel}
+                      disabled={busy || running}
+                      onChange={(e) => void usePickedModel(e.target.value)}
+                    >
+                      <option value="">{SESSION_MODEL_DEFAULT}</option>
+                      {models.map((choice, index) => (
+                        <option key={index} value={String(index)}>
+                          {choice.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : models === null ? (
+                  <div className="session-card-model-note">
+                    {SESSION_MODEL_OWN_SETTING}
+                  </div>
+                ) : null)}
+              {/* A CARD WHOSE ROW IS GONE says so and offers the rows this
+                  build ships again. */}
+              {toolName === null && (
+                <div className="session-card-missing" role="status">
+                  <div className="session-card-missing-sentence">
+                    {SESSION_MISSING_TOOL_SENTENCE}
+                  </div>
+                  {tools.length > 0 && onChooseTool !== undefined && (
+                    <div className="session-card-picker">
+                      <select
+                        className="session-card-pick"
+                        aria-label="run this card with"
+                        value={picked ?? tools[0]!.id}
+                        disabled={busy || running}
+                        onChange={(e) => setPicked(e.target.value)}
+                      >
+                        {tools.map((choice) => (
+                          <option key={choice.id} value={choice.id}>
+                            {choice.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="session-card-bind"
+                        disabled={busy || running}
+                        onClick={() => void usePickedTool()}
+                      >
+                        use this tool
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* STORY 19.2 — THE BINDING AND THE BOUNDARY. A project is a
+                  card, so the picker offers NAMES only; the boundary is the
+                  person's declaration, and its absence is the safe default. */}
+              {(onChooseProject !== undefined ||
+                onChooseBoundary !== undefined) && (
+                <div className="session-card-binding-choice">
+                  {onChooseProject !== undefined && (
+                    <select
+                      className="session-card-pick"
+                      aria-label="run this card in a project"
+                      value={session.project ?? ""}
+                      disabled={busy || running}
+                      onChange={(e) => void usePickedProject(e.target.value)}
+                    >
+                      <option value="">no project</option>
+                      {projects.map((choice) => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {onChooseBoundary !== undefined && (
+                    <select
+                      className="session-card-pick"
+                      aria-label="what this run may do there"
+                      value={session.boundary ?? ""}
+                      disabled={
+                        busy || running || session.project === undefined
+                      }
+                      onChange={(e) => void usePickedBoundary(e.target.value)}
+                    >
+                      <option value="">
+                        {SESSION_BOUNDARY_LABELS.undeclared}
+                      </option>
+                      <option value="read">
+                        {SESSION_BOUNDARY_LABELS.read}
+                      </option>
+                      <option value="write">
+                        {SESSION_BOUNDARY_LABELS.write}
+                      </option>
+                    </select>
+                  )}
+                  {session.boundary === undefined && (
+                    <div className="session-card-bound-hint">
+                      {SESSION_BOUNDARY_UNDECLARED_SENTENCE}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* STORY 22.1b — THE TOOL'S OWN SIGN-IN. While the child is
+                  alive: the running line, its newest line cropped, the "open
+                  the page" verb, and the one small field for the code. Once it
+                  ends: ONE sentence, never a claim that it worked. */}
+              {signIn !== null && (
+                <div className="session-card-sign-in">
+                  {signIn.running ? (
+                    <>
+                      <div className="session-card-sign-in-line" role="status">
+                        {SETUP_SENTENCES.running}
+                      </div>
+                      {signIn.line !== null &&
+                        setupLineCrop(signIn.line) !== "" && (
+                          <div className="session-card-sign-in-child">
+                            {setupLineCrop(signIn.line)}
+                          </div>
+                        )}
+                      {signInUrl !== null && (
+                        <button
+                          type="button"
+                          className="session-card-sign-in-page"
+                          disabled={signIn.openPage === undefined}
+                          onClick={() => signIn.openPage?.(signInUrl)}
+                        >
+                          {SETUP_VERBS.openPage}
+                        </button>
+                      )}
+                      <div className="session-card-sign-in-code">
+                        <input
+                          type="text"
+                          className="session-card-sign-in-field"
+                          aria-label={SETUP_CODE_LABEL}
+                          placeholder={SETUP_CODE_PLACEHOLDER}
+                          value={code}
+                          onChange={(e) => {
+                            setCode(e.target.value);
+                            if (problem !== null) setProblem(null);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="session-card-sign-in-send"
+                          disabled={signIn.sendCode === undefined}
+                          onClick={() => sendSignInCode()}
+                        >
+                          {SETUP_VERBS.sendCode}
+                        </button>
+                        <button
+                          type="button"
+                          className="session-card-sign-in-stop"
+                          disabled={signIn.stop === undefined}
+                          onClick={() => signIn.stop?.()}
+                        >
+                          {SETUP_VERBS.stop}
+                        </button>
+                      </div>
+                    </>
+                  ) : signIn.ended !== null ? (
+                    <div className="session-card-sign-in-line" role="status">
+                      {setupEndSentence(
+                        signIn.ended.ending,
+                        signIn.ended.line,
+                        signIn.ended.sentence,
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+              {/* STORY 21.1 — THE SECOND COMPOSER: continue the card's last
+                  delegate session. The follow-up's packet is the task and the
+                  bound alone. */}
+              {resume !== null && (
+                <div className="session-card-follow-up">
+                  <div className="session-card-follow-up-label">
+                    {SESSION_FOLLOW_UP_LABEL}
+                  </div>
+                  {canResume ? (
+                    <>
+                      <textarea
+                        className="session-card-task session-card-follow-up-task"
+                        aria-label={SESSION_FOLLOW_UP_LABEL}
+                        placeholder={SESSION_FOLLOW_UP_PLACEHOLDER}
+                        value={followUp}
+                        disabled={busy || running}
+                        onChange={(e) => {
+                          setFollowUp(e.target.value);
+                          if (problem !== null) setProblem(null);
+                        }}
+                      />
+                      {followUpPacket !== null && (
+                        <details className="ask-card-declaration session-card-sent session-card-follow-up-sent">
+                          <summary className="ask-card-declaration-verb">
+                            {ASK_DECLARATION_VERB}
+                          </summary>
+                          <div className="ask-card-declaration-body">
+                            <PacketSurface
+                              declaration={followUpPacket.declaration}
+                              messages={followUpPacket.messages}
+                            />
+                          </div>
+                        </details>
+                      )}
+                      <button
+                        type="button"
+                        className="session-card-follow-up-verb"
+                        disabled={
+                          busy ||
+                          running ||
+                          onFollowUp === undefined ||
+                          followUp.trim() === ""
+                        }
+                        onClick={() => void continueSession()}
+                      >
+                        continue
+                      </button>
+                    </>
+                  ) : (
+                    <div className="session-card-follow-up-refusal">
+                      {SESSION_RESUME_REFUSALS.rowCannot}
+                    </div>
+                  )}
+                </div>
+              )}
+              {readbackMessages !== null && (
                 <PacketSurface
                   declaration={readbackDeclaration}
                   messages={readbackMessages}
                 />
-              </div>
-            </details>
+              )}
+            </div>
+          </details>
+          {/* STORY 22.6 — the one press's honest outcome line stays ON THE
+              FACE (it is news, not chrome); its verb sits in the overflow. */}
+          {keepNotice !== null && (
+            <div className="session-distil-fallback">
+              <span className="session-distil-said">{keepNotice}</span>
+            </div>
           )}
+          {/* STORY 24-5 — TWO VERBS ON THE FACE: run (or stop), and ONE quiet
+              overflow. Everything else — test, sign in, keep, remove, close —
+              is one press in, exactly like the ask card's "more". Nothing is
+              lost: every verb keeps its own rule and its keyboard path. */}
           <div className="session-card-actions">
             {running ? (
               <>
@@ -1532,46 +1548,37 @@ export function SessionCard({
                 run
               </button>
             )}
-            {/* STORY 22.1 — THE ROW'S ONE VERB, beside run/stop and shown only
-                when a row is bound. It is NOT gated on the card's live run: a
-                press then answers the existing busy sentence, and the test's
-                own ending never touches that run or its transcript. */}
-            {toolName !== null && onTestRow !== undefined && (
-              <button
-                type="button"
-                className="session-card-test"
-                disabled={busy}
-                onClick={() => void testRow()}
-              >
-                test
-              </button>
-            )}
-            {/* STORY 22.1b — THE SIGN-IN VERB, beside "test". It is
-                shown whenever the card was handed a sign-in view (the row
-                declares one) and is disabled while the child is alive, so one
-                card never hosts two sign-ins. Starting it changes NO state
-                fact: the row's state line is written by tests alone. */}
-            {signIn !== null && (
-              <button
-                type="button"
-                className="session-card-sign-in-verb"
-                disabled={busy || signIn.running}
-                onClick={() => signIn.start?.()}
-              >
-                {SETUP_VERBS.signIn}
-              </button>
-            )}
-            {/* STORY 22.6 — ONE VERB, ONE PRESS. A completed run can be kept
-                as a card; the layer tries the curator first and falls back to
-                18.4's rule copy whenever that answer cannot be used. The line
-                above the verb is the press's own outcome and names which card
-                was made. A PARTIAL offers no verb (18.4's rule kept): a partial
-                is never a result, so only its sentence may show. The copy stays
-                byte-for-byte the card 18.4 wrote; the curator's card is the
-                same artifact it always was. */}
-            {keepNotice !== null && (
-              <div className="session-distil-fallback">
-                <span className="session-distil-said">{keepNotice}</span>
+            <details className="session-card-overflow">
+              <summary className="session-card-overflow-verb">more</summary>
+              <div className="session-card-overflow-menu">
+                {/* STORY 22.1 — the row's one verb. NOT gated on the card's
+                    live run: a press then answers the existing busy sentence,
+                    and the test's own ending never touches that run. */}
+                {toolName !== null && onTestRow !== undefined && (
+                  <button
+                    type="button"
+                    className="session-card-test"
+                    disabled={busy}
+                    onClick={() => void testRow()}
+                  >
+                    test
+                  </button>
+                )}
+                {/* STORY 22.1b — the sign-in verb, disabled while the child is
+                    alive, so one card never hosts two sign-ins. */}
+                {signIn !== null && (
+                  <button
+                    type="button"
+                    className="session-card-sign-in-verb"
+                    disabled={busy || signIn.running}
+                    onClick={() => signIn.start?.()}
+                  >
+                    {SETUP_VERBS.signIn}
+                  </button>
+                )}
+                {/* STORY 22.6 — one verb, one press: the layer tries the
+                    curator first and falls back to 18.4's rule copy. A PARTIAL
+                    offers no verb: a partial is never a result. */}
                 {lastEnded !== null && lastEnded.ending === "completed" && (
                   <button
                     type="button"
@@ -1582,36 +1589,27 @@ export function SessionCard({
                     {SESSION_RESULT_KEEP_VERB}
                   </button>
                 )}
-              </div>
-            )}
-            {keepNotice === null &&
-              lastEnded !== null &&
-              lastEnded.ending === "completed" && (
+                {/* STORY 18.5 — the card's remove: immediate, reversible
+                    through the one toast. A live run is never cut by it. */}
+                {onRemove !== undefined && (
+                  <button
+                    type="button"
+                    className="session-card-remove"
+                    disabled={busy || running}
+                    onClick={() => void removeCard()}
+                  >
+                    remove
+                  </button>
+                )}
                 <button
                   type="button"
-                  className="session-card-make"
-                  disabled={busy || onKeepResult === undefined}
-                  onClick={() => void keepResult()}
+                  className="session-card-close"
+                  onClick={onClose}
                 >
-                  {SESSION_RESULT_KEEP_VERB}
+                  close
                 </button>
-              )}
-            {/* STORY 18.5 — the card's remove, beside close: immediate,
-                reversible through the one toast. A live run is never cut by a
-                delete — the verb waits. */}
-            {onRemove !== undefined && (
-              <button
-                type="button"
-                className="session-card-remove"
-                disabled={busy || running}
-                onClick={() => void removeCard()}
-              >
-                remove
-              </button>
-            )}
-            <button type="button" className="session-card-close" onClick={onClose}>
-              close
-            </button>
+              </div>
+            </details>
           </div>
         </div>
       )}
