@@ -113,6 +113,7 @@ import {
 import type { AskPacket } from "./turn/packet";
 import { readingFor } from "./map/readings";
 import type { Media } from "./map/media";
+import { GroundGuides } from "./canvas/GroundGuides";
 import { GroundWires } from "./canvas/GroundWires";
 import { createGroundDragChannel } from "./canvas/groundDragRef";
 import { GroundBubble, type GroundIntent } from "./canvas/GroundBubble";
@@ -5490,14 +5491,28 @@ function App() {
             link has no card to attach to, so it is not drawn; the ground
             notices group names it and the file keeps it. */}
         {level === "ground" && (
-          <GroundWires
-            links={ground.links}
-            references={ground.references}
-            asks={ground.asks}
-            sessions={ground.sessions}
-            onRemoveLink={ground.unlink}
-            drag={groundDrag}
-          />
+          <>
+            <GroundWires
+              links={ground.links}
+              references={ground.references}
+              asks={ground.asks}
+              sessions={ground.sessions}
+              onRemoveLink={ground.unlink}
+              drag={groundDrag}
+            />
+            {/* STORY 24-3 (ADR-0043) — the alignment guides ride the same
+                channel as the wires: faint lines where a dragged card's edges
+                line up with a neighbour's. VISUAL ONLY — nothing snaps, and
+                they vanish with the hand. */}
+            <GroundGuides
+              cards={[
+                ...ground.references,
+                ...ground.asks,
+                ...ground.sessions,
+              ]}
+              drag={groundDrag}
+            />
+          </>
         )}
 
         {/* THE GROUND MAP's own layer (story 16.1): its references are drawn

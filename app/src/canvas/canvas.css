@@ -6808,6 +6808,48 @@ body {
   background: #fffdf8;
 }
 
+/* STORY 24-3 (ADR-0043) — THE ALIGNMENT GUIDES: faint lines where a dragged
+   card's edges line up with a neighbour's. Screen-space hairlines on the world
+   layer (the lasso's non-scaling idiom), pointer-less, gone with the hand.
+   Ink, not LIVE: a line of alignment is not a connection (rule 3). */
+.ground-guides {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ground-guide-line {
+  stroke: var(--ink-soft);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* STORY 24-3 (ADR-0043) — THE ONE-SHOT: a terminal that has just been
+   connected flashes once and settles. Removed, not shortened, under reduced
+   motion (the sheet header's promise). PROVISIONAL: the ring's reach. */
+@keyframes terminal-flash {
+  from {
+    box-shadow: 0 0 0 2px var(--live);
+  }
+  to {
+    box-shadow: 0 0 0 9px rgb(var(--live-rgb) / 0);
+  }
+}
+
+.terminal-flash {
+  animation: terminal-flash var(--motion-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-flash {
+    animation: none;
+  }
+}
+
 /* The creation bubble: world-anchored at the double-clicked point and
    counter-scaled by the component (the naming popup's idiom). Provisional:
    the card's look. */

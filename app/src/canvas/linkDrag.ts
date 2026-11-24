@@ -1,5 +1,6 @@
 import { isGestureArmed, type GestureMode } from "./gates";
 import type { Point } from "./geometry";
+import { flashLandedWireWhenDrawn } from "./terminalFlash";
 import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 
 /**
@@ -132,6 +133,10 @@ export function startGroundLinkDrag(
     if (release === null) return;
     if (release.kind === "link") {
       void writer(from, release.to);
+      // STORY 24-3 (ADR-0043): when the landed wire appears on the map its
+      // terminals flash ONCE — the moment of connection, never an ambient
+      // pulse. A refused write never draws a wire, so nothing flashes.
+      flashLandedWireWhenDrawn(from, release.to);
       return;
     }
     deps.onCreateFromLink?.(release.from, release.at);
