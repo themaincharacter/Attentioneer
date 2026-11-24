@@ -15,6 +15,7 @@ import { CONTENT_CLASSES } from "../src/canvas/gates";
 import {
   GroundWires,
   cardCenter,
+  conduitLegs,
   linkConfirmed,
   linkStepAfter,
   wireGeometry,
@@ -308,6 +309,27 @@ describe("the wire: pure geometry, a midpoint between the two cards", () => {
   test("cards on the SAME point draw nothing (the record still exists)", () => {
     const same: GroundReference = { on: "e", name: "E", x: 0, y: 0 };
     expect(wireGeometry(A, same)).toBeNull();
+  });
+
+  test("the conduit runs in two legs with one quarter-turn, dominant axis first", () => {
+    // A wide run turns horizontally first: the leg leaving a facing edge does
+    // the running (story 24-2's routing rule).
+    const wide = conduitLegs({ x: 0, y: 0 }, { x: 100, y: 40 });
+    expect(wide.first.length).toBe(100);
+    expect(wide.first.angle).toBe(0);
+    expect(wide.second.length).toBe(40);
+    expect(wide.second.angle).toBe(90);
+    const tall = conduitLegs({ x: 0, y: 0 }, { x: 40, y: 100 });
+    expect(tall.first.angle).toBe(90);
+    expect(tall.first.length).toBe(100);
+    expect(tall.second.angle).toBe(0);
+    expect(tall.second.length).toBe(40);
+    // A straight run keeps one full leg and one zero-length leg, so every wire
+    // paints the same parts (and the end clamps share the run's angle).
+    const straight = conduitLegs({ x: 0, y: 0 }, { x: 100, y: 0 });
+    expect(straight.first.length).toBe(100);
+    expect(straight.first.angle).toBe(0);
+    expect(straight.second.length).toBe(0);
   });
 });
 

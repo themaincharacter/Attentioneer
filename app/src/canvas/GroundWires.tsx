@@ -131,6 +131,46 @@ export function wireGeometry(
   };
 }
 
+/**
+ * STORY 24-2 (ADR-0043) — THE CONDUIT'S LEGS. A cable runs in two straight
+ * legs with ONE quarter-turn (the pipes of the mock): horizontal-first when the
+ * run is wider than it is tall, vertical-first otherwise, so the leg leaving a
+ * card's facing edge does the most running. A run that is already straight has
+ * one full leg and one zero-length leg, so every wire paints the same parts.
+ * PURE and additive: `wireGeometry` (the mark's truth) is untouched.
+ */
+export interface ConduitLeg {
+  x: number;
+  y: number;
+  length: number;
+  angle: number;
+}
+
+export function conduitLegs(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): { first: ConduitLeg; second: ConduitLeg } {
+  const horizontalFirst =
+    Math.abs(to.x - from.x) >= Math.abs(to.y - from.y);
+  const bend = horizontalFirst
+    ? { x: to.x, y: from.y }
+    : { x: from.x, y: to.y };
+  const leg = (
+    a: { x: number; y: number },
+    b: { x: number; y: number },
+  ): ConduitLeg => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    return {
+      x: a.x,
+      y: a.y,
+      length: Math.hypot(dx, dy),
+      angle: (Math.atan2(dy, dx) * 180) / Math.PI,
+    };
+  };
+  return { first: leg(from, bend), second: leg(bend, to) };
+}
+
 interface GroundWiresProps {
   /** Every readable ground link, in FILE ORDER (later wires on top). */
   links: readonly GroundLink[];
@@ -230,8 +270,11 @@ function GroundWire({
   drag?: GroundDragChannel;
 }) {
   const wireRef = useRef<HTMLDivElement>(null);
-  const lineRef = useRef<HTMLDivElement>(null);
-  const hitRef = useRef<HTMLDivElement>(null);
+  // STORY 24-2: the conduit paints TWO legs, TWO hit bands and TWO terminal
+  // clamps per wire, all written imperatively by `paintWire` (never state).
+  const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const hitRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const clampRefs = useRef<(HTMLDivElement | null)[]>([]);
   const markRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLDivElement>(null);
   const problemRef = useRef<HTMLDivElement>(null);
@@ -285,22 +328,49 @@ function GroundWire({
    * hidden for those frames instead of inventing a direction.
    */
   function paintWire(live: WireGeometry | null): void {
-    const line = lineRef.current;
-    const hit = hitRef.current;
     if (live === null) {
-      if (line !== null) line.style.opacity = "0";
-      if (hit !== null) hit.style.opacity = "0";
+      for (const el of lineRefs.current) {
+        if (el !== null) el.style.opacity = "0";
+      }
+      for (const el of hitRefs.current) {
+        if (el !== null) el.style.opacity = "0";
+      }
+      for (const el of clampRefs.current) {
+        if (el !== null) el.style.opacity = "0";
+      }
       return;
     }
-    const transform = `translate3d(${live.from.x}px, ${live.from.y}px, 0) rotate(${live.angle}deg) scaleX(${live.length})`;
-    if (line !== null) {
-      line.style.opacity = "";
-      line.style.transform = transform;
-    }
-    if (hit !== null) {
-      hit.style.opacity = "";
-      hit.style.transform = transform;
-    }
+    // STORY 24-2 — the same live frame, now as a conduit: the two legs carry
+    // the transform, the two clamps grip the run's ends. Still only style
+    // writes: no wire re-renders, nothing but the touched wires repaint.
+    const legs = conduitLegs(live.from, live.to);
+    const parts: ConduitLeg[] = [legs.first, legs.second];
+    parts.forEach((leg, index) => {
+      const transform = `translate3d(${leg.x}px, ${leg.y}px, 0) rotate(${leg.angle}deg) scaleX(${leg.length})`;
+      const line = lineRefs.current[index];
+      if (line !== null && line !== undefined) {
+        line.style.opacity = "";
+        line.style.transform = transform;
+      }
+      const hit = hitRefs.current[index];
+      if (hit !== null && hit !== undefined) {
+        hit.style.opacity = "";
+        hit.style.transform = transform;
+      }
+    });
+    const straight = legs.second.length === 0;
+    const ends = [
+      { at: live.from, angle: legs.first.angle },
+      { at: live.to, angle: straight ? legs.first.angle : legs.second.angle },
+    ];
+    ends.forEach((end, index) => {
+      const clamp = clampRefs.current[index];
+      if (clamp === null || clamp === undefined) return;
+      clamp.style.opacity = "";
+      clamp.style.left = `${end.at.x}px`;
+      clamp.style.top = `${end.at.y}px`;
+      clamp.style.transform = `rotate(${end.angle}deg)`;
+    });
     for (const el of [markRef.current, confirmRef.current, problemRef.current]) {
       if (el === null) continue;
       el.style.left = `${live.mid.x}px`;
@@ -338,7 +408,15 @@ function GroundWire({
     }
   }
 
-  const lineTransform = `translate3d(${geometry.from.x}px, ${geometry.from.y}px, 0) rotate(${geometry.angle}deg)`;
+  const legs = conduitLegs(geometry.from, geometry.to);
+  const legParts: ConduitLeg[] = [legs.first, legs.second];
+  const clampEnds = [
+    { at: geometry.from, angle: legs.first.angle },
+    {
+      at: geometry.to,
+      angle: legs.second.length === 0 ? legs.first.angle : legs.second.angle,
+    },
+  ];
   return (
     <div
       ref={wireRef}
@@ -346,18 +424,50 @@ function GroundWire({
       data-from={link.from}
       data-to={link.to}
     >
-      <div
-        ref={lineRef}
-        className="ground-wire-line"
-        style={{ transform: `${lineTransform} scaleX(${geometry.length})` }}
-      />
+      {legParts.map((leg, index) => (
+        <div
+          key={`leg-${index}`}
+          ref={(el) => {
+            lineRefs.current[index] = el;
+          }}
+          className="ground-wire-line"
+          style={{
+            transform: `translate3d(${leg.x}px, ${leg.y}px, 0) rotate(${leg.angle}deg) scaleX(${leg.length})`,
+          }}
+        />
+      ))}
       {/* The hover band: a press on it is a press on the plane (the wire has
-          no press of its own), but hovering it reveals the remove mark. */}
-      <div
-        ref={hitRef}
-        className="ground-wire-hit"
-        style={{ transform: `${lineTransform} scaleX(${geometry.length})` }}
-      />
+          no press of its own), but hovering it reveals the remove mark. One
+          band per leg, so the hover hugs the cable. */}
+      {legParts.map((leg, index) => (
+        <div
+          key={`hit-${index}`}
+          ref={(el) => {
+            hitRefs.current[index] = el;
+          }}
+          className="ground-wire-hit"
+          style={{
+            transform: `translate3d(${leg.x}px, ${leg.y}px, 0) rotate(${leg.angle}deg) scaleX(${leg.length})`,
+          }}
+        />
+      ))}
+      {/* STORY 24-2 — THE TERMINAL CLAMPS: one at each end, gripping the run
+          at the angle it leaves. Purely painted (no press, no state). */}
+      {clampEnds.map((end, index) => (
+        <div
+          key={`clamp-${index}`}
+          ref={(el) => {
+            clampRefs.current[index] = el;
+          }}
+          className="ground-wire-clamp"
+          aria-hidden="true"
+          style={{
+            left: end.at.x,
+            top: end.at.y,
+            transform: `rotate(${end.angle}deg)`,
+          }}
+        />
+      ))}
       {step === "asking" ? (
         <div
           ref={confirmRef}

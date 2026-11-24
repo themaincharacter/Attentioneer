@@ -6565,12 +6565,29 @@ body {
   top: 0;
   z-index: 1;
   width: 1px;
-  height: 0;
-  border-top: 1px solid rgba(141, 136, 124, 0.55);
+  height: 3px;
+  /* STORY 24-2 (ADR-0043) — THE CONDUIT: the wire is a cable, not a hairline.
+     The sheath is the ink ladder's darkest rung (no second ink); the core is
+     the LIVE rung — the colour of a connection (rule 3). The leg keeps the
+     stretched-transform idiom, so a drag still costs one compositor transform:
+     the core stretches with it as the leg's own ::after. The map's scale rule
+     is untouched (the wire zooms with the plane, as a test pins), so at 25%
+     zoom the cable is three times the old hairline's width. */
+  background: var(--ink-strong);
   transform-origin: 0 0;
   pointer-events: none;
   will-change: transform;
   animation: fade-in var(--motion-slow) var(--ease-out);
+}
+
+.ground-wire-line::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 1px;
+  height: 1px;
+  background: var(--live-soft);
 }
 
 /* The hover band: it takes the press only to reveal the remove mark, and a
@@ -6585,6 +6602,41 @@ body {
   background: transparent;
   transform-origin: 0 0;
   pointer-events: auto;
+}
+
+/* STORY 24-2 (ADR-0043) — THE TERMINAL CLAMP: where a cable meets a card. One
+   per end, riding the run's own angle so it grips the cable. The two dots are
+   its marks (PROVISIONAL: shape and size). It takes no press — the wire's verbs
+   stay at the midpoint mark. */
+.ground-wire-clamp {
+  position: absolute;
+  z-index: 2;
+  width: 5px;
+  height: 12px;
+  margin: -6px 0 0 -2.5px;
+  background: var(--ink-strong);
+  border-radius: 1.5px;
+  pointer-events: none;
+}
+
+.ground-wire-clamp::before,
+.ground-wire-clamp::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 1.5px;
+  height: 1.5px;
+  margin-left: -0.75px;
+  border-radius: 50%;
+  background: var(--live);
+}
+
+.ground-wire-clamp::before {
+  top: 1.5px;
+}
+
+.ground-wire-clamp::after {
+  bottom: 1.5px;
 }
 
 /* The remove mark, quiet until the wire is hovered: one small circle near the
@@ -6700,16 +6752,19 @@ body {
    its press-to-open and drag-to-move rule untouched. */
 .ground-link-handle {
   position: absolute;
-  right: -7px;
+  right: -8px;
   top: 50%;
   z-index: 3;
   width: 14px;
-  height: 14px;
-  margin-top: -7px;
+  height: 20px;
+  margin-top: -10px;
   padding: 0;
-  border: 1px solid rgba(141, 136, 124, 0.4);
-  border-radius: 50%;
-  background: rgba(255, 253, 248, 0.95);
+  /* STORY 24-2 (ADR-0043): the handle is the TERMINAL you drag a cable from —
+     the same clamp that greets a wire at a card's edge, and the hit target is
+     no smaller than the circle it replaces. */
+  border: 1px solid var(--ink-faint);
+  border-radius: 3px;
+  background: rgba(247, 241, 229, 0.96);
   opacity: 0;
   pointer-events: none;
   cursor: crosshair;
