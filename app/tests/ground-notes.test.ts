@@ -67,8 +67,8 @@ import { previewText, READING_PREVIEW_LINES } from "../src/map/readings";
  *   - an orphan note is REPORTED, never adopted and never deleted;
  *   - deleting a card removes its note in the same queued pass, after the
  *     reference line and before the links' cascade;
- *   - the small face crops the note to `NOTE_PREVIEW_LINES` above the reading
- *     crop; the expanded face has the whole note and the in-place editor.
+ *   - the small face crops the note to `NOTE_PREVIEW_LINES` above the paged
+ *     reading; the expanded face has the whole note and the in-place editor.
  *
  * PROVISIONAL (ADR-0003's rendering seam): the crop, the edit's verbs, the
  * note's face and the byte cap.
@@ -486,7 +486,7 @@ describe("the card: the note above the reading, cropped, editable in place", () 
   };
   const note = "note line one\nnote line two\nnote line three";
 
-  test("the small face shows two note lines above the reading crop", () => {
+  test("the small face shows two note lines above the paged reading", () => {
     const html = renderToStaticMarkup(
       createElement(GroundLayer, {
         references: [reference],
@@ -500,18 +500,26 @@ describe("the card: the note above the reading, cropped, editable in place", () 
     expect(NOTE_PREVIEW_LINES).toBe(2);
     expect(html).toContain("ground-note");
     expect(html).toContain("note line two…");
-    // Only the FACE is cropped: the note's third line is not on the small card.
+    // Only the NOTE is cropped: its third line is not on the small card.
     expect(html).not.toContain("note line three");
     // And the note reads ABOVE the reading.
     expect(html.indexOf("ground-note")).toBeLessThan(
       html.indexOf("ground-reading"),
     );
-    // The reading's own crop is untouched.
-    expect(html).toContain("line 6…");
+    // The reading renders WHOLE now — the pages, not a crop, hold its lines.
+    expect(html).toContain("line 10");
+    expect(html).not.toContain("line 6…");
     expect(READING_PREVIEW_LINES).toBe(6);
+    // The note's crop is still the pure helper's, at the stated count.
     expect(previewText(note, NOTE_PREVIEW_LINES)).toBe(
       "note line one\nnote line two…",
     );
+    // The cut ends in a fade and ONE small verb — the NOTE's marginalia now:
+    // "more" opens the card, and it is never a number on the map.
+    expect(html).toContain('class="ground-fold"');
+    expect(html).toContain('class="ground-fade"');
+    expect(html).toContain('class="ground-more"');
+    expect(html).toContain(">more<");
   });
 
   test("a card with no note renders none (no empty note element)", () => {
@@ -525,7 +533,9 @@ describe("the card: the note above the reading, cropped, editable in place", () 
       }),
     );
     expect(html).not.toContain("ground-note");
-    expect(html).toContain("line 6…");
+    // The reading still renders its whole, paged self.
+    expect(html).toContain("line 10");
+    expect(html).not.toContain("line 6…");
   });
 
   test("the expanded face has the whole note and the in-place editor", () => {

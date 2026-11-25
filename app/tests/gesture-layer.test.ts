@@ -89,12 +89,23 @@ function cssRule(selector: string): string {
 }
 
 function reduceBlock(): string {
-  const at = CSS.indexOf("@media (prefers-reduced-motion: reduce)");
-  expect(at).toBeGreaterThan(-1);
-  // The story's block is the LAST one, written for the gesture layer.
-  const last = CSS.lastIndexOf("@media (prefers-reduced-motion: reduce)");
-  const end = CSS.indexOf("\n}\n", last);
-  return CSS.slice(last, end + 3);
+  // STORY 25-2: the gesture layer's block is found by its OWN selectors — the
+  // sheet may carry other reduced-motion blocks after it now (the paged flip,
+  // the working signal), so "the last one" no longer names it.
+  const marker = "@media (prefers-reduced-motion: reduce)";
+  const starts: number[] = [];
+  let at = CSS.indexOf(marker);
+  while (at !== -1) {
+    starts.push(at);
+    at = CSS.indexOf(marker, at + 1);
+  }
+  expect(starts.length).toBeGreaterThan(0);
+  for (const start of starts) {
+    const end = CSS.indexOf("\n}\n", start);
+    const block = CSS.slice(start, end + 3);
+    if (block.includes(".gesture-chip")) return block;
+  }
+  throw new Error("no reduced-motion block governs the gesture chip");
 }
 
 describe("the chip's word table (shortlist item 4)", () => {

@@ -56,7 +56,7 @@ import {
  *   - a document with no text layer is ONE sentence and NO reading (an empty
  *     reading is never pretended), and a refused/too-large file writes nothing;
  *   - a legacy line without `extract` reads as TEXT and is never rewritten;
- *   - the card renders the STORED text unchanged (the crop is the same crop).
+ *   - the card renders the STORED text unchanged (the pages are the crop now).
  *
  * PROVISIONAL (story 16.4): the sentences, the size cap and the field's name.
  */
@@ -512,7 +512,7 @@ describe("the card shows the stored text unchanged, and the file name beneath", 
     onRemove: async () => ({ ok: true as const }),
   };
 
-  test("a pdf reading is a card like any other: name, cropped text, file name", () => {
+  test("a pdf reading is a card like any other: name, paged text, file name", () => {
     const stored = Array.from({ length: 9 }, (_, index) => "line " + (index + 1)).join(
       "\n",
     );
@@ -526,10 +526,15 @@ describe("the card shows the stored text unchanged, and the file name beneath", 
       }),
     );
     expect(html).toContain("Attention");
+    // The reading renders WHOLE: every stored line reaches the card — the
+    // lines the crop used to cut away are all here now.
     expect(html).toContain("line 1");
-    expect(html).toContain("line 6…");
-    // Only the FACE is cropped; the stored text is what the card holds.
-    expect(html).not.toContain("line 7");
+    expect(html).toContain("line 7");
+    expect(html).toContain("line 9");
+    expect(html).not.toContain("line 6…");
+    // The pages, not a crop, hold the text at the person's stated count.
+    expect(html).toContain('class="paged-flow"');
+    expect(html).toContain("--page-lines:6");
     expect(html).toContain("attention.pdf");
   });
 });

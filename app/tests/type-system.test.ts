@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GroundLayer } from "../src/canvas/GroundLayer";
+import { mountPagedText } from "./paged-harness";
 import { GroundConceptPanel } from "../src/canvas/GroundNote";
 import { MentionPicker } from "../src/canvas/MentionPicker";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
@@ -345,7 +346,7 @@ describe("the crop helper respects the stated value", () => {
   });
 });
 
-describe("the small card: the crop, the fade and the one verb", () => {
+describe("the small card: the reading pages, and the fold is the note's alone", () => {
   const reference: GroundReference = {
     on: "rain-gauge",
     name: "Rain gauge",
@@ -381,21 +382,51 @@ describe("the small card: the crop, the fade and the one verb", () => {
     );
   }
 
-  test("the passed threshold is the crop, and its number rides the card", () => {
+  test("the passed threshold is the PAGE, and its number rides the card", () => {
+    // STORY 25-2: the pages are the crop — the reading renders WHOLE and the
+    // PagedText cuts it at the person's stated count (which still rides the
+    // card as --preview-lines, and still drives the note's clamp).
     const html = render(3);
-    expect(html).toContain("line 3…");
-    expect(html).not.toContain("line 4");
+    expect(html).toContain("line 10");
     expect(html).toContain("--preview-lines:3");
     expect(html).toContain("--note-lines:2");
+    // The stated count IS the size the flow breaks a page at.
+    expect(html).toContain("--page-lines:3");
   });
 
-  test("the cut ends in a fade and a small 'more' that is a verb", () => {
+  test("the reading's cut is the flip: a page cue, never a fold", () => {
+    // STORY 25-2: the READING pages now — its cut ends in the keys-sized cue
+    // (a POSITION like "1 / 4", never a number on the map), and the fade +
+    // "more" belong to the NOTE's marginalia alone.
     const html = render(3);
-    expect(html).toContain('class="ground-fold"');
-    expect(html).toContain('class="ground-fade"');
-    expect(html).toContain('class="ground-more"');
-    expect(html).toContain(">more<");
-    // It opens the card and it is never a number on the map.
+    // The reading renders WHOLE on the card: the pages, not a crop, hold it.
+    expect(html).toContain("line 10");
+    expect(html).not.toContain("line 3…");
+    expect(html).not.toContain("ground-fold");
+    // THE CUE is the paged text's own and draws only past one page — mount
+    // the component with this reading and this stated count (three lines to
+    // a page), the harness standing in for the browser's one measurement.
+    const paged = mountPagedText(
+      createElement("div", { className: "ground-reading" }, LONG),
+      3,
+    );
+    // Ten lines at three to a page: four pages, and the cue IS the flip.
+    expect(paged.cue).not.toBeNull();
+    expect(paged.cue).toContain('class="paged-cue verb-key"');
+    expect(paged.cue).toContain("1 / 4 ▼");
+    expect(paged.cue).toContain('aria-label="page 1 of 4, next page"');
+    // The press turns ONE page (view state): the text itself never moves.
+    paged.flip();
+    expect(paged.cue).toContain("2 / 4 ▼");
+    expect(paged.html).toContain("--page-at:1");
+    expect(paged.html).toContain("line 10");
+    // and the pages wrap, one press at a time.
+    paged.flip();
+    paged.flip();
+    expect(paged.cue).toContain("4 / 4 ▼");
+    paged.flip();
+    expect(paged.cue).toContain("1 / 4 ▼");
+    // The fold's machinery still exists for the note.
     expect(LAYER).toContain('className="ground-more"');
     expect(LAYER).toContain("onClick={onOpen}");
     expect(LAYER).not.toMatch(/ground-more[\s\S]{0,200}previewLines}/);
@@ -407,11 +438,19 @@ describe("the small card: the crop, the fade and the one verb", () => {
     );
   });
 
-  test("a card that fits its threshold draws no fold at all", () => {
+  test("a reading that fits its page draws no cue and no fold", () => {
     const html = render(20);
+    // The reading is whole whatever the page size.
     expect(html).toContain("line 10");
     expect(html).not.toContain("ground-fold");
     expect(html).not.toContain(">more<");
+    // Ten lines at twenty to a page: ONE page — no cue, no flip to press.
+    const paged = mountPagedText(
+      createElement("div", { className: "ground-reading" }, LONG),
+      20,
+    );
+    expect(paged.cue).toBeNull();
+    expect(paged.html).not.toContain("paged-cue");
   });
 
   test("the ground map still renders none of the concept map's content", () => {

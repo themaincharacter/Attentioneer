@@ -46,8 +46,9 @@ import {
  * two steps and a reopened workspace does not bring it back"). This file pins
  * the rules underneath it:
  *
- *   - the crop is PURE (`previewText`): first six lines, one trailing
- *     ellipsis, and only the FACE is cut — the stored text keeps every line;
+ *   - the reading renders WHOLE and pages at the person's stated count
+ *     (`PagedText`; the pure crop helper survives for the note alone) — the
+ *     stored text keeps every line;
  *   - the expanded card shows the STORED reading and nothing else: the layer
  *     has no bridge import and no re-read (asserted by source, because the
  *     card must never gain a fetch);
@@ -57,8 +58,8 @@ import {
  *   - the delete is IMMEDIATE (story 16.13 removed the two-step confirm);
  *     the toast's Restore is the guard, pinned in ground-restore.test.ts.
  *
- * PROVISIONAL (ADR-0003's rendering seam): the card's sizes, the six-line
- * crop, the delete's wording and the open/close behaviour.
+ * PROVISIONAL (ADR-0003's rendering seam): the card's sizes, the page
+ * size, the delete's wording and the open/close behaviour.
  */
 
 const APP_DIR = fileURLToPath(new URL("..", import.meta.url));
@@ -190,18 +191,21 @@ describe("the crop is pure: first six lines, one trailing ellipsis", () => {
   });
 });
 
-describe("the small card crops; the stored text is untouched", () => {
-  test("the face shows the name, six lines and the file name — not a wall", () => {
+describe("the small card pages; the stored text is untouched", () => {
+  test("the face shows the name, the paged reading and the file name — not a wall", () => {
     const html = render();
     expect(html).toContain("Rain gauge");
-    expect(html).toContain("line 6…");
+    // The reading renders WHOLE — even the tenth line the crop used to cut.
+    expect(html).toContain("line 10");
+    expect(html).not.toContain("line 6…");
     expect(html).toContain("gauge.txt");
-    // The wall is gone: the seventh line is not on the small face.
-    expect(html).not.toContain("line 7");
-    // A card, not a stretched row: the surface and the crop are classes.
+    // A card, not a stretched row and not a wall: the surface classes stay,
+    // and the reading flows into PAGES at the person's stated count.
     expect(html).toContain("ground-reference");
     expect(html).toContain("ground-body");
     expect(html).toContain("ground-footer");
+    expect(html).toContain('class="paged-flow"');
+    expect(html).toContain("--page-lines:6");
   });
 
   test("every card mounts SMALL: open/closed is view state, never a record", () => {
@@ -248,10 +252,13 @@ describe("the expanded body shows the STORED reading and nothing else", () => {
     ]) {
       expect({ io, found: code.includes(io) }).toEqual({ io, found: false });
     }
-    // The expanded face is the same stored text, only uncropped.
-    expect(code).toContain("previewText(");
-    // STORY 17: the crop reads the person's STATED count, never a constant.
-    expect(code).toContain("previewText(shownText, previewLines)");
+    // The face is the STORED text, whole — the layer crops nothing itself
+    // any more (story 25-2: the pages are the crop; the pure helper stays
+    // for the note's marginalia alone).
+    expect(code).not.toContain("previewText(");
+    expect(code).toContain("const bodyText = shownText;");
+    // STORY 17 -> 25-2: the PAGE SIZE is the person's STATED count.
+    expect(code).toContain("linesPerPage={previewLines}");
   });
 
   test("the wheel on the body is kept off the plane's zoom", () => {

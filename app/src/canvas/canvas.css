@@ -9778,3 +9778,77 @@ body.wiring .session-card-actions {
 .ghost-preview {
   border: 1px dashed rgba(74, 66, 58, 0.5);
 }
+
+
+/* STORY 25-2 (ADR-0046) — THE PAGED TEXT. The body flows into fixed-height
+   pages (the CSS pagination trick: column height = the page, one column wide,
+   so the content breaks into columns that ARE pages). The flip is a view-state
+   translate; the box never scrolls on the map card. */
+.paged-box {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  gap: 4px;
+}
+
+.paged-flow {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.paged-box .paged-flow {
+  height: calc(var(--page-lines, 4) * var(--prose-size) * var(--prose-leading));
+  column-width: 100%;
+  column-fill: auto;
+  column-gap: 0;
+  transform: translateX(calc(var(--page-at, 0) * -100%));
+  transition: transform var(--motion-base) var(--ease-soft);
+}
+
+/* THE CUE: a POSITION ("1 / 3 ▼"), never a quality — no colour, no dots, no
+   grading (the find pill's rule). It IS the flip button: keys-sized and
+   counter-scaled (the person's condition, ADR-0046 ruling 2). */
+.paged-cue {
+  width: auto;
+  min-width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  align-self: flex-start;
+  transform: scale(var(--verb-scale, 1));
+  transform-origin: left top;
+}
+
+.paged-cue-text {
+  font-family: var(--voice-press);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paged-box .paged-flow {
+    transition: none;
+  }
+}
+
+.paged-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* The paged reading is NOT clamped or scrolled anywhere: the pages are the
+   crop, and the flip is the fold (story 25-2 retires both on the reading). */
+.paged-flow .ground-reading,
+.paged-flow .ground-distilled-claim,
+.paged-flow .ground-distilled-field {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}

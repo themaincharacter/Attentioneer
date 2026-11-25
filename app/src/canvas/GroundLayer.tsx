@@ -28,7 +28,6 @@ import {
   isFileReading,
   pageHost,
   previewOverflows,
-  previewText,
   READING_PREVIEW_LINES,
   readingAbsolutePath,
   readingExtract,
@@ -47,6 +46,7 @@ import { askCardOf } from "../turn/context";
 import { parseDistilledCardText } from "../turn/curator";
 import type { WorkingChannel } from "./workingRef";
 import { epistemicState, frameFor } from "../reading/frames";
+import { PagedText } from "../reading/PagedText";
 import {
   IconAsk,
   IconDone,
@@ -2422,12 +2422,10 @@ function GroundCard({
   // STATED threshold, and the fold's fade + "more" are drawn only when
   // something is actually folded away. The expanded face is the stored text
   // itself, untouched. Neither path reads anything.
-  const bodyText =
-    shownText === null
-      ? null
-      : open
-        ? shownText
-        : previewText(shownText, previewLines);
+  // STORY 25-2 (ADR-0046): the pages ARE the crop now. The reading renders
+  // WHOLE and the PagedText cuts it into pages at the person's stated line
+  // count (previewLines) — the flip replaces both the clamp and the fold.
+  const bodyText = shownText;
   // STORY 24-6 (ADR-0043) — THE CURATOR'S GLANCE, read from the card's own
   // text: the claim is the face, and the three named fields ride ONE
   // disclosure. Any other shape answers null and renders verbatim as it always
@@ -2440,8 +2438,10 @@ function GroundCard({
   // and either one puts the card's ONE verb on the face.
   const noteFolded =
     shownNote !== null && !open && previewOverflows(shownNote, noteLines);
-  const readingFolded =
-    shownText !== null && !open && previewOverflows(shownText, previewLines);
+  // STORY 25-2 (ADR-0046): the reading PAGES now — the pages are the crop and
+  // the flip is the fold. The fold stays for the note alone (its 2-line
+  // marginalia is a different thing).
+  const readingFolded = false;
   const folded = noteFolded || readingFolded;
   // STORY 16.14: the page's title is its "what this is" line; the image is the
   // card's own line above the reading (no image, no line). Both are copies
@@ -2936,6 +2936,7 @@ function GroundCard({
             // it rests on, what it does not cover and the uncertainty ride ONE
             // disclosure on the expanded face (the ask card's shape). The raw
             // reply stays one verb away, as it always was.
+            <PagedText key={open ? "open" : "small"} linesPerPage={previewLines}>
             <div className="ground-reading" ref={readingRef}>
               <div className="ground-distilled-claim">
                 <GroundReadingText text={distilledGlance.claim} open={open} />
@@ -2959,10 +2960,13 @@ function GroundCard({
                 </details>
               )}
             </div>
+            </PagedText>
           ) : (
-            <div className="ground-reading" ref={readingRef}>
-              <GroundReadingText text={bodyText} open={open} />
-            </div>
+            <PagedText key={open ? "open" : "small"} linesPerPage={previewLines}>
+              <div className="ground-reading" ref={readingRef}>
+                <GroundReadingText text={bodyText} open={open} />
+              </div>
+            </PagedText>
           )
         ) : showNeeds && needsLine !== null ? (
           // STORY 16.15: an image or a video has no reading and never pretends
