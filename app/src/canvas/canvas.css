@@ -6395,8 +6395,11 @@ body {
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
-  opacity: 0;
-  pointer-events: none;
+  /* STORY 24-12 (the person, 2026-11-24) — THE KEYS STAY: no autohide
+     ("wont be good when we port to ipad" — there is no hover on a tablet,
+     and a verb that is not there is a verb you cannot press). The strip is
+     always on the card's edge; the step-aside below is the one state that
+     moves it. */
   transform: translateY(-50%) scale(var(--verb-scale, 1));
   transform-origin: right center;
   transition:
@@ -6404,14 +6407,29 @@ body {
     transform var(--motion-fast) var(--ease-soft);
 }
 
-.ground-reference:hover .ground-actions,
-.ground-reference:focus-within .ground-actions,
-.ask-card:hover .ask-card-actions,
-.ask-card:focus-within .ask-card-actions,
-.session-card:hover .session-card-actions,
-.session-card:focus-within .session-card-actions {
+/* STORY 24-12 — THE CARD'S FOCUS EARN THE KEYS THEIR GROWTH: one quiet
+   step up in size over the contract's fastest easing, on pointer OR keyboard
+   focus. A state change serving the moment (ADR-0043's motion clarification:
+   the game vibe is welcome, reward loops are not). PROVISIONAL: the 1.15. */
+.ground-reference:hover .verb-key,
+.ground-reference:focus-within .verb-key,
+.ask-card:hover .verb-key,
+.ask-card:focus-within .verb-key,
+.session-card:hover .verb-key,
+.session-card:focus-within .verb-key {
+  transform: scale(1.15);
+}
+
+/* The quiet sentences about MISSING verbs are not keys: they keep their own
+   reveal on card focus, where they explain the gaps in the strip. */
+.ground-actions .ground-quiet {
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-soft);
+}
+
+.ground-reference:hover .ground-actions .ground-quiet,
+.ground-reference:focus-within .ground-actions .ground-quiet {
   opacity: 1;
-  pointer-events: auto;
 }
 
 /* The quiet lines about MISSING verbs stay beside the verbs — they explain
@@ -6426,6 +6444,7 @@ body {
   width: 28px;
   height: 28px;
   padding: 0;
+  transition: transform var(--motion-fast) var(--ease-soft);
   border: 1px solid var(--ink-faint);
   border-radius: 50%;
   background: rgba(253, 250, 243, 0.97);
@@ -6490,7 +6509,8 @@ body {
 }
 
 .verb-key:hover .verb-tip,
-.verb-key:focus-visible .verb-tip {
+.verb-key:focus-visible .verb-tip,
+.verb-key:active .verb-tip {
   opacity: 1;
 }
 
