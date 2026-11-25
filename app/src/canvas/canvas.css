@@ -5643,6 +5643,13 @@ body {
   box-sizing: border-box;
   max-width: 260px;
   padding: 3px 10px 4px;
+  /* STORY 24-13 (the person: "the copper dot thing creates a new line instead
+     of space"): the pill is a ROW — the stamp's dot and the name share one
+     line. The name is display:block (its ellipsis needs it), so without this
+     the dot's inline box wrapped onto a line of its own. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
   /* STORY 24-1 (ADR-0043) — THE NAME IS A STAMPED LABEL: a tag's small corner
      radius, one stronger hairline, and a whisper of tracking, on the bench's
      own warm paper. The name keeps the person's own case — it is their coined
@@ -5653,22 +5660,6 @@ body {
   box-shadow: 0 1px 4px rgba(40, 35, 25, 0.07);
   letter-spacing: 0.03em;
   transform: scale(var(--pill-scale, 1));
-}
-
-/* THE STAMP'S MARK (the person's ruling, 2026-11-24: "keep the copper dot —
-   it doesn't violate the ADR"). One live dot on every label is a UNIFORM
-   mark of the stamp, not a status light; ADR-0043 rule 3 is amended to say
-   the accent marks connections AND the label's own stamp. Still never on
-   text, never on a surface. */
-.ground-pill::before {
-  content: "";
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--live-strong);
-  margin-right: 6px;
-  vertical-align: 1px;
   transform-origin: left bottom;
   white-space: nowrap;
   /* A press on the name is a press on the handle: the grab cursor says the
@@ -5676,6 +5667,22 @@ body {
      with no move path yet passes `movable={false}`, so the pill sets the
      default cursor and promises nothing it cannot do. */
   cursor: var(--pill-cursor, grab);
+}
+
+/* THE STAMP'S MARK (the person's ruling, 2026-11-24: "keep the copper dot —
+   it doesn't violate the ADR"). One live dot on every label is a UNIFORM
+   mark of the stamp, not a status light; ADR-0043 rule 3 is amended to say
+   the accent marks connections AND the label's own stamp. Still never on
+   text, never on a surface. STORY 24-13 repairs this rule's first writing,
+   which had swallowed the pill's own tail (its scale origin, its nowrap and
+   its grab cursor) — the dot is a flex item beside the name, nothing more. */
+.ground-pill::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--live-strong);
 }
 
 /* The rename field opens IN the pill's own shape and type, so the card does not
@@ -6402,9 +6409,11 @@ body {
      moves it. */
   transform: translateY(-50%) scale(var(--verb-scale, 1));
   transform-origin: right center;
-  transition:
-    opacity var(--motion-fast) var(--ease-soft),
-    transform var(--motion-fast) var(--ease-soft);
+  /* STORY 24-13 (the person: "zooming in and out is jittery"): NO transition
+     on the transform here. The counter-scale changes on EVERY zoom frame, and
+     a transition restarts per frame — a rubbery lag against the cards. The
+     one state that moves the strip (the step-aside) carries its own. */
+  transition: opacity var(--motion-fast) var(--ease-soft);
 }
 
 /* STORY 24-12 — THE CARD'S FOCUS EARN THE KEYS THEIR GROWTH: one quiet
@@ -6526,6 +6535,11 @@ body.wiring .session-card-actions {
   opacity: 0;
   pointer-events: none;
   transform: translateY(-50%) translateX(8px) scale(var(--verb-scale, 1));
+  /* The slide animates only while stepping aside (the base carries no
+     transform transition — story 24-13); the return is instant. */
+  transition:
+    opacity var(--motion-fast) var(--ease-soft),
+    transform var(--motion-fast) var(--ease-soft);
 }
 
 /* STORY 16.13 (shortlist item 2): the verbs a card cannot offer say WHY in one
