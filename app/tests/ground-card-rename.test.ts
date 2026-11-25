@@ -13,7 +13,9 @@ import {
 import { GroundLayer } from "../src/canvas/GroundLayer";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
 import {
+  ASK_UNTITLED_NAME,
   askDisplayName,
+  askNameForCreate,
   askNameForWrite,
   parseAsks,
   renameAsk,
@@ -33,6 +35,7 @@ import {
 } from "../src/map/sessions";
 import {
   GROUND_UNTITLED_NAME,
+  UNTITLED_DISPLAY,
   groundDisplayName,
   groundNameForWrite,
   type GroundReference,
@@ -62,9 +65,11 @@ import type { MirrorView as _View } from "../src/map/mirror";
  * what can be pinned without one:
  *
  *   - all THREE kinds wear the SAME pill (one component, one counter-scale),
- *     and each kind keeps its OWN name rules: a reference's blank field stores
- *     "Untitled reference", a session's stores "Untitled session", and an ask's
- *     is a REFUSAL that writes nothing at all;
+ *     and each kind keeps its OWN write rules: a reference's blank field
+ *     stores "Untitled reference", a session's stores "Untitled session", and
+ *     an ask's blank RENAME is a REFUSAL that writes nothing at all (its
+ *     creation takes the "Untitled ask" sentinel). The pill SHOWS one quiet
+ *     line — "no name yet" — for a blank name or a family's untitled sentence;
  *   - a committed rename emits exactly ONE `card.rename` line naming the
  *     family, the slug and BOTH names — never content — and a same-name commit
  *     or an abandoned rename emits none;
@@ -119,22 +124,34 @@ describe("three kinds, one pill, each family's own rules", () => {
     expect(pillCounterScale(0.25)).toBe(4);
   });
 
-  test("the three fallbacks are three different rules, stated where they live", () => {
+  test("the write rules are three different rules; the showing is one quiet line", () => {
     // REFERENCE: a blank field is a legal name and stores the sentence.
-    expect(groundDisplayName("")).toBe(GROUND_UNTITLED_NAME);
     expect(groundNameForWrite("  ")).toBe(GROUND_UNTITLED_NAME);
     expect(GROUND_UNTITLED_NAME).toBe("Untitled reference");
     // SESSION: the same shape, its own words (new in this story).
-    expect(sessionDisplayName("")).toBe(SESSION_UNTITLED_NAME);
     expect(sessionNameForWrite("   ")).toBe(SESSION_UNTITLED_NAME);
     expect(SESSION_UNTITLED_NAME).toBe("Untitled session");
-    // ASK: a blank name is a REFUSAL — no placeholder is ever invented.
+    // ASK: a blank RENAME is still a REFUSAL — no placeholder is invented
+    // there — while a blank CREATION takes the family's own sentinel (the
+    // person, 2026-11-25: a name is optional at creation).
     expect(askNameForWrite("")).toBeNull();
     expect(askNameForWrite("   ")).toBeNull();
     expect(askNameForWrite("  Why wet?  ")).toBe("Why wet?");
-    // The shown name is the record's own words: no display fallback to disagree
-    // with the write rule above.
-    expect(askDisplayName("")).toBe("");
+    expect(askNameForCreate("")).toBe(ASK_UNTITLED_NAME);
+    expect(ASK_UNTITLED_NAME).toBe("Untitled ask");
+    // The SHOWING is one quiet line for every family: a blank name and a
+    // record carrying its family's untitled sentence alike. The RECORD keeps
+    // its own sentences; only the pill says the absence.
+    expect(UNTITLED_DISPLAY).toBe("no name yet");
+    expect(groundDisplayName("")).toBe(UNTITLED_DISPLAY);
+    expect(groundDisplayName(GROUND_UNTITLED_NAME)).toBe(UNTITLED_DISPLAY);
+    expect(sessionDisplayName("")).toBe(UNTITLED_DISPLAY);
+    expect(sessionDisplayName(SESSION_UNTITLED_NAME)).toBe(UNTITLED_DISPLAY);
+    expect(askDisplayName("")).toBe(UNTITLED_DISPLAY);
+    expect(askDisplayName(ASK_UNTITLED_NAME)).toBe(UNTITLED_DISPLAY);
+    // Real names show as the person wrote them.
+    expect(groundDisplayName("Rain gauge")).toBe("Rain gauge");
+    expect(sessionDisplayName("Gauge run")).toBe("Gauge run");
     expect(askDisplayName("Why wet?")).toBe("Why wet?");
   });
 
@@ -149,7 +166,7 @@ describe("three kinds, one pill, each family's own rules", () => {
     expect(REFERENCE_PILL_RULES.nameForWrite("")).toBe(GROUND_UNTITLED_NAME);
   });
 
-  test("the pill renders all three kinds, with the right untitled fallback", () => {
+  test("the pill renders all three kinds, with the quiet line where a name is blank", () => {
     const html = render(
       [
         { on: "rain-gauge", name: "Rain gauge", x: 0, y: 0 },
@@ -168,17 +185,20 @@ describe("three kinds, one pill, each family's own rules", () => {
     // One pill per card, all counter-scaled by the SAME camera reading.
     expect(html.split('class="ground-pill"').length - 1).toBe(6);
     expect(html.split("--pill-scale:4").length - 1).toBe(6);
-    // Every kind's name is up there...
-    for (const name of [
-      "Rain gauge",
-      GROUND_UNTITLED_NAME,
-      "Why wet?",
-      "Untitled ask",
-      "Gauge run",
-      SESSION_UNTITLED_NAME,
-    ]) {
-      expect(html).toContain(">" + name + "<");
-    }
+    // Every kind's name is up there in its own pill: the record's words, or
+    // the one quiet line for a blank name and a family's untitled sentence.
+    const pillName = (slug: string): string => {
+      const card = html.slice(html.indexOf(`data-slug="${slug}"`));
+      const open =
+        card.indexOf('class="ground-name">') + 'class="ground-name">'.length;
+      return card.slice(open, card.indexOf("</span>", open));
+    };
+    expect(pillName("rain-gauge")).toBe("Rain gauge");
+    expect(pillName("blank-ref")).toBe(UNTITLED_DISPLAY);
+    expect(pillName("why-wet")).toBe("Why wet?");
+    expect(pillName("asks-name")).toBe(UNTITLED_DISPLAY);
+    expect(pillName("run-1")).toBe("Gauge run");
+    expect(pillName("run-blank")).toBe(UNTITLED_DISPLAY);
     // ...and no card renders its name inside its body any more.
     expect(html).not.toContain("ask-card-name");
     expect(html).not.toContain("session-card-name");

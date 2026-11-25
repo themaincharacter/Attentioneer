@@ -213,9 +213,21 @@ export function withGroundRemoved(
  */
 export const GROUND_UNTITLED_NAME = "Untitled reference";
 
-/** The name a card SHOWS: the record's words, or the one sentence for none. */
+/**
+ * THE QUIET STATE OF NO NAME YET (the person's ruling, 2026-11-25: a name is
+ * optional at creation and the pill says the absence in the app's own voice —
+ * "no name yet" — rather than pretending the untitled sentence is a name).
+ * The RECORD keeps its untitled sentence (a line cannot carry an empty name);
+ * only the SHOWING changes.
+ */
+export const UNTITLED_DISPLAY = "no name yet";
+
+/** The name a card SHOWS: the record's words, or the quiet absence. */
 export function groundDisplayName(name: string): string {
-  return name.trim() === "" ? GROUND_UNTITLED_NAME : name;
+  const trimmed = name.trim();
+  return trimmed === "" || trimmed === GROUND_UNTITLED_NAME
+    ? UNTITLED_DISPLAY
+    : name;
 }
 
 /**

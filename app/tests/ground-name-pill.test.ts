@@ -20,6 +20,7 @@ import { CONTENT_CLASSES } from "../src/canvas/gates";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
 import { renameGroundRecords } from "../src/canvas/useGround";
 import {
+  UNTITLED_DISPLAY,
   groundDisplayName,
   groundNameForWrite,
   GROUND_UNTITLED_NAME,
@@ -41,8 +42,8 @@ import {
  *   - the counter-scale is PURE and CLAMPED (scale = clamp(1/zoom, 1, 4)), so
  *     25% is the last zoom at which it grows and a deeper zoom-out shrinks the
  *     pills with the map instead of stacking them;
- *   - the pill RENDERS the name (and the untitled sentence for none), while the
- *     card body renders it nowhere: the pill holds the only .ground-name;
+ *   - the pill RENDERS the name (and the quiet "no name yet" for none), while
+ *     the card body renders it nowhere: the pill holds the only .ground-name;
  *   - THERE IS ONE DRAG RULE: the pill owns no pointer handling at all and the
  *     card's existing listener is the only caller of groundDrag.ts, whose
  *     threshold stays the module's own constant (never restated);
@@ -193,13 +194,22 @@ describe("the pill renders the name; the card body does not", () => {
     expect(render([reference("Rain gauge")], 4)).toContain("--pill-scale:1");
   });
 
-  test("an empty name is legal and reads Untitled reference", () => {
-    expect(render([reference("", "no-name")])).toContain(GROUND_UNTITLED_NAME);
-    expect(render([reference("   ", "blank")])).toContain(GROUND_UNTITLED_NAME);
-    expect(groundDisplayName("")).toBe(GROUND_UNTITLED_NAME);
-    expect(groundDisplayName("  ")).toBe(GROUND_UNTITLED_NAME);
+  test("an empty name is legal and shows the quiet line 'no name yet'", () => {
+    expect(render([reference("", "no-name")])).toContain(UNTITLED_DISPLAY);
+    expect(render([reference("   ", "blank")])).toContain(UNTITLED_DISPLAY);
+    // The pill says the ABSENCE, never the record's untitled sentence.
+    expect(render([reference("", "no-name")])).not.toContain(
+      GROUND_UNTITLED_NAME,
+    );
+    expect(UNTITLED_DISPLAY).toBe("no name yet");
+    expect(groundDisplayName("")).toBe(UNTITLED_DISPLAY);
+    expect(groundDisplayName("  ")).toBe(UNTITLED_DISPLAY);
+    // A record carrying the untitled sentence shows the same quiet line...
+    expect(groundDisplayName(GROUND_UNTITLED_NAME)).toBe(UNTITLED_DISPLAY);
     expect(groundDisplayName("Rain gauge")).toBe("Rain gauge");
+    // ...and the RECORD keeps its own sentence (a line cannot carry no name).
     expect(GROUND_UNTITLED_NAME).toBe("Untitled reference");
+    expect(groundNameForWrite("")).toBe(GROUND_UNTITLED_NAME);
   });
 
   test("the pill is content to the plane's gate and adds no map content family", () => {

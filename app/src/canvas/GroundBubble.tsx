@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { readingFileName } from "../map/readings";
 import {
-  SESSION_NAME_REFUSAL,
   SESSION_TOOL_REFUSAL,
   proposeSessionName,
 } from "../map/sessions";
+import { askNameForCreate } from "../map/asks";
+import { dropCardName } from "./osDrop";
+import { webLinkName } from "./webLink";
 import { ACP_SPECS, acpRowLabel } from "../turn/acpSpecs";
 import { rowWithFacts, type AcpRowFact } from "../turn/acpRowStore";
 import { pickFolder, pickReadingFile } from "../workspace/dialogs";
@@ -237,15 +239,14 @@ export function GroundBubble({
     // pointer and no reading taken. A bubble without that door cannot commit it.
     const add = intent === "folder" ? onAddFolder : onAdd;
     if (add === undefined) return;
+    // STORY 24-16 (the person, 2026-11-25): a name is OPTIONAL. A blank field
+    // names the card from the world's own words — the file's (or folder's)
+    // stem — exactly as dropping a file onto the map always has (dropCardName).
     const trimmed = name.trim();
-    if (trimmed === "") {
-      setProblem("name it first.");
-      nameRef.current?.focus();
-      return;
-    }
+    const named = trimmed === "" ? dropCardName(chosen) : trimmed;
     setBusy(true);
     setProblem(null);
-    const result = await add(trimmed, chosen);
+    const result = await add(named, chosen);
     if (result.ok) {
       doneRef.current = true;
       onClose();
@@ -261,12 +262,10 @@ export function GroundBubble({
     if (doneRef.current || busy) return;
     const add = intent === "video" ? onAddVideo : onAddPage;
     if (add === undefined) return;
+    // STORY 24-16: a blank name is named from the address's own words
+    // (webLinkName — the same rule a pasted link has always used).
     const trimmed = name.trim();
-    if (trimmed === "") {
-      setProblem("name it first.");
-      nameRef.current?.focus();
-      return;
-    }
+    const named = trimmed === "" ? webLinkName(url) : trimmed;
     if (url.trim() === "") {
       setProblem(
         intent === "video"
@@ -278,7 +277,7 @@ export function GroundBubble({
     setBusy(true);
     setProblem(null);
     // STORED VERBATIM: the address is never trimmed, normalized or repaired.
-    const result = await add(trimmed, url);
+    const result = await add(named, url);
     if (result.ok) {
       doneRef.current = true;
       onClose();
@@ -295,19 +294,17 @@ export function GroundBubble({
    */
   async function commitSession() {
     if (doneRef.current || busy || onAddSession === undefined) return;
+    // STORY 24-16: a blank name takes the tool row's own proposed name — the
+    // words the picker already put in the field (proposeSessionName).
     const trimmed = name.trim();
-    if (trimmed === "") {
-      setProblem(SESSION_NAME_REFUSAL);
-      nameRef.current?.focus();
-      return;
-    }
+    const named = trimmed === "" ? proposeSessionName(tool) : trimmed;
     if (tool === "") {
       setProblem(SESSION_TOOL_REFUSAL);
       return;
     }
     setBusy(true);
     setProblem(null);
-    const result = await onAddSession(trimmed, tool);
+    const result = await onAddSession(named, tool);
     if (result.ok) {
       doneRef.current = true;
       onClose();
@@ -322,20 +319,15 @@ export function GroundBubble({
    * STORY 21.13 — commit an ASK CARD: the person's name and nothing else. The
    * card is born EMPTY (the ask's own creation path writes one record line; a
    * conversation only exists once something was asked), so this press makes no
-   * turn, starts no send and writes no conversation file. A blank name is this
-   * bubble's own refusal — never an invented "Untitled ask".
+   * turn, starts no send and writes no conversation file. STORY 24-16 (the
+   * person, 2026-11-25): a blank name is legal — it becomes the family's
+   * "Untitled ask" sentinel, which the card's first question renames (17.10).
    */
   async function commitAsk() {
     if (doneRef.current || busy || onAddAsk === undefined) return;
-    const trimmed = name.trim();
-    if (trimmed === "") {
-      setProblem("name it first.");
-      nameRef.current?.focus();
-      return;
-    }
     setBusy(true);
     setProblem(null);
-    const result = await onAddAsk(trimmed);
+    const result = await onAddAsk(askNameForCreate(name));
     if (result.ok) {
       doneRef.current = true;
       onClose();
@@ -348,11 +340,8 @@ export function GroundBubble({
 
   async function chooseFile() {
     if (doneRef.current || busy || intent !== "file") return;
-    if (name.trim() === "") {
-      setProblem("name it first.");
-      nameRef.current?.focus();
-      return;
-    }
+    // STORY 24-16: no name needed — the pick is the commit, and a blank field
+    // is named from the file's own name (see commit).
     pickingRef.current = true;
     setProblem(null);
     let picked: string | null = null;
@@ -376,11 +365,8 @@ export function GroundBubble({
   async function chooseFolder() {
     if (doneRef.current || busy || intent !== "folder") return;
     if (onAddFolder === undefined) return;
-    if (name.trim() === "") {
-      setProblem("name it first.");
-      nameRef.current?.focus();
-      return;
-    }
+    // STORY 24-16: no name needed — the pick is the commit, and a blank field
+    // is named from the folder's own name (see commit).
     pickingRef.current = true;
     setProblem(null);
     let picked: string | null = null;

@@ -30,12 +30,13 @@ import {
 } from "../src/canvas/useGround";
 import {
   ASK_MISSING_REFUSAL,
-  ASK_NAME_REFUSAL,
   ASK_QUESTION_REFUSAL,
   ASK_SOURCE_REFUSAL,
+  ASK_UNTITLED_NAME,
   appendExchange,
   appendTurn,
   askLastTurnText,
+  askNameForCreate,
   askQuestionRefusal,
   askRefusal,
   askTurnPath,
@@ -545,12 +546,17 @@ describe("the reference card is never modified", () => {
 });
 
 describe("an empty question refuses and writes nothing", () => {
-  test("the one refusal rule, PURE", () => {
+  test("the one refusal rule is the question's, PURE", () => {
     expect(askQuestionRefusal("")).toBe(ASK_QUESTION_REFUSAL);
     expect(askQuestionRefusal("   \n ")).toBe(ASK_QUESTION_REFUSAL);
     expect(askQuestionRefusal("why?")).toBeNull();
-    expect(askRefusal("  ")).toBe(ASK_NAME_REFUSAL);
+    // A NAME is optional (the person, 2026-11-25): askRefusal refuses
+    // nothing, and a blank creation name becomes the family's own sentinel.
+    expect(askRefusal("")).toBeNull();
+    expect(askRefusal("  ")).toBeNull();
     expect(askRefusal("Rain gauge question")).toBeNull();
+    expect(askNameForCreate("")).toBe(ASK_UNTITLED_NAME);
+    expect(askNameForCreate("  Why wet?  ")).toBe("Why wet?");
   });
 
   test("the writer's refusals run BEFORE any file is touched", async () => {
@@ -575,10 +581,15 @@ describe("an empty question refuses and writes nothing", () => {
     );
   });
 
-  test("the creation refuses a blank name before the queue", () => {
-    expect(askRefusal("")).toBe(ASK_NAME_REFUSAL);
+  test("the creation's rule runs before the queue; a blank name is named, not refused", () => {
+    // A blank name no longer refuses (the person, 2026-11-25): it is named at
+    // the bubble's commit — the ask sentinel, which the first question
+    // renames (17.10).
+    expect(askRefusal("")).toBeNull();
+    expect(askNameForCreate("")).toBe(ASK_UNTITLED_NAME);
     // STORY 17.10: both roads (the bubble's ask door and the reference verb)
-    // reach the ONE empty-ask writer, so that is where the refusal lives.
+    // reach the ONE empty-ask writer, so the rule lives there and runs BEFORE
+    // the queue.
     const createBlock = HOOK.slice(
       HOOK.indexOf("const writeEmptyAsk = useCallback"),
     );

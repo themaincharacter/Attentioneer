@@ -6,7 +6,7 @@ import {
 } from "../lib/fs";
 import { canonicalJsonlLine, canonicalText, nextSlug, slugName } from "../lib/serialize";
 import { utf8ByteLength } from "../lib/textBytes";
-import type { GroundReference } from "./ground";
+import { UNTITLED_DISPLAY, type GroundReference } from "./ground";
 import { ASK_RECORD_FILE, ASK_TURNS_DIR, mapDir } from "./records";
 // STORY 18.3 — the shared slug space now spans THREE families; the type is all
 // this module needs from the session card's record.
@@ -866,9 +866,15 @@ export const ASK_SOURCE_REFUSAL = "that card is not on the map.";
 /** The one sentence a question with no ask card answers (PROVISIONAL). */
 export const ASK_MISSING_REFUSAL = "there is no ask card here.";
 
-/** The creation's ONE refusal rule, PURE: a blank name writes nothing. */
+/**
+ * The creation's ONE refusal rule — RETIRED as a refusal (the person's ruling,
+ * 2026-11-25): a blank name is legal and becomes the sentinel through
+ * {@link askNameForCreate}. The function stays so every caller's shape holds;
+ * it now answers only what it can still judge.
+ */
 export function askRefusal(name: string): string | null {
-  return name.trim() === "" ? ASK_NAME_REFUSAL : null;
+  void name;
+  return null;
 }
 
 /** The turn's ONE refusal rule, PURE: a blank question writes nothing. */
@@ -898,7 +904,23 @@ export function askQuestionRefusal(question: string): string | null {
  * because an empty ask name is refused rather than stored (see below).
  */
 export function askDisplayName(name: string): string {
-  return name;
+  const trimmed = name.trim();
+  return trimmed === "" || trimmed === ASK_UNTITLED_NAME
+    ? UNTITLED_DISPLAY
+    : name;
+}
+
+/**
+ * THE NAME AN ASK CREATION STORES (the person's ruling, 2026-11-25: a name is
+ * optional at creation — "typing out a title... can create friction"). A blank
+ * field becomes the SENTINEL, which this family already understands: the first
+ * question renames an "Untitled ask" (story 17.10). 16.22's "never a sentence
+ * a write invents" governed the RENAME rule and still does; creation is the
+ * person saying "not yet", and the sentinel says exactly that.
+ */
+export function askNameForCreate(name: string): string {
+  const trimmed = name.trim();
+  return trimmed === "" ? ASK_UNTITLED_NAME : trimmed;
 }
 
 /**

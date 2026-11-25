@@ -64,11 +64,13 @@ import {
 import { addGroundReference, loadGround, saveGround, groundPath } from "../src/map/ground";
 import { loadReadings as loadReadingsReal, saveReadings } from "../src/map/readings";
 import {
+  VIDEO_URL_REFUSAL,
   createFetchedVideo,
   writeVideoCard,
   videoRefusal,
   type VideoIo,
 } from "../src/canvas/useGround";
+import { webLinkName } from "../src/canvas/webLink";
 import {
   readingAbsenceLine,
   readingKind,
@@ -874,12 +876,15 @@ describe("a video card is copied beside the map and reopens OFFLINE", () => {
     }
   });
 
-  test("a blank name or address refuses before the read", () => {
-    expect(videoRefusal("", YOUTUBE_URL)).toBe("name it first.");
-    expect(videoRefusal("Slow river", "  ")).toBe(
-      "paste a video's address first.",
-    );
+  test("a blank name is named from the address; only a blank address refuses", () => {
+    // A NAME IS OPTIONAL (the person, 2026-11-25): a blank one no longer
+    // refuses — it is named from the address's own words at the commit.
+    expect(videoRefusal("", YOUTUBE_URL)).toBeNull();
+    expect(videoRefusal("  ", YOUTUBE_URL)).toBeNull();
+    expect(videoRefusal("Slow river", "  ")).toBe(VIDEO_URL_REFUSAL);
     expect(videoRefusal("Slow river", YOUTUBE_URL)).toBeNull();
+    // The world's name for a blank field: the address's host.
+    expect(webLinkName(YOUTUBE_URL)).toBe("www.youtube.com");
   });
 
   test("an image reads back after a reopen with no server and no copy", async () => {

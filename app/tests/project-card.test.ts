@@ -22,6 +22,7 @@ import {
   projectCardRefusal,
   writeProjectCard,
 } from "../src/canvas/useGround";
+import { dropCardName } from "../src/canvas/osDrop";
 import type { GroundReference } from "../src/map/ground";
 import {
   PROJECT_FOLDER_GONE,
@@ -421,37 +422,25 @@ describe("a refused project card writes nothing", () => {
     };
   }
 
-  test("the refusal rule is the bubble's and the writer's one rule", () => {
-    expect(projectCardRefusal("", POSIX_FOLDER)).toBe("name it first.");
-    expect(projectCardRefusal("   ", POSIX_FOLDER)).toBe("name it first.");
+  test("the refusal rule is the bubble's and the writer's one rule: only the folder", () => {
+    // A NAME IS OPTIONAL (the person, 2026-11-25): a blank one is named from
+    // the folder's own name at the commit, so it never refuses here.
+    expect(projectCardRefusal("", POSIX_FOLDER)).toBeNull();
+    expect(projectCardRefusal("   ", POSIX_FOLDER)).toBeNull();
     expect(projectCardRefusal("Repo", "")).toBe("pick a folder first.");
     expect(projectCardRefusal("Repo", "code/repo")).toBe(
       "pick a folder first.",
     );
     expect(projectCardRefusal("Repo", POSIX_FOLDER)).toBeNull();
+    // The world's name for a blank field: the folder's own name.
+    expect(dropCardName(POSIX_FOLDER)).toBe("attentioneer");
   });
 
-  test("an empty name or no folder reaches neither writer nor disk", async () => {
+  test("a missing folder reaches neither writer nor disk; a blank name is named from the folder", async () => {
     const workspace = freshWorkspace();
     const log: string[] = [];
     const io = loggingIo(log);
     const before = existsSync(join(workspace, "map", "readings"));
-
-    const noName = await writeProjectCard(
-      workspace,
-      [],
-      [],
-      [],
-      [],
-      "   ",
-      10,
-      20,
-      POSIX_FOLDER,
-      new Set(),
-      TAKEN,
-      io,
-    );
-    expect(noName).toEqual({ ok: false, message: "name it first." });
 
     const noFolder = await writeProjectCard(
       workspace,
@@ -485,10 +474,33 @@ describe("a refused project card writes nothing", () => {
     );
     expect(relative).toEqual({ ok: false, message: "pick a folder first." });
 
+    // A refusal reaches neither writer nor disk.
     expect(log).toEqual([]);
     expect(existsSync(join(workspace, "map", "readings"))).toBe(before);
     expect(existsSync(join(workspace, "map", "ground.txt"))).toBe(false);
     expect(existsSync(join(workspace, "map", "readings.txt"))).toBe(false);
+
+    // A blank name is no longer a refusal (the person, 2026-11-25): the
+    // bubble names it from the folder's own name before the writer, and the
+    // named card lands.
+    const named = await writeProjectCard(
+      workspace,
+      [],
+      [],
+      [],
+      [],
+      dropCardName(POSIX_FOLDER),
+      10,
+      20,
+      POSIX_FOLDER,
+      new Set(),
+      TAKEN,
+      io,
+    );
+    expect(named.ok).toBe(true);
+    if (!named.ok) return;
+    expect(named.reference.name).toBe("attentioneer");
+    expect(named.reference.on).toBe("attentioneer");
   });
 
   test("a committed card writes the reading line first, the ground line last", async () => {

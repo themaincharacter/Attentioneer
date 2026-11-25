@@ -495,10 +495,13 @@ describe("the session card's record", () => {
     expect(sessionAtBottom(0, 50, 150)).toBe(false);
   });
 
-  test("a blank name refuses before anything is named", () => {
-    expect(sessionRefusal("  ")).toBe("name it first.");
+  test("a blank name is named from the tool's own words, not refused", () => {
+    // A NAME IS OPTIONAL (the person, 2026-11-25): nothing refuses a blank
+    // one; the bubble names it from the tool row the picker already chose.
+    expect(sessionRefusal("  ")).toBeNull();
     expect(sessionRefusal("a run")).toBeNull();
     expect(proposeSessionName("Fake ACP")).toBe("Fake ACP session");
+    expect(proposeSessionName("")).toBe("a session");
   });
 
   test("a card can be bound to another row, one field at a time", () => {

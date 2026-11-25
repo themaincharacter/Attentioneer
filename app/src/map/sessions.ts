@@ -7,6 +7,7 @@ import {
 } from "../lib/fs";
 import { utf8ByteLength } from "../lib/textBytes";
 import type { RunOutcome } from "./prisms";
+import { UNTITLED_DISPLAY } from "./ground";
 import { canonicalJsonlLine, canonicalText, nextSlug, slugName } from "../lib/serialize";
 import { SESSION_RECORD_FILE, SESSION_TRANSCRIPTS_DIR, mapDir } from "./records";
 
@@ -1420,9 +1421,12 @@ export const SESSION_TOOL_REFUSAL = "pick a tool to run.";
  */
 export const SESSION_UNTITLED_NAME = "Untitled session";
 
-/** The name a session card SHOWS: the record's words, or the untitled sentence. */
+/** The name a session card SHOWS: the record's words, or the quiet absence. */
 export function sessionDisplayName(name: string): string {
-  return name.trim() === "" ? SESSION_UNTITLED_NAME : name;
+  const trimmed = name.trim();
+  return trimmed === "" || trimmed === SESSION_UNTITLED_NAME
+    ? UNTITLED_DISPLAY
+    : name;
 }
 
 /**
@@ -1489,9 +1493,15 @@ export function withSessionMoved(
   );
 }
 
-/** The creation's ONE refusal rule, PURE: a blank name writes nothing. */
+/**
+ * The creation's ONE refusal rule — RETIRED as a refusal (the person's ruling,
+ * 2026-11-25): a blank name is legal and becomes the family's untitled
+ * sentence at the write (sessionNameForWrite). The function stays so every
+ * caller's shape holds.
+ */
 export function sessionRefusal(name: string): string | null {
-  return name.trim() === "" ? SESSION_NAME_REFUSAL : null;
+  void name;
+  return null;
 }
 
 /**

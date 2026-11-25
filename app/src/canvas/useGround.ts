@@ -4020,7 +4020,9 @@ export const PAGE_URL_REFUSAL = "paste a web page's address first.";
  * never reaches the network or a file.
  */
 export function pageRefusal(name: string, url: string): string | null {
-  if (name.trim() === "") return PAGE_NAME_REFUSAL;
+  // The name is OPTIONAL (the person, 2026-11-25): a blank name is named from
+  // the address's own words at the write. Only the address can still refuse.
+  void name;
   if (url.trim() === "") return PAGE_URL_REFUSAL;
   return null;
 }
@@ -4039,7 +4041,9 @@ export function projectCardRefusal(
   name: string,
   folder: string,
 ): string | null {
-  if (name.trim() === "") return PROJECT_NAME_REFUSAL;
+  // The name is OPTIONAL (the person, 2026-11-25): a blank name is named from
+  // the folder's own name at the write. Only the pointer can still refuse.
+  void name;
   if (folder === "" || !isAbsolutePath(folder)) return PROJECT_FOLDER_REFUSAL;
   return null;
 }
@@ -4324,7 +4328,9 @@ export const VIDEO_URL_REFUSAL = "paste a video's address first.";
  * never reaches the network or a file.
  */
 export function videoRefusal(name: string, url: string): string | null {
-  if (name.trim() === "") return VIDEO_NAME_REFUSAL;
+  // The name is OPTIONAL (the person, 2026-11-25): a blank name is named from
+  // the address's own words at the write. Only the address can still refuse.
+  void name;
   if (url.trim() === "") return VIDEO_URL_REFUSAL;
   return null;
 }

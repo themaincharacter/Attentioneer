@@ -26,6 +26,7 @@ import {
   type AskCard as AskCardRecord,
   type AskTurn,
 } from "../src/map/asks";
+import { UNTITLED_DISPLAY } from "../src/map/ground";
 import { addGroundLink } from "../src/map/groundLinks";
 import { renderedMapContent } from "../src/canvas/mapContentRules";
 
@@ -333,7 +334,10 @@ describe("the reply renders in the card, above the composer", () => {
         onAskTurn: async () => ({ ok: true }),
       }),
     );
-    expect(html).toContain("Untitled ask");
+    // The pill shows the quiet absence for a record carrying the sentinel
+    // (the person, 2026-11-25): "no name yet", never the sentinel sentence.
+    expect(html).toContain('class="ground-name">' + UNTITLED_DISPLAY + "</span>");
+    expect(html).not.toContain("Untitled ask");
     expect(html).toContain(ASK_PEER_LINE);
     // The OPEN face is the composer with an empty thread; the closed face is
     // the one that says "no question asked yet".

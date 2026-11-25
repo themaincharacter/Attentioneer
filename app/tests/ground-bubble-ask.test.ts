@@ -19,7 +19,8 @@ import { GroundBubble } from "../src/canvas/GroundBubble";
 import { newWireClaim } from "../src/canvas/hookedWire";
 import { writeAskCard } from "../src/canvas/useGround";
 import {
-  ASK_NAME_REFUSAL,
+  ASK_UNTITLED_NAME,
+  askNameForCreate,
   askRefusal,
   askTurnPath,
   askTurnsDir,
@@ -50,8 +51,9 @@ import { renderedMapContent } from "../src/canvas/mapContentRules";
  *   1. THE DOOR: "an ask" is in the intent row (first), and only when the app
  *      handed the bubble its ask creator.
  *   2. THE CREATE: the form calls the app's ONE ask creator exactly once, with
- *      the person's trimmed name; the app supplies the point. A blank name is
- *      the bubble's own refusal and reaches no writer, so nothing is invented.
+ *      the creation rule's name (trimmed, or the ask's "Untitled ask" sentinel
+ *      for a blank field — the person, 2026-11-25: a name is optional); the
+ *      app supplies the point, and the bubble invents no wording of its own.
  *   3. THE EMPTY CARD: the ask's existing creation road writes ONE record line —
  *      no question, no turn, and no conversation file.
  *   4. THE HOOKUP: a bubble opened by 20.3's wire release owes one wire and
@@ -196,17 +198,20 @@ describe("the intent row gains an ask door", () => {
  * ------------------------------------------------------------------ */
 
 describe("choosing the door calls the ask creator once, with name and point", () => {
-  test("the form makes exactly one ask call, with the trimmed name", () => {
+  test("the form makes exactly one ask call, with the creation rule's name", () => {
     // ONE call site in the form, and no second road that could double-create.
     const calls = BUBBLE.match(/onAddAsk\(/g) ?? [];
     expect(calls).toHaveLength(1);
     const commit = between(BUBBLE, "async function commitAsk", "async function chooseFile");
-    expect(commit).toContain("const trimmed = name.trim();");
+    // The name is trimmed and named AT THE COMMIT: a blank field becomes the
+    // ask's own sentinel (the person, 2026-11-25: a name is optional).
+    expect(commit).toContain("const result = await onAddAsk(askNameForCreate(name));");
+    expect(askNameForCreate("  The gauge question  ")).toBe("The gauge question");
+    expect(askNameForCreate("")).toBe(ASK_UNTITLED_NAME);
     // A double press or a busy bubble creates nothing a second time.
     expect(commit).toContain("if (doneRef.current || busy || onAddAsk === undefined) return;");
-    expect(commit).toContain("const result = await onAddAsk(trimmed);");
     expect(commit.indexOf("doneRef.current || busy")).toBeLessThan(
-      commit.indexOf("onAddAsk(trimmed)"),
+      commit.indexOf("onAddAsk(askNameForCreate(name))"),
     );
     // The add verb and Enter both route an ask to that one commit; a file is
     // never picked for an ask and an address is never read for one.
@@ -236,17 +241,18 @@ describe("choosing the door calls the ask creator once, with name and point", ()
     expect(APP).not.toContain("chooseGroundAsk");
   });
 
-  test("a blank name is the bubble's refusal and reaches no writer", () => {
+  test("a blank name is named at the commit; the bubble invents no wording", () => {
     const commit = between(BUBBLE, "async function commitAsk", "async function chooseFile");
-    expect(commit).toContain('setProblem("name it first.");');
-    expect(commit.indexOf('if (trimmed === "")')).toBeLessThan(
-      commit.indexOf("onAddAsk(trimmed)"),
-    );
-    // The bubble's sentence IS the ask record's own refusal — no new wording,
-    // and no invented "Untitled ask" on this road.
-    expect("name it first.").toBe(ASK_NAME_REFUSAL);
-    expect(askRefusal("   ")).toBe(ASK_NAME_REFUSAL);
+    // The bubble has no refusal of its own any more: the ONE naming rule runs
+    // before the writer, and the writer is reached with the sentinel.
+    expect(commit).not.toContain("name it first.");
+    expect(commit).toContain("onAddAsk(askNameForCreate(name))");
+    // The sentinel's words live in the record family, never in the bubble;
+    // the record's name refusal is retired (a blank name is legal now).
     expect(commit).not.toContain("Untitled ask");
+    expect(askNameForCreate("")).toBe(ASK_UNTITLED_NAME);
+    expect(ASK_UNTITLED_NAME).toBe("Untitled ask");
+    expect(askRefusal("   ")).toBeNull();
   });
 });
 

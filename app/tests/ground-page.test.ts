@@ -62,11 +62,13 @@ import {
 import { loadGround, saveGround } from "../src/map/ground";
 import { loadReadings, saveReadings } from "../src/map/readings";
 import {
+  PAGE_URL_REFUSAL,
   createFetchedPage,
   pageRefusal,
   writePageCard,
   type PageIo,
 } from "../src/canvas/useGround";
+import { webLinkName } from "../src/canvas/webLink";
 import { readingKind, readingProvenance } from "../src/canvas/GroundLayer";
 import { renderMirror } from "../src/map/mirror";
 import { groundPath } from "../src/map/ground";
@@ -753,12 +755,15 @@ describe("a page card is copied beside the map and reopens OFFLINE", () => {
     }
   });
 
-  test("a blank name or address refuses before the fetch", async () => {
-    expect(pageRefusal("", PAGE_URL)).toBe("name it first.");
-    expect(pageRefusal("Rivers", "  ")).toBe(
-      "paste a web page's address first.",
-    );
+  test("a blank name is named from the address; only a blank address refuses", () => {
+    // A NAME IS OPTIONAL (the person, 2026-11-25): a blank one no longer
+    // refuses — it is named from the address's own words at the commit.
+    expect(pageRefusal("", PAGE_URL)).toBeNull();
+    expect(pageRefusal("  ", PAGE_URL)).toBeNull();
+    expect(pageRefusal("Rivers", "  ")).toBe(PAGE_URL_REFUSAL);
     expect(pageRefusal("Rivers", PAGE_URL)).toBeNull();
+    // The world's name for a blank field: the address's host.
+    expect(webLinkName(PAGE_URL)).toBe("127.0.0.1");
   });
 
   test("the reading text is capped by the reading's own provisional bound", () => {
