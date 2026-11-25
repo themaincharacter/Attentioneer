@@ -45,6 +45,7 @@ import {
 import type { Media } from "../map/media";
 import { askCardOf } from "../turn/context";
 import { parseDistilledCardText } from "../turn/curator";
+import type { WorkingChannel } from "./workingRef";
 import {
   IconAsk,
   IconDone,
@@ -672,6 +673,8 @@ interface GroundLayerProps {
   sessions?: readonly SessionCardRecord[];
   sessionEntries?: Readonly<Record<string, readonly SessionEntry[]>>;
   sessionRunning?: readonly string[];
+  /** STORY 24-15: the map's working channel (absent in a render test). */
+  working?: WorkingChannel;
   /**
    * STORY 18.5 — remove one session card: the immediate delete with the toast's
    * Restore as its guard (the same one toast every other card uses).
@@ -927,6 +930,7 @@ export function GroundLayer({
   sessions = [],
   sessionEntries = {},
   sessionRunning = [],
+  working,
   sessionPermission = {},
   sessionKeepNotice = {},
   sessionSignIn = {},
@@ -1469,6 +1473,7 @@ export function GroundLayer({
             // the DOM focus jumping to the new card. STORY 17.15's "takes the
             // eye" rule is retired by the person's later ruling: the eye takes
             // itself.
+            working={working}
             onAskTurn={onAskTurn}
             onStopTurn={onStopAskTurn}
             hasProvider={hasProvider}
@@ -1629,6 +1634,7 @@ export function GroundLayer({
             contextCards={contextView.cards}
             contextMissing={contextView.dangling}
             running={sessionRunning.includes(session.on)}
+            working={working}
             zoom={zoom}
             open={openSessionOn === session.on}
             previewLines={previewLines}

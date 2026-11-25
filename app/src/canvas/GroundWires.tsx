@@ -6,6 +6,7 @@ import {
   type GroundDragChannel,
 } from "./groundDragRef";
 import { GROUND_CARD_BOX } from "./geometry";
+import type { WorkingChannel } from "./workingRef";
 import type { GroundAddResult } from "./useGround";
 
 /**
@@ -171,6 +172,36 @@ export function conduitLegs(
   return { first: leg(from, bend), second: leg(bend, to) };
 }
 
+/**
+ * STORY 24-15 — WHERE THE CURRENT'S SPARK SITS, PURE. The route is the
+ * conduit's legs (from -> bend -> to); t runs 0..1 along its total length.
+ */
+export function pointAlongRoute(
+  legs: readonly ConduitLeg[],
+  t: number,
+): { x: number; y: number } {
+  const first = legs[0];
+  if (first === undefined) return { x: 0, y: 0 };
+  const total = legs.reduce((sum, leg) => sum + leg.length, 0);
+  if (total === 0) return { x: first.x, y: first.y };
+  let want = Math.min(Math.max(t, 0), 1) * total;
+  for (const leg of legs) {
+    if (want <= leg.length) {
+      const ratio = leg.length === 0 ? 0 : want / leg.length;
+      return {
+        x: leg.x + Math.cos((leg.angle * Math.PI) / 180) * leg.length * ratio,
+        y: leg.y + Math.sin((leg.angle * Math.PI) / 180) * leg.length * ratio,
+      };
+    }
+    want -= leg.length;
+  }
+  const last = legs[legs.length - 1]!;
+  return {
+    x: last.x + Math.cos((last.angle * Math.PI) / 180) * last.length,
+    y: last.y + Math.sin((last.angle * Math.PI) / 180) * last.length,
+  };
+}
+
 interface GroundWiresProps {
   /** Every readable ground link, in FILE ORDER (later wires on top). */
   links: readonly GroundLink[];
@@ -191,6 +222,8 @@ interface GroundWiresProps {
    * channel simply paints where the records say, exactly as before.
    */
   drag?: GroundDragChannel;
+  /** STORY 24-15: the map's working channel (absent in a render test). */
+  working?: WorkingChannel;
 }
 
 export function GroundWires({
@@ -200,6 +233,7 @@ export function GroundWires({
   sessions = [],
   onRemoveLink,
   drag,
+  working,
 }: GroundWiresProps) {
   const bySlug = new Map<string, WireCard>(
     [
@@ -227,6 +261,7 @@ export function GroundWires({
             geometry={geometry}
             onRemoveLink={onRemoveLink}
             drag={drag}
+            working={working}
           />
         );
       })}
@@ -259,6 +294,7 @@ function GroundWire({
   geometry,
   onRemoveLink,
   drag,
+  working,
 }: {
   link: GroundLink;
   /** The two cards this wire runs between, so the live drag can move one end. */
@@ -268,6 +304,8 @@ function GroundWire({
   onRemoveLink: (from: string, to: string) => Promise<GroundAddResult>;
   /** STORY 16.25: the map's one in-flight drag (absent in a render test). */
   drag?: GroundDragChannel;
+  /** STORY 24-15: the map's working channel (absent in a render test). */
+  working?: WorkingChannel;
 }) {
   const wireRef = useRef<HTMLDivElement>(null);
   // STORY 24-2: the conduit paints TWO legs, TWO hit bands and TWO terminal
@@ -278,9 +316,63 @@ function GroundWire({
   const markRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLDivElement>(null);
   const problemRef = useRef<HTMLDivElement>(null);
+  // STORY 24-15: the current's spark (moved imperatively along the route).
+  const sparkRef = useRef<HTMLDivElement>(null);
   const [step, setStep] = useState<GroundLinkStep>("idle");
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // STORY 24-15 — THE CURRENT (the person: a loading signal may be FLASHY —
+  // "this is not distraction this is an important signal"). While either end
+  // works, the wire says so: the attribute dresses the cable (the stylesheet
+  // lights its core), and a spark runs the route TOWARD the working card — a
+  // wire is context, so the current is what the work is being fed. The loop is
+  // rAF and IMPERATIVE (the drag's idiom): no render per frame, and it stops
+  // the moment the work does. Reduced motion never starts it — the lit core
+  // is then the whole signal.
+  useEffect(() => {
+    const channel = working;
+    if (channel === undefined) return;
+    const reduced =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let raf = 0;
+    let travel = 0;
+    const step = () => {
+      const spark = sparkRef.current;
+      const live = wireGeometry(from, to);
+      if (spark !== null && live !== null) {
+        const legs = conduitLegs(live.from, live.to);
+        const at = pointAlongRoute(
+          [legs.first, legs.second],
+          channel.is(to.on) ? travel : 1 - travel,
+        );
+        spark.style.left = `${at.x}px`;
+        spark.style.top = `${at.y}px`;
+      }
+      travel = (travel + 0.012) % 1;
+      raf = requestAnimationFrame(step);
+    };
+    const paint = () => {
+      const el = wireRef.current;
+      if (el === null) return;
+      const on = channel.is(from.on) || channel.is(to.on);
+      if (on) el.setAttribute("data-working", "");
+      else el.removeAttribute("data-working");
+      if (on && !reduced && raf === 0) raf = requestAnimationFrame(step);
+      if (!on && raf !== 0) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+        travel = 0;
+      }
+    };
+    paint();
+    const unsubscribe = channel.subscribe(paint);
+    return () => {
+      unsubscribe();
+      if (raf !== 0) cancelAnimationFrame(raf);
+    };
+  }, [working, from, to]);
 
   // d3-zoom stops mousedown at the plane, so the wire's OWN affordances (the
   // mark and the confirm's two verbs) must stop their press first — a press on
@@ -468,6 +560,10 @@ function GroundWire({
           }}
         />
       ))}
+      {/* STORY 24-15 — THE CURRENT'S SPARK: hidden unless this wire feeds a
+          working card (the stylesheet lights it); moved along the route by the
+          effect above. */}
+      <div ref={sparkRef} className="ground-wire-current" aria-hidden="true" />
       {step === "asking" ? (
         <div
           ref={confirmRef}

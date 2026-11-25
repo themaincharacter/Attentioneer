@@ -21,6 +21,7 @@ import {
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
 import { IconMore, IconRun, IconStop, IconWire } from "./icons";
 import { VerbBubble, verbCounterScale } from "./VerbBubble";
+import type { WorkingChannel } from "./workingRef";
 import { SESSION_TASK_REFUSAL, type GroundAddResult } from "./useGround";
 import { PacketSurface } from "./PacketSurface";
 import {
@@ -374,6 +375,7 @@ export function SessionCard({
   interactionMode = "idle",
   onNarrate,
   drag,
+  working,
 }: {
   session: SessionCardRecord;
   /** The bound row's display name, or null when this build does not ship it. */
@@ -450,6 +452,8 @@ export function SessionCard({
    * test needs no channel; the card then moves its own element alone.
    */
   drag?: GroundDragChannel;
+  /** STORY 24-15: the map's working channel (absent in a render test). */
+  working?: WorkingChannel;
   open: boolean;
   /** How many lines the small face crops at (the stated preference). */
   previewLines: number;
@@ -555,6 +559,13 @@ export function SessionCard({
   /** The one sentence a wiring drag speaks; absent in a render test. */
   onNarrate?: (gesture: GestureNarration) => void;
 }) {
+  // STORY 24-15 — THE WORKING SIGNAL: the card publishes its live run to the
+  // map's working channel so the wires feeding it carry current.
+  useEffect(() => {
+    working?.set(session.on, running);
+    return () => working?.set(session.on, false);
+  }, [working, session.on, running]);
+
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
@@ -1075,6 +1086,7 @@ export function SessionCard({
         } as CSSProperties
       }
       data-slug={session.on}
+      data-working={running ? "" : undefined}
     >
       {/* STORY 16.22 — THE NAME FLOATS ABOVE THE SESSION CARD, in the SAME pill
           the reference and ask cards wear: one component, one counter-scale,

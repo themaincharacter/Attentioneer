@@ -6523,6 +6523,75 @@ body {
   opacity: 1;
 }
 
+/* STORY 24-15 (the person, 2026-11-25) — THE WORKING SIGNAL. Their ruling:
+   "let's do better loading animations... we can be flashy about because this
+   is not distraction this is an important signal." So this is the ONE place
+   motion runs while the state lasts (ADR-0043's clarification, second
+   amendment): a working card wears a slow LIVE aura, and the wires feeding it
+   carry current. Everything stops the moment the work does. Under
+   reduced-motion the signal STAYS but stands still: a steady ring and a
+   steady bright core — the signal is the point, the motion is not. */
+.ask-card[data-working]::after,
+.session-card[data-working]::after,
+.ground-reference[data-working]::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 2px solid var(--live);
+  border-radius: 10px;
+  opacity: 0.2;
+  pointer-events: none;
+  animation: working-breathe 2.4s var(--ease-soft) infinite;
+}
+
+@keyframes working-breathe {
+  0%,
+  100% {
+    opacity: 0.14;
+  }
+  50% {
+    opacity: 0.32;
+  }
+}
+
+/* THE WIRE'S CURRENT: the core goes LIVE and the spark runs the cable toward
+   the working card (a wire is context — the current is what the work is being
+   fed). The spark is painted imperatively along the route, like the drag's
+   frames; this block only dresses it. */
+.ground-wire[data-working] .ground-wire-line::after {
+  background: var(--live);
+}
+
+.ground-wire-current {
+  position: absolute;
+  z-index: 2;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: var(--live-strong);
+  box-shadow: 0 0 6px rgb(var(--live-rgb) / 0.55);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ground-wire[data-working] .ground-wire-current {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-card[data-working]::after,
+  .session-card[data-working]::after,
+  .ground-reference[data-working]::after {
+    animation: none;
+    opacity: 0.22;
+  }
+  .ground-wire[data-working] .ground-wire-current {
+    /* No travel: the bright core above is the whole signal. */
+    display: none;
+  }
+}
+
 /* STORY 24-10 (ADR-0044, rule 6) — THE STEP-ASIDE. While a wire is being
    placed (body.wiring, set by the one wiring drag), every strip steps aside
    ONCE: a fade and one key-width inward slide over the contract's fastest

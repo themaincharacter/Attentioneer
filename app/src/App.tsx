@@ -116,6 +116,7 @@ import type { Media } from "./map/media";
 import { GroundGuides } from "./canvas/GroundGuides";
 import { GroundWires } from "./canvas/GroundWires";
 import { createGroundDragChannel } from "./canvas/groundDragRef";
+import { createWorkingChannel } from "./canvas/workingRef";
 import { GroundBubble, type GroundIntent } from "./canvas/GroundBubble";
 import { GroundDropNotice } from "./canvas/GroundDropNotice";
 import {
@@ -710,6 +711,10 @@ function App() {
    * only: nothing here is a record, and the release is still the one write.
    */
   const groundDrag = useRef(createGroundDragChannel()).current;
+  // STORY 24-15 — THE WORKING SIGNAL's one channel: the cards publish their
+  // work, the wires carry the current. Made once per mounted map (the drag
+  // channel's own idiom), handed to both sides below.
+  const groundWorking = useRef(createWorkingChannel()).current;
 
   // The step's run (Epic 8 story 3, ADR-0022): an EPHEMERAL read of the ACTIVE
   // model, held in memory and never written. The key is the model's identity —
@@ -5499,6 +5504,7 @@ function App() {
               sessions={ground.sessions}
               onRemoveLink={ground.unlink}
               drag={groundDrag}
+              working={groundWorking}
             />
             {/* STORY 24-3 (ADR-0043) — the alignment guides ride the same
                 channel as the wires: faint lines where a dragged card's edges
@@ -5564,7 +5570,8 @@ function App() {
             /* STORY 21.7 — the questions a command's accept left waiting in
                ask composers: a draft, never a record and never a send. */
             askDrafts={askDrafts}
-            onAskTurn={ground.askTurn}
+            working={groundWorking}
+        onAskTurn={ground.askTurn}
             onStopAskTurn={ground.askStop}
             /* STORY 18.3 — the session cards: their records, their transcripts
                and the runs that are live right now. The verbs are the hook's,

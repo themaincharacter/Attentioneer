@@ -39,6 +39,7 @@ import {
   IconWire,
 } from "./icons";
 import { VerbBubble, verbCounterScale } from "./VerbBubble";
+import type { WorkingChannel } from "./workingRef";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
 import { attachGroundCardDrag } from "./groundDrag";
@@ -529,6 +530,7 @@ export function AskCard({
   interactionMode = "idle",
   onNarrate,
   drag,
+  working,
 }: {
   ask: AskCardRecord;
   /**
@@ -582,6 +584,8 @@ export function AskCard({
    * test needs no channel; the card then moves its own element alone.
    */
   drag?: GroundDragChannel;
+  /** STORY 24-15: the map's working channel (absent in a render test). */
+  working?: WorkingChannel;
   /** View state: a small card opens; an expanded card sends. */
   open: boolean;
   /** How many lines the small face crops at (the stated preference). */
@@ -775,6 +779,14 @@ export function AskCard({
    */
   const [noCard, setNoCard] = useState<string | null>(null);
   const running = pending !== null && pending.ending === "running";
+  // STORY 24-15 — THE WORKING SIGNAL: the card publishes its work to the
+  // map's one working channel (handed in like the drag channel), so the wires
+  // feeding it can carry current. The data attribute below is the stylesheet's
+  // hook; this is the wires'.
+  useEffect(() => {
+    working?.set(ask.on, running);
+    return () => working?.set(ask.on, false);
+  }, [working, ask.on, running]);
   /**
    * STORY 16.29 — WHAT THIS MODEL'S CATALOGUE ENTRY OFFERS. "default" is ours,
    * not a level: it means "send nothing", so a catalogue that happens to list
@@ -1332,6 +1344,7 @@ export function AskCard({
         } as CSSProperties
       }
       data-slug={ask.on}
+      data-working={running ? "" : undefined}
     >
       {/* STORY 16.22 — THE NAME FLOATS ABOVE THE ASK CARD, in the SAME pill the
           reference cards wear (one component, one counter-scale, one rename
