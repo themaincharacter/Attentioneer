@@ -15,9 +15,18 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 export function PagedText({
   children,
   linesPerPage = 4,
+  anchor = "inline",
 }: {
   children: ReactNode;
+  /** The page size (the person's ruling: 4; the setting will carry 3/4/5). */
   linesPerPage?: number;
+  /**
+   * STORY 25-4: where the cue lives. "inline" is the flow's own foot (the
+   * pane's case); "card" anchors it to the nearest positioned ancestor — the
+   * CARD — below its edge, outside every clip, exactly like the name pill
+   * sits above. The person: the chip must be reachable without expanding.
+   */
+  anchor?: "inline" | "card";
 }) {
   const flowRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
@@ -66,6 +75,7 @@ export function PagedText({
         <button
           type="button"
           className="paged-cue verb-key"
+          data-cue-anchor={anchor}
           aria-label={"page " + (page + 1) + " of " + pages + ", next page"}
           onClick={() => setPage((at) => (at + 1) % pages)}
         >

@@ -534,7 +534,7 @@ describe("the card shows the stored text unchanged, and the file name beneath", 
     expect(html).not.toContain("line 6…");
     // The pages, not a crop, hold the text at the person's stated count.
     expect(html).toContain('class="paged-flow"');
-    expect(html).toContain("--page-lines:6");
+    expect(html).toContain("--page-lines:4");
     expect(html).toContain("attention.pdf");
   });
 });

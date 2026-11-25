@@ -23,13 +23,19 @@ describe("the silent ink (story 25-3)", () => {
     expect(reduced).toContain("animation: none");
   });
 
-  test("the appear is opacity only: no slide, no scale, no glow", () => {
+  test("the appear is FELT: a lift and the ink resolving — never a glow", () => {
+    // STORY 25-4 (the person: minimal never meant silent — "a simple appear
+    // that generates some dopamine is fine"). The words land, lift a hair and
+    // resolve from wet blur to crisp ink.
     const keyframes = CSS.slice(
       CSS.indexOf("@keyframes ink-appear"),
-      CSS.indexOf("@keyframes ink-appear") + 200,
+      CSS.indexOf("@keyframes ink-appear") + 300,
     );
-    expect(keyframes).toContain("opacity: 0.35");
-    expect(keyframes).not.toContain("transform");
+    expect(keyframes).toContain("opacity: 0;");
+    expect(keyframes).toContain("translateY(8px)");
+    expect(keyframes).toContain("blur(1.5px)");
+    expect(keyframes).toContain("blur(0)");
+    // But it never glows and never loops.
     expect(keyframes).not.toContain("box-shadow");
   });
 });

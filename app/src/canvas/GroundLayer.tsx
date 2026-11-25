@@ -2936,7 +2936,7 @@ function GroundCard({
             // it rests on, what it does not cover and the uncertainty ride ONE
             // disclosure on the expanded face (the ask card's shape). The raw
             // reply stays one verb away, as it always was.
-            <PagedText key={open ? "open" : "small"} linesPerPage={previewLines}>
+            <PagedText key={open ? "open" : "small"} anchor="card">
             <div className="ground-reading" ref={readingRef}>
               <div className="ground-distilled-claim">
                 <GroundReadingText text={distilledGlance.claim} open={open} />
@@ -2962,7 +2962,7 @@ function GroundCard({
             </div>
             </PagedText>
           ) : (
-            <PagedText key={open ? "open" : "small"} linesPerPage={previewLines}>
+            <PagedText key={open ? "open" : "small"} anchor="card">
               <div className="ground-reading" ref={readingRef}>
                 <GroundReadingText text={bodyText} open={open} />
               </div>

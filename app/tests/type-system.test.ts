@@ -391,7 +391,9 @@ describe("the small card: the reading pages, and the fold is the note's alone", 
     expect(html).toContain("--preview-lines:3");
     expect(html).toContain("--note-lines:2");
     // The stated count IS the size the flow breaks a page at.
-    expect(html).toContain("--page-lines:3");
+    // STORY 25-4: the page holds FOUR lines — the person's ruling (the old
+    // crop count was 6, which clipped the chip off the collapsed card).
+    expect(html).toContain("--page-lines:4");
   });
 
   test("the reading's cut is the flip: a page cue, never a fold", () => {

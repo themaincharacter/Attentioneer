@@ -6539,18 +6539,22 @@ body {
   inset: -3px;
   border: 2px solid var(--live);
   border-radius: 10px;
-  opacity: 0.2;
+  opacity: 0.55;
+  box-shadow: 0 0 16px rgb(var(--live-rgb) / 0.35);
   pointer-events: none;
   animation: working-breathe 2.4s var(--ease-soft) infinite;
 }
 
+/* STORY 25-4 (the person: "I didn't notice a glow for loading") — the aura
+   must be SEEN: a real copper glow with a clear breathe. Status may be
+   flashy (ADR-0043's second amendment) and this is the signal's whole job. */
 @keyframes working-breathe {
   0%,
   100% {
-    opacity: 0.14;
+    opacity: 0.45;
   }
   50% {
-    opacity: 0.32;
+    opacity: 0.85;
   }
 }
 
@@ -6584,7 +6588,7 @@ body {
   .session-card[data-working]::after,
   .ground-reference[data-working]::after {
     animation: none;
-    opacity: 0.22;
+    opacity: 0.6;
   }
   .ground-wire[data-working] .ground-wire-current {
     /* No travel: the bright core above is the whole signal. */
@@ -9834,6 +9838,18 @@ body.wiring .session-card-actions {
   }
 }
 
+/* STORY 25-4 (the person's window: "I can only access the next page chip if I
+   expand the card") — THE CUE ON THE CARD'S EDGE. Anchored to the card below
+   its bottom edge (the name pill's mirror: the pill floats above, the cue
+   hangs below), it is ALWAYS reachable on the map card and its counter-scale
+   grows into open paper instead of into the body's clip. PROVISIONAL: the
+   edge placement — the person may prefer it inside the footer row. */
+.paged-cue[data-cue-anchor="card"] {
+  position: absolute;
+  left: 6px;
+  top: calc(100% + 8px);
+}
+
 .paged-measure {
   position: absolute;
   left: 0;
@@ -9861,15 +9877,22 @@ body.wiring .session-card-actions {
    completely still afterwards (the motion clarification's rule: the moment
    earns the motion, and it never loops). */
 .ink-settle {
-  animation: ink-appear var(--motion-base) var(--ease-soft);
+  animation: ink-appear var(--motion-slow) var(--ease-out);
 }
 
+/* STORY 25-4 (the person: "a simple appear that generates some dopamine is
+   fine" — minimal never meant silent): the words land, lift a hair, and
+   resolve from wet blur to crisp ink. Felt, not busy; no typewriter. */
 @keyframes ink-appear {
   from {
-    opacity: 0.35;
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(1.5px);
   }
   to {
     opacity: 1;
+    transform: none;
+    filter: blur(0);
   }
 }
 

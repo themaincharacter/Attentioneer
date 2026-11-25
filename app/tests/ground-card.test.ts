@@ -205,7 +205,7 @@ describe("the small card pages; the stored text is untouched", () => {
     expect(html).toContain("ground-body");
     expect(html).toContain("ground-footer");
     expect(html).toContain('class="paged-flow"');
-    expect(html).toContain("--page-lines:6");
+    expect(html).toContain("--page-lines:4");
   });
 
   test("every card mounts SMALL: open/closed is view state, never a record", () => {
@@ -258,7 +258,11 @@ describe("the expanded body shows the STORED reading and nothing else", () => {
     expect(code).not.toContain("previewText(");
     expect(code).toContain("const bodyText = shownText;");
     // STORY 17 -> 25-2: the PAGE SIZE is the person's STATED count.
-    expect(code).toContain("linesPerPage={previewLines}");
+    // STORY 25-4: the page size is the primitive's own default — the person's
+    // ruling of four lines (the setting will carry 3/4/5) — and the cue is
+    // anchored to the card so it is reachable without expanding.
+    expect(code).toContain('anchor="card"');
+    expect(code).not.toContain("linesPerPage={previewLines}");
   });
 
   test("the wheel on the body is kept off the plane's zoom", () => {
