@@ -139,18 +139,24 @@ describe("the wire runs from the source's RIGHT edge into the card's LEFT edge",
   });
 });
 
-describe("the artifact takes the eye, and the ask card stops holding it", () => {
-  test("the layer opens the created card, closes the chat, and moves focus", () => {
+describe("the artifact lands without taking the stage", () => {
+  test("the layer stops stealing focus: the chat stays open and the hand keeps its place", () => {
     const layer = source("canvas/GroundLayer.tsx");
     const wrapper = layer.slice(
-      layer.indexOf("STORY 17.15 — THE ARTIFACT TAKES THE EYE"),
+      layer.indexOf(
+        "STORY 24-6 (ADR-0043) — THE ARTIFACT LANDS WITHOUT TAKING THE",
+      ),
       layer.indexOf("onStopTurn={onStopAskTurn}"),
     );
-    expect(wrapper).toContain("setOpenOn(result.created)");
-    expect(wrapper).toContain("setOpenAskOn(null)");
-    expect(wrapper).toContain("setOpenSessionOn(null)");
-    // The card is reachable by keyboard (the layer focuses it after the commit).
-    expect(wrapper).toContain("focus()");
+    // THE PERSON'S RULING (the redesign brief, 2026-11-24): an artifact "must
+    // land beside its source, level, wired in, and must NOT steal focus".
+    // STORY 17.15's "takes the eye" behaviour is deliberately retired — this
+    // test used to pin it, and now pins its absence.
+    expect(wrapper).not.toContain("setOpenOn(result.created)");
+    expect(wrapper).not.toContain("setOpenAskOn(null)");
+    expect(wrapper).not.toContain(".focus()");
+    // The turn still runs through the one path, unchanged.
+    expect(wrapper).toContain("onAskTurn={onAskTurn}");
     expect(layer).toContain("tabIndex={-1}");
   });
 

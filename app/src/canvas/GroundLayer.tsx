@@ -44,6 +44,7 @@ import {
 } from "../map/readings";
 import type { Media } from "../map/media";
 import { askCardOf } from "../turn/context";
+import { parseDistilledCardText } from "../turn/curator";
 import { sessionDistilWords, type AskCallsFacts, type AskWorkPhase } from "./contactRules";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
@@ -1448,40 +1449,15 @@ export function GroundLayer({
               setOpenAskOn(ask.on);
             }}
             onClose={() => setOpenAskOn(null)}
-            // STORY 17.15 — THE ARTIFACT TAKES THE EYE WHEN THE TURN LANDS.
-            // The ask card's turn writes the card (the hook reports its slug on
-            // `created`); the chat then CLOSES and the new card is the open one.
-            // The layer does this here because it owns which face is open — no
-            // second open-state path, and the ask card's composer unmounts, so
-            // typing can no longer land in the chat.
-            onAskTurn={
-              onAskTurn === undefined
-                ? undefined
-                : async (slug, question, onPart, onPhase, effort) => {
-                    const result = await onAskTurn(
-                      slug,
-                      question,
-                      onPart,
-                      onPhase,
-                      effort,
-                    );
-                    if (result.ok && result.created !== undefined) {
-                      setOpenOn(result.created);
-                      setOpenAskOn(null);
-                      setOpenSessionOn(null);
-                      // After the commit, not before: the new card is in the
-                      // DOM and the ask card's composer is gone.
-                      requestAnimationFrame(() => {
-                        document
-                          .querySelector<HTMLElement>(
-                            `.ground-reference[data-slug="${result.created}"]`,
-                          )
-                          ?.focus();
-                      });
-                    }
-                    return result;
-                  }
-            }
+            // STORY 24-6 (ADR-0043) — THE ARTIFACT LANDS WITHOUT TAKING THE
+            // STAGE (the person's brief: it "must not steal focus"). The turn
+            // still writes the card — right of its source, level, wired in
+            // (artifactPlacement) — and the hook still reports its slug on
+            // `created`; what is gone is the chat closing under the person and
+            // the DOM focus jumping to the new card. STORY 17.15's "takes the
+            // eye" rule is retired by the person's later ruling: the eye takes
+            // itself.
+            onAskTurn={onAskTurn}
             onStopTurn={onStopAskTurn}
             hasProvider={hasProvider}
             calls={calls}
@@ -2433,6 +2409,14 @@ function GroundCard({
       : open
         ? shownText
         : previewText(shownText, previewLines);
+  // STORY 24-6 (ADR-0043) — THE CURATOR'S GLANCE, read from the card's own
+  // text: the claim is the face, and the three named fields ride ONE
+  // disclosure. Any other shape answers null and renders verbatim as it always
+  // did; the record's bytes are never rewritten.
+  const distilledGlance =
+    reading !== null && reading.form === "distilled" && shownText !== null
+      ? parseDistilledCardText(shownText)
+      : null;
   // A note and a reading fold independently (each has its own stated count),
   // and either one puts the card's ONE verb on the face.
   const noteFolded =
@@ -2919,9 +2903,41 @@ function GroundCard({
           // — the card hands `expanded` to the one predicate, which bails
           // before the drag takes the pointer, so the browser's selection and
           // this box's scroll are never touched.
-          <div className="ground-reading" ref={readingRef}>
-            <GroundReadingText text={bodyText} open={open} />
-          </div>
+          distilledGlance !== null ? (
+            // STORY 24-6 (ADR-0043) — THE CURATOR'S GLANCE. The person: "the
+            // generated artifact is way too verbose... it is supposed to act
+            // like a curator... do not distract." The face is the CLAIM; what
+            // it rests on, what it does not cover and the uncertainty ride ONE
+            // disclosure on the expanded face (the ask card's shape). The raw
+            // reply stays one verb away, as it always was.
+            <div className="ground-reading" ref={readingRef}>
+              <div className="ground-distilled-claim">
+                <GroundReadingText text={distilledGlance.claim} open={open} />
+              </div>
+              {open && (
+                <details className="ask-card-declaration ground-distilled-rest">
+                  <summary className="ask-card-declaration-verb">
+                    what it rests on
+                  </summary>
+                  <div className="ask-card-declaration-body">
+                    <div className="ground-distilled-field">
+                      rests on: {distilledGlance.restsOn}
+                    </div>
+                    <div className="ground-distilled-field">
+                      does not cover: {distilledGlance.doesNotCover}
+                    </div>
+                    <div className="ground-distilled-field">
+                      uncertainty: {distilledGlance.uncertainty}
+                    </div>
+                  </div>
+                </details>
+              )}
+            </div>
+          ) : (
+            <div className="ground-reading" ref={readingRef}>
+              <GroundReadingText text={bodyText} open={open} />
+            </div>
+          )
         ) : showNeeds && needsLine !== null ? (
           // STORY 16.15: an image or a video has no reading and never pretends
           // to. Its slot says, in one quiet line, what the reading needs.

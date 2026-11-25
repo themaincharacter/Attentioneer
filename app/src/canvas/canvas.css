@@ -5789,6 +5789,24 @@ body {
   color: var(--ink-soft);
 }
 
+/* STORY 24-6 (ADR-0043) — THE CURATOR'S GLANCE: the claim is the face; what it
+   rests on, what it does not cover and the uncertainty ride ONE disclosure on
+   the expanded face (the ask card's shape). The fields speak in the compact
+   scale — the small-panel voice. */
+.ground-distilled-claim {
+  color: var(--ink);
+}
+
+.ground-distilled-rest {
+  margin-top: 4px;
+}
+
+.ground-distilled-field {
+  font-size: var(--compact-size);
+  line-height: var(--compact-leading);
+  color: var(--ink-soft);
+}
+
 /* The file's opening lines, read at add time and kept in the map folder. A
    quiet body size, line breaks verbatim: this is what the file said, not a
    summary of it. On the SMALL face it is cropped to the preview's six lines

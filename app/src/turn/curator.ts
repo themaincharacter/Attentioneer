@@ -334,6 +334,41 @@ export function curatorCardText(card: CuratorCard): string {
   ].join("\n");
 }
 
+/** The four places a distilled card's text carries (story 24-6's glance). */
+export interface DistilledCardText {
+  claim: string;
+  restsOn: string;
+  doesNotCover: string;
+  uncertainty: string;
+}
+
+/**
+ * STORY 24-6 (ADR-0043) — THE GLANCE'S READING OF A DISTILLED CARD, PURE. The
+ * card's text is written by ONE function above (the claim, a blank line, three
+ * named fields); this reads exactly that shape back so the card can show the
+ * claim as its face and put the three fields behind one disclosure — the
+ * person: "it is supposed to act like a curator... do not distract." ANY other
+ * shape (a rule's copy, a hand-written reading, a shape a later story moves)
+ * answers null and the reading renders verbatim as it always did. The record's
+ * bytes are never rewritten: this only decides how they sit.
+ */
+export function parseDistilledCardText(text: string): DistilledCardText | null {
+  const parts = text.split("\n\n");
+  if (parts.length !== 2) return null;
+  const claim = (parts[0] ?? "").trim();
+  const lines = (parts[1] ?? "").split("\n");
+  if (claim === "" || lines.length !== 3) return null;
+  const field = (line: string, prefix: string): string | null =>
+    line.startsWith(prefix) ? line.slice(prefix.length).trim() : null;
+  const restsOn = field(lines[0] ?? "", "rests on: ");
+  const doesNotCover = field(lines[1] ?? "", "does not cover: ");
+  const uncertainty = field(lines[2] ?? "", "uncertainty: ");
+  if (restsOn === null || doesNotCover === null || uncertainty === null) {
+    return null;
+  }
+  return { claim, restsOn, doesNotCover, uncertainty };
+}
+
 /** The decline's one sentence: the curator's first line, or the stated one. */
 function declineSentence(answer: string): string {
   const first = answer.trim().split(/\n\s*\n/)[0] ?? "";
