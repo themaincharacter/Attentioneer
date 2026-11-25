@@ -47,10 +47,18 @@ export function PagedText({
           ["--page-at" as string]: Math.min(page, pages - 1),
         }}
       >
-        {children}
+        {/* STORY 25-3 (ADR-0046 decision 4) — THE SILENT INK: the arriving
+            page's words appear as if laid down, then settle at once. A SIMPLE
+            appear (the person: "a simple appear animation that isn't
+            distracting") — one-shot per page change (the key remounts the
+            wrapper), completely still afterwards. The pen scratch is the
+            person's deferred want. */}
+        <div className="ink-settle" key={page}>
+          {children}
+        </div>
       </div>
       {/* The same content, unflowed and hidden: full height over one page's
-          height is the page count. */}
+          height is the page total. */}
       <div className="paged-measure" ref={measureRef} aria-hidden="true">
         {children}
       </div>

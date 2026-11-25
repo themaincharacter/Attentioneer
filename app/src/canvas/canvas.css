@@ -9852,3 +9852,29 @@ body.wiring .session-card-actions {
   -webkit-line-clamp: unset;
   overflow: visible;
 }
+
+
+/* STORY 25-3 (ADR-0046 decision 4) — THE SILENT INK. The arriving page's
+   words appear as if laid down and settle at once: a simple appear, nothing
+   distracting (the person's word — the wet-dry colour shift and the pen
+   scratch are both deferred wants). One-shot per page change; the box is
+   completely still afterwards (the motion clarification's rule: the moment
+   earns the motion, and it never loops). */
+.ink-settle {
+  animation: ink-appear var(--motion-base) var(--ease-soft);
+}
+
+@keyframes ink-appear {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ink-settle {
+    animation: none;
+  }
+}

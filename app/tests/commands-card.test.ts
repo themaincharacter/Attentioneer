@@ -160,11 +160,16 @@ describe("the card is closed by default and never calls attention", () => {
     for (const banned of ["badge", "pulse", "unread"]) {
       expect(html).not.toContain(banned);
     }
-    // The card's CSS block carries no entry animation either: it does not move
-    // to catch the eye.
-    const block = CSS.slice(CSS.indexOf(".command-card {"));
-    expect(block).not.toContain("animation:");
-    expect(block).not.toContain("@keyframes");
+    // The card's CSS rules carry no entry animation either: it does not move
+    // to catch the eye. (Bounded to its OWN rules — story 25-2: the sheet has
+    // grown past the command card since this was written, so "everything from
+    // here to the end of the sheet" no longer means "the card's block".)
+    const ownRules = CSS.match(/\.command-card[^{}]*\{[^}]*\}/g) ?? [];
+    expect(ownRules.length).toBeGreaterThan(0);
+    for (const rule of ownRules) {
+      expect(rule).not.toContain("animation");
+      expect(rule).not.toContain("keyframes");
+    }
   });
 });
 
