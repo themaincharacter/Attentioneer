@@ -5653,6 +5653,22 @@ body {
   box-shadow: 0 1px 4px rgba(40, 35, 25, 0.07);
   letter-spacing: 0.03em;
   transform: scale(var(--pill-scale, 1));
+}
+
+/* THE STAMP'S MARK (the person's ruling, 2026-11-24: "keep the copper dot —
+   it doesn't violate the ADR"). One live dot on every label is a UNIFORM
+   mark of the stamp, not a status light; ADR-0043 rule 3 is amended to say
+   the accent marks connections AND the label's own stamp. Still never on
+   text, never on a surface. */
+.ground-pill::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--live-strong);
+  margin-right: 6px;
+  vertical-align: 1px;
   transform-origin: left bottom;
   white-space: nowrap;
   /* A press on the name is a press on the handle: the grab cursor says the
