@@ -900,8 +900,25 @@ export function AskCard({
       }
       onClose();
     }
+    // STORY 24-11 — A PRESS AWAY CLOSES THE CARD TOO, the reference card's
+    // one rule (the person: "the ask card and session card don't contract on
+    // map click like the other cards do"). Capture phase, so a plane press
+    // that d3 handles still counts as a press away; a press INSIDE the card —
+    // its keys, its composer, its overflow menu — is not one. The question's
+    // draft lives in this mount and survives the close, like every field.
+    function onPressAway(e: MouseEvent) {
+      const el = cardRef.current;
+      if (el !== null && e.target instanceof Node && el.contains(e.target)) {
+        return;
+      }
+      onClose();
+    }
     document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
+    document.addEventListener("mousedown", onPressAway, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onPressAway, true);
+    };
   }, [open, onClose, forking]);
 
   // STORY 17.9 — THE WIRING HANDLE. The same raw-listener idiom the reference
