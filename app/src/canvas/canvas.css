@@ -5537,7 +5537,7 @@ body {
 /* STORY 16.3 — the reference is a CARD: a quiet surface, a title, a muted
    cropped body and a meta footer, FIXED in size (the body crops and scrolls;
    the card never stretches with its content). A node card's dimensions are
-   OURS, not borrowed: 300x200 / 520x420 are sized for this map's zoom and
+   OURS, not borrowed: 300x220 / 520x420 are sized for this map's zoom and
    reading density. PROVISIONAL: the sizes and the six-line crop are
    ADR-0003's rendering seam — meant to be reshaped by play, not a design
    system. The reference is content, never empty paper: a press on it must not
@@ -8490,8 +8490,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  /* STORY 24-7 (ADR-0043) — ONE BOX LAW: every ground card wears the box
+     the wires, the artifact placement and the find ring already assume
+     (geometry's GROUND_CARD_BOX, 300x220). The session card used to be 20px
+     shorter, so its wires anchored past its edges; it also gives the
+     transcript 20px more face (story 24.5's own wish). */
   width: 300px;
-  height: 200px;
+  height: 220px;
   padding: 9px 13px 8px;
   background: rgba(255, 253, 248, 0.92);
   border: 1px solid var(--ink-rule);
@@ -8504,8 +8509,10 @@ body {
 
 .session-card.expanded {
   z-index: 6;
-  width: 500px;
-  height: 400px;
+  /* STORY 24-7: the family's expanded box too (the ask and reference cards'
+     own 520x420), so the three card families share one geometry. */
+  width: 520px;
+  height: 420px;
   padding: 14px 16px 12px;
   cursor: default;
 }
