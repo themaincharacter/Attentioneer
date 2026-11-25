@@ -6918,36 +6918,55 @@ body.wiring .session-card-actions {
    its press-to-open and drag-to-move rule untouched. */
 .ground-link-handle {
   position: absolute;
-  right: -8px;
+  right: -10px;
   top: 50%;
   z-index: 3;
-  width: 14px;
-  height: 20px;
-  margin-top: -10px;
+  width: 20px;
+  height: 28px;
+  margin-top: -14px;
   padding: 0;
-  /* STORY 24-2 (ADR-0043): the handle is the TERMINAL you drag a cable from —
-     the same clamp that greets a wire at a card's edge, and the hit target is
-     no smaller than the circle it replaces. */
+  /* STORY 24-14 (the person, 2026-11-25): "the wire drag out button on the
+     right side of the card should be larger and have an icon too. Also should
+     be able to see without expanding the card." So: a larger terminal clamp
+     carrying the wire glyph, ALWAYS on the card's edge like the keys — no
+     hover to reveal (the tablet rule). It grows with the keys on card focus.
+     The hit target only gets bigger. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--ink-faint);
   border-radius: 3px;
   background: rgba(247, 241, 229, 0.96);
-  opacity: 0;
-  pointer-events: none;
   cursor: crosshair;
-  transition: opacity var(--motion-fast) var(--ease-soft);
+  transition: transform var(--motion-fast) var(--ease-soft);
 }
 
+.ground-link-handle svg {
+  width: 13px;
+  height: 13px;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+/* The word points AWAY from the card (the keys' tags point left; this one is
+   on the right edge). */
+.ground-link-handle .verb-tip {
+  right: auto;
+  left: calc(100% + 8px);
+}
+
+/* STORY 24-14: the terminal is always visible (it needs no reveal — the
+   tablet rule), and it grows with the keys on card focus. */
 .ground-reference:hover .ground-link-handle,
 .ground-reference:focus-within .ground-link-handle,
-.ground-reference.expanded .ground-link-handle,
 .ask-card:hover .ground-link-handle,
 .ask-card:focus-within .ground-link-handle,
-.ask-card.expanded .ground-link-handle,
 .session-card:hover .ground-link-handle,
-.session-card:focus-within .ground-link-handle,
-.session-card.expanded .ground-link-handle {
-  opacity: 1;
-  pointer-events: auto;
+.session-card:focus-within .ground-link-handle {
+  transform: scale(1.15);
 }
 
 /* STORY 17.9 — the context line above an ask card's thread: the wired cards by
@@ -6970,8 +6989,11 @@ body.wiring .session-card-actions {
 }
 
 .ground-link-handle:hover {
-  border-color: #8d8779;
-  background: #fffdf8;
+  border-color: var(--live);
+}
+
+.ground-link-handle:hover svg {
+  stroke: var(--live);
 }
 
 /* STORY 24-3 (ADR-0043) — THE ALIGNMENT GUIDES: faint lines where a dragged

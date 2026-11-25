@@ -54,6 +54,7 @@ import {
   IconReadMore,
   IconRefresh,
   IconRemove,
+  IconWire,
 } from "./icons";
 import { VerbBubble, verbCounterScale } from "./VerbBubble";
 import { sessionDistilWords, type AskCallsFacts, type AskWorkPhase } from "./contactRules";
@@ -2765,8 +2766,10 @@ function GroundCard({
         type="button"
         className="ground-link-handle"
         aria-label="link to another card"
-        title="drag to link"
-      />
+      >
+        <IconWire />
+        <span className="verb-tip">drag to link</span>
+      </button>
       {/* STORY 16.21 — THE NAME FLOATS ABOVE THE CARD. It left the body because
           the body's own reading cropped it and the plane's scale shrank it: the
           pill counter-scales (clamped) so the name is legible at 25% zoom, it is

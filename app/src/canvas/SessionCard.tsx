@@ -19,7 +19,7 @@ import {
   type SessionEntry,
 } from "../map/sessions";
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
-import { IconMore, IconRun, IconStop } from "./icons";
+import { IconMore, IconRun, IconStop, IconWire } from "./icons";
 import { VerbBubble, verbCounterScale } from "./VerbBubble";
 import { SESSION_TASK_REFUSAL, type GroundAddResult } from "./useGround";
 import { PacketSurface } from "./PacketSurface";
@@ -1114,9 +1114,11 @@ export function SessionCard({
         <button
           type="button"
           className="ground-link-handle"
-          title="wire this card to another"
           aria-label="wire this card to another"
-        />
+        >
+          <IconWire />
+          <span className="verb-tip">wire this card to another</span>
+        </button>
       )}
       <div className="session-card-body" ref={bodyRef} onScroll={trackScroll}>
         {open ? (

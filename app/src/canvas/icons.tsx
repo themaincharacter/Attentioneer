@@ -148,6 +148,15 @@ export function IconKey() {
   );
 }
 
+/** Wire: the cable you drag out of a terminal. */
+export function IconWire() {
+  return (
+    <Glyph>
+      <path d="M9 7H7a5 5 0 0 0 0 10h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8" />
+    </Glyph>
+  );
+}
+
 /** Open settings: the sliders. */
 export function IconSettings() {
   return (

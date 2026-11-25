@@ -31,7 +31,13 @@ import {
   type AskCallsFacts,
   type AskWorkPhase,
 } from "./contactRules";
-import { IconMore, IconSend, IconSettings, IconStop } from "./icons";
+import {
+  IconMore,
+  IconSend,
+  IconSettings,
+  IconStop,
+  IconWire,
+} from "./icons";
 import { VerbBubble, verbCounterScale } from "./VerbBubble";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
@@ -1395,9 +1401,11 @@ export function AskCard({
         <button
           type="button"
           className="ground-link-handle"
-          title="wire this card to another"
           aria-label="wire this card to another"
-        />
+        >
+          <IconWire />
+          <span className="verb-tip">wire this card to another</span>
+        </button>
       )}
       <div className="ask-card-body" ref={bodyRef} onScroll={trackScroll}>
         {open ? (
