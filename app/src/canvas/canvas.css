@@ -6494,6 +6494,20 @@ body {
   opacity: 1;
 }
 
+/* STORY 24-10 (ADR-0044, rule 6) — THE STEP-ASIDE. While a wire is being
+   placed (body.wiring, set by the one wiring drag), every strip steps aside
+   ONCE: a fade and one key-width inward slide over the contract's fastest
+   step. It is a state, not physics — the buttons never move because a wire
+   arrived; the two simply never share a moment. Under reduced-motion the
+   global rule removes the transition, so the strip is simply not there. */
+body.wiring .ground-actions,
+body.wiring .ask-card-actions,
+body.wiring .session-card-actions {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(8px) scale(var(--verb-scale, 1));
+}
+
 /* STORY 16.13 (shortlist item 2): the verbs a card cannot offer say WHY in one
    quiet line where they would have been — a selection has no file behind it.
    It is not a disabled button and it never suggests another action. */

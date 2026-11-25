@@ -103,10 +103,17 @@ export function startGroundLinkDrag(
   }
   event.preventDefault();
   deps.onNarrate?.({ kind: "wiring" });
+  // STORY 24-10 (ADR-0044, rule 6): while a wire is being placed, the verb
+  // strips STEP ASIDE once — a fade and one key-width inward slide — so the
+  // two never share a moment. No physics: the buttons never move because a
+  // wire arrived (a moving hit target is worse than a static overlap), and
+  // under reduced-motion the stylesheet takes the step out entirely.
+  document.body.classList.add("wiring");
   let cancelled = false;
   const finish = () => {
     window.removeEventListener("mouseup", onLinkUp);
     window.removeEventListener("keydown", onLinkKey);
+    document.body.classList.remove("wiring");
     deps.onNarrate?.(GESTURE_IDLE);
   };
   const onLinkKey = (ev: KeyboardEvent) => {
