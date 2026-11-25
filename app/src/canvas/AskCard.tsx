@@ -31,6 +31,8 @@ import {
   type AskCallsFacts,
   type AskWorkPhase,
 } from "./contactRules";
+import { IconMore, IconSend, IconSettings, IconStop } from "./icons";
+import { VerbBubble, verbCounterScale } from "./VerbBubble";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
 import { attachGroundCardDrag } from "./groundDrag";
@@ -1209,11 +1211,9 @@ export function AskCard({
   function overflowVerbs() {
     return (
       <details className="ask-card-overflow">
-        <summary
-          className="ask-card-overflow-verb"
-          title="fork, remove or close this card"
-        >
-          {ASK_OVERFLOW_VERB}
+        <summary className="ask-card-overflow-verb verb-key">
+          <IconMore />
+          <span className="verb-tip">{ASK_OVERFLOW_VERB}</span>
         </summary>
         <div className="ask-card-overflow-body">
           {onForkTurn !== undefined && (
@@ -1303,6 +1303,9 @@ export function AskCard({
           left: ask.x,
           top: ask.y,
           "--preview-lines": previewLines,
+          // STORY 24-9 (ADR-0044): the verb strip counter-scales like the
+          // name pill, so its bubbles stay finger-sized at every zoom.
+          "--verb-scale": verbCounterScale(zoom),
         } as CSSProperties
       }
       data-slug={ask.on}
@@ -1525,13 +1528,12 @@ export function AskCard({
               <div className="ask-fallback">{PROVIDER_SENTENCES.nothing}</div>
               <div className="ask-card-actions">
                 {onOpenSettings !== undefined && (
-                  <button
-                    type="button"
+                  <VerbBubble
                     className="ask-configure"
+                    label="open settings"
+                    icon={<IconSettings />}
                     onClick={onOpenSettings}
-                  >
-                    open settings
-                  </button>
+                  />
                 )}
                 {overflowVerbs()}
               </div>
@@ -1614,63 +1616,62 @@ export function AskCard({
                   {askReadMoreWords(sent.read)}
                 </button>
               )}
-              <div className="ask-card-actions">
-                {/* STORY 16.29 — THE EFFORT SELECTOR, BESIDE SEND. It exists
-                    ONLY when the catalogue lists efforts for this model: a
-                    model that declares none gets no control at all, because a
-                    level the catalogue never stated is an invented promise
-                    about a provider. "default" is the choice that sends no
-                    field. The pick is the CARD's (per ask) and writes itself to
-                    the record, so a reopen remembers it. */}
-                {offeredEfforts.length > 0 && (
-                  <label
-                    className="ask-card-effort"
-                    title="the effort levels this model's catalogue entry declares"
+              {/* STORY 16.29 — THE EFFORT SELECTOR (moved out of the verb
+                  strip by story 24-9: a selector is not a bubble). It exists
+                  ONLY when the catalogue lists efforts for this model: a model
+                  that declares none gets no control at all, because a level the
+                  catalogue never stated is an invented promise about a
+                  provider. "default" is the choice that sends no field. The
+                  pick is the CARD's (per ask) and writes itself to the record,
+                  so a reopen remembers it. */}
+              {offeredEfforts.length > 0 && (
+                <label
+                  className="ask-card-effort"
+                  title="the effort levels this model's catalogue entry declares"
+                >
+                  <span className="ask-card-effort-label">effort</span>
+                  <select
+                    className="ask-card-effort-select"
+                    value={effectiveEffort}
+                    disabled={running || busy}
+                    onChange={(e) => {
+                      const picked = e.target.value;
+                      setEffortChoice(picked);
+                      if (onSetEffort === undefined) return;
+                      void onSetEffort(picked === "default" ? null : picked).then(
+                        (result) => {
+                          // A refused write is one sentence, never a selector
+                          // that silently disagrees with the record.
+                          if (!result.ok) setProblem(result.message);
+                        },
+                      );
+                    }}
                   >
-                    <span className="ask-card-effort-label">effort</span>
-                    <select
-                      className="ask-card-effort-select"
-                      value={effectiveEffort}
-                      disabled={running || busy}
-                      onChange={(e) => {
-                        const picked = e.target.value;
-                        setEffortChoice(picked);
-                        if (onSetEffort === undefined) return;
-                        void onSetEffort(picked === "default" ? null : picked).then(
-                          (result) => {
-                            // A refused write is one sentence, never a selector
-                            // that silently disagrees with the record.
-                            if (!result.ok) setProblem(result.message);
-                          },
-                        );
-                      }}
-                    >
-                      <option value="default">default</option>
-                      {offeredEfforts.map((effort) => (
-                        <option key={effort} value={effort}>
-                          {effort}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                <button
-                  type="button"
+                    <option value="default">default</option>
+                    {offeredEfforts.map((effort) => (
+                      <option key={effort} value={effort}>
+                        {effort}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <div className="ask-card-actions">
+                <VerbBubble
                   className="ask-card-send"
+                  label="send"
+                  icon={<IconSend />}
                   disabled={running}
                   onClick={() => void send()}
-                >
-                  send
-                </button>
+                />
                 {running && (
-                  <button
-                    type="button"
+                  <VerbBubble
                     className="ask-card-stop"
+                    label="stop"
+                    icon={<IconStop />}
                     disabled={stopping}
                     onClick={() => void stop()}
-                  >
-                    stop
-                  </button>
+                  />
                 )}
                 {/* STORY 16.27 — every other verb (fork, remove, close) is
                     behind the one overflow summary, so the footer reads as the

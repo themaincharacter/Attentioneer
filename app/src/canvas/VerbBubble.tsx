@@ -25,7 +25,7 @@ export function VerbBubble({
   return (
     <button
       type="button"
-      className={"verb-bubble " + className}
+      className={"verb-key " + className}
       aria-label={label}
       disabled={disabled}
       onClick={onClick}

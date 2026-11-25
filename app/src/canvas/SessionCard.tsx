@@ -19,6 +19,8 @@ import {
   type SessionEntry,
 } from "../map/sessions";
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
+import { IconMore, IconRun, IconStop } from "./icons";
+import { VerbBubble, verbCounterScale } from "./VerbBubble";
 import { SESSION_TASK_REFUSAL, type GroundAddResult } from "./useGround";
 import { PacketSurface } from "./PacketSurface";
 import {
@@ -1050,6 +1052,9 @@ export function SessionCard({
           left: session.x,
           top: session.y,
           "--preview-lines": previewLines,
+          // STORY 24-9 (ADR-0044): the verb strip counter-scales like the
+          // name pill, so its bubbles stay finger-sized at every zoom.
+          "--verb-scale": verbCounterScale(zoom),
         } as CSSProperties
       }
       data-slug={session.on}
@@ -1512,6 +1517,12 @@ export function SessionCard({
               )}
             </div>
           </details>
+          {/* The one sentence, and the one verb. No spinner: this line is
+              read from the live-run list, so it cannot outlive the run. The
+              sentence stays ON THE FACE (it is news); its verb is in the strip. */}
+          {running && (
+            <span className="session-running">{SESSION_RUNNING_SENTENCE}</span>
+          )}
           {/* STORY 22.6 — the one press's honest outcome line stays ON THE
               FACE (it is news, not chrome); its verb sits in the overflow. */}
           {keepNotice !== null && (
@@ -1525,31 +1536,27 @@ export function SessionCard({
               lost: every verb keeps its own rule and its keyboard path. */}
           <div className="session-card-actions">
             {running ? (
-              <>
-                {/* The one sentence, and the one verb. No spinner: this line is
-                    read from the live-run list, so it cannot outlive the run. */}
-                <span className="session-running">{SESSION_RUNNING_SENTENCE}</span>
-                <button
-                  type="button"
-                  className="session-card-stop"
-                  disabled={onStop === undefined}
-                  onClick={() => void stopRun()}
-                >
-                  stop
-                </button>
-              </>
+              <VerbBubble
+                className="session-card-stop"
+                label="stop"
+                icon={<IconStop />}
+                disabled={onStop === undefined}
+                onClick={() => void stopRun()}
+              />
             ) : (
-              <button
-                type="button"
+              <VerbBubble
                 className="session-card-run-verb"
+                label="run"
+                icon={<IconRun />}
                 disabled={busy || toolName === null || onRun === undefined}
                 onClick={() => void startRun()}
-              >
-                run
-              </button>
+              />
             )}
             <details className="session-card-overflow">
-              <summary className="session-card-overflow-verb">more</summary>
+              <summary className="session-card-overflow-verb verb-key">
+                <IconMore />
+                <span className="verb-tip">more</span>
+              </summary>
               <div className="session-card-overflow-menu">
                 {/* STORY 22.1 — the row's one verb. NOT gated on the card's
                     live run: a press then answers the existing busy sentence,

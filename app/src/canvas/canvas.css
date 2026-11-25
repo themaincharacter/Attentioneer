@@ -6385,7 +6385,9 @@ body {
    map is cards and clean cables (rule 5). The two re-reads and the remove
    live here as they always did: the verbs, not a toolbar, and nothing here
    watches or polls. */
-.ground-actions {
+.ground-actions,
+.ask-card-actions,
+.session-card-actions {
   position: absolute;
   right: calc(100% + 8px);
   top: 50%;
@@ -6403,7 +6405,11 @@ body {
 }
 
 .ground-reference:hover .ground-actions,
-.ground-reference:focus-within .ground-actions {
+.ground-reference:focus-within .ground-actions,
+.ask-card:hover .ask-card-actions,
+.ask-card:focus-within .ask-card-actions,
+.session-card:hover .session-card-actions,
+.session-card:focus-within .session-card-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -6416,7 +6422,7 @@ body {
 }
 
 /* THE BUBBLE (shared by every card family's strip). */
-.verb-bubble {
+.verb-key {
   width: 28px;
   height: 28px;
   padding: 0;
@@ -6431,7 +6437,7 @@ body {
   position: relative;
 }
 
-.verb-bubble svg {
+.verb-key svg {
   width: 15px;
   height: 15px;
   stroke: var(--ink);
@@ -6441,24 +6447,24 @@ body {
   fill: none;
 }
 
-.verb-bubble:hover {
+.verb-key:hover {
   border-color: var(--live);
 }
 
-.verb-bubble:hover svg {
+.verb-key:hover svg {
   stroke: var(--live);
 }
 
-.verb-bubble:disabled {
+.verb-key:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
-.verb-bubble:disabled:hover {
+.verb-key:disabled:hover {
   border-color: var(--ink-faint);
 }
 
-.verb-bubble:disabled:hover svg {
+.verb-key:disabled:hover svg {
   stroke: var(--ink);
 }
 
@@ -6483,8 +6489,8 @@ body {
   transition: opacity var(--motion-fast) var(--ease-soft);
 }
 
-.verb-bubble:hover .verb-tip,
-.verb-bubble:focus-visible .verb-tip {
+.verb-key:hover .verb-tip,
+.verb-key:focus-visible .verb-tip {
   opacity: 1;
 }
 
@@ -8478,12 +8484,9 @@ body {
   outline: none;
 }
 
-.ask-card-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.ask-card-actions button,
+/* STORY 24-9 (ADR-0044): the ask card's verbs join the strip — the container
+   is positioned by the shared strip rule. The collapsed card's "open" door
+   stays a word (it is the door, like the fold's "more"). */
 .ask-card-open {
   padding: 0;
   border: none;
@@ -8494,14 +8497,8 @@ body {
   cursor: pointer;
 }
 
-.ask-card-actions button:hover,
 .ask-card-open:hover {
   color: var(--ink-strong);
-}
-
-.ask-card-actions button:disabled {
-  color: var(--ink-faint);
-  cursor: default;
 }
 
 /* STORY 16.29 — THE EFFORT SELECTOR, BESIDE SEND. It is a quiet word and a
@@ -8891,13 +8888,9 @@ body {
   gap: 8px;
 }
 
-.session-card-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.session-card-actions button,
+/* STORY 24-9 (ADR-0044): the session card's verbs join the strip — the
+   container is positioned by the shared strip rule. The collapsed card's
+   "open" door stays a word, like the ask card's. */
 .session-card-open {
   padding: 0;
   border: none;
@@ -8908,14 +8901,8 @@ body {
   cursor: pointer;
 }
 
-.session-card-actions button:hover,
 .session-card-open:hover {
   color: var(--ink-strong);
-}
-
-.session-card-actions button:disabled {
-  color: var(--ink-faint);
-  cursor: default;
 }
 
 /* STORY 19.4 — THE DISTIL EGRESS, SAID QUIETLY. Before the press the card names

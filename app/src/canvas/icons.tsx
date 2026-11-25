@@ -148,6 +148,17 @@ export function IconKey() {
   );
 }
 
+/** Open settings: the sliders. */
+export function IconSettings() {
+  return (
+    <Glyph>
+      <path d="M4 8h16M4 16h16" />
+      <circle cx="9" cy="8" r="2" />
+      <circle cx="15" cy="16" r="2" />
+    </Glyph>
+  );
+}
+
 /** Send: the question leaves. */
 export function IconSend() {
   return (
