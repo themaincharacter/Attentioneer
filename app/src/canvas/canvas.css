@@ -6376,43 +6376,116 @@ body {
   color: var(--state-accent);
 }
 
-/* The two re-reads: quiet text buttons on the card, never a toolbar. They are
-   the only re-reads the app has; nothing here watches or polls. */
+/* STORY 24-8 (ADR-0044) — THE VERB STRIP: the card's tools are a column of
+   BUBBLES on the card's free (left) edge. Icons in the board's stroke
+   language; each bubble carries its word as a stamped-tag tooltip on hover
+   AND on keyboard focus. The strip counter-scales like the name pill
+   (--verb-scale, set where the card renders) so the bubbles stay finger-sized
+   at every zoom, and it reveals on hover/focus on BOTH faces — at rest the
+   map is cards and clean cables (rule 5). The two re-reads and the remove
+   live here as they always did: the verbs, not a toolbar, and nothing here
+   watches or polls. */
 .ground-actions {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
   opacity: 0;
-  transition: opacity var(--motion-fast) var(--ease-soft);
+  pointer-events: none;
+  transform: translateY(-50%) scale(var(--verb-scale, 1));
+  transform-origin: right center;
+  transition:
+    opacity var(--motion-fast) var(--ease-soft),
+    transform var(--motion-fast) var(--ease-soft);
 }
 
 .ground-reference:hover .ground-actions,
 .ground-reference:focus-within .ground-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 
-/* An open card keeps its verbs visible: the expanded face is where a person
-   acts on a reading, and hunting for a hover would be the only hidden step. */
-.ground-reference.expanded .ground-actions {
-  opacity: 1;
+/* The quiet lines about MISSING verbs stay beside the verbs — they explain
+   the gaps in the strip, so they share its reveal (story 16.13's rule). */
+.ground-actions .ground-quiet {
+  max-width: 240px;
+  text-align: right;
 }
 
-.ground-actions button {
+/* THE BUBBLE (shared by every card family's strip). */
+.verb-bubble {
+  width: 28px;
+  height: 28px;
   padding: 0;
-  border: none;
-  background: none;
-  font: inherit;
-  font-size: 11.5px;
-  color: var(--ink-marker);
+  border: 1px solid var(--ink-faint);
+  border-radius: 50%;
+  background: rgba(253, 250, 243, 0.97);
+  box-shadow: 0 1px 4px rgba(40, 35, 25, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  position: relative;
 }
 
-.ground-actions button:hover {
-  color: var(--ink-strong);
+.verb-bubble svg {
+  width: 15px;
+  height: 15px;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
 }
 
-.ground-actions button:disabled {
-  color: var(--ink-faint);
+.verb-bubble:hover {
+  border-color: var(--live);
+}
+
+.verb-bubble:hover svg {
+  stroke: var(--live);
+}
+
+.verb-bubble:disabled {
+  opacity: 0.4;
   cursor: default;
+}
+
+.verb-bubble:disabled:hover {
+  border-color: var(--ink-faint);
+}
+
+.verb-bubble:disabled:hover svg {
+  stroke: var(--ink);
+}
+
+/* THE VERB'S WORD: a stamped tag (the name pill's own material) on hover AND
+   on keyboard focus — the word is never gone, it only moves (rule 3). */
+.verb-tip {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 2px 8px 3px;
+  background: rgba(247, 241, 229, 0.96);
+  border: 1px solid var(--ink-faint);
+  border-radius: 3px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  letter-spacing: 0.03em;
+  color: var(--ink-strong);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease-soft);
+}
+
+.verb-bubble:hover .verb-tip,
+.verb-bubble:focus-visible .verb-tip {
+  opacity: 1;
 }
 
 /* STORY 16.13 (shortlist item 2): the verbs a card cannot offer say WHY in one

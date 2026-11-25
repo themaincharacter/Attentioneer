@@ -45,6 +45,17 @@ import {
 import type { Media } from "../map/media";
 import { askCardOf } from "../turn/context";
 import { parseDistilledCardText } from "../turn/curator";
+import {
+  IconAsk,
+  IconDone,
+  IconFolder,
+  IconNote,
+  IconPin,
+  IconReadMore,
+  IconRefresh,
+  IconRemove,
+} from "./icons";
+import { VerbBubble, verbCounterScale } from "./VerbBubble";
 import { sessionDistilWords, type AskCallsFacts, type AskWorkPhase } from "./contactRules";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
@@ -2739,6 +2750,9 @@ function GroundCard({
           // variables, so a changed threshold re-crops without a reload.
           "--preview-lines": previewLines,
           "--note-lines": noteLines,
+          // STORY 24-8 (ADR-0044): the verb strip counter-scales like the
+          // name pill, so its bubbles stay finger-sized at every zoom.
+          "--verb-scale": verbCounterScale(zoom),
         } as CSSProperties
       }
       data-slug={reference.on}
@@ -3062,37 +3076,34 @@ function GroundCard({
               Story 17.7 retired the embedded panel: this is the ground map's
               ONLY ask-shaped verb. */}
           {open && onCreateAsk !== undefined && askNaming === null && (
-            <button
-              type="button"
+            <VerbBubble
               className="ground-ask-card"
+              label="ask about this"
+              icon={<IconAsk />}
               disabled={busy}
               onClick={askAboutCard}
-            >
-              ask about this
-            </button>
+            />
           )}
           {/* STORY 16.6: the note's edit verb lives on the EXPANDED card. The
               done verb only exists while editing; Esc and a press away are the
               other exits (Esc abandons, a press away saves). */}
           {open && onSetNote !== undefined && (
             editing ? (
-              <button
-                type="button"
+              <VerbBubble
                 className="ground-note-done"
+                label="done"
+                icon={<IconDone />}
                 disabled={busy}
                 onClick={() => void saveNoteDraft()}
-              >
-                done
-              </button>
+              />
             ) : (
-              <button
-                type="button"
+              <VerbBubble
                 className="ground-note-edit"
+                label={shownNote === null ? "add a note…" : "edit the note…"}
+                icon={<IconNote />}
                 disabled={busy}
                 onClick={beginNoteEdit}
-              >
-                {shownNote === null ? "add a note…" : "edit the note…"}
-              </button>
+              />
             )
           )}
           {/* STORY 16.8 — the ONE pull verb, on the EXPANDED card only. It is
@@ -3105,28 +3116,26 @@ function GroundCard({
             isFileReading(reading) &&
             readingExtract(reading) !== "image" &&
             onPull !== undefined && (
-            <button
-              type="button"
+            <VerbBubble
               className="ground-read-more"
+              label="read more"
+              icon={<IconReadMore />}
               disabled={busy}
               onClick={() => void run(() => onPull(reference.on))}
-            >
-              read more
-            </button>
+            />
           )}
           {/* Story 16.12: a selection has no file to re-read or re-point, so
               neither verb is drawn for it — its bytes are the map's own. STORY
               16.13 (shortlist item 2): the missing verbs are not silent; one
               quiet line here says why there is nothing behind them. */}
           {canRefresh && (
-            <button
-              type="button"
+            <VerbBubble
               className="ground-refresh"
+              label="refresh"
+              icon={<IconRefresh />}
               disabled={busy}
               onClick={() => void run(() => onRefresh(reference.on))}
-            >
-              refresh
-            </button>
+            />
           )}
           {/* STORY 20.1 (PROVISIONAL) — THE ONE OUTWARD MOVE: the system's file
               manager at this folder. READ-ONLY: the card writes nothing here,
@@ -3134,24 +3143,24 @@ function GroundCard({
               capability does not allow, or a box with no handler, answers the
               existing "cannot open" sentence — there is no fallback. */}
           {canOpenFolder && (
-            <button
-              type="button"
+            <VerbBubble
               className="ground-open-folder"
+              label="open in file explorer"
+              icon={<IconFolder />}
               disabled={busy}
               onClick={() => void openFolder()}
-            >
-              open in file explorer
-            </button>
+            />
           )}
           {reading === null || fileReading ? (
-            <button
-              type="button"
+            <VerbBubble
               className="ground-repoint"
+              label={
+                reading === null ? "point at a file…" : "point at another file…"
+              }
+              icon={<IconPin />}
               disabled={busy}
               onClick={() => void repoint()}
-            >
-              {reading === null ? "point at a file…" : "point at another file…"}
-            </button>
+            />
           ) : null}
           {reading !== null && reading.form === "selection" && (
             <div className="ground-quiet">
@@ -3169,14 +3178,13 @@ function GroundCard({
               this is drawn from its own file; there is nothing to refresh.
             </div>
           )}
-          <button
-            type="button"
+          <VerbBubble
             className="ground-remove"
+            label="remove"
+            icon={<IconRemove />}
             disabled={busy}
             onClick={() => void removeCard()}
-          >
-            remove
-          </button>
+          />
         </div>
 
       {/* STORY 16.7 — the `@` list, while the editor asks. It opens below the
