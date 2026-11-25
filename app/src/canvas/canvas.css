@@ -9686,3 +9686,95 @@ body.wiring .session-card-actions {
 .command-card-working {
   color: var(--ink-marker);
 }
+
+
+/* ========================================================================== *
+ * STORY 25-1 (ADR-0046) — THE VOICES AND THE FRAMES.
+ *
+ * THE DRAFT VOICE's shipped hand: a LOCAL file, because the person's condition
+ * was "certain the font will work in different OS" — a shipped file renders
+ * identically on every one of them, which no system stack can promise. SIL
+ * OFL; its licence travels beside it in app/src/assets/fonts/. This is the
+ * template for any future voice.
+ * ========================================================================== */
+@font-face {
+  font-family: "card-draft";
+  src: url("../assets/fonts/draft-hand.ttf") format("truetype");
+  font-display: swap;
+}
+
+:root {
+  /* THE VOICES (ADR-0046 decision 2): provenance is a font. The sizes and
+     leadings stay the type system's — a voice is a family, not a scale. */
+  --voice-hand: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --voice-press: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --voice-draft: "card-draft", "Segoe Script", "Bradley Hand", cursive;
+}
+
+/* THE HAND — the person's words: coined names, notes, questions. */
+.ground-name {
+  font-family: var(--voice-hand);
+}
+
+.ground-note {
+  font-family: var(--voice-hand);
+}
+
+.ask-turn.person .ask-turn-text {
+  font-family: var(--voice-hand);
+}
+
+/* THE PRESS — the agent's words: answers, proposals, distilled claims. */
+.ask-turn.answer .ask-turn-text {
+  font-family: var(--voice-press);
+}
+
+.ground-distilled-claim,
+.ground-distilled-field {
+  font-family: var(--voice-press);
+}
+
+.ghost-preview {
+  font-family: var(--voice-press);
+}
+
+/* THE PAGE — the world's words: the readings, quoted at the quote rung. */
+.ground-reading {
+  font-family: var(--voice-hand);
+  color: var(--ink-quote);
+}
+
+/* THE DRAFT — the words of absence: an unnamed card's quiet line. */
+.ground-name-absent {
+  font-family: var(--voice-draft);
+  color: var(--ink-soft);
+}
+
+/* THE QUIET — the app's own sentences — stays today's sans, untouched.
+
+   THE FRAMES (ADR-0046 decision 3): the epistemic state as the container.
+   SHAPE first (bevel / dash / muted) so the state reads at 25% and without
+   colour; never motion, never glow, and never meaning alone — every state
+   keeps its honest sentence beside the frame. PROVISIONAL: the weights. */
+.frame-bevel {
+  border: 1px solid rgba(74, 66, 58, 0.45);
+  box-shadow:
+    0 1px 5px rgba(40, 35, 25, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0 rgba(74, 66, 58, 0.12);
+}
+
+.frame-dashed {
+  border: 1px dashed rgba(74, 66, 58, 0.5);
+  background: rgba(253, 250, 243, 0.82);
+}
+
+.frame-muted {
+  border: 1px solid rgba(74, 66, 58, 0.2);
+  background: rgba(253, 250, 243, 0.72);
+}
+
+/* A PROPOSAL surface speaks the dashed frame too (it is not the person's yet). */
+.ghost-preview {
+  border: 1px dashed rgba(74, 66, 58, 0.5);
+}

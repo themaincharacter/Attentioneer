@@ -40,6 +40,7 @@ import {
 } from "./icons";
 import { VerbBubble, verbCounterScale } from "./VerbBubble";
 import type { WorkingChannel } from "./workingRef";
+import { epistemicState, frameFor } from "../reading/frames";
 import { isGestureArmed, type GestureMode } from "./gates";
 import { startGroundLinkDrag } from "./linkDrag";
 import { attachGroundCardDrag } from "./groundDrag";
@@ -1330,7 +1331,9 @@ export function AskCard({
   return (
     <div
       ref={cardRef}
-      className={`ask-card${open ? " expanded" : ""}`}
+      className={`ask-card ${frameFor(
+        epistemicState({ absentWords: turns.length === 0 }),
+      )}${open ? " expanded" : ""}`}
       style={
         {
           // STORY 16.25: the RECORD's point is what React renders; the hand's

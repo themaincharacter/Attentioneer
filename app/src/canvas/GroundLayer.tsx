@@ -46,6 +46,7 @@ import type { Media } from "../map/media";
 import { askCardOf } from "../turn/context";
 import { parseDistilledCardText } from "../turn/curator";
 import type { WorkingChannel } from "./workingRef";
+import { epistemicState, frameFor } from "../reading/frames";
 import {
   IconAsk,
   IconDone,
@@ -2746,7 +2747,9 @@ function GroundCard({
   return (
     <div
       ref={cardRef}
-      className={`ground-reference${open ? " expanded" : ""}`}
+      className={`ground-reference ${frameFor(
+        epistemicState({ absentWords: bodyText === null }),
+      )}${open ? " expanded" : ""}`}
       tabIndex={-1}
       style={
         {

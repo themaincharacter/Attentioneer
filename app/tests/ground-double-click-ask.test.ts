@@ -336,7 +336,10 @@ describe("the reply renders in the card, above the composer", () => {
     );
     // The pill shows the quiet absence for a record carrying the sentinel
     // (the person, 2026-11-25): "no name yet", never the sentinel sentence.
-    expect(html).toContain('class="ground-name">' + UNTITLED_DISPLAY + "</span>");
+    // STORY 25-1: the absence also wears the draft voice's hook class.
+    expect(html).toContain(
+      'class="ground-name ground-name-absent">' + UNTITLED_DISPLAY + "</span>",
+    );
     expect(html).not.toContain("Untitled ask");
     expect(html).toContain(ASK_PEER_LINE);
     // The OPEN face is the composer with an empty thread; the closed face is

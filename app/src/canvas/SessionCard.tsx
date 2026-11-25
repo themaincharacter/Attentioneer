@@ -22,6 +22,7 @@ import { CardNamePill, type PillNameRules } from "./CardNamePill";
 import { IconMore, IconRun, IconStop, IconWire } from "./icons";
 import { VerbBubble, verbCounterScale } from "./VerbBubble";
 import type { WorkingChannel } from "./workingRef";
+import { epistemicState, frameFor } from "../reading/frames";
 import { SESSION_TASK_REFUSAL, type GroundAddResult } from "./useGround";
 import { PacketSurface } from "./PacketSurface";
 import {
@@ -1072,7 +1073,9 @@ export function SessionCard({
   return (
     <div
       ref={cardRef}
-      className={`session-card${open ? " expanded" : ""}`}
+      className={`session-card ${frameFor(
+        epistemicState({ absentWords: toolName === null }),
+      )}${open ? " expanded" : ""}`}
       style={
         {
           // STORY 16.25: the RECORD's point is what React renders; the hand's

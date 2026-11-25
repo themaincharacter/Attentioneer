@@ -189,8 +189,10 @@ describe("three kinds, one pill, each family's own rules", () => {
     // the one quiet line for a blank name and a family's untitled sentence.
     const pillName = (slug: string): string => {
       const card = html.slice(html.indexOf(`data-slug="${slug}"`));
-      const open =
-        card.indexOf('class="ground-name">') + 'class="ground-name">'.length;
+      // STORY 25-1: the absent name wears the draft voice's class too, so the
+      // name starts at the first ground-name class and its closing bracket.
+      const start = card.indexOf('class="ground-name');
+      const open = card.indexOf(">", start) + 1;
       return card.slice(open, card.indexOf("</span>", open));
     };
     expect(pillName("rain-gauge")).toBe("Rain gauge");
@@ -199,6 +201,8 @@ describe("three kinds, one pill, each family's own rules", () => {
     expect(pillName("asks-name")).toBe(UNTITLED_DISPLAY);
     expect(pillName("run-1")).toBe("Gauge run");
     expect(pillName("run-blank")).toBe(UNTITLED_DISPLAY);
+    // STORY 25-1: an absent name also wears the draft voice's hook class.
+    expect(html.split('ground-name ground-name-absent').length - 1).toBe(3);
     // ...and no card renders its name inside its body any more.
     expect(html).not.toContain("ask-card-name");
     expect(html).not.toContain("session-card-name");

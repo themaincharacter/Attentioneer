@@ -1,5 +1,9 @@
 import { useRef, useState, type CSSProperties } from "react";
-import { groundDisplayName, groundNameForWrite } from "../map/ground";
+import {
+  UNTITLED_DISPLAY,
+  groundDisplayName,
+  groundNameForWrite,
+} from "../map/ground";
 import type { GroundAddResult } from "./useGround";
 
 /**
@@ -259,7 +263,16 @@ export function CardNamePill({
       ) : (
         // The name keeps the card heading's own type (canvas.css), so moving
         // it out of the card changes where it sits, never what it reads like.
-        <span className="ground-name">{rules.displayName(name)}</span>
+        <span
+        className={
+          "ground-name" +
+          (rules.displayName(name) === UNTITLED_DISPLAY
+            ? " ground-name-absent"
+            : "")
+        }
+      >
+        {rules.displayName(name)}
+      </span>
       )}
     </div>
   );
