@@ -77,20 +77,23 @@ export type GroundIntent =
   | "video"
   | "session";
 
-/** The intent row's words, in order. PROVISIONAL. */
-const INTENTS: readonly { intent: GroundIntent; label: string }[] = [
-  // STORY 21.13 — THE ASK COMES FIRST: this map is built around the ask card,
-  // and a wire released on empty paper is already asking "connect this to
-  // something new". The label keeps the row's grammar ("a file", "a session").
-  { intent: "ask", label: "an ask" },
+/**
+ * STORY 25-19 (the person's redesign) — THE MENU IS TWO STEPS. It starts with
+ * two options — an ASK or a REFERENCE — and a reference opens its own second
+ * row: a PROJECT (the folder's own word, renamed), a WEB LINK (page and video
+ * consolidated), or a FILE. A SESSION is not in this menu at all: it only
+ * makes sense beside a project, so it lives on the wire's menu alone.
+ */
+const KINDS: readonly { kind: "ask" | "reference"; label: string }[] = [
+  { kind: "ask", label: "an ask" },
+  { kind: "reference", label: "a reference" },
+];
+
+/** The reference's second step. PROVISIONAL: the order. */
+const REFERENCE_KINDS: readonly { intent: GroundIntent; label: string }[] = [
+  { intent: "folder", label: "a project" },
+  { intent: "page", label: "a web link" },
   { intent: "file", label: "a file" },
-  { intent: "folder", label: "a folder" },
-  { intent: "page", label: "a page" },
-  { intent: "video", label: "a video" },
-  // STORY 18.3 — the SESSION CARD is created here too: the person is already
-  // at a point on the paper, and a run needs a place. It is not a reference and
-  // not an intent on a reference's source: the row it binds is the whole card.
-  { intent: "session", label: "a session" },
 ];
 
 interface GroundBubbleProps {
@@ -173,7 +176,21 @@ export function GroundBubble({
   // extractor. Nothing here looks at a file's bytes or guesses a host's kind.
   // STORY 17.10: the bubble can ARRIVE on a door the person already chose in
   // the double-click's bubble; its own intent row stays editable from there.
-  const [intent, setIntent] = useState<GroundIntent>(initialIntent);
+  // STORY 25-19 — THE TWO STEPS: the kind (ask / reference / session) and,
+  // for a reference, its own choice (project / web link / file). The menu
+  // starts with neither chosen.
+  const [intent, setIntent] = useState<GroundIntent | null>(
+    initialIntent === undefined || initialIntent === null ? null : initialIntent,
+  );
+  const [kind, setKind] = useState<"ask" | "reference" | "session" | null>(
+    initialIntent === undefined || initialIntent === null
+      ? null
+      : initialIntent === "ask"
+        ? "ask"
+        : initialIntent === "session"
+          ? "session"
+          : "reference",
+  );
   const [from, setFrom] = useState<string | null>(null);
   // A pasted address is kept VERBATIM: it is handed to the app exactly as
   // given, and the sidecar's own guard decides whether it can be taken.
@@ -381,6 +398,28 @@ export function GroundBubble({
     await commit(picked);
   }
 
+  /**
+   * STORY 25-19 — STEP ONE. "an ask" opens the ask's own form; "a reference"
+   * opens the second row and NOTHING is picked yet — the choice is the
+   * person's. A session never appears here (it is the wire's alone).
+   */
+  function chooseKind(next: "ask" | "reference") {
+    if (busy) return;
+    if (next === "ask") {
+      setKind("ask");
+      setFrom(null);
+      setIntent("ask");
+      setProblem(null);
+      nameRef.current?.focus();
+      return;
+    }
+    setKind("reference");
+    setFrom(null);
+    setIntent(null);
+    setProblem(null);
+    nameRef.current?.focus();
+  }
+
   /** The intent row never loses a draft: it only changes which door is shown. */
   function chooseIntent(next: GroundIntent) {
     if (busy) return;
@@ -403,14 +442,18 @@ export function GroundBubble({
   // STORY 21.13: an ask needs no source beyond its name — the card is empty by
   // design, and the name is the whole of what the person has to supply.
   const hasSource =
-    intent === "ask"
-      ? true
-      : intent === "session"
-        ? tool !== ""
-        : intent === "file" || intent === "folder"
-          ? from !== null
-          : url.trim() !== "";
-  const canAdd = !busy && name.trim() !== "" && hasSource;
+    intent === null
+      ? false
+      : intent === "ask"
+        ? true
+        : intent === "session"
+          ? tool !== ""
+          : intent === "file" || intent === "folder"
+            ? from !== null
+            : url.trim() !== "";
+  // STORY 25-19 (the person): THE NAME IS OPTIONAL — the gate is the source,
+  // never the title. A blank field is named from the world's own words below.
+  const canAdd = !busy && hasSource;
   const addressIntent = intent === "page" || intent === "video";
   // STORY 22.1 — THE ROWS THIS PICKER OFFERS ARE THE ROWS THIS MACHINE KNOWS:
   // the shipped data with the per-machine fact laid over it, so a row tested
@@ -441,52 +484,78 @@ export function GroundBubble({
           default, a session when that door is open (story 18.3), an ask when
           story 21.13's door is the one chosen. */}
       <div className="ground-bubble-title">
-        {intent === "ask"
-          ? "ask"
-          : intent === "session"
-            ? "session"
-            : "reference"}
+        {kind === null
+          ? "add a card"
+          : kind === "ask"
+            ? "ask"
+            : kind === "session"
+              ? "session"
+              : "reference"}
       </div>
+      {/* STORY 25-19 — STEP ONE: an ask or a reference (a session is the
+          wire's alone — it only makes sense beside a project). */}
       <div className="ground-bubble-intents" role="group" aria-label="what to add">
-        {INTENTS.map((option) => {
-          // A door this app was not handed is not offered: the bubble is also
-          // mounted by tests with fewer ways in.
-          const offered =
-            option.intent === "file"
-              ? true
-              : option.intent === "folder"
-                ? onAddFolder !== undefined
-                : option.intent === "page"
-                  ? onAddPage !== undefined
-                  : option.intent === "video"
-                    ? onAddVideo !== undefined
-                    : option.intent === "ask"
-                      ? onAddAsk !== undefined
-                      : onAddSession !== undefined;
+        {KINDS.map((option) => {
+          const offered = option.kind === "ask" ? onAddAsk !== undefined : true;
           if (!offered) return null;
+          const active =
+            option.kind === "ask" ? kind === "ask" : kind === "reference";
           return (
             <button
-              key={option.intent}
+              key={option.kind}
               type="button"
               className={
-                intent === option.intent
-                  ? "ground-bubble-intent active"
-                  : "ground-bubble-intent"
+                active ? "ground-bubble-intent active" : "ground-bubble-intent"
               }
-              aria-pressed={intent === option.intent}
+              aria-pressed={active}
               disabled={busy}
-              onClick={() => chooseIntent(option.intent)}
+              onClick={() => chooseKind(option.kind)}
             >
               {option.label}
             </button>
           );
         })}
       </div>
+      {/* STORY 25-19 — STEP TWO: the reference's own kinds. Nothing is picked
+          until the person picks it. */}
+      {kind === "reference" && (
+        <div
+          className="ground-bubble-intents"
+          role="group"
+          aria-label="what kind of reference"
+        >
+          {REFERENCE_KINDS.map((option) => {
+            const offered =
+              option.intent === "file"
+                ? true
+                : option.intent === "folder"
+                  ? onAddFolder !== undefined
+                  : onAddPage !== undefined;
+            if (!offered) return null;
+            return (
+              <button
+                key={option.intent}
+                type="button"
+                className={
+                  intent === option.intent
+                    ? "ground-bubble-intent active"
+                    : "ground-bubble-intent"
+                }
+                aria-pressed={intent === option.intent}
+                disabled={busy}
+                onClick={() => chooseIntent(option.intent)}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <input
         ref={nameRef}
         className="ground-bubble-name"
         value={name}
-        placeholder="name it…"
+        placeholder="a name — optional"
         aria-label={
           intent === "ask"
             ? "name the ask card"

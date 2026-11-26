@@ -4706,9 +4706,13 @@ function App() {
   const handlePlaneDoubleClick = useCallback(
     (point: Point) => {
       if (level === "ground") {
+        // STORY 25-19 (the person): the double-click and the wire open THE
+        // SAME MENU — the two-step bubble — so the door list is not the
+        // ground's front door any more (its site stays written for the
+        // flip-back, the sheet's own idiom).
         setMenuAt(null);
-        setGroundAt(null);
-        setGroundMenuAt(point);
+        setGroundMenuAt(null);
+        setGroundAt(point);
         return;
       }
       setGroundAt(null);

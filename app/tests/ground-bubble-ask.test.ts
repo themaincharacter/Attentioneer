@@ -157,15 +157,18 @@ function renderBubble(
  * ------------------------------------------------------------------ */
 
 describe("the intent row gains an ask door", () => {
-  test("the row paints \"an ask\" first, before the reference doors", () => {
+  test("the menu starts with two options and a session is never one", () => {
+    // STORY 25-19 (the person's redesign): the menu is TWO STEPS — an ask or
+    // a reference — and a reference opens its own second row. A session is
+    // not in this menu at all (it is the wire's alone).
     const html = renderBubble({ initialIntent: "ask" });
     expect(html).toContain(">an ask</button>");
+    expect(html).toContain(">a reference</button>");
+    expect(html).not.toContain(">a session</button>");
     const ask = html.indexOf(">an ask</button>");
-    const file = html.indexOf(">a file</button>");
-    const session = html.indexOf(">a session</button>");
+    const reference = html.indexOf(">a reference</button>");
     expect(ask).toBeGreaterThan(-1);
-    expect(ask).toBeLessThan(file);
-    expect(file).toBeLessThan(session);
+    expect(ask).toBeLessThan(reference);
     // The chosen door is the active one, and the title says what is being made.
     expect(html).toContain("ground-bubble-intent active");
     expect(html).toContain(">ask</div>");
@@ -176,19 +179,38 @@ describe("the intent row gains an ask door", () => {
     expect(html).not.toContain("choose a folder");
   });
 
+  test("a reference opens the second row: project, web link, file", () => {
+    const html = renderBubble({ initialIntent: "file" });
+    // The second row is the reference's own kinds, in the person's words.
+    const project = html.indexOf(">a project</button>");
+    const web = html.indexOf(">a web link</button>");
+    const file = html.indexOf(">a file</button>");
+    expect(project).toBeGreaterThan(-1);
+    expect(project).toBeLessThan(web);
+    expect(web).toBeLessThan(file);
+    // The web link is ONE option (page and video consolidated).
+    expect(html).not.toContain(">a page</button>");
+    expect(html).not.toContain(">a video</button>");
+  });
+
   test("a door the app did not hand the bubble is not offered", () => {
     const html = renderBubble({ onAddAsk: undefined });
     expect(html).not.toContain(">an ask</button>");
-    expect(BUBBLE).toContain('option.intent === "ask"');
+    expect(BUBBLE).toContain('option.kind === "ask"');
     expect(BUBBLE).toContain("onAddAsk !== undefined");
   });
 
   test("the source names the intent and the words, in the spec's order", () => {
     const type = between(BUBBLE, "export type GroundIntent =", "/**");
     expect(type).toContain('"ask"');
-    const row = between(BUBBLE, "const INTENTS", "];");
-    expect(row.indexOf('{ intent: "ask", label: "an ask" }')).toBeGreaterThan(-1);
-    expect(row.indexOf('intent: "ask"')).toBeLessThan(row.indexOf('intent: "file"'));
+    // The two-step rows: the kind row, then the reference's own kinds.
+    const kinds = between(BUBBLE, "const KINDS", "];");
+    expect(kinds.indexOf('{ kind: "ask", label: "an ask" }')).toBeGreaterThan(-1);
+    expect(kinds.indexOf('kind: "ask"')).toBeLessThan(kinds.indexOf('kind: "reference"'));
+    const row = between(BUBBLE, "const REFERENCE_KINDS", "];");
+    expect(row.indexOf('intent: "folder", label: "a project"')).toBeGreaterThan(-1);
+    expect(row.indexOf('intent: "folder"')).toBeLessThan(row.indexOf('intent: "page"'));
+    expect(row.indexOf('intent: "page", label: "a web link"')).toBeGreaterThan(-1);
     expect(renderedMapContent("ground")).toEqual([]);
   });
 });

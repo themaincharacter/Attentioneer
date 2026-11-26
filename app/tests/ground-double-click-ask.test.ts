@@ -93,11 +93,12 @@ describe("the ground double-click reuses the concept map's bubble", () => {
       "const handlePlaneDoubleClick = useCallback",
       "const closePlaneMenu = useCallback",
     );
-    expect(handler).toContain("setGroundMenuAt(point)");
     expect(handler).toContain('level === "ground"');
-    // The ground branch no longer opens the reference form directly: the
-    // bubble comes first, and a door opens the form.
-    expect(handler).not.toContain("setGroundAt(point)");
+    // STORY 25-19 (the person): the double-click and the wire open THE SAME
+    // MENU — the two-step bubble. The door list is not the ground's front door
+    // any more (its site stays written for the flip-back).
+    expect(handler).toContain("setGroundAt(point)");
+    expect(handler).not.toContain("setGroundMenuAt(point);");
     // The door list, in the spec's order.
     const ask = APP.indexOf('id: "ask"');
     const file = APP.indexOf('id: "file"');
@@ -115,7 +116,7 @@ describe("the ground double-click reuses the concept map's bubble", () => {
     expect(APP).toContain("level === \"ground\" && groundMenuAt !== null && (");
     // A reference door opens the existing form, already on that intent.
     expect(APP).toContain("initialIntent={groundIntent}");
-    expect(BUBBLE).toContain("useState<GroundIntent>(initialIntent)");
+    expect(BUBBLE).toContain("useState<GroundIntent | null>(");
   });
 
   test("the same component paints doors in order around the anchor dot", () => {
