@@ -2787,7 +2787,7 @@ function GroundCard({
   // token (open or not) and once inside the pin window (always open). The
   // parameter is the FACE's own openness; the state below is shared by both
   // copies because there is only one card.
-  const renderBody = (open: boolean) => (
+  const renderBody = (open: boolean, inWindow = false) => (
     <>
         {/* STORY 20.2 (PROVISIONAL) — THE EXPLORER: a quiet block on an
             EXPANDED project card, ABOVE the kept reading. It is live
@@ -2914,7 +2914,7 @@ function GroundCard({
             // it rests on, what it does not cover and the uncertainty ride ONE
             // disclosure on the expanded face (the ask card's shape). The raw
             // reply stays one verb away, as it always was.
-            <PagedText key={open ? "open" : "small"} anchor="card">
+            <PagedText key={open ? "open" : "small"} anchor="card" fill={inWindow}>
             <div className="ground-reading" ref={readingRef}>
               <div className="ground-distilled-claim">
                 <GroundReadingText text={distilledGlance.claim} open={open} />
@@ -2940,7 +2940,7 @@ function GroundCard({
             </div>
             </PagedText>
           ) : (
-            <PagedText key={open ? "open" : "small"} anchor="card">
+            <PagedText key={open ? "open" : "small"} anchor="card" fill={inWindow}>
               <div className="ground-reading" ref={readingRef}>
                 <GroundReadingText text={bodyText} open={open} />
               </div>
@@ -3057,7 +3057,7 @@ function GroundCard({
         className={`ground-body${open ? "" : " ground-body-collapsed"}`}
         ref={bodyRef}
       >
-        {renderBody(open)}
+        {renderBody(open, false)}
       </div>
       <div className="ground-footer">
         {provenance !== null && (
@@ -3290,7 +3290,7 @@ function GroundCard({
       {pinned &&
         createPortal(
           <PinWindow name={reference.name} onClose={() => onPin?.()}>
-            <div className="ground-body">{renderBody(true)}</div>
+            <div className="ground-body">{renderBody(true, true)}</div>
           </PinWindow>,
           document.body,
         )}

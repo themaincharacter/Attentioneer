@@ -43,6 +43,67 @@ export function PinWindow({
     window.addEventListener("mouseup", up);
   };
 
+  // STORY 25-12 — THE CORNER RESIZE (the person: "resize it by dragging out
+  // from the corners"): each corner writes the box in place (the drag idiom,
+  // no render), and the page inside re-counts itself (the fill rule). The
+  // minimum is one comfortable page (PROVISIONAL).
+  const onCornerDown =
+    (corner: "nw" | "ne" | "sw" | "se") => (event: React.MouseEvent) => {
+      const el = rootRef.current;
+      if (!el || event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const at = el.getBoundingClientRect();
+      const move = (ev: MouseEvent) => {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        let left = at.left;
+        let top = at.top;
+        let width = at.width;
+        let height = at.height;
+        if (corner === "se") {
+          width = at.width + dx;
+          height = at.height + dy;
+        }
+        if (corner === "sw") {
+          left = at.left + dx;
+          width = at.width - dx;
+          height = at.height + dy;
+        }
+        if (corner === "ne") {
+          top = at.top + dy;
+          width = at.width + dx;
+          height = at.height - dy;
+        }
+        if (corner === "nw") {
+          left = at.left + dx;
+          top = at.top + dy;
+          width = at.width - dx;
+          height = at.height - dy;
+        }
+        if (width < 320) {
+          if (left !== at.left) left = at.right - 320;
+          width = 320;
+        }
+        if (height < 240) {
+          if (top !== at.top) top = at.bottom - 240;
+          height = 240;
+        }
+        el.style.left = left + "px";
+        el.style.top = top + "px";
+        el.style.width = width + "px";
+        el.style.height = height + "px";
+      };
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    };
+
   const frame = (
     <div
       ref={rootRef}
@@ -65,6 +126,13 @@ export function PinWindow({
         </button>
       </div>
       <div className="pin-window-body">{children}</div>
+      {(["nw", "ne", "sw", "se"] as const).map((corner) => (
+        <div
+          key={corner}
+          className={"pin-corner pin-corner-" + corner}
+          onMouseDown={onCornerDown(corner)}
+        />
+      ))}
     </div>
   );
 

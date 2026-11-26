@@ -9851,6 +9851,13 @@ body.wiring .session-card-actions {
   min-height: 0;
 }
 
+/* STORY 25-12 (the person's ruling): a FILL page takes its BOX's height —
+   a taller window shows more lines per page (the four-line rule stays the
+   token's). */
+.paged-box .paged-flow.paged-fill {
+  height: 100%;
+}
+
 .paged-box .paged-flow {
   height: calc(var(--page-lines, 4) * var(--prose-size) * var(--prose-leading));
   column-width: 100%;
@@ -10028,4 +10035,51 @@ body.wiring .session-card-actions {
 
 .pin-window-body .ground-body {
   overflow-y: auto;
+}
+
+
+/* STORY 25-12 — THE WINDOW'S BODY IS A COLUMN the fill page grows in: the
+   reading takes the space the window's height leaves it, so a taller window
+   shows more lines per page (the person's ruling). */
+.pin-window-body .ground-body {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.pin-window-body .paged-box {
+  flex: 1 1 auto;
+  min-height: 96px;
+}
+
+/* THE CORNERS (the person: "resize it by dragging out from the corners"). */
+.pin-corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  z-index: 2;
+}
+
+.pin-corner-nw {
+  left: 0;
+  top: 0;
+  cursor: nwse-resize;
+}
+
+.pin-corner-ne {
+  right: 0;
+  top: 0;
+  cursor: nesw-resize;
+}
+
+.pin-corner-sw {
+  left: 0;
+  bottom: 0;
+  cursor: nesw-resize;
+}
+
+.pin-corner-se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
 }

@@ -16,10 +16,18 @@ export function PagedText({
   children,
   linesPerPage = 4,
   anchor = "inline",
+  fill = false,
 }: {
   children: ReactNode;
   /** The page size (the person's ruling: 4; the setting will carry 3/4/5). */
   linesPerPage?: number;
+  /**
+   * STORY 25-12 (the person's ruling on the window's resize): a FILL page
+   * takes its box's height — "the big point of a resize would be to get more
+   * lines in view" — so a taller window shows more lines per page and the
+   * four-line rule stays the token's.
+   */
+  fill?: boolean;
   /**
    * STORY 25-4: where the cue lives. "inline" is the flow's own foot (the
    * pane's case); "card" anchors it to the nearest positioned ancestor — the
@@ -33,7 +41,7 @@ export function PagedText({
   const [pages, setPages] = useState(1);
   const [page, setPage] = useState(0);
 
-  useEffect(() => {
+  const measurePages = () => {
     const flow = flowRef.current;
     const measure = measureRef.current;
     if (flow === null || measure === null) return;
@@ -44,12 +52,23 @@ export function PagedText({
     const total = Math.max(1, Math.ceil(measure.scrollHeight / pageHeight));
     setPages(total);
     setPage((at) => Math.min(at, total - 1));
-  }, [children]);
+  };
+  useEffect(() => {
+    measurePages();
+    // STORY 25-12 (the person's ruling on the window's resize): a FILL page
+    // re-counts when its box changes — the corner drag grows the page in
+    // view. A tiny guard on the unmount.
+    const flow = flowRef.current;
+    if (flow === null || typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(() => measurePages());
+    watch.observe(flow);
+    return () => watch.disconnect();
+  }, [children, fill]);
 
   return (
     <div className="paged-box">
       <div
-        className="paged-flow"
+        className={fill ? "paged-flow paged-fill" : "paged-flow"}
         ref={flowRef}
         style={{
           ["--page-lines" as string]: linesPerPage,

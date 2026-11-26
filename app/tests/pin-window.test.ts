@@ -54,6 +54,38 @@ describe("the pin window (story 25-11)", () => {
     expect(LAYER).toContain("togglePin");
   });
 
+  test("the corners resize the box and the page grows with it", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        PinWindow,
+        { name: "Rain gauge", onClose: () => {} },
+        createElement("div", { className: "ground-body" }, "the face"),
+      ),
+    );
+    // All four corners, each its own diagonal.
+    for (const corner of ["nw", "ne", "sw", "se"]) {
+      expect(html).toContain('class="pin-corner pin-corner-' + corner + '"');
+    }
+    // THE PERSON'S RULING: the page fills the window's box — "the big point
+    // of a resize would be to get more lines in view" — and re-counts when
+    // the box changes.
+    const PW = readFileSync(
+      join(import.meta.dir, "../src/canvas/PinWindow.tsx"),
+      "utf8",
+    );
+    expect(PW).toContain("onCornerDown");
+    const PAGED = readFileSync(
+      join(import.meta.dir, "../src/reading/PagedText.tsx"),
+      "utf8",
+    );
+    expect(PAGED).toContain("fill?: boolean");
+    expect(PAGED).toContain("ResizeObserver");
+    // Only the window's copy fills; the token keeps the four-line rule.
+    expect(LAYER).toContain("renderBody(open, false)");
+    expect(LAYER).toContain("renderBody(true, true)");
+    expect(LAYER).toContain("fill={inWindow}");
+  });
+
   test("the window moves by its header and the body stays text", () => {
     const PW = readFileSync(
       join(import.meta.dir, "../src/canvas/PinWindow.tsx"),
