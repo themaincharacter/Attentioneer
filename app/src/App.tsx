@@ -164,12 +164,7 @@ import {
   type CommandThread,
   type CommandView,
 } from "./canvas/CommandCard";
-import {
-  ReadingPane,
-  AskDockBody,
-  type DockedCard,
-} from "./canvas/ReadingPane";
-import { askThreadOf } from "./canvas/useGround";
+
 import {
   applyCommandScript,
   createAttentioneerHost,
@@ -859,9 +854,7 @@ function App() {
   // last landed on (the map's brief marker). Neither is ever a record; the
   // search reads names and notes the load already carries.
   const [findOpen, setFindOpen] = useState(false);
-  // STORY 25-8 (ADR-0046 ruling 2) — the docked card's text in the reading
-  // pane. View state, never a record: the click docks, the close undocks.
-  const [docked, setDocked] = useState<DockedCard | null>(null);
+
   const [findMark, setFindMark] = useState<FindMark | null>(null);
   const narrate = useCallback((next: GestureNarration) => {
     setGesture(next);
@@ -5671,10 +5664,16 @@ function App() {
             /* STORY 16.33 — the card the find pill landed on, marked briefly.
                View state only; App owns the marker's short life. */
             found={findMark}
-            /* STORY 25-8 (ADR-0046 ruling 2): the click docks — the card's
-               full text hands itself to the reading pane. */
-            onDock={setDocked}
-            dockedOn={docked === null ? null : docked.slug}
+            /* STORY 25-10 (the person's ruling): on expansion, pan the screen
+               to the card — the eased camera seat at the viewport's middle. */
+            onCenter={(at) =>
+              intents.centerOn(
+                at.x,
+                at.y,
+                window.innerWidth / 2,
+                window.innerHeight / 2,
+              )
+            }
           />
         )}
 
@@ -6607,34 +6606,7 @@ function App() {
           default: the flag starts false and only the person's press opens it.
           Its own body is the one scroll region; the map never scrolls under it,
           and the wheel over the card stays on the card. */}
-      {/* STORY 25-8 — THE READING PANE (the person's ruling #2: the click
-            docks; the expanded face is replaced). Fixed at the window's right,
-            outside the world layer. */}
-        {level === "ground" && docked !== null && (
-          <ReadingPane
-            docked={docked}
-            note={ground.notes[docked.slug] ?? ""}
-            onSetNote={ground.setNote}
-            onClose={() => setDocked(null)}
-          >
-            {docked.kind === "ask" &&
-              (() => {
-                const one = ground.asks.find((ask) => ask.on === docked.slug);
-                if (one === undefined) return null;
-                return (
-                  <AskDockBody
-                    ask={one}
-                    turns={askThreadOf(one, ground.asks, ground.askTurns).turns}
-                    draft={askDrafts.find((entry) => entry.slug === docked.slug)}
-                    hasProvider={askProvider}
-                    onOpenSettings={() => openSettings("providers")}
-                    onAskTurn={ground.askTurn}
-                    onStopAskTurn={ground.askStop}
-                  />
-                );
-              })()}
-          </ReadingPane>
-        )}
+
 
         <CommandCard
         level={level}

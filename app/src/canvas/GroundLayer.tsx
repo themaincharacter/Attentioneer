@@ -359,6 +359,16 @@ export const DELETE_IS_IMMEDIATE = true;
  * truth: the same slug staying open keeps its look (a re-render must not
  * discard it), while closing or opening another card dismisses the old one.
  */
+/**
+ * STORY 25-10 (the person's ruling) — WHERE AN EXPANDED CARD'S CENTER SITS.
+ * The pan-to-card aims one camera intent here, so the grown card takes the
+ * stage instead of growing off the screen's edge. PURE (the three families
+ * share one expanded box — story 24-7). PROVISIONAL: the box.
+ */
+export function expandedCenter(x: number, y: number): Point {
+  return { x: x + 260, y: y + 210 };
+}
+
 export function pullToDismiss(
   previous: string | null,
   next: string | null,
@@ -916,18 +926,11 @@ interface GroundLayerProps {
    */
   found?: FindMark | null;
   /**
-   * STORY 25-8 (ADR-0046 ruling 2): expand-on-click is REPLACED by
-   * dock-on-click — a body press hands the card's full text to the reading
-   * pane. Optional so a render test needs no pane.
+   * STORY 25-10 (the person's ruling): on expansion, pan the screen to the
+   * card. The layer aims the camera at the card's expanded middle and writes
+   * nothing else.
    */
-  onDock?: (docked: {
-    kind: "reference" | "ask" | "session";
-    slug: string;
-    name: string;
-    text: string | null;
-  }) => void;
-  /** The slug whose text is docked right now (its card lights the marker). */
-  dockedOn?: string | null;
+  onCenter?: (at: Point) => void;
 }
 
 export function GroundLayer({
@@ -1001,8 +1004,7 @@ export function GroundLayer({
   zoom = 1,
   drag,
   found = null,
-  onDock,
-  dockedOn = null,
+  onCenter,
 }: GroundLayerProps) {
   const readingsBySlug = new Map(readings.map((reading) => [reading.on, reading]));
   const mediaBySlug = new Map(media.map((entry) => [entry.on, entry]));
@@ -1388,12 +1390,6 @@ export function GroundLayer({
           note={notes[reference.on]}
           pulled={pulled[reference.on]}
           state={states[reference.on] ?? (readingsBySlug.has(reference.on) ? "current" : "unread")}
-          onDock={
-            onDock &&
-            ((d) =>
-              onDock({ kind: "reference", slug: d.slug, name: d.name, text: d.text }))
-          }
-          dockedOn={dockedOn}
           open={openOn === reference.on}
           // STORY 17.1: one face at a time — opening a reference closes the
           // ask card's editor, and opening an ask closes the reference's.
@@ -1401,6 +1397,9 @@ export function GroundLayer({
             setOpenAskOn(null);
             setOpenSessionOn(null);
             setOpenOn(reference.on);
+            // STORY 25-10: expansion takes the stage — the camera pans to the
+            // grown card.
+            onCenter?.(expandedCenter(reference.x, reference.y));
           }}
           onOpenCard={(slug) => {
             setOpenAskOn(null);
@@ -1485,6 +1484,7 @@ export function GroundLayer({
               setOpenOn(null);
               setOpenSessionOn(null);
               setOpenAskOn(ask.on);
+            onCenter?.(expandedCenter(ask.x, ask.y));
             }}
             onClose={() => setOpenAskOn(null)}
             // STORY 24-6 (ADR-0043) — THE ARTIFACT LANDS WITHOUT TAKING THE
@@ -1516,12 +1516,6 @@ export function GroundLayer({
             /* STORY 21.7 — a question the command card's act left waiting. It
                reaches the composer as a DRAFT: no record, no turn, no send. */
             draft={askDrafts.find((entry) => entry.slug === ask.on)}
-          onDock={
-            onDock &&
-            ((d) =>
-              onDock({ kind: "ask", slug: d.slug, name: d.name, text: d.text }))
-          }
-          dockedOn={dockedOn}
             onForkTurn={
               onForkAsk === undefined
                 ? undefined
@@ -1670,6 +1664,7 @@ export function GroundLayer({
               setOpenOn(null);
               setOpenAskOn(null);
               setOpenSessionOn(session.on);
+            onCenter?.(expandedCenter(session.x, session.y));
             }}
             onClose={() => setOpenSessionOn(null)}
             onRun={
@@ -1936,8 +1931,6 @@ function GroundCard({
   open,
   onOpen,
   onOpenCard,
-  onDock,
-  dockedOn = null,
   onClose,
   cardNames,
   wordSlugs,
@@ -2052,14 +2045,6 @@ function GroundCard({
   /** STORY 17: the stated fold threshold, already bounded (preview + note). */
   previewLines: number;
   noteLines: number;
-  /** STORY 25-8: a body click docks the card's text in the reading pane. */
-  onDock?: (docked: {
-    slug: string;
-    name: string;
-    text: string | null;
-  }) => void;
-  /** The slug whose text is docked right now (its card lights the marker). */
-  dockedOn?: string | null;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -2254,17 +2239,7 @@ function GroundCard({
       // STORY 16.21 — a press on the NAME is the handle, so it opens nothing;
       // a press on the body still opens the card (a drag never does).
       onClick: (onPill) => {
-        // STORY 25-8 (ADR-0046 ruling 2) — expand-on-click is REPLACED by
-        // dock-on-click: a body press hands the card's full text to the
-        // reading pane, and the token stays a token. The fold's "more" still
-        // opens the inline face (the editors live there until the pane takes
-        // them, story 25-9).
-        if (onPill) return;
-        if (onDock) {
-          onDock({ slug: reference.on, name: reference.name, text: shownText });
-          return;
-        }
-        onOpen();
+        if (!onPill) onOpen();
       },
     });
   });
@@ -2852,11 +2827,7 @@ function GroundCard({
       {kindLine !== null && (
         <div className="ground-kind">{kindLine}</div>
       )}
-      {/* STORY 25-8: while this card's text is docked in the reading pane, the
-          card says so in one quiet word. */}
-      {dockedOn === reference.on && (
-        <span className="ground-reading-mark">reading</span>
-      )}
+
       <div
         className={`ground-body${open ? "" : " ground-body-collapsed"}`}
         ref={bodyRef}

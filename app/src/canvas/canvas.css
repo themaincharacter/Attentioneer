@@ -153,6 +153,19 @@ body {
   cursor: grabbing;
 }
 
+/* STORY 25-10 — THE PROGRAMMATIC GLIDE: while the camera takes a new seat
+   (the pan-to-card), the inner layer eases there. The wheel's per-frame paints
+   never wear this class, so zooming stays exactly as it was. */
+.plane-inner.camera-gliding {
+  transition: transform 220ms var(--ease-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plane-inner.camera-gliding {
+    transition: none;
+  }
+}
+
 .plane-inner {
   position: absolute;
   left: 0;
@@ -9945,122 +9958,4 @@ body.wiring .session-card-actions {
 }
 
 
-/* STORY 25-8 (ADR-0046 ruling 2) — THE READING PANE: a fixed dock at the
-   window's right. The card's full text lands here when the body is clicked;
-   the token stays a token on the map. PROVISIONAL: the size and the place. */
-.reading-pane {
-  position: fixed;
-  right: 16px;
-  top: 56px;
-  bottom: 88px;
-  width: 380px;
-  z-index: 38;
-  background: var(--surface);
-  border: 1px solid rgb(var(--ink-rgb) / 0.16);
-  border-radius: 10px;
-  box-shadow: 0 6px 20px rgb(var(--ink-rgb) / 0.12);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  cursor: default;
-}
 
-.reading-pane-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  border-bottom: 1px solid var(--rule);
-  padding-bottom: 8px;
-}
-
-.reading-pane-name {
-  font-size: 19px;
-}
-
-.reading-pane-close {
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  font-size: 16px;
-  line-height: 1;
-}
-
-.reading-pane-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.reading-pane-reading {
-  font-family: var(--voice-hand);
-  font-size: var(--prose-size);
-  line-height: var(--prose-leading);
-  color: var(--ink-quote);
-  user-select: text;
-  cursor: text;
-}
-
-.reading-pane-foot {
-  border-top: 1px solid var(--rule);
-  padding-top: 8px;
-}
-
-.reading-pane-note {
-  width: 100%;
-  min-height: 54px;
-  resize: vertical;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  padding: 6px 8px;
-  font-family: var(--voice-hand);
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--ink);
-  background: var(--surface-sunk);
-}
-
-/* STORY 25-9 — THE ASK'S FACE IN THE PANE: the thread pages like the token
-   and the composer sits at the foot. */
-.reading-pane-thread {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.reading-pane-send {
-  margin-top: 6px;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--surface);
-  padding: 4px 12px;
-  font-family: var(--voice-quiet);
-  font-size: 12px;
-  color: var(--ink);
-}
-
-.reading-pane-link {
-  border: none;
-  background: none;
-  padding: 0 4px;
-  font-family: var(--voice-quiet);
-  font-size: 11px;
-  color: var(--ink-soft);
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-/* THE MARKER: while a card's text is docked, the card says so in one quiet
-   word — never a count, never a colour. */
-.ground-reading-mark {
-  font-family: var(--voice-quiet);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: var(--ink-soft);
-  background: var(--surface-sunk);
-  border: 1px solid var(--rule);
-  border-radius: 999px;
-  padding: 2px 8px;
-}

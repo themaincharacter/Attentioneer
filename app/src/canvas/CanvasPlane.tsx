@@ -778,6 +778,19 @@ export function CanvasPlane({
       current.y !== camera.y ||
       current.k !== camera.zoom
     ) {
+      // STORY 25-10 — A PROGRAMMATIC MOVE GLIDES (the pan-to-card is the
+      // caller): the inner layer wears the glide class while the camera takes
+      // its new seat, so the map EASES there and the grid rides along. A real
+      // gesture's settle never reaches here (its transform already matches),
+      // the wheel's own per-frame paints wear no class (no lag), and reduced
+      // motion takes the instant seat.
+      const inner = innerRef.current;
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)")
+        .matches;
+      if (inner !== null && !reduced) {
+        inner.classList.add("camera-gliding");
+        window.setTimeout(() => inner.classList.remove("camera-gliding"), 240);
+      }
       select(el).call(
         behavior.transform,
         zoomIdentity.translate(camera.x, camera.y).scale(camera.zoom),
