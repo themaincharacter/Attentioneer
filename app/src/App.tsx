@@ -88,6 +88,12 @@ import {
   type CardPreference,
 } from "./lib/cardPreference";
 import {
+  looksBySlug,
+  parseLooks,
+  saveLook,
+  type CardLook,
+} from "./map/looks";
+import {
   DEFAULT_READING_PREFERENCE,
   type ReadingPreference,
 } from "./lib/readingPreference";
@@ -1149,6 +1155,13 @@ function App() {
   // STORY 25-14 — the cards' stated knobs (Settings is the only writer).
   const [cardPreference, setCardPreference] = useState<CardPreference>(
     DEFAULT_CARD_PREFERENCE,
+  );
+  // STORY 25-17 — THE CARDS' OWN LOOKS. The RECORD is the map's own
+  // looks.jsonl; this is the read side (view state), and the gear's picker is
+  // the one writer. PROVISIONAL: the state's home beside the preference (the
+  // look family may ride the ground hook with the media later).
+  const [cardLooks, setCardLooks] = useState<Readonly<Record<string, CardLook>>>(
+    {},
   );
   const [readingPreference, setReadingPreference] =
     useState<ReadingPreference>(DEFAULT_READING_PREFERENCE);
@@ -2827,6 +2840,29 @@ function App() {
   useEffect(() => {
     refreshCardPreference();
   }, [refreshCardPreference]);
+
+  // The looks load with the workspace; a missing file is the honest default
+  // (every card wears its state's own frame).
+  useEffect(() => {
+    if (workspace === null) return;
+    let alive = true;
+    void readTextFile(`${workspace.path}/map/looks.jsonl`)
+      .then((text) => {
+        if (!alive) return;
+        setCardLooks(looksBySlug(parseLooks(text ?? "").looks));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [workspace === null ? "" : workspace.path]);
+
+  /** The gear's write: one card's look line, then the read side catches up. */
+  const onSetLook = useCallback((look: CardLook) => {
+    if (workspace === null) return;
+    setCardLooks((by) => ({ ...by, [look.on]: look }));
+    void saveLook(workspace.path, look).catch(() => {});
+  }, [workspace === null ? "" : workspace.path]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -5693,6 +5729,8 @@ function App() {
             onNarrate={narrate}
             interactionMode={gestureMode}
             pageLines={cardPreference.pageLines}
+            looks={cardLooks}
+            onSetLook={onSetLook}
             previewLines={readingPreference.previewLines}
             noteLines={readingPreference.noteLines}
             zoom={camera.zoom}

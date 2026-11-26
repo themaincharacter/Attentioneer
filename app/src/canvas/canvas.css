@@ -10154,3 +10154,80 @@ body.wiring .session-card-actions {
 .session-card-body {
   padding: 4px 6px;
 }
+
+
+/* STORY 25-17 — THE LOOK PICKER (the gear's panel): the frame choices and the
+   tint swatches, in the card's own quiet language. */
+.look-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--ink-rule);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.94);
+}
+
+.look-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.look-label {
+  font-family: var(--voice-quiet);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  min-width: 52px;
+}
+
+.look-choice {
+  border: 1px solid var(--ink-rule);
+  border-radius: 6px;
+  background: transparent;
+  padding: 2px 8px;
+  font-family: var(--voice-quiet);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.look-choice-on {
+  color: var(--ink);
+  border-color: var(--ink-kept);
+}
+
+.look-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid var(--ink-rule);
+  background: transparent;
+  padding: 0;
+}
+
+.look-swatch-on {
+  outline: 2px solid var(--ink-kept);
+  outline-offset: 1px;
+}
+
+.look-free {
+  width: 30px;
+  height: 22px;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.look-done {
+  align-self: flex-start;
+  border: 1px solid var(--ink-rule);
+  border-radius: 6px;
+  background: transparent;
+  padding: 2px 10px;
+  font-family: var(--voice-quiet);
+  font-size: 11px;
+  color: var(--ink-soft);
+}

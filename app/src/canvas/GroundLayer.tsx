@@ -46,11 +46,14 @@ import { askCardOf } from "../turn/context";
 import { parseDistilledCardText } from "../turn/curator";
 import type { WorkingChannel } from "./workingRef";
 import { epistemicState, frameFor } from "../reading/frames";
+import type { CardLook } from "../map/looks";
+import { CardLookPicker } from "./CardLookPicker";
 import { PagedText } from "../reading/PagedText";
 import {
   IconAsk,
   IconDone,
   IconFolder,
+  IconGear,
   IconNote,
   IconPin,
   IconReadMore,
@@ -936,6 +939,9 @@ interface GroundLayerProps {
   onCenter?: (at: Point) => void;
   /** STORY 25-14: a token's stated page size (Settings states it). */
   pageLines?: number;
+  /** STORY 25-17: the cards' own looks (the gear's picker writes them). */
+  looks?: Readonly<Record<string, CardLook>>;
+  onSetLook?: (look: CardLook) => void;
 }
 
 export function GroundLayer({
@@ -1011,6 +1017,8 @@ export function GroundLayer({
   found = null,
   onCenter,
   pageLines = 4,
+  looks = {},
+  onSetLook,
 }: GroundLayerProps) {
   const readingsBySlug = new Map(readings.map((reading) => [reading.on, reading]));
   const mediaBySlug = new Map(media.map((entry) => [entry.on, entry]));
@@ -1405,6 +1413,8 @@ export function GroundLayer({
           state={states[reference.on] ?? (readingsBySlug.has(reference.on) ? "current" : "unread")}
           pinned={pinnedOn.includes(reference.on)}
           onPin={() => togglePin(reference.on)}
+          look={looks[reference.on]}
+          onSetLook={onSetLook}
           open={openOn === reference.on}
           // STORY 17.1: one face at a time — opening a reference closes the
           // ask card's editor, and opening an ask closes the reference's.
@@ -1953,6 +1963,8 @@ function GroundCard({
   onOpenCard,
   pinned = false,
   onPin,
+  look,
+  onSetLook,
   onClose,
   cardNames,
   wordSlugs,
@@ -2073,6 +2085,9 @@ function GroundCard({
   /** STORY 25-11 (ADR-0047): the pin keeps the card's face open in a window. */
   pinned?: boolean;
   onPin?: () => void;
+  /** STORY 25-17: the card's own look (the gear's picker writes it). */
+  look?: CardLook;
+  onSetLook?: (look: CardLook) => void;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -2088,6 +2103,8 @@ function GroundCard({
   const liveRef = useRef<Point | null>(null);
   const droppedRef = useRef<Point | null>(null);
   const [busy, setBusy] = useState(false);
+  // STORY 25-17 — the gear's picker (view state; the write is the seam's).
+  const [lookOpen, setLookOpen] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // STORY 20.2 (PROVISIONAL) — THE EXPLORER IS VIEW STATE, like the picker and
   // the panel below it: where the person walked inside the project folder and
@@ -3002,12 +3019,20 @@ function GroundCard({
     </>
   );
 
+  // STORY 25-17 — THE WORN FRAME: the person's choice overrides the state's
+  // edge; "plain" wears no frame at all and "default" keeps the state's own.
+  const worn = look?.frame ?? "default";
+  const frameClass =
+    worn === "default"
+      ? frameFor(epistemicState({ absentWords: bodyText === null }))
+      : worn === "plain"
+        ? ""
+        : `frame-${worn}`;
+
   return (
     <div
       ref={cardRef}
-      className={`ground-reference ${frameFor(
-        epistemicState({ absentWords: bodyText === null }),
-      )}${open ? " expanded" : ""}${pinned ? " pinned" : ""}`}
+      className={`ground-reference ${frameClass}${open ? " expanded" : ""}${pinned ? " pinned" : ""}`}
       tabIndex={-1}
       style={
         {
@@ -3020,6 +3045,9 @@ function GroundCard({
           "--note-lines": noteLines,
           // STORY 25-5: the counter-scale is the plane's shared var now
           // (set per zoom frame); the keys inherit it like the pill does.
+          // STORY 25-17: the card's own tint — the edge takes it inline, so no
+          // frame class can outrank the person's colour.
+          borderColor: look?.tint,
         } as CSSProperties
       }
       data-slug={reference.on}
@@ -3095,6 +3123,14 @@ function GroundCard({
           field is PRE-FILLED with the proposed name and is the person's to
           edit; the confirm writes the ask's one line, and a blank name refuses
           with the same one sentence the bubble uses. Esc or cancel forgets it. */}
+      {/* STORY 25-17 — THE LOOK PICKER: the gear's own panel, in the card. */}
+      {lookOpen && look !== undefined && onSetLook !== undefined && (
+        <CardLookPicker
+          look={look}
+          onSet={(next) => onSetLook(next)}
+          onClose={() => setLookOpen(false)}
+        />
+      )}
       {askNaming !== null && (
         <div
           className="ground-selection ground-ask-naming"
@@ -3252,6 +3288,17 @@ function GroundCard({
             <div className="ground-quiet">
               this is drawn from its own file; there is nothing to refresh.
             </div>
+          )}
+          {/* STORY 25-17 — THE GEAR: the card's own look (the frame and the
+              colour), written to the card's look line. */}
+          {onSetLook !== undefined && (
+            <VerbBubble
+              className="ground-gear"
+              label="this card's look"
+              icon={<IconGear />}
+              disabled={busy}
+              onClick={() => setLookOpen((open) => !open)}
+            />
           )}
           {/* STORY 25-11 (ADR-0047) — THE PIN: the card's face kept open on
               the glass. The verb toggles; the window's close and this verb's
