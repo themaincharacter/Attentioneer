@@ -56,7 +56,7 @@ import {
   IconReadMore,
   IconRefresh,
   IconRemove,
-  IconWindow,
+  IconPoint,
   IconWire,
 } from "./icons";
 import { VerbBubble } from "./VerbBubble";
@@ -3221,7 +3221,7 @@ function GroundCard({
               label={
                 reading === null ? "point at a file…" : "point at another file…"
               }
-              icon={<IconPin />}
+              icon={<IconPoint />}
               disabled={busy}
               onClick={() => void repoint()}
             />
@@ -3249,7 +3249,7 @@ function GroundCard({
             <VerbBubble
               className="ground-pin"
               label={pinned ? "unpin" : "pin"}
-              icon={<IconWindow />}
+              icon={<IconPin />}
               disabled={busy}
               onClick={() => onPin()}
             />

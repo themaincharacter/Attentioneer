@@ -82,12 +82,12 @@ export function IconPin() {
   );
 }
 
-/** Keep a card's window open (the pin): a small window mark (its own glyph). */
-export function IconWindow() {
+/** Point at a file (repoint): a page with its folded corner. */
+export function IconPoint() {
   return (
     <Glyph>
-      <rect x="3.5" y="5" width="13" height="10" rx="1.5" />
-      <path d="M3.5 8.5h13" />
+      <path d="M6 3.5h5.5L15 7v9.5H6z" />
+      <path d="M11.5 3.5V7H15" />
     </Glyph>
   );
 }
