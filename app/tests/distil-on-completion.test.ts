@@ -472,8 +472,11 @@ describe("a distil that made no card says so once and offers the copy", () => {
 
   test("the one verb presses the hook's curator-first chain", () => {
     const card = source("canvas/SessionCard.tsx");
-    const start = card.indexOf("keepNotice !== null");
+    // STORY 25-15: the keep verb is its own key in the strip (session-card-make),
+    // still gated on a completed run — one press, the hook's one chain.
+    const start = card.indexOf("one verb, one press (a PARTIAL");
     const fallback = card.slice(start, card.indexOf("STORY 18.5", start));
+    expect(fallback).toContain('className="session-card-make"');
     expect(fallback).toContain("SESSION_RESULT_KEEP_VERB");
     expect(fallback).toContain("onClick={() => void keepResult()}");
     expect(fallback).toContain('lastEnded.ending === "completed"');

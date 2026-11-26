@@ -21,7 +21,17 @@ import {
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
 import { createPortal } from "react-dom";
 import { PinWindow } from "./PinWindow";
-import { IconMore, IconRun, IconStop, IconWire } from "./icons";
+import {
+  IconCollapse,
+  IconKey,
+  IconKeep,
+  IconPin,
+  IconRemove,
+  IconRun,
+  IconStop,
+  IconTest,
+  IconWire,
+} from "./icons";
 import { VerbBubble } from "./VerbBubble";
 import type { WorkingChannel } from "./workingRef";
 import { epistemicState, frameFor } from "../reading/frames";
@@ -1120,6 +1130,75 @@ export function SessionCard({
     </>
   );
 
+  /**
+   * STORY 25-15 (the person's cleanup) — THE STRIP'S KEYS. The overflow's
+   * "more" is gone: every option is its own icon key on the card's left edge,
+   * like the reference card's — and the pin is one of them (the pushpin).
+   */
+  function stripVerbs() {
+    return (
+      <>
+        {onPin !== undefined && (
+          <VerbBubble
+            className="ground-pin"
+            label={pinned ? "unpin" : "pin"}
+            icon={<IconPin />}
+            disabled={busy}
+            onClick={() => onPin()}
+          />
+        )}
+        {/* STORY 22.1 — the row's one verb. NOT gated on the card's live run:
+            a press then answers the existing busy sentence. */}
+        {toolName !== null && onTestRow !== undefined && (
+          <VerbBubble
+            className="session-card-test"
+            label="test"
+            icon={<IconTest />}
+            disabled={busy}
+            onClick={() => void testRow()}
+          />
+        )}
+        {/* STORY 22.1b — the sign-in verb, disabled while the child is alive. */}
+        {signIn !== null && (
+          <VerbBubble
+            className="session-card-sign-in-verb"
+            label={SETUP_VERBS.signIn}
+            icon={<IconKey />}
+            disabled={busy || signIn.running}
+            onClick={() => signIn.start?.()}
+          />
+        )}
+        {/* STORY 22.6 — one verb, one press (a PARTIAL offers no verb). */}
+        {lastEnded !== null && lastEnded.ending === "completed" && (
+          <VerbBubble
+            className="session-card-make"
+            label={SESSION_RESULT_KEEP_VERB}
+            icon={<IconKeep />}
+            disabled={busy || onKeepResult === undefined}
+            onClick={() => void keepResult()}
+          />
+        )}
+        {/* STORY 18.5 — the card's remove: immediate, reversible through the
+            one toast. A live run is never cut by it. */}
+        {onRemove !== undefined && (
+          <VerbBubble
+            className="ground-remove"
+            label="remove"
+            icon={<IconRemove />}
+            disabled={busy || running}
+            onClick={() => void removeCard()}
+          />
+        )}
+        <VerbBubble
+          className="session-card-close"
+          label="close"
+          icon={<IconCollapse />}
+          onClick={onClose}
+        />
+      </>
+    );
+  }
+
   return (
     <div
       ref={cardRef}
@@ -1601,71 +1680,7 @@ export function SessionCard({
                 onClick={() => void startRun()}
               />
             )}
-            <details className="session-card-overflow">
-              <summary className="session-card-overflow-verb verb-key">
-                <IconMore />
-                <span className="verb-tip">more</span>
-              </summary>
-              <div className="session-card-overflow-menu">
-                {/* STORY 22.1 — the row's one verb. NOT gated on the card's
-                    live run: a press then answers the existing busy sentence,
-                    and the test's own ending never touches that run. */}
-                {toolName !== null && onTestRow !== undefined && (
-                  <button
-                    type="button"
-                    className="session-card-test"
-                    disabled={busy}
-                    onClick={() => void testRow()}
-                  >
-                    test
-                  </button>
-                )}
-                {/* STORY 22.1b — the sign-in verb, disabled while the child is
-                    alive, so one card never hosts two sign-ins. */}
-                {signIn !== null && (
-                  <button
-                    type="button"
-                    className="session-card-sign-in-verb"
-                    disabled={busy || signIn.running}
-                    onClick={() => signIn.start?.()}
-                  >
-                    {SETUP_VERBS.signIn}
-                  </button>
-                )}
-                {/* STORY 22.6 — one verb, one press: the layer tries the
-                    curator first and falls back to 18.4's rule copy. A PARTIAL
-                    offers no verb: a partial is never a result. */}
-                {lastEnded !== null && lastEnded.ending === "completed" && (
-                  <button
-                    type="button"
-                    className="session-card-make"
-                    disabled={busy || onKeepResult === undefined}
-                    onClick={() => void keepResult()}
-                  >
-                    {SESSION_RESULT_KEEP_VERB}
-                  </button>
-                )}
-                {/* STORY 18.5 — the card's remove: immediate, reversible
-                    through the one toast. A live run is never cut by it. */}
-                {onRemove !== undefined && (
-                  <button
-                    type="button"
-                    className="session-card-remove"
-                    disabled={busy || running}
-                    onClick={() => void removeCard()}
-                  >
-                    remove
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="session-card-close"
-                  onClick={onClose}
-                >
-                  close
-                </button>
-              </div>
-            </details>
+            {stripVerbs()}
           </div>
         </div>
       )}
@@ -1678,17 +1693,11 @@ export function SessionCard({
           </PinWindow>,
           document.body,
         )}
+      {/* STORY 25-15: the keys live on the token too — the same left-edge
+          strip as the other cards, so a pin is always pressable. */}
+      {!open && <div className="session-card-actions">{stripVerbs()}</div>}
       {!open && (
         <div className="session-card-footer">
-          {onPin !== undefined && (
-          <button
-            type="button"
-            className="session-card-pin"
-            onClick={() => onPin()}
-          >
-            {pinned ? "unpin" : "pin"}
-          </button>
-        )}
         <button type="button" className="session-card-open" onClick={onOpen}>
             open
           </button>

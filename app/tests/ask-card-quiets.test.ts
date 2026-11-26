@@ -47,13 +47,14 @@ import {
  * default and a send never opens it; with the disclosures stripped the face
  * states no size at all; the declaration still carries every fact it carried
  * before (through the same pure rules); the retrieval offer is a verb and its
- * sentence lives in the declaration; the footer is the primary action plus ONE
- * overflow holding exactly fork, remove and close; the honest sentences stand
+ * sentence lives in the declaration; the footer is the primary action plus the
+ * strip's own keys — pin, fork, remove, close (story 25-15 retired the
+ * overflow's "more"); the honest sentences stand
  * outside the thread and only when they happen; the thread is still the only
  * scroll region; renderedMapContent("ground") stays [].
  *
- * PROVISIONAL: the disclosure verb's wording, the overflow verb and its items,
- * the read-more verb, and where the full provenance list sits.
+ * PROVISIONAL: the disclosure verb's wording, the strip's keys and their
+ * labels, the read-more verb, and where the full provenance list sits.
  */
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
@@ -122,6 +123,18 @@ function detail(html: string, cls: string): { tag: string; body: string } {
 /** The markup a person actually SEES: every closed disclosure removed. */
 function face(html: string): string {
   return html.replace(/<details[\s\S]*?<\/details>/g, "");
+}
+
+/** One actions row's own markup — the presses and the strip's keys. The row
+ * holds buttons (and their tips' spans and icons) and no nested div, so its
+ * first </div> is its own. */
+function actionsRow(html: string): string {
+  const start = html.indexOf('<div class="ask-card-actions">');
+  if (start < 0) throw new Error("no ask-card-actions row in the markup");
+  const openEnd = html.indexOf(">", start);
+  const end = html.indexOf("</div>", openEnd);
+  if (openEnd < 0 || end < 0) throw new Error("malformed ask-card-actions row");
+  return html.slice(openEnd + 1, end);
 }
 
 /* ------------------------------------------------------------------ *
@@ -263,39 +276,85 @@ describe("the retrieval offer is a verb, not a READ: line", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * THE FOOTER: ONE PRIMARY, ONE OVERFLOW
+ * THE FOOTER: ONE PRIMARY, AND THE STRIP'S OWN KEYS
  * ------------------------------------------------------------------ */
 
-describe("the footer carries the primary action and ONE overflow verb", () => {
-  test("the overflow holds exactly fork, remove and close", () => {
+describe("the footer carries the primary action and the strip's own keys", () => {
+  test("the strip holds exactly pin, fork, remove and close", () => {
+    // STORY 25-15: the overflow's "more" is GONE — every verb is its own icon
+    // key on the strip. The keys live on the token too, so the closed face
+    // below reads the strip on its own.
     const html = render({
+      open: false,
+      onPin: () => {},
       onForkTurn: async () => ({ ok: true }),
       onRemove: async () => ({ ok: true }),
     });
-    const overflow = detail(html, "ask-card-overflow");
-    expect(overflow.tag).not.toContain(" open");
-    expect(overflow.body).toContain(">" + ASK_OVERFLOW_VERB + "<");
-    expect((overflow.body.match(/<button/g) ?? []).length).toBe(3);
-    expect(overflow.body).toContain(ASK_OVERFLOW_FORK);
-    expect(overflow.body).toContain(ASK_OVERFLOW_REMOVE);
-    expect(overflow.body).toContain(ASK_OVERFLOW_CLOSE);
-    for (const outsider of ["send", "stop", "open", "read more"]) {
-      expect(overflow.body).not.toContain(">" + outsider + "<");
-    }
+    expect(html).not.toContain('<details class="ask-card-overflow"');
+    expect(html).not.toContain(">" + ASK_OVERFLOW_VERB + "<");
+    // EXACTLY four keys, each a VerbBubble: its class, and its word in the tip.
+    const row = actionsRow(html);
+    expect((row.match(/<button/g) ?? []).length).toBe(4);
+    expect(row).toContain('class="verb-key ground-pin"');
+    expect(row).toContain('class="verb-tip">pin</span>');
+    expect(row).toContain('class="verb-key ask-card-fork"');
+    expect(row).toContain(
+      'class="verb-tip">' + ASK_OVERFLOW_FORK + " this card at its end</span>",
+    );
+    expect(row).toContain('class="verb-key ground-remove"');
+    expect(row).toContain('class="verb-tip">' + ASK_OVERFLOW_REMOVE + "</span>");
+    expect(row).toContain('class="verb-key ask-card-close"');
+    expect(row).toContain('class="verb-tip">' + ASK_OVERFLOW_CLOSE + "</span>");
+    // The pin's word follows the state: "pin" until the window is up, then
+    // "unpin".
+    expect(ASK_CARD).toContain('label={pinned ? "unpin" : "pin"}');
+    // The fork's word names where the press branches: a card with no own turn
+    // offers the plain word — and no press.
+    const bare = render({
+      open: false,
+      onPin: () => {},
+      onForkTurn: async () => ({ ok: true }),
+      onRemove: async () => ({ ok: true }),
+      turns: [],
+    });
+    expect(bare).toContain('class="verb-tip">' + ASK_OVERFLOW_FORK + "</span>");
+    expect(bare).toMatch(
+      /<button type="button" class="verb-key ask-card-fork"[^>]*disabled/,
+    );
   });
 
-  test("the footer outside the overflow is the primary action only", () => {
-    const html = render({ onForkTurn: async () => ({ ok: true }) });
-    const actionsStart = html.indexOf('class="ask-card-actions"');
-    const overflowAt = html.indexOf('<details class="ask-card-overflow"');
-    const outside = html.slice(actionsStart, overflowAt);
+  test("the footer outside the strip's keys is the primary action only", () => {
+    const html = render({
+      onPin: () => {},
+      onForkTurn: async () => ({ ok: true }),
+      onRemove: async () => ({ ok: true }),
+    });
+    const row = actionsRow(html);
+    expect(row).toContain('class="verb-key ask-card-send"');
+    // Outside the strip's four keys, the primary press is the row's only
+    // button: no third option rides beside them.
+    let outside = row;
+    for (const key of [
+      "ground-pin",
+      "ask-card-fork",
+      "ground-remove",
+      "ask-card-close",
+    ]) {
+      outside = outside.replace(
+        new RegExp(
+          '<button type="button" class="verb-key ' + key + '"[\\s\\S]*?</button>',
+          "g",
+        ),
+        "",
+      );
+    }
+    expect((outside.match(/<button/g) ?? []).length).toBe(1);
     expect(outside).toContain("ask-card-send");
-    expect(outside).not.toContain("ask-card-remove");
-    expect(outside).not.toContain("ask-card-close");
-    expect(outside).not.toContain("ask-card-overflow-fork");
-    // The overflow is the actions row's other child: after it, only the divs
-    // that close the row and the composer.
-    const after = html.slice(html.lastIndexOf("</details>") + "</details>".length);
+    expect(outside).not.toContain("ask-card-overflow");
+    // After the row only the divs close the composer: no press below it.
+    const after = html.slice(
+      html.indexOf("</div>", html.indexOf('class="ask-card-actions"')),
+    );
     expect(after).not.toContain("<button");
   });
 

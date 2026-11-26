@@ -706,7 +706,9 @@ describe("an ask card is removable, with the same reversible promise", () => {
 
   test("the verbs are wired: the card, the layer, the app", () => {
     expect(ASK_CARD).toContain("onRemove");
-    expect(ASK_CARD).toContain("ask-card-remove");
+    // STORY 25-15: the remove verb is its own strip key now — ground-remove.
+    expect(ASK_CARD).toContain('className="ground-remove"');
+    expect(ASK_CARD).toContain('label="remove"');
     expect(LAYER).toContain("onRemoveAsk");
     expect(LAYER).toContain("onRemoveAsk(ask.on)");
     expect(APP).toContain("onRemoveAsk={ground.removeAsk}");
@@ -725,8 +727,10 @@ describe("an ask card is removable, with the same reversible promise", () => {
         onRemove: async () => ({ ok: true }),
       }),
     );
-    expect(html).toContain("ask-card-remove");
-    expect(html).toContain("remove");
+    // STORY 25-15: the remove key is a VerbBubble on the strip — its class,
+    // and its word in the tip.
+    expect(html).toContain('class="verb-key ground-remove"');
+    expect(html).toContain('class="verb-tip">remove</span>');
   });
 });
 

@@ -138,9 +138,14 @@ describe("the ink ladder: one colour at named strengths", () => {
     );
     expect(declarations.length).toBeGreaterThan(40);
     for (const declaration of declarations) {
+      // STORY 25-15 (the person's cleanup): the two SANCTIONED tints — the
+      // remove keys' red and the wire handle's blue. Exactly these two values
+      // may leave the ink ladder; no third tint joins them.
+      const sanctionedTints = ["#a0453b", "#4a6a94"];
       const allowed =
         /^var\(--ink(?:-[a-z]+)?\)$/.test(declaration.value) ||
-        declaration.value === "var(--state-accent)";
+        declaration.value === "var(--state-accent)" ||
+        sanctionedTints.includes(declaration.value);
       expect({
         selector: declaration.selector,
         value: declaration.value,

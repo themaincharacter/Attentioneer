@@ -92,11 +92,14 @@ export function IconPoint() {
   );
 }
 
-/** Remove: the quiet x, as it always was. */
+/** Remove: a trash can (the person's word for the verb's look). */
 export function IconRemove() {
   return (
     <Glyph>
-      <path d="M6 6l12 12M18 6L6 18" />
+      <path d="M5.5 6.5h13" />
+      <path d="M8 6.5V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v1.5" />
+      <path d="M7 6.5l.8 11a1.5 1.5 0 0 0 1.5 1.4h5.4a1.5 1.5 0 0 0 1.5-1.4l.8-11" />
+      <path d="M10.5 10.5v5M13.5 10.5v5" />
     </Glyph>
   );
 }

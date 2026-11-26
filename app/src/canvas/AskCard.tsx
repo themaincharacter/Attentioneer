@@ -21,10 +21,6 @@ import {
 import {
   ASK_DECLARATION_VERB,
   ASK_DECLARATION_VERB_SENT,
-  ASK_OVERFLOW_CLOSE,
-  ASK_OVERFLOW_FORK,
-  ASK_OVERFLOW_REMOVE,
-  ASK_OVERFLOW_VERB,
   ASK_READ_MISSED,
   askReadMoreWords,
   askWorkingWords,
@@ -32,7 +28,10 @@ import {
   type AskWorkPhase,
 } from "./contactRules";
 import {
-  IconMore,
+  IconCollapse,
+  IconFork,
+  IconPin,
+  IconRemove,
   IconSend,
   IconSettings,
   IconStop,
@@ -1251,44 +1250,49 @@ export function AskCard({
    * END of the card's own conversation; the per-turn verb still sits with a
    * chosen turn (revealed on hover, never drawn on every line by default).
    */
-  function overflowVerbs() {
+  /**
+   * STORY 25-15 (the person's cleanup) — THE STRIP'S KEYS. The overflow's
+   * "more" is gone: every option is its own icon key on the card's left edge,
+   * like the reference card's — and the pin is one of them (the pushpin), so
+   * the three families read the same.
+   */
+  function stripVerbs() {
     return (
-      <details className="ask-card-overflow">
-        <summary className="ask-card-overflow-verb verb-key">
-          <IconMore />
-          <span className="verb-tip">{ASK_OVERFLOW_VERB}</span>
-        </summary>
-        <div className="ask-card-overflow-body">
-          {onForkTurn !== undefined && (
-            <button
-              type="button"
-              className="ask-card-overflow-fork"
-              disabled={busy || running || ownTurns === 0}
-              title={
-                ownTurns === 0
-                  ? "there is no turn to fork yet"
-                  : "fork this card at its end"
-              }
-              onClick={() => startFork(ownTurns)}
-            >
-              {ASK_OVERFLOW_FORK}
-            </button>
-          )}
-          {onRemove !== undefined && (
-            <button
-              type="button"
-              className="ask-card-remove"
-              disabled={busy || running}
-              onClick={() => void removeCard()}
-            >
-              {ASK_OVERFLOW_REMOVE}
-            </button>
-          )}
-          <button type="button" className="ask-card-close" onClick={onClose}>
-            {ASK_OVERFLOW_CLOSE}
-          </button>
-        </div>
-      </details>
+      <>
+        {onPin !== undefined && (
+          <VerbBubble
+            className="ground-pin"
+            label={pinned ? "unpin" : "pin"}
+            icon={<IconPin />}
+            disabled={busy}
+            onClick={() => onPin()}
+          />
+        )}
+        {onForkTurn !== undefined && (
+          <VerbBubble
+            className="ask-card-fork"
+            label={ownTurns === 0 ? "fork" : "fork this card at its end"}
+            icon={<IconFork />}
+            disabled={busy || running || ownTurns === 0}
+            onClick={() => startFork(ownTurns)}
+          />
+        )}
+        {onRemove !== undefined && (
+          <VerbBubble
+            className="ground-remove"
+            label="remove"
+            icon={<IconRemove />}
+            disabled={busy || running}
+            onClick={() => void removeCard()}
+          />
+        )}
+        <VerbBubble
+          className="ask-card-close"
+          label="close"
+          icon={<IconCollapse />}
+          onClick={onClose}
+        />
+      </>
     );
   }
 
@@ -1591,7 +1595,7 @@ export function AskCard({
                     onClick={onOpenSettings}
                   />
                 )}
-                {overflowVerbs()}
+                {stripVerbs()}
               </div>
             </div>
           ) : (
@@ -1730,9 +1734,9 @@ export function AskCard({
                   />
                 )}
                 {/* STORY 16.27 — every other verb (fork, remove, close) is
-                    behind the one overflow summary, so the footer reads as the
-                    primary action and one quiet word. */}
-                {overflowVerbs()}
+                    alongside the strip's own keys (story 25-15: the overflow
+                    summary is gone — every option is its own icon key). */}
+                {stripVerbs()}
               </div>
             </>
           )}
@@ -1747,17 +1751,11 @@ export function AskCard({
           </PinWindow>,
           document.body,
         )}
+      {/* STORY 25-15: the keys live on the token too — the same left-edge
+          strip as the other cards, so a pin is always pressable. */}
+      {!open && <div className="ask-card-actions">{stripVerbs()}</div>}
       {!open && (
         <div className="ask-card-footer">
-          {onPin !== undefined && (
-            <button
-              type="button"
-              className="ask-card-pin"
-              onClick={() => onPin()}
-            >
-              {pinned ? "unpin" : "pin"}
-            </button>
-          )}
           <button
             type="button"
             className="ask-card-open"

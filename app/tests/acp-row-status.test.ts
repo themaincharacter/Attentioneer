@@ -726,14 +726,18 @@ describe("the card says the row's state on its expanded face, and offers one ver
     expect(html).toContain("this tool is not on this machine.");
   });
 
-  test("NOTHING of it is on the closed face", () => {
+  test("the state line stays off the closed face; the test key rides the strip", () => {
     const html = cardHtml({
       open: false,
       toolStatus: acpRowStatus(true, false, null),
       onTestRow: async () => ({ ok: true as const }),
     });
+    // STORY 25-15: the verbs moved to the strip, and the strip rides BOTH
+    // faces — the test key is pressable on the token. Only the state LINE is
+    // the expanded face's own.
     expect(html).not.toContain("this row has never been tested here.");
-    expect(html).not.toContain("session-card-test");
+    expect(html).toContain('class="verb-key session-card-test"');
+    expect(html).toContain('class="verb-tip">test</span>');
   });
 
   test("a card whose row is gone has neither the line nor the verb", () => {

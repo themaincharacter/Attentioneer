@@ -576,7 +576,9 @@ describe("a session card is removable, with the same reversible promise", () => 
 
   test("the verbs are wired: the card, the layer, the app", () => {
     expect(CARD_VIEW).toContain("onRemove");
-    expect(CARD_VIEW).toContain("session-card-remove");
+    // STORY 25-15: the remove verb is its own strip key now — ground-remove.
+    expect(CARD_VIEW).toContain('className="ground-remove"');
+    expect(CARD_VIEW).toContain('label="remove"');
     expect(LAYER).toContain("onRemoveSession");
     expect(LAYER).toContain("onRemoveSession(session.on)");
     expect(APP).toContain("onRemoveSession={ground.removeSession}");
@@ -598,8 +600,10 @@ describe("a session card is removable, with the same reversible promise", () => 
         onRemove: async () => ({ ok: true }),
       }),
     );
-    expect(html).toContain("session-card-remove");
-    expect(html).toContain("remove");
+    // STORY 25-15: the remove key is a VerbBubble on the strip — its class,
+    // and its word in the tip.
+    expect(html).toContain('class="verb-key ground-remove"');
+    expect(html).toContain('class="verb-tip">remove</span>');
   });
 });
 

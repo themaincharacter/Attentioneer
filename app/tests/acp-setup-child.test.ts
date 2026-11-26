@@ -777,7 +777,7 @@ describe("the sign-in is a row field, and the card draws it only when it is ther
     expect(html).not.toContain(SETUP_SENTENCES.running);
   });
 
-  test("the running line, the child's newest line and the verbs are on the expanded face", () => {
+  test("the running line, the child's newest line and the code composer are on the expanded face", () => {
     const html = cardHtml({
       signIn: runningSignIn("open this page: https://example.test/sign-in"),
     });
@@ -799,10 +799,17 @@ describe("the sign-in is a row field, and the card draws it only when it is ther
     });
     expect(ended).not.toContain(SETUP_SENTENCES.running);
     expect(ended).toContain(SETUP_SENTENCES.done);
-    // Nothing of it is on the closed face.
+    // STORY 25-15: the sign-in verb is a strip key now, and the strip rides
+    // BOTH faces — the token carries it. The running line and the code
+    // composer stay on the expanded face.
     const closed = cardHtml({ open: false, signIn: runningSignIn("a line") });
-    expect(closed).not.toContain(SETUP_VERBS.signIn);
+    expect(closed).toContain('class="verb-key session-card-sign-in-verb"');
+    expect(closed).toContain(
+      'class="verb-tip">' + SETUP_VERBS.signIn + "</span>",
+    );
     expect(closed).not.toContain(SETUP_SENTENCES.running);
+    expect(closed).not.toContain(SETUP_VERBS.sendCode);
+    expect(closed).not.toContain(SETUP_CODE_LABEL);
   });
 
   test("the child's own last line is what a failure says, cropped", () => {
