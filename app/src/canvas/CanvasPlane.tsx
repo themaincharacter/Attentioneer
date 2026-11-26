@@ -476,12 +476,29 @@ export function CanvasPlane({
       .on("zoom.camera", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
         // (see the paint/tick pair above)
         const t: ZoomTransform = event.transform;
-        const target = { x: t.x, y: t.y, zoom: t.k };
-        targetRef.current = target;
         const discrete =
           event.sourceEvent !== null &&
           event.sourceEvent !== undefined &&
           event.sourceEvent.type === "wheel";
+        // STORY 25-20 — THE SCALE STEP (the reserve list's remedy for the
+        // raster catch-up): during a wheel gesture the shown scale moves in
+        // STEPS about the pointer, so the compositor's raster HOLDS between
+        // steps — a stable soft image instead of a flicker every frame. The
+        // step keeps the pointer's own world point under the pointer, and the
+        // gesture's settle still lands on d3's exact transform.
+        let target = { x: t.x, y: t.y, zoom: t.k };
+        if (discrete && event.sourceEvent !== null) {
+          const rect = el.getBoundingClientRect();
+          const mx = event.sourceEvent.clientX - rect.left;
+          const my = event.sourceEvent.clientY - rect.top;
+          const step = 0.015;
+          const rounded = Math.round(t.k / step) * step;
+          const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, rounded));
+          const wx = (mx - t.x) / t.k;
+          const wy = (my - t.y) / t.k;
+          target = { x: mx - k * wx, y: my - k * wy, zoom: k };
+        }
+        targetRef.current = target;
         const shown = shownRef.current;
         if (!discrete || shown === null) {
           shownRef.current = target;

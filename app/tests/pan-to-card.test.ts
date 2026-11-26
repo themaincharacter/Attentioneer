@@ -28,6 +28,18 @@ describe("the pan to the card (story 25-10)", () => {
     expect(APP).toContain("window.innerWidth / 2");
   });
 
+  test("the wheel's scale moves in steps so the raster holds (story 25-20)", () => {
+    // The reserve list's remedy for the raster catch-up: the shown scale
+    // steps about the pointer, so the compositor's raster holds between steps
+    // — a stable soft image instead of a flicker every frame. The settle
+    // still lands on the exact transform.
+    expect(PLANE).toContain("const step = 0.015;");
+    expect(PLANE).toContain("Math.round(t.k / step) * step");
+    // The step keeps the pointer's own world point under the pointer.
+    expect(PLANE).toContain("const wx = (mx - t.x) / t.k;");
+    expect(PLANE).toContain("target = { x: mx - k * wx, y: my - k * wy, zoom: k }");
+  });
+
   test("a programmatic move glides, and reduced motion takes the instant seat", () => {
     // The glide is the inner layer's one class — the wheel's per-frame paints
     // never wear it, so zooming is untouched.
