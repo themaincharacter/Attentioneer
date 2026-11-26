@@ -89,6 +89,21 @@ describe("the card's own look (story 25-17)", () => {
     expect(LAYER).toContain("<CardLookPicker");
   });
 
+  test("every family wears its own look (story 25-18)", () => {
+    // The ask and session gears ride the same seam as the reference's: the
+    // worn frame overrides the state's edge, the tint rides the root inline.
+    for (const name of ["AskCard.tsx", "SessionCard.tsx"]) {
+      const src = readFileSync(
+        join(import.meta.dir, "../src/canvas/" + name),
+        "utf8",
+      );
+      expect(src).toContain('className="ground-gear"');
+      expect(src).toContain("<CardLookPicker");
+      expect(src).toContain('const worn = look?.frame ?? "default"');
+      expect(src).toContain("borderColor: look?.tint");
+    }
+  });
+
   test("a malformed line is kept as itself, never guessed", () => {
     const parsed = parseLooks('{"on":"a"}\nthis is not a line\n');
     expect(parsed.looks).toEqual([{ on: "a" }]);

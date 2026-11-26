@@ -1544,6 +1544,8 @@ export function GroundLayer({
             draft={askDrafts.find((entry) => entry.slug === ask.on)}
           pinned={pinnedOn.includes(ask.on)}
           onPin={() => togglePin(ask.on)}
+          look={looks[ask.on]}
+          onSetLook={onSetLook}
             onForkTurn={
               onForkAsk === undefined
                 ? undefined
@@ -1688,6 +1690,8 @@ export function GroundLayer({
             zoom={zoom}
             pinned={pinnedOn.includes(session.on)}
           onPin={() => togglePin(session.on)}
+          look={looks[session.on]}
+          onSetLook={onSetLook}
           open={openSessionOn === session.on}
             previewLines={previewLines}
             onOpen={() => {

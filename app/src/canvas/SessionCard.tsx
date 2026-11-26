@@ -21,9 +21,12 @@ import {
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
 import { createPortal } from "react-dom";
 import { PinWindow } from "./PinWindow";
+import type { CardLook } from "../map/looks";
+import { CardLookPicker } from "./CardLookPicker";
 import {
   IconKey,
   IconKeep,
+  IconGear,
   IconPin,
   IconRemove,
   IconRun,
@@ -363,6 +366,8 @@ export function SessionCard({
   onOpen,
   pinned = false,
   onPin,
+  look,
+  onSetLook,
   onClose,
   onRun,
   onFollowUp,
@@ -575,6 +580,9 @@ export function SessionCard({
   /** STORY 25-13 (ADR-0047): the pin keeps the card's face open in a window. */
   pinned?: boolean;
   onPin?: () => void;
+  /** STORY 25-18: the card's own look (the gear's picker writes it). */
+  look?: CardLook;
+  onSetLook?: (look: CardLook) => void;
 }) {
   // STORY 24-15 — THE WORKING SIGNAL: the card publishes its live run to the
   // map's working channel so the wires feeding it carry current.
@@ -585,6 +593,8 @@ export function SessionCard({
 
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // STORY 25-18 — the gear's picker (view state; the write is the seam's).
+  const [lookOpen, setLookOpen] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   // STORY 19.3 — THE TASK IS EPHEMERAL VIEW STATE (never a record field), and
   // `typed` remembers whether the person has written in the field since the
@@ -1137,6 +1147,15 @@ export function SessionCard({
   function stripVerbs() {
     return (
       <>
+        {onSetLook !== undefined && (
+          <VerbBubble
+            className="ground-gear"
+            label="this card's look"
+            icon={<IconGear />}
+            disabled={busy}
+            onClick={() => setLookOpen((at) => !at)}
+          />
+        )}
         {onPin !== undefined && (
           <VerbBubble
             className="ground-pin"
@@ -1192,17 +1211,27 @@ export function SessionCard({
     );
   }
 
+  // STORY 25-18 — THE WORN FRAME (the gear's choice overrides the state's).
+  const worn = look?.frame ?? "default";
+  const frameClass =
+    worn === "default"
+      ? frameFor(epistemicState({ absentWords: toolName === null }))
+      : worn === "plain"
+        ? ""
+        : `frame-${worn}`;
+
   return (
     <div
       ref={cardRef}
-      className={`session-card ${frameFor(
-        epistemicState({ absentWords: toolName === null }),
-      )}${open ? " expanded" : ""}${pinned ? " pinned" : ""}`}
+      className={`session-card ${frameClass}${open ? " expanded" : ""}${pinned ? " pinned" : ""}`}
       style={
         {
           // STORY 16.25: the RECORD's point is what React renders; the hand's
           // own frame is written on the element, so a drag re-renders nothing.
           left: session.x,
+          // STORY 25-18: the card's own tint — inline, so no frame class can
+          // outrank the person's colour.
+          borderColor: look?.tint,
           top: session.y,
           "--preview-lines": previewLines,
           // STORY 25-5: the counter-scale is the plane's shared var now.
@@ -1679,6 +1708,14 @@ export function SessionCard({
       )}
       {/* STORY 25-13 (ADR-0047) — THE PIN WINDOW: the card's own face,
           rendered twice — the token above and the glass here. */}
+      {/* STORY 25-18 — THE LOOK PICKER: the gear's own panel, in the card. */}
+      {lookOpen && look !== undefined && onSetLook !== undefined && (
+        <CardLookPicker
+          look={look}
+          onSet={(next) => onSetLook(next)}
+          onClose={() => setLookOpen(false)}
+        />
+      )}
       {pinned &&
         createPortal(
           <PinWindow name={session.name} onClose={() => onPin?.()}>

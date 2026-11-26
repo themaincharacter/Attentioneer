@@ -29,6 +29,7 @@ import {
 } from "./contactRules";
 import {
   IconFork,
+  IconGear,
   IconPin,
   IconRemove,
   IconSend,
@@ -56,6 +57,8 @@ import { PROVIDER_SENTENCES } from "../turn/providers";
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
 import { createPortal } from "react-dom";
 import { PinWindow } from "./PinWindow";
+import type { CardLook } from "../map/looks";
+import { CardLookPicker } from "./CardLookPicker";
 import type { GroundAddResult } from "./useGround";
 
 /**
@@ -530,6 +533,8 @@ export function AskCard({
   draft,
   pinned = false,
   onPin,
+  look,
+  onSetLook,
   interactionMode = "idle",
   onNarrate,
   drag,
@@ -711,6 +716,9 @@ export function AskCard({
   /** STORY 25-13 (ADR-0047): the pin keeps the card's face open in a window. */
   pinned?: boolean;
   onPin?: () => void;
+  /** STORY 25-18: the card's own look (the gear's picker writes it). */
+  look?: CardLook;
+  onSetLook?: (look: CardLook) => void;
   /** The gesture gate, so a wiring drag never starts under an armed tool. */
   interactionMode?: GestureMode;
   /** The one sentence a wiring drag speaks; absent in a render test. */
@@ -741,6 +749,8 @@ export function AskCard({
     null,
   );
   const [busy, setBusy] = useState(false);
+  // STORY 25-18 — the gear's picker (view state; the write is the seam's).
+  const [lookOpen, setLookOpen] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   /**
@@ -1258,6 +1268,15 @@ export function AskCard({
   function stripVerbs() {
     return (
       <>
+        {onSetLook !== undefined && (
+          <VerbBubble
+            className="ground-gear"
+            label="this card's look"
+            icon={<IconGear />}
+            disabled={busy}
+            onClick={() => setLookOpen((at) => !at)}
+          />
+        )}
         {onPin !== undefined && (
           <VerbBubble
             className="ground-pin"
@@ -1461,17 +1480,27 @@ export function AskCard({
     </>
   );
 
+  // STORY 25-18 — THE WORN FRAME (the gear's choice overrides the state's).
+  const worn = look?.frame ?? "default";
+  const frameClass =
+    worn === "default"
+      ? frameFor(epistemicState({ absentWords: turns.length === 0 }))
+      : worn === "plain"
+        ? ""
+        : `frame-${worn}`;
+
   return (
     <div
       ref={cardRef}
-      className={`ask-card ${frameFor(
-        epistemicState({ absentWords: turns.length === 0 }),
-      )}${open ? " expanded" : ""}${pinned ? " pinned" : ""}`}
+      className={`ask-card ${frameClass}${open ? " expanded" : ""}${pinned ? " pinned" : ""}`}
       style={
         {
           // STORY 16.25: the RECORD's point is what React renders; the hand's
           // own frame is written on the element, so a drag re-renders nothing.
           left: ask.x,
+          // STORY 25-18: the card's own tint — inline, so no frame class can
+          // outrank the person's colour.
+          borderColor: look?.tint,
           top: ask.y,
           "--preview-lines": previewLines,
           // STORY 25-5: the counter-scale is the plane's shared var now.
@@ -1737,6 +1766,14 @@ export function AskCard({
       )}
       {/* STORY 25-13 (ADR-0047) — THE PIN WINDOW: the card's own face,
           rendered twice — the token above and the glass here. */}
+      {/* STORY 25-18 — THE LOOK PICKER: the gear's own panel, in the card. */}
+      {lookOpen && look !== undefined && onSetLook !== undefined && (
+        <CardLookPicker
+          look={look}
+          onSet={(next) => onSetLook(next)}
+          onClose={() => setLookOpen(false)}
+        />
+      )}
       {pinned &&
         createPortal(
           <PinWindow name={ask.name} onClose={() => onPin?.()}>
