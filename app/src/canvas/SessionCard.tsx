@@ -1709,9 +1709,11 @@ export function SessionCard({
       {/* STORY 25-13 (ADR-0047) — THE PIN WINDOW: the card's own face,
           rendered twice — the token above and the glass here. */}
       {/* STORY 25-18 — THE LOOK PICKER: the gear's own panel, in the card. */}
-      {lookOpen && look !== undefined && onSetLook !== undefined && (
+      {/* (A card with NO look still opens the picker — its look is the
+          default until the person says otherwise.) */}
+      {lookOpen && onSetLook !== undefined && (
         <CardLookPicker
-          look={look}
+          look={look ?? { on: session.on }}
           onSet={(next) => onSetLook(next)}
           onClose={() => setLookOpen(false)}
         />

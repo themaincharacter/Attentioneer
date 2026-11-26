@@ -92,7 +92,7 @@ describe("the card's own look (story 25-17)", () => {
   test("every family wears its own look (story 25-18)", () => {
     // The ask and session gears ride the same seam as the reference's: the
     // worn frame overrides the state's edge, the tint rides the root inline.
-    for (const name of ["AskCard.tsx", "SessionCard.tsx"]) {
+    for (const name of ["GroundLayer.tsx", "AskCard.tsx", "SessionCard.tsx"]) {
       const src = readFileSync(
         join(import.meta.dir, "../src/canvas/" + name),
         "utf8",
@@ -101,6 +101,10 @@ describe("the card's own look (story 25-17)", () => {
       expect(src).toContain("<CardLookPicker");
       expect(src).toContain('const worn = look?.frame ?? "default"');
       expect(src).toContain("borderColor: look?.tint");
+      // A card with NO stored look still opens the picker (the bug the person
+      // found: the panel used to require a look to exist before it showed).
+      expect(src).toContain("look={look ?? {");
+      expect(src).not.toContain("lookOpen && look !== undefined");
     }
   });
 

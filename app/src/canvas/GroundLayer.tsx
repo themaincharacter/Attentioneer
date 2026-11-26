@@ -3128,9 +3128,11 @@ function GroundCard({
           edit; the confirm writes the ask's one line, and a blank name refuses
           with the same one sentence the bubble uses. Esc or cancel forgets it. */}
       {/* STORY 25-17 — THE LOOK PICKER: the gear's own panel, in the card. */}
-      {lookOpen && look !== undefined && onSetLook !== undefined && (
+      {/* (A card with NO look still opens the picker — its look is the
+          default until the person says otherwise.) */}
+      {lookOpen && onSetLook !== undefined && (
         <CardLookPicker
-          look={look}
+          look={look ?? { on: reference.on }}
           onSet={(next) => onSetLook(next)}
           onClose={() => setLookOpen(false)}
         />
