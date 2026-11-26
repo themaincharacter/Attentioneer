@@ -220,7 +220,13 @@ describe("three kinds, one pill, each family's own rules", () => {
       expect(card).toContain("if (onPill) return;");
       expect(card).toContain("return;");
     }
-    expect(LAYER).toContain("if (!onPill) onOpen();");
+    // STORY 25-8: the reference card's body press now DOCKS (the reading
+    // pane) and the pill press still opens nothing — the same "handle, not
+    // the door" rule as the other families, in the same shape.
+    expect(LAYER).toContain("if (onPill) return;");
+    expect(LAYER).toContain(
+      "onDock({ slug: reference.on, name: reference.name, text: shownText })",
+    );
     // Escape in the field belongs to the pill: it forgets the draft and never
     // collapses the card as well (one press, one thing).
     expect(ASK_CARD).toContain('?.closest?.(".ground-pill")');

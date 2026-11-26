@@ -915,6 +915,18 @@ interface GroundLayerProps {
    * finder.
    */
   found?: FindMark | null;
+  /**
+   * STORY 25-8 (ADR-0046 ruling 2): expand-on-click is REPLACED by
+   * dock-on-click — a body press hands the card's full text to the reading
+   * pane. Optional so a render test needs no pane.
+   */
+  onDock?: (docked: {
+    slug: string;
+    name: string;
+    text: string | null;
+  }) => void;
+  /** The slug whose text is docked right now (its card lights the marker). */
+  dockedOn?: string | null;
 }
 
 export function GroundLayer({
@@ -988,6 +1000,8 @@ export function GroundLayer({
   zoom = 1,
   drag,
   found = null,
+  onDock,
+  dockedOn = null,
 }: GroundLayerProps) {
   const readingsBySlug = new Map(readings.map((reading) => [reading.on, reading]));
   const mediaBySlug = new Map(media.map((entry) => [entry.on, entry]));
@@ -1373,6 +1387,8 @@ export function GroundLayer({
           note={notes[reference.on]}
           pulled={pulled[reference.on]}
           state={states[reference.on] ?? (readingsBySlug.has(reference.on) ? "current" : "unread")}
+          onDock={onDock}
+          dockedOn={dockedOn}
           open={openOn === reference.on}
           // STORY 17.1: one face at a time — opening a reference closes the
           // ask card's editor, and opening an ask closes the reference's.
@@ -1909,6 +1925,8 @@ function GroundCard({
   open,
   onOpen,
   onOpenCard,
+  onDock,
+  dockedOn = null,
   onClose,
   cardNames,
   wordSlugs,
@@ -2023,6 +2041,14 @@ function GroundCard({
   /** STORY 17: the stated fold threshold, already bounded (preview + note). */
   previewLines: number;
   noteLines: number;
+  /** STORY 25-8: a body click docks the card's text in the reading pane. */
+  onDock?: (docked: {
+    slug: string;
+    name: string;
+    text: string | null;
+  }) => void;
+  /** The slug whose text is docked right now (its card lights the marker). */
+  dockedOn?: string | null;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -2217,7 +2243,17 @@ function GroundCard({
       // STORY 16.21 — a press on the NAME is the handle, so it opens nothing;
       // a press on the body still opens the card (a drag never does).
       onClick: (onPill) => {
-        if (!onPill) onOpen();
+        // STORY 25-8 (ADR-0046 ruling 2) — expand-on-click is REPLACED by
+        // dock-on-click: a body press hands the card's full text to the
+        // reading pane, and the token stays a token. The fold's "more" still
+        // opens the inline face (the editors live there until the pane takes
+        // them, story 25-9).
+        if (onPill) return;
+        if (onDock) {
+          onDock({ slug: reference.on, name: reference.name, text: shownText });
+          return;
+        }
+        onOpen();
       },
     });
   });
@@ -2804,6 +2840,11 @@ function GroundCard({
           another card, or a reference with no reading. Never a broken box. */}
       {kindLine !== null && (
         <div className="ground-kind">{kindLine}</div>
+      )}
+      {/* STORY 25-8: while this card's text is docked in the reading pane, the
+          card says so in one quiet word. */}
+      {dockedOn === reference.on && (
+        <span className="ground-reading-mark">reading</span>
       )}
       <div
         className={`ground-body${open ? "" : " ground-body-collapsed"}`}
