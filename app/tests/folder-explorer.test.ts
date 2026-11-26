@@ -508,13 +508,15 @@ describe("the explorer block is drawn only on an expanded folder card", () => {
     const layer = source("canvas/GroundLayer.tsx");
     expect(layer).toContain("{open &&\n          folderCard &&");
     expect(layer).toContain("<FolderExplorerFace");
-    // It sits inside the body, BEFORE the kept reading's own slot. (22.7 put a
-    // collapsed-only class on the body, so the body is found by its ref.)
-    const body = layer.indexOf("ref={bodyRef}");
+    // It sits inside the body's FACE, BEFORE the kept reading's own slot.
+    // (STORY 25-11: the face is one local render — the map's token and the pin
+    // window's copy both read it — so the order is checked inside that face.)
+    const face = layer.indexOf("const renderBody = ");
     const block = layer.indexOf("<FolderExplorerFace");
     const readingSlot = layer.indexOf('<div className="ground-reading" ref={readingRef}>');
-    expect(body).toBeGreaterThan(-1);
-    expect(block).toBeGreaterThan(body);
+    expect(face).toBeGreaterThan(-1);
+    expect(layer).toContain("ref={bodyRef}");
+    expect(block).toBeGreaterThan(face);
     expect(block).toBeLessThan(readingSlot);
   });
 

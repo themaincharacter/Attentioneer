@@ -56,6 +56,7 @@ import {
   IconReadMore,
   IconRefresh,
   IconRemove,
+  IconWindow,
   IconWire,
 } from "./icons";
 import { VerbBubble } from "./VerbBubble";
@@ -81,6 +82,8 @@ import { GESTURE_IDLE, type GestureNarration } from "./gestureWord";
 import { besidePlacement, type Point } from "./geometry";
 import { AskCard } from "./AskCard";
 import { CardNamePill } from "./CardNamePill";
+import { createPortal } from "react-dom";
+import { PinWindow } from "./PinWindow";
 import type { FindMark } from "./FindPill";
 import { SelectionAsk, clearTextSelection } from "./SelectionAsk";
 import {
@@ -1013,6 +1016,13 @@ export function GroundLayer({
   // state only (a reopened workspace shows every card small) and no write
   // path here touches a file.
   const [openOn, setOpenOn] = useState<string | null>(null);
+  // STORY 25-11 (ADR-0047) — THE PINS: view state, never a record (the
+  // person: pins do not survive a restart). One list, one toggle.
+  const [pinnedOn, setPinnedOn] = useState<string[]>([]);
+  const togglePin = (slug: string) =>
+    setPinnedOn((list) =>
+      list.includes(slug) ? list.filter((one) => one !== slug) : [...list, slug],
+    );
   // STORY 17.1 — the OPEN ASK CARD is the layer's view state too, on its own
   // slug: opening one closes the other face, so the map never has two editors
   // asking for the eye at once. Nothing here is a record.
@@ -1390,6 +1400,8 @@ export function GroundLayer({
           note={notes[reference.on]}
           pulled={pulled[reference.on]}
           state={states[reference.on] ?? (readingsBySlug.has(reference.on) ? "current" : "unread")}
+          pinned={pinnedOn.includes(reference.on)}
+          onPin={() => togglePin(reference.on)}
           open={openOn === reference.on}
           // STORY 17.1: one face at a time — opening a reference closes the
           // ask card's editor, and opening an ask closes the reference's.
@@ -1931,6 +1943,8 @@ function GroundCard({
   open,
   onOpen,
   onOpenCard,
+  pinned = false,
+  onPin,
   onClose,
   cardNames,
   wordSlugs,
@@ -2045,6 +2059,9 @@ function GroundCard({
   /** STORY 17: the stated fold threshold, already bounded (preview + note). */
   previewLines: number;
   noteLines: number;
+  /** STORY 25-11 (ADR-0047): the pin keeps the card's face open in a window. */
+  pinned?: boolean;
+  onPin?: () => void;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -2766,72 +2783,12 @@ function GroundCard({
   // the card it just revealed, so the next keystroke is the card's and never the
   // chat's. Not in the tab order (-1): the map is still navigated by the person,
   // this only finishes one programmatic move.
-  return (
-    <div
-      ref={cardRef}
-      className={`ground-reference ${frameFor(
-        epistemicState({ absentWords: bodyText === null }),
-      )}${open ? " expanded" : ""}`}
-      tabIndex={-1}
-      style={
-        {
-          left: x,
-          top: y,
-          // STORY 17: the SAME stated counts the crop uses drive the DOM's
-          // clamp and the note's crop height — canvas.css reads these two
-          // variables, so a changed threshold re-crops without a reload.
-          "--preview-lines": previewLines,
-          "--note-lines": noteLines,
-          // STORY 25-5: the counter-scale is the plane's shared var now
-          // (set per zoom frame); the keys inherit it like the pill does.
-        } as CSSProperties
-      }
-      data-slug={reference.on}
-    >
-      {/* STORY 16.5 — the one new affordance: a small quiet handle on the
-          card's edge. Drag it onto another card and the two are WIRED, with no
-          word and no meaning (hover-revealed like the card's verbs). The card's
-          BODY keeps its press-to-open and drag-to-move exactly as before. */}
-      <button
-        type="button"
-        className="ground-link-handle"
-        aria-label="link to another card"
-      >
-        <IconWire />
-        <span className="verb-tip">drag to link</span>
-      </button>
-      {/* STORY 16.21 — THE NAME FLOATS ABOVE THE CARD. It left the body because
-          the body's own reading cropped it and the plane's scale shrank it: the
-          pill counter-scales (clamped) so the name is legible at 25% zoom, it is
-          the card's drag HANDLE (a press on it rides the card's one raw mousedown
-          listener, below — no second drag) and a double-click renames it through
-          the one name write path. The body below starts at the TYPE LINE. */}
-      <CardNamePill
-        name={reference.name}
-        busy={busy}
-        onRename={
-          onRename === undefined
-            ? undefined
-            : async (name: string) => {
-                const result = await onRename(reference.on, name);
-                // A refused write is one sentence on the card, never a name
-                // that quietly snaps back for no stated reason.
-                if (!result.ok) setProblem(result.message);
-                return result;
-              }
-        }
-      />
-      {/* STORY 16.13 (shortlist items 3 and 10): the card's second line says
-          WHAT THIS IS — the copy kept from a file, a copy of text selected from
-          another card, or a reference with no reading. Never a broken box. */}
-      {kindLine !== null && (
-        <div className="ground-kind">{kindLine}</div>
-      )}
-
-      <div
-        className={`ground-body${open ? "" : " ground-body-collapsed"}`}
-        ref={bodyRef}
-      >
+  // STORY 25-11 (ADR-0047) — THE FACE, RENDERED TWICE: once on the map's
+  // token (open or not) and once inside the pin window (always open). The
+  // parameter is the FACE's own openness; the state below is shared by both
+  // copies because there is only one card.
+  const renderBody = (open: boolean) => (
+    <>
         {/* STORY 20.2 (PROVISIONAL) — THE EXPLORER: a quiet block on an
             EXPANDED project card, ABOVE the kept reading. It is live
             navigation over the folder (one on-demand listing per press), while
@@ -3031,6 +2988,76 @@ function GroundCard({
             onDismiss={() => onDismissPull?.(reference.on)}
           />
         )}
+    </>
+  );
+
+  return (
+    <div
+      ref={cardRef}
+      className={`ground-reference ${frameFor(
+        epistemicState({ absentWords: bodyText === null }),
+      )}${open ? " expanded" : ""}${pinned ? " pinned" : ""}`}
+      tabIndex={-1}
+      style={
+        {
+          left: x,
+          top: y,
+          // STORY 17: the SAME stated counts the crop uses drive the DOM's
+          // clamp and the note's crop height — canvas.css reads these two
+          // variables, so a changed threshold re-crops without a reload.
+          "--preview-lines": previewLines,
+          "--note-lines": noteLines,
+          // STORY 25-5: the counter-scale is the plane's shared var now
+          // (set per zoom frame); the keys inherit it like the pill does.
+        } as CSSProperties
+      }
+      data-slug={reference.on}
+    >
+      {/* STORY 16.5 — the one new affordance: a small quiet handle on the
+          card's edge. Drag it onto another card and the two are WIRED, with no
+          word and no meaning (hover-revealed like the card's verbs). The card's
+          BODY keeps its press-to-open and drag-to-move exactly as before. */}
+      <button
+        type="button"
+        className="ground-link-handle"
+        aria-label="link to another card"
+      >
+        <IconWire />
+        <span className="verb-tip">drag to link</span>
+      </button>
+      {/* STORY 16.21 — THE NAME FLOATS ABOVE THE CARD. It left the body because
+          the body's own reading cropped it and the plane's scale shrank it: the
+          pill counter-scales (clamped) so the name is legible at 25% zoom, it is
+          the card's drag HANDLE (a press on it rides the card's one raw mousedown
+          listener, below — no second drag) and a double-click renames it through
+          the one name write path. The body below starts at the TYPE LINE. */}
+      <CardNamePill
+        name={reference.name}
+        busy={busy}
+        onRename={
+          onRename === undefined
+            ? undefined
+            : async (name: string) => {
+                const result = await onRename(reference.on, name);
+                // A refused write is one sentence on the card, never a name
+                // that quietly snaps back for no stated reason.
+                if (!result.ok) setProblem(result.message);
+                return result;
+              }
+        }
+      />
+      {/* STORY 16.13 (shortlist items 3 and 10): the card's second line says
+          WHAT THIS IS — the copy kept from a file, a copy of text selected from
+          another card, or a reference with no reading. Never a broken box. */}
+      {kindLine !== null && (
+        <div className="ground-kind">{kindLine}</div>
+      )}
+
+      <div
+        className={`ground-body${open ? "" : " ground-body-collapsed"}`}
+        ref={bodyRef}
+      >
+        {renderBody(open)}
       </div>
       <div className="ground-footer">
         {provenance !== null && (
@@ -3215,6 +3242,18 @@ function GroundCard({
               this is drawn from its own file; there is nothing to refresh.
             </div>
           )}
+          {/* STORY 25-11 (ADR-0047) — THE PIN: the card's face kept open on
+              the glass. The verb toggles; the window's close and this verb's
+              "unpin" both take the window away. */}
+          {onPin !== undefined && (
+            <VerbBubble
+              className="ground-pin"
+              label={pinned ? "unpin" : "pin"}
+              icon={<IconWindow />}
+              disabled={busy}
+              onClick={() => onPin()}
+            />
+          )}
           <VerbBubble
             className="ground-remove"
             label="remove"
@@ -3245,6 +3284,16 @@ function GroundCard({
           onClose={() => setPanel(null)}
         />
       )}
+      {/* STORY 25-11 (ADR-0047) — THE PIN WINDOW: the card's own face,
+          rendered twice — once above (the token) and once here (the glass).
+          One card, one state: an edit in the window is the token's own. */}
+      {pinned &&
+        createPortal(
+          <PinWindow name={reference.name} onClose={() => onPin?.()}>
+            <div className="ground-body">{renderBody(true)}</div>
+          </PinWindow>,
+          document.body,
+        )}
       {/* STORY 17.7 — THE EMBEDDED PANEL IS GONE. The expanded card's one
           ask-shaped verb is `ask about this` above: it makes an ask card beside
           this one, and THAT card owns the turn, the declaration, the readback

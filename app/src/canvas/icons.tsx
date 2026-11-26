@@ -82,6 +82,16 @@ export function IconPin() {
   );
 }
 
+/** Keep a card's window open (the pin): a small window mark (its own glyph). */
+export function IconWindow() {
+  return (
+    <Glyph>
+      <rect x="3.5" y="5" width="13" height="10" rx="1.5" />
+      <path d="M3.5 8.5h13" />
+    </Glyph>
+  );
+}
+
 /** Remove: the quiet x, as it always was. */
 export function IconRemove() {
   return (
