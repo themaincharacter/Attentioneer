@@ -164,7 +164,12 @@ import {
   type CommandThread,
   type CommandView,
 } from "./canvas/CommandCard";
-import { ReadingPane, type DockedCard } from "./canvas/ReadingPane";
+import {
+  ReadingPane,
+  AskDockBody,
+  type DockedCard,
+} from "./canvas/ReadingPane";
+import { askThreadOf } from "./canvas/useGround";
 import {
   applyCommandScript,
   createAttentioneerHost,
@@ -6611,7 +6616,24 @@ function App() {
             note={ground.notes[docked.slug] ?? ""}
             onSetNote={ground.setNote}
             onClose={() => setDocked(null)}
-          />
+          >
+            {docked.kind === "ask" &&
+              (() => {
+                const one = ground.asks.find((ask) => ask.on === docked.slug);
+                if (one === undefined) return null;
+                return (
+                  <AskDockBody
+                    ask={one}
+                    turns={askThreadOf(one, ground.asks, ground.askTurns).turns}
+                    draft={askDrafts.find((entry) => entry.slug === docked.slug)}
+                    hasProvider={askProvider}
+                    onOpenSettings={() => openSettings("providers")}
+                    onAskTurn={ground.askTurn}
+                    onStopAskTurn={ground.askStop}
+                  />
+                );
+              })()}
+          </ReadingPane>
         )}
 
         <CommandCard

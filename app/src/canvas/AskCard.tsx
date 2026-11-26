@@ -528,6 +528,8 @@ export function AskCard({
   autoAsk,
   onAutoAsked,
   draft,
+  onDock,
+  dockedOn = null,
   interactionMode = "idle",
   onNarrate,
   drag,
@@ -706,6 +708,13 @@ export function AskCard({
    * makes it ONCE, so a re-render cannot refill a field the person edited.
    */
   draft?: { question: string; token: number };
+  /** STORY 25-9: a body press docks the ask's thread and composer. */
+  onDock?: (docked: {
+    slug: string;
+    name: string;
+    text: string | null;
+  }) => void;
+  dockedOn?: string | null;
   /** The gesture gate, so a wiring drag never starts under an armed tool. */
   interactionMode?: GestureMode;
   /** The one sentence a wiring drag speaks; absent in a render test. */
@@ -1043,13 +1052,20 @@ export function AskCard({
       // are already the helper's own exclusions.
       expanded: () => open,
       onClick: (onPill) => {
-        // A press on the name pill is the handle and opens nothing; a press
-        // that never moved on the body is the card's door.
+        // A press on the name pill is the handle and opens nothing.
+        // STORY 25-9 (ADR-0046 ruling 2): a body press DOCKS — the thread and
+        // the composer live in the reading pane now. The fold's "more" still
+        // opens the inline face (its fork and effort verbs move to the pane in
+        // story 25-10).
         if (onPill) return;
+        if (onDock) {
+          onDock({ slug: ask.on, name: ask.name, text: null });
+          return;
+        }
         onOpen();
       },
     });
-  }, [ask.on, ask.x, ask.y, zoom, onMove, onOpen, onNarrate, interactionMode, drag]);
+  }, [ask.on, ask.x, ask.y, zoom, onMove, onOpen, onDock, onNarrate, interactionMode, drag]);
 
   /**
    * THE FRAME IS RELEASED WHEN THE RECORD CATCHES UP: the new point arrives as
@@ -1354,6 +1370,10 @@ export function AskCard({
           zoom and is this card's one place a name changes. The card's OWN name
           rules ride in (ASK_PILL_RULES): a blank field is a REFUSAL here, so no
           placeholder is ever stored. */}
+      {/* STORY 25-9: while this ask's thread is docked, the card says so. */}
+      {dockedOn === ask.on && (
+        <span className="ground-reading-mark">reading</span>
+      )}
       <CardNamePill
         name={ask.name}
         busy={busy}

@@ -921,6 +921,7 @@ interface GroundLayerProps {
    * pane. Optional so a render test needs no pane.
    */
   onDock?: (docked: {
+    kind: "reference" | "ask" | "session";
     slug: string;
     name: string;
     text: string | null;
@@ -1387,7 +1388,11 @@ export function GroundLayer({
           note={notes[reference.on]}
           pulled={pulled[reference.on]}
           state={states[reference.on] ?? (readingsBySlug.has(reference.on) ? "current" : "unread")}
-          onDock={onDock}
+          onDock={
+            onDock &&
+            ((d) =>
+              onDock({ kind: "reference", slug: d.slug, name: d.name, text: d.text }))
+          }
           dockedOn={dockedOn}
           open={openOn === reference.on}
           // STORY 17.1: one face at a time — opening a reference closes the
@@ -1511,6 +1516,12 @@ export function GroundLayer({
             /* STORY 21.7 — a question the command card's act left waiting. It
                reaches the composer as a DRAFT: no record, no turn, no send. */
             draft={askDrafts.find((entry) => entry.slug === ask.on)}
+          onDock={
+            onDock &&
+            ((d) =>
+              onDock({ kind: "ask", slug: d.slug, name: d.name, text: d.text }))
+          }
+          dockedOn={dockedOn}
             onForkTurn={
               onForkAsk === undefined
                 ? undefined

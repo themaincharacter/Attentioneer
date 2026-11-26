@@ -10022,6 +10022,36 @@ body.wiring .session-card-actions {
   background: var(--surface-sunk);
 }
 
+/* STORY 25-9 — THE ASK'S FACE IN THE PANE: the thread pages like the token
+   and the composer sits at the foot. */
+.reading-pane-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.reading-pane-send {
+  margin-top: 6px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 4px 12px;
+  font-family: var(--voice-quiet);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.reading-pane-link {
+  border: none;
+  background: none;
+  padding: 0 4px;
+  font-family: var(--voice-quiet);
+  font-size: 11px;
+  color: var(--ink-soft);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* THE MARKER: while a card's text is docked, the card says so in one quiet
    word — never a count, never a colour. */
 .ground-reading-mark {
