@@ -113,16 +113,17 @@ function oneRow(): ProviderRow {
 }
 
 /* ------------------------------------------------------------------ *
- * The frame: one modal, five sections (story 17 added Reading), closed
- * without a write.
+ * The frame: one modal, six sections (story 17 added Reading; story 25-14
+ * added the Cards' look), closed without a write.
  * ------------------------------------------------------------------ */
 
-describe("the frame is one modal with the five sections", () => {
-  test("the section list is Providers, Turn defaults, Reading, Local model, About", () => {
+describe("the frame is one modal with the six sections", () => {
+  test("the section list is Providers, Turn defaults, Reading, Cards, Local model, About", () => {
     expect(SETTINGS_SECTIONS.map((section) => section.label)).toEqual([
       "Providers",
       "Turn defaults",
       "Reading",
+      "Cards",
       "Local model",
       "About",
     ]);

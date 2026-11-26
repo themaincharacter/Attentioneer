@@ -9811,7 +9811,7 @@ body.wiring .session-card-actions {
    colour; never motion, never glow, and never meaning alone — every state
    keeps its honest sentence beside the frame. PROVISIONAL: the weights. */
 .frame-bevel {
-  border: 1px solid rgba(74, 66, 58, 0.45);
+  border: var(--frame-w, 1px) solid rgba(74, 66, 58, 0.45);
   box-shadow:
     0 1px 5px rgba(40, 35, 25, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.55),
@@ -9819,12 +9819,12 @@ body.wiring .session-card-actions {
 }
 
 .frame-dashed {
-  border: 1px dashed rgba(74, 66, 58, 0.5);
+  border: var(--frame-w, 1px) dashed rgba(74, 66, 58, 0.5);
   background: rgba(253, 250, 243, 0.82);
 }
 
 .frame-muted {
-  border: 1px solid rgba(74, 66, 58, 0.2);
+  border: var(--frame-w, 1px) solid rgba(74, 66, 58, 0.2);
   background: rgba(253, 250, 243, 0.72);
 }
 
@@ -9938,8 +9938,9 @@ body.wiring .session-card-actions {
    scratch are both deferred wants). One-shot per page change; the box is
    completely still afterwards (the motion clarification's rule: the moment
    earns the motion, and it never loops). */
+/* STORY 25-14: the settle's speed is the person's knob (--settle-ms). */
 .ink-settle {
-  animation: ink-appear var(--motion-slow) var(--ease-out);
+  animation: ink-appear var(--settle-ms, 260ms) var(--ease-out);
 }
 
 /* STORY 25-4 (the person: "a simple appear that generates some dopamine is

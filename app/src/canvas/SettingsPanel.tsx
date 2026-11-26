@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import appPackage from "../../package.json";
 import { ProvidersPanel } from "./ProvidersPanel";
-import { loadReadingPreference, saveReadingPreference } from "../lib/appConfig";
+import {
+  loadReadingPreference,
+  saveReadingPreference,
+  loadCardPreference,
+  saveCardPreference,
+} from "../lib/appConfig";
+import type { CardPreference } from "../lib/cardPreference";
 import {
   PREVIEW_LINES_CEILING,
   PREVIEW_LINES_FLOOR,
@@ -64,6 +70,7 @@ export const SETTINGS_SECTIONS = [
   { id: "providers", label: "Providers" },
   { id: "defaults", label: "Turn defaults" },
   { id: "reading", label: "Reading" },
+  { id: "cards", label: "Cards" },
   { id: "local", label: "Local model" },
   { id: "about", label: "About" },
 ] as const;
@@ -88,6 +95,7 @@ export function SettingsPanel({
   onClose,
   onChanged,
   onReadingChanged,
+  onCardsChanged,
 }: {
   /** The section on screen (the ask's shortcut opens Providers). */
   section: SettingsSection;
@@ -103,6 +111,8 @@ export function SettingsPanel({
    * needs no app chrome.
    */
   onReadingChanged?: () => void;
+  /** STORY 25-14: the cards' look changed (the app re-applies its vars). */
+  onCardsChanged?: () => void;
 }) {
   // Esc closes the whole modal. One listener, on the window, because the
   // modal's own controls are many and focus may be anywhere inside it.
@@ -167,6 +177,9 @@ export function SettingsPanel({
             )}
             {section === "reading" && (
               <ReadingFold onReadingChanged={onReadingChanged} />
+            )}
+            {section === "cards" && (
+              <CardsFold onCardsChanged={onCardsChanged} />
             )}
             {section === "local" && (
               <LocalModel onSection={onSection} onChanged={onChanged} />
@@ -409,6 +422,140 @@ function TurnDefaults({
       )}
       {sentence !== null && (
         <div className="settings-note settings-note-problem" role="status">
+          {sentence}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * CARDS — STORY 25-14 (ADR-0047's settings): the person's four knobs. The
+ * token's page size (their ruling: four, with three and five beside it), the
+ * frames' weight, the ink settle's speed, and the three VOICE STACKS — the
+ * fonts the hand, the press and the draft read in. System stacks only: the
+ * hard constraint stands, and no webfont is ever fetched.
+ *
+ * Every control writes through the config's one queued merge on the "keep"
+ * press, and what is shown after a save is what LANDED. PROVISIONAL: the
+ * labels, the options and the wording.
+ */
+function CardsFold({ onCardsChanged }: { onCardsChanged?: () => void }) {
+  const [preference, setPreference] = useState<CardPreference | null>(null);
+  const [drafts, setDrafts] = useState<CardPreference | null>(null);
+  const [sentence, setSentence] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void loadCardPreference().then((loaded) => {
+      if (!alive) return;
+      setPreference(loaded);
+      setDrafts(loaded);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function keep(): Promise<void> {
+    if (drafts === null || busy) return;
+    setSentence(null);
+    setBusy(true);
+    try {
+      const saved = await saveCardPreference(drafts);
+      setPreference(saved);
+      setDrafts(saved);
+      onCardsChanged?.();
+    } catch (error) {
+      const text = String(error).replace(/\s+/g, " ").trim();
+      setSentence(text === "" ? "the cards' look could not be saved" : text);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const choice = <T extends string | number>(
+    label: string,
+    key: "pageLines" | "frameWeight" | "settleSpeed",
+    options: readonly T[],
+    words: Readonly<Record<string, string>>,
+  ) => (
+    <div className="settings-field settings-field-inline">
+      <span>{label}</span>
+      {options.map((option) => (
+        <button
+          key={String(option)}
+          type="button"
+          className={
+            String(drafts?.[key]) === String(option)
+              ? "settings-choice settings-choice-on"
+              : "settings-choice"
+          }
+          disabled={busy}
+          onClick={() => {
+            if (drafts === null) return;
+            setDrafts({ ...drafts, [key]: option } as CardPreference);
+            if (sentence !== null) setSentence(null);
+          }}
+        >
+          {words[String(option)] ?? String(option)}
+        </button>
+      ))}
+    </div>
+  );
+
+  const stack = (label: string, key: "voiceHand" | "voicePress" | "voiceDraft", aria: string) => (
+    <label className="settings-field settings-field-inline">
+      <span>{label}</span>
+      <input
+        type="text"
+        value={drafts?.[key] ?? ""}
+        disabled={busy}
+        aria-label={aria}
+        onChange={(e) => {
+          if (drafts === null) return;
+          setDrafts({ ...drafts, [key]: e.target.value });
+          if (sentence !== null) setSentence(null);
+        }}
+      />
+    </label>
+  );
+
+  if (preference === null || drafts === null) {
+    return <div className="settings-note">reading the cards' look…</div>;
+  }
+
+  return (
+    <div className="settings-block">
+      <p className="settings-prose">
+        How the cards look and read. A token's page holds the lines you pick
+        here; a pinned window grows its page with the window. The frames' weight
+        draws every card's edge, and the ink settle is how a page's words land.
+        The three stacks are the fonts your words, the agent's words and the
+        words of absence read in — system fonts only.
+      </p>
+      {choice("page lines", "pageLines", [3, 4, 5] as const, {})}
+      {choice("frames", "frameWeight", ["thin", "medium", "thick"] as const, {})}
+      {choice(
+        "ink settle",
+        "settleSpeed",
+        ["quick", "gentle", "slow"] as const,
+        { quick: "quick", gentle: "gentle", slow: "slow" },
+      )}
+      {stack("your words", "voiceHand", "the font stack for the person's words")}
+      {stack("the agent's words", "voicePress", "the font stack for the agent's words")}
+      {stack("words of absence", "voiceDraft", "the font stack for the words of absence")}
+      <button
+        type="button"
+        className="settings-save"
+        disabled={busy}
+        onClick={() => void keep()}
+      >
+        keep
+      </button>
+      {sentence !== null && (
+        <div className="settings-note" role="status">
           {sentence}
         </div>
       )}

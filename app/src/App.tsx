@@ -80,7 +80,13 @@ import {
   type GestureNarration,
 } from "./canvas/gestureWord";
 import { createTurnPort } from "./turn/sidecar";
-import { loadReadingPreference } from "./lib/appConfig";
+import { loadReadingPreference, loadCardPreference } from "./lib/appConfig";
+import {
+  DEFAULT_CARD_PREFERENCE,
+  FRAME_WEIGHT_PX,
+  SETTLE_MS,
+  type CardPreference,
+} from "./lib/cardPreference";
 import {
   DEFAULT_READING_PREFERENCE,
   type ReadingPreference,
@@ -1140,6 +1146,10 @@ function App() {
   // holds the current value so every ground card re-crops when Settings writes
   // a new one; the defaults stand until the config answers, and nothing here
   // counts or tracks what was read.
+  // STORY 25-14 — the cards' stated knobs (Settings is the only writer).
+  const [cardPreference, setCardPreference] = useState<CardPreference>(
+    DEFAULT_CARD_PREFERENCE,
+  );
   const [readingPreference, setReadingPreference] =
     useState<ReadingPreference>(DEFAULT_READING_PREFERENCE);
   // The ghost's ask surface (Epic 10 story 3): the one panel where the person
@@ -2802,6 +2812,30 @@ function App() {
   useEffect(() => {
     refreshReadingPreference();
   }, [refreshReadingPreference]);
+
+  /**
+   * STORY 25-14 — THE CARDS' LOOK IS A FEW CSS VARS. Settings writes the
+   * config; this is the read side, and the sheet reads the vars: the three
+   * voice stacks, the frames' weight and the ink settle's speed.
+   */
+  const refreshCardPreference = useCallback(() => {
+    void loadCardPreference()
+      .then(setCardPreference)
+      .catch(() => setCardPreference(DEFAULT_CARD_PREFERENCE));
+  }, []);
+
+  useEffect(() => {
+    refreshCardPreference();
+  }, [refreshCardPreference]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--voice-hand", cardPreference.voiceHand);
+    root.style.setProperty("--voice-press", cardPreference.voicePress);
+    root.style.setProperty("--voice-draft", cardPreference.voiceDraft);
+    root.style.setProperty("--frame-w", FRAME_WEIGHT_PX[cardPreference.frameWeight]);
+    root.style.setProperty("--settle-ms", SETTLE_MS[cardPreference.settleSpeed]);
+  }, [cardPreference]);
 
   /**
    * STORY 17.7b — READ THE ONE SELECTION AT START, so an ask card can say
@@ -5658,6 +5692,7 @@ function App() {
             workspacePath={workspace.path}
             onNarrate={narrate}
             interactionMode={gestureMode}
+            pageLines={cardPreference.pageLines}
             previewLines={readingPreference.previewLines}
             noteLines={readingPreference.noteLines}
             zoom={camera.zoom}
@@ -6341,6 +6376,7 @@ function App() {
           onClose={closeSettings}
           onChanged={refreshProviderFacts}
           onReadingChanged={refreshReadingPreference}
+           onCardsChanged={refreshCardPreference}
         />
       )}
 

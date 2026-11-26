@@ -6,6 +6,12 @@ import {
   storedReadingPreference,
   type ReadingPreference,
 } from "./readingPreference";
+import {
+  DEFAULT_CARD_PREFERENCE,
+  readCardPreference,
+  storedCardPreference,
+  type CardPreference,
+} from "./cardPreference";
 import { canonicalJson, writeMachineFile } from "./serialize";
 import { createWriteQueue } from "./writeQueue";
 
@@ -118,6 +124,28 @@ export async function loadReadingPreference(): Promise<ReadingPreference> {
  * LANDED, so Settings can show the number that is actually used rather than the
  * number that was typed.
  */
+/** The config key the cards' stated knobs live under (story 25-14). */
+export const CARDS_CONFIG_KEY = "cards";
+
+/** The cards' knobs from the config; ignorance is the honest default. */
+export async function loadCardPreference(): Promise<CardPreference> {
+  try {
+    const config = await loadAppConfig();
+    return readCardPreference(config[CARDS_CONFIG_KEY]);
+  } catch {
+    return DEFAULT_CARD_PREFERENCE;
+  }
+}
+
+/** Persist the cards' knobs (each bounded) and answer what LANDED. */
+export async function saveCardPreference(
+  preference: CardPreference,
+): Promise<CardPreference> {
+  const stored = storedCardPreference(preference);
+  await saveAppConfig({ [CARDS_CONFIG_KEY]: stored });
+  return stored;
+}
+
 export async function saveReadingPreference(
   preference: ReadingPreference,
 ): Promise<ReadingPreference> {

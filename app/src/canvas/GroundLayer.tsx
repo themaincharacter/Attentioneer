@@ -934,6 +934,8 @@ interface GroundLayerProps {
    * nothing else.
    */
   onCenter?: (at: Point) => void;
+  /** STORY 25-14: a token's stated page size (Settings states it). */
+  pageLines?: number;
 }
 
 export function GroundLayer({
@@ -1008,6 +1010,7 @@ export function GroundLayer({
   drag,
   found = null,
   onCenter,
+  pageLines = 4,
 }: GroundLayerProps) {
   const readingsBySlug = new Map(readings.map((reading) => [reading.on, reading]));
   const mediaBySlug = new Map(media.map((entry) => [entry.on, entry]));
@@ -1447,6 +1450,7 @@ export function GroundLayer({
           onCreateFromLink={onCreateFromLink}
           workspacePath={workspacePath}
           onNarrate={onNarrate}
+          pageLines={pageLines}
           previewLines={previewLines}
           noteLines={noteLines}
           drag={drag}
@@ -1975,6 +1979,7 @@ function GroundCard({
   onNarrate,
   previewLines,
   noteLines,
+  pageLines = 4,
   sourceNames,
   drag,
 }: {
@@ -2063,6 +2068,8 @@ function GroundCard({
   /** STORY 17: the stated fold threshold, already bounded (preview + note). */
   previewLines: number;
   noteLines: number;
+  /** STORY 25-14: a token's stated page size (Settings states it). */
+  pageLines?: number;
   /** STORY 25-11 (ADR-0047): the pin keeps the card's face open in a window. */
   pinned?: boolean;
   onPin?: () => void;
@@ -2918,7 +2925,7 @@ function GroundCard({
             // it rests on, what it does not cover and the uncertainty ride ONE
             // disclosure on the expanded face (the ask card's shape). The raw
             // reply stays one verb away, as it always was.
-            <PagedText key={open ? "open" : "small"} anchor="card" fill={inWindow}>
+            <PagedText key={open ? "open" : "small"} anchor="card" fill={inWindow} linesPerPage={pageLines}>
             <div className="ground-reading" ref={readingRef}>
               <div className="ground-distilled-claim">
                 <GroundReadingText text={distilledGlance.claim} open={open} />
@@ -2944,7 +2951,7 @@ function GroundCard({
             </div>
             </PagedText>
           ) : (
-            <PagedText key={open ? "open" : "small"} anchor="card" fill={inWindow}>
+            <PagedText key={open ? "open" : "small"} anchor="card" fill={inWindow} linesPerPage={pageLines}>
               <div className="ground-reading" ref={readingRef}>
                 <GroundReadingText text={bodyText} open={open} />
               </div>
