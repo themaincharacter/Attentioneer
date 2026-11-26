@@ -6109,6 +6109,19 @@ function App() {
             x={groundAt.x}
             y={groundAt.y}
             initialIntent={groundIntent}
+            /* STORY 25-19 (the person's ruling): the WIRE's menu is the
+               restricted one — an ask, and a session only beside a project. */
+            wireSource={
+              groundAt.hookup === undefined
+                ? undefined
+                : ground.readings.some(
+                      (reading) =>
+                        reading.on === groundAt.hookup &&
+                        reading.form === "folder",
+                    )
+                  ? "project"
+                  : "other"
+            }
             onAdd={addGroundAt}
             /* STORY 21.13 — THE ASK DOOR: an empty ask card at the point, in
                the person's own name. 20.3's wire rides the same wrapper every

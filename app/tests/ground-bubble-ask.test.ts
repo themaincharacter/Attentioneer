@@ -193,6 +193,25 @@ describe("the intent row gains an ask door", () => {
     expect(html).not.toContain(">a video</button>");
   });
 
+  test("the wire's menu is the restricted one (story 25-19)", () => {
+    // The person asked to be corrected if wrong — they were right: a
+    // reference-to-reference wire is read by nothing (the wire's only reader
+    // is the ask's context gathering). So a wire offers AN ASK always, a
+    // SESSION only beside a project, and never a reference.
+    const other = renderBubble({ wireSource: "other" });
+    expect(other).toContain(">an ask</button>");
+    expect(other).not.toContain(">a reference</button>");
+    expect(other).not.toContain(">a session</button>");
+    const project = renderBubble({ wireSource: "project" });
+    expect(project).toContain(">an ask</button>");
+    expect(project).toContain(">a session</button>");
+    expect(project).not.toContain(">a reference</button>");
+    // And the full menu (no wire) keeps both steps.
+    const full = renderBubble({});
+    expect(full).toContain(">a reference</button>");
+    expect(full).not.toContain(">a session</button>");
+  });
+
   test("a door the app did not hand the bubble is not offered", () => {
     const html = renderBubble({ onAddAsk: undefined });
     expect(html).not.toContain(">an ask</button>");

@@ -151,6 +151,14 @@ interface GroundBubbleProps {
    * render test) means every row reads untested here.
    */
   toolRowFacts?: readonly AcpRowFact[];
+  /**
+   * STORY 25-19 (the person's ruling) — THE WIRE'S RESTRICTED MENU. A wire
+   * released on empty paper offers AN ASK always (its only reader is the
+   * ask's context gathering — the person asked, and a reference-to-reference
+   * wire is read by nothing), and A SESSION only beside a project. No
+   * reference kinds join it. Absent: the full two-step menu.
+   */
+  wireSource?: "project" | "other";
   /** Drop the draft (Esc, cancel or a press outside). */
   onClose: () => void;
 }
@@ -166,6 +174,7 @@ export function GroundBubble({
   onAddVideo,
   onAddSession,
   toolRowFacts = [],
+  wireSource,
   onClose,
 }: GroundBubbleProps) {
   const { camera } = usePlane();
@@ -495,7 +504,15 @@ export function GroundBubble({
       {/* STORY 25-19 — STEP ONE: an ask or a reference (a session is the
           wire's alone — it only makes sense beside a project). */}
       <div className="ground-bubble-intents" role="group" aria-label="what to add">
-        {KINDS.map((option) => {
+        {KINDS.filter((option) =>
+          // STORY 25-19: the wire's menu is the restricted one (an ask, and a
+          // session only beside a project); a wire never offers a reference.
+          wireSource === undefined
+            ? true
+            : option.kind === "ask"
+              ? true
+              : false,
+        ).map((option) => {
           const offered = option.kind === "ask" ? onAddAsk !== undefined : true;
           if (!offered) return null;
           const active =
@@ -515,6 +532,31 @@ export function GroundBubble({
             </button>
           );
         })}
+        {/* STORY 25-19: the session appears ONLY beside a project (the
+            person: "Session is only selectable as a wire drag option off a
+            project reference because that's the only way it makes sense"). */}
+        {wireSource === "project" && onAddSession !== undefined && (
+          <button
+            type="button"
+            className={
+              kind === "session"
+                ? "ground-bubble-intent active"
+                : "ground-bubble-intent"
+            }
+            aria-pressed={kind === "session"}
+            disabled={busy}
+            onClick={() => {
+              if (busy) return;
+              setKind("session");
+              setFrom(null);
+              setIntent("session");
+              setProblem(null);
+              nameRef.current?.focus();
+            }}
+          >
+            a session
+          </button>
+        )}
       </div>
       {/* STORY 25-19 — STEP TWO: the reference's own kinds. Nothing is picked
           until the person picks it. */}
