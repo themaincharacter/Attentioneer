@@ -149,6 +149,26 @@ export function zoomAbout(
  * a map the person is not looking at. A tab switch changes `level`, and the
  * camera to come back is the one this store kept.
  */
+/**
+ * The camera after ONE GLIDE FRAME toward a target (story 25-6): linear in the
+ * position, GEOMETRIC in the scale (a zoom should halve in equal steps, not
+ * sprint). PURE — the easing is a number, so the feel is testable and tunable
+ * without a DOM. PROVISIONAL: the factor.
+ */
+export function glideToward(
+  shown: Camera,
+  target: Camera,
+  factor: number,
+): Camera {
+  return {
+    x: shown.x + (target.x - shown.x) * factor,
+    y: shown.y + (target.y - shown.y) * factor,
+    zoom: Math.exp(
+      Math.log(shown.zoom) + (Math.log(target.zoom) - Math.log(shown.zoom)) * factor,
+    ),
+  };
+}
+
 export function useCamera(
   level: Level,
   initial: MapCameras = INITIAL_CAMERAS,

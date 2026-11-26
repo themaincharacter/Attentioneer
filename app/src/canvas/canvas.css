@@ -133,7 +133,11 @@ body {
   background-color: #f7f6f3;
   /* Dot grid; background-position/size track the camera (set inline in
      CanvasPlane) so the plane visibly pans and zooms even when empty. */
-  background-image: radial-gradient(circle, #d8d4cc 1px, transparent 1px);
+  background-image: radial-gradient(
+    circle,
+    rgba(216, 212, 204, calc(0.95 * var(--grid-fade, 1))) 1px,
+    transparent 1px
+  );
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -148,12 +152,19 @@ body {
    pans and zooms with the map. PROVISIONAL: the tone and the grain's rung. */
 .plane[data-map="ground"] {
   background-color: #e6dccb;
+  /* STORY 25-6: the grid fades toward the pixel grid (--grid-fade, written
+     per camera frame) — a hairline pattern at a 6-7px pitch beats against the
+     screen and reads as jitter while the zoom moves. */
   background-image: linear-gradient(
       to right,
-      var(--ink-chip) 1px,
+      rgb(30 33 38 / calc(0.08 * var(--grid-fade, 1))) 1px,
       transparent 1px
     ),
-    linear-gradient(to bottom, var(--ink-chip) 1px, transparent 1px);
+    linear-gradient(
+      to bottom,
+      rgb(30 33 38 / calc(0.08 * var(--grid-fade, 1))) 1px,
+      transparent 1px
+    );
 }
 
 .plane.dragging {

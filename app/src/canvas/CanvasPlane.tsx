@@ -24,6 +24,7 @@ import {
   type GestureMode,
 } from "./gates";
 import { pillCounterScale } from "./CardNamePill";
+import { glideToward } from "./useCamera";
 import type { SketchPoint } from "../map/sketches";
 import {
   DEFAULT_DRAW_TOOL,
@@ -286,6 +287,11 @@ export function CanvasPlane({
   // through these — never through a render.
   const innerRef = useRef<HTMLDivElement>(null);
   const chipRef = useRef<HTMLDivElement>(null);
+  // STORY 25-6: the glide's shown/target pair (the wheel eases toward its
+  // step; a pan and a pinch stay instant — the hand holds the content).
+  const shownRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
+  const targetRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
+  const glideRef = useRef(0);
   const behaviorRef = useRef<ZoomBehavior<HTMLDivElement, unknown> | null>(null);
   const pressesRef = useRef<PlanePress[]>([]);
   const [lassoPath, setLassoPath] = useState<Point[] | null>(null);
@@ -398,6 +404,46 @@ export function CanvasPlane({
     const el = planeRef.current;
     if (!el) return;
 
+    // STORY 25-5/25-6 — ONE FRAME'S WRITES (never a render).
+    const paint = (cam: { x: number; y: number; zoom: number }): void => {
+      cameraRef.current = cam;
+      const inner = innerRef.current;
+      if (inner !== null) {
+        inner.style.transform =
+          "translate(" + cam.x + "px, " + cam.y + "px) scale(" + cam.zoom + ")";
+      }
+      el.style.backgroundPosition = cam.x + "px " + cam.y + "px";
+      el.style.backgroundSize = GRID * cam.zoom + "px " + GRID * cam.zoom + "px";
+      // (The counting words are banned from surface code — this is a scale.)
+      const shared = pillCounterScale(cam.zoom);
+      el.style.setProperty("--pill-scale", String(shared));
+      el.style.setProperty("--verb-scale", String(shared));
+      // STORY 25-6 — THE GRID FADES toward the pixel grid: a hairline pattern
+      // at a 6-7px pitch beats against the screen and reads as JITTER while the
+      // zoom moves (the person's gif was at 25%, where the bench's grid is
+      // densest). The bench keeps its material at working pitches and goes
+      // quiet at the far ones — the classic map answer, and nothing the map
+      // carries is lost.
+      const fade = Math.min(1, Math.max(0, (GRID * cam.zoom - 4) / 8));
+      el.style.setProperty("--grid-fade", String(fade));
+      const chip = chipRef.current;
+      if (chip !== null) chip.textContent = zoomChipPercent(cam.zoom) + "%";
+    };
+    const tick = () => {
+      glideRef.current = 0;
+      const shown = shownRef.current;
+      const target = targetRef.current;
+      if (shown === null || target === null) return;
+      const next = glideToward(shown, target, 0.32);
+      const arrived =
+        Math.abs(next.zoom - target.zoom) < target.zoom * 0.002 &&
+        Math.abs(next.x - target.x) < 0.5 &&
+        Math.abs(next.y - target.y) < 0.5;
+      shownRef.current = arrived ? target : next;
+      paint(shownRef.current);
+      if (!arrived) glideRef.current = requestAnimationFrame(tick);
+    };
+
     const behavior: ZoomBehavior<HTMLDivElement, unknown> = d3zoom<
       HTMLDivElement,
       unknown
@@ -417,30 +463,23 @@ export function CanvasPlane({
         return !event.button;
       })
       .on("zoom.camera", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
-        // STORY 25-5 — THE CAMERA LEAVES REACT. Every frame of a zoom or a pan
-        // writes the DOM directly (the drag's own idiom, 16.25): the inner
-        // transform, the grid, the shared counter-scale and the chip. NOTHING
-        // re-renders per frame — this handler used to set React state per
-        // event, re-rendering every card on every wheel tick (the jitter the
-        // person's gif shows). React catches up ONCE, when the gesture settles
-        // (end.camera, below). Safe because React overwrites only a style it
-        // has CHANGED: the camera prop is untouched mid-gesture, so any other
-        // re-render never rewrites these values.
+        // (see the paint/tick pair above)
         const t: ZoomTransform = event.transform;
-        cameraRef.current = { x: t.x, y: t.y, zoom: t.k };
-        const inner = innerRef.current;
-        if (inner !== null) {
-          inner.style.transform =
-            "translate(" + t.x + "px, " + t.y + "px) scale(" + t.k + ")";
+        const target = { x: t.x, y: t.y, zoom: t.k };
+        targetRef.current = target;
+        const discrete =
+          event.sourceEvent !== null &&
+          event.sourceEvent !== undefined &&
+          event.sourceEvent.type === "wheel";
+        const shown = shownRef.current;
+        if (!discrete || shown === null) {
+          shownRef.current = target;
+          paint(target);
+          return;
         }
-        el.style.backgroundPosition = t.x + "px " + t.y + "px";
-        el.style.backgroundSize = GRID * t.k + "px " + GRID * t.k + "px";
-        // (The counting words are banned from surface code — this is a scale.)
-        const shared = pillCounterScale(t.k);
-        el.style.setProperty("--pill-scale", String(shared));
-        el.style.setProperty("--verb-scale", String(shared));
-        const chip = chipRef.current;
-        if (chip !== null) chip.textContent = zoomChipPercent(t.k) + "%";
+        if (glideRef.current === 0) {
+          glideRef.current = requestAnimationFrame(tick);
+        }
       })
       .on("start.cursor", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
         if (event.sourceEvent?.type === "mousedown") el.classList.add("dragging");
@@ -457,6 +496,15 @@ export function CanvasPlane({
       })
       .on("end.camera", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
         el.classList.remove("dragging");
+        // STORY 25-5/25-6 — THE CAMERA CATCHES UP: the glide lands exactly on
+        // the settled transform and React state lands ONCE, here (every path —
+        // a smoothed wheel carries no sourceEvent either).
+        const settle = event.transform;
+        const landed = { x: settle.x, y: settle.y, zoom: settle.k };
+        shownRef.current = landed;
+        targetRef.current = landed;
+        paint(landed);
+        intents.setTransform(landed);
         // The release ends the gesture: the chip clears. A programmatic camera
         // move (no sourceEvent) never narrated anything, so it clears nothing.
         if (event.sourceEvent) onNarrateRef.current?.(GESTURE_IDLE);
