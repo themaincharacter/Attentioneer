@@ -280,10 +280,11 @@ describe("the retrieval offer is a verb, not a READ: line", () => {
  * ------------------------------------------------------------------ */
 
 describe("the footer carries the primary action and the strip's own keys", () => {
-  test("the strip holds exactly pin, fork, remove and close", () => {
+  test("the strip holds exactly pin, fork and remove", () => {
     // STORY 25-15: the overflow's "more" is GONE — every verb is its own icon
     // key on the strip. The keys live on the token too, so the closed face
-    // below reads the strip on its own.
+    // below reads the strip on its own. (The close key retired with the
+    // person's cleanup: it served no purpose.)
     const html = render({
       open: false,
       onPin: () => {},
@@ -292,9 +293,9 @@ describe("the footer carries the primary action and the strip's own keys", () =>
     });
     expect(html).not.toContain('<details class="ask-card-overflow"');
     expect(html).not.toContain(">" + ASK_OVERFLOW_VERB + "<");
-    // EXACTLY four keys, each a VerbBubble: its class, and its word in the tip.
+    // EXACTLY three keys, each a VerbBubble: its class, and its word in the tip.
     const row = actionsRow(html);
-    expect((row.match(/<button/g) ?? []).length).toBe(4);
+    expect((row.match(/<button/g) ?? []).length).toBe(3);
     expect(row).toContain('class="verb-key ground-pin"');
     expect(row).toContain('class="verb-tip">pin</span>');
     expect(row).toContain('class="verb-key ask-card-fork"');
@@ -303,8 +304,6 @@ describe("the footer carries the primary action and the strip's own keys", () =>
     );
     expect(row).toContain('class="verb-key ground-remove"');
     expect(row).toContain('class="verb-tip">' + ASK_OVERFLOW_REMOVE + "</span>");
-    expect(row).toContain('class="verb-key ask-card-close"');
-    expect(row).toContain('class="verb-tip">' + ASK_OVERFLOW_CLOSE + "</span>");
     // The pin's word follows the state: "pin" until the window is up, then
     // "unpin".
     expect(ASK_CARD).toContain('label={pinned ? "unpin" : "pin"}');

@@ -28,7 +28,6 @@ import {
   type AskWorkPhase,
 } from "./contactRules";
 import {
-  IconCollapse,
   IconFork,
   IconPin,
   IconRemove,
@@ -1286,12 +1285,6 @@ export function AskCard({
             onClick={() => void removeCard()}
           />
         )}
-        <VerbBubble
-          className="ask-card-close"
-          label="close"
-          icon={<IconCollapse />}
-          onClick={onClose}
-        />
       </>
     );
   }

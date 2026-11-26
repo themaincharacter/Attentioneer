@@ -22,7 +22,6 @@ import { CardNamePill, type PillNameRules } from "./CardNamePill";
 import { createPortal } from "react-dom";
 import { PinWindow } from "./PinWindow";
 import {
-  IconCollapse,
   IconKey,
   IconKeep,
   IconPin,
@@ -1189,12 +1188,6 @@ export function SessionCard({
             onClick={() => void removeCard()}
           />
         )}
-        <VerbBubble
-          className="session-card-close"
-          label="close"
-          icon={<IconCollapse />}
-          onClick={onClose}
-        />
       </>
     );
   }

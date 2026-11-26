@@ -10110,14 +10110,15 @@ body.wiring .session-card-actions {
 
 /* STORY 25-15 (the person's cleanup) — THE REMOVE'S RED AND THE WIRE'S BLUE:
    the two destructive/creative verbs carry their own quiet tint, so they are
-   found at a glance and never confused with each other. */
-.ground-remove {
+   found at a glance and never confused with each other. The glyph's stroke is
+   the sheet's own (`.verb-key svg`), so the tint reaches the stroke too. */
+.verb-key.ground-remove {
   color: #a0453b;
 }
 
-.ask-card-fork,
-.session-card-remove {
-  color: #a0453b;
+.verb-key.ground-remove svg,
+.ground-remove svg {
+  stroke: #a0453b;
 }
 
 .ground-link-handle {
