@@ -58,7 +58,7 @@ import {
   IconRemove,
   IconWire,
 } from "./icons";
-import { VerbBubble, verbCounterScale } from "./VerbBubble";
+import { VerbBubble } from "./VerbBubble";
 import { sessionDistilWords, type AskCallsFacts, type AskWorkPhase } from "./contactRules";
 import { assetSrc } from "./imageSource";
 import { pickReadingFile } from "../workspace/dialogs";
@@ -2760,9 +2760,8 @@ function GroundCard({
           // variables, so a changed threshold re-crops without a reload.
           "--preview-lines": previewLines,
           "--note-lines": noteLines,
-          // STORY 24-8 (ADR-0044): the verb strip counter-scales like the
-          // name pill, so its bubbles stay finger-sized at every zoom.
-          "--verb-scale": verbCounterScale(zoom),
+          // STORY 25-5: the counter-scale is the plane's shared var now
+          // (set per zoom frame); the keys inherit it like the pill does.
         } as CSSProperties
       }
       data-slug={reference.on}
@@ -2787,7 +2786,6 @@ function GroundCard({
           the one name write path. The body below starts at the TYPE LINE. */}
       <CardNamePill
         name={reference.name}
-        zoom={zoom}
         busy={busy}
         onRename={
           onRename === undefined

@@ -9844,10 +9844,15 @@ body.wiring .session-card-actions {
    hangs below), it is ALWAYS reachable on the map card and its counter-scale
    grows into open paper instead of into the body's clip. PROVISIONAL: the
    edge placement — the person may prefer it inside the footer row. */
-.paged-cue[data-cue-anchor="card"] {
+.paged-box .paged-cue[data-cue-anchor="card"] {
   position: absolute;
   left: 6px;
   top: calc(100% + 8px);
+  /* STORY 25-5: the cue's scale tracks the zoom PER FRAME (the shared var),
+     so it must not transition its transform and it must out-rank the keys'
+     grow-on-focus rule. The hover stays a border change. */
+  transform: scale(var(--verb-scale, 1));
+  transition: none;
 }
 
 .paged-measure {

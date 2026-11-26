@@ -167,7 +167,9 @@ describe("the counter-scale is pure and clamped", () => {
     // The layer passes the camera's value it already has; the pill only turns
     // it into the clamped number (it never re-derives a transform).
     expect(LAYER).toContain("zoom={zoom}");
-    expect(PILL).toContain('"--pill-scale": pillCounterScale(zoom)');
+    // STORY 25-5: the counter-scale is the PLANE's shared var, written per
+    // zoom frame (the camera's frames leave React); the pill carries none.
+    expect(PILL).not.toContain("--pill-scale");
     expect(CSS).toContain("transform: scale(var(--pill-scale, 1))");
     expect(CSS).toContain("transform-origin: left bottom");
   });
@@ -189,9 +191,10 @@ describe("the pill renders the name; the card body does not", () => {
   });
 
   test("the pill's scale follows the camera in the rendered style", () => {
-    expect(render([reference("Rain gauge")], 0.25)).toContain("--pill-scale:4");
-    expect(render([reference("Rain gauge")], 0.5)).toContain("--pill-scale:2");
-    expect(render([reference("Rain gauge")], 4)).toContain("--pill-scale:1");
+    // The rule itself is pinned through pillCounterScale (above): the pill
+    // renders NO scale of its own — it inherits the plane's shared var.
+    expect(render([reference("Rain gauge")], 0.25)).not.toContain("--pill-scale");
+    expect(render([reference("Rain gauge")], 0.25)).toContain('class="ground-name"');
   });
 
   test("an empty name is legal and shows the quiet line 'no name yet'", () => {

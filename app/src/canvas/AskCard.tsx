@@ -38,7 +38,7 @@ import {
   IconStop,
   IconWire,
 } from "./icons";
-import { VerbBubble, verbCounterScale } from "./VerbBubble";
+import { VerbBubble } from "./VerbBubble";
 import type { WorkingChannel } from "./workingRef";
 import { epistemicState, frameFor } from "../reading/frames";
 import { isGestureArmed, type GestureMode } from "./gates";
@@ -1341,9 +1341,7 @@ export function AskCard({
           left: ask.x,
           top: ask.y,
           "--preview-lines": previewLines,
-          // STORY 24-9 (ADR-0044): the verb strip counter-scales like the
-          // name pill, so its bubbles stay finger-sized at every zoom.
-          "--verb-scale": verbCounterScale(zoom),
+          // STORY 25-5: the counter-scale is the plane's shared var now.
         } as CSSProperties
       }
       data-slug={ask.on}
@@ -1358,7 +1356,6 @@ export function AskCard({
           placeholder is ever stored. */}
       <CardNamePill
         name={ask.name}
-        zoom={zoom}
         busy={busy}
         rules={ASK_PILL_RULES}
         renameLabel="rename this ask card"

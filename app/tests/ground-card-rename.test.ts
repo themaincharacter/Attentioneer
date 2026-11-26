@@ -184,7 +184,9 @@ describe("three kinds, one pill, each family's own rules", () => {
     );
     // One pill per card, all counter-scaled by the SAME camera reading.
     expect(html.split('class="ground-pill"').length - 1).toBe(6);
-    expect(html.split("--pill-scale:4").length - 1).toBe(6);
+    // STORY 25-5: no pill carries its own scale — the plane's shared var is
+    // the one rule (the six pills themselves are counted above).
+    expect(html).not.toContain("--pill-scale");
     // Every kind's name is up there in its own pill: the record's words, or
     // the one quiet line for a blank name and a family's untitled sentence.
     const pillName = (slug: string): string => {

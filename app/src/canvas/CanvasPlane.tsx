@@ -23,6 +23,7 @@ import {
   shouldCreate,
   type GestureMode,
 } from "./gates";
+import { pillCounterScale } from "./CardNamePill";
 import type { SketchPoint } from "../map/sketches";
 import {
   DEFAULT_DRAW_TOOL,
@@ -281,6 +282,10 @@ export function CanvasPlane({
   children,
 }: CanvasPlaneProps) {
   const planeRef = useRef<HTMLDivElement>(null);
+  // STORY 25-5: the camera's frame writes (the inner transform, the chip) go
+  // through these — never through a render.
+  const innerRef = useRef<HTMLDivElement>(null);
+  const chipRef = useRef<HTMLDivElement>(null);
   const behaviorRef = useRef<ZoomBehavior<HTMLDivElement, unknown> | null>(null);
   const pressesRef = useRef<PlanePress[]>([]);
   const [lassoPath, setLassoPath] = useState<Point[] | null>(null);
@@ -412,8 +417,30 @@ export function CanvasPlane({
         return !event.button;
       })
       .on("zoom.camera", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
+        // STORY 25-5 — THE CAMERA LEAVES REACT. Every frame of a zoom or a pan
+        // writes the DOM directly (the drag's own idiom, 16.25): the inner
+        // transform, the grid, the shared counter-scale and the chip. NOTHING
+        // re-renders per frame — this handler used to set React state per
+        // event, re-rendering every card on every wheel tick (the jitter the
+        // person's gif shows). React catches up ONCE, when the gesture settles
+        // (end.camera, below). Safe because React overwrites only a style it
+        // has CHANGED: the camera prop is untouched mid-gesture, so any other
+        // re-render never rewrites these values.
         const t: ZoomTransform = event.transform;
-        intents.setTransform({ x: t.x, y: t.y, zoom: t.k });
+        cameraRef.current = { x: t.x, y: t.y, zoom: t.k };
+        const inner = innerRef.current;
+        if (inner !== null) {
+          inner.style.transform =
+            "translate(" + t.x + "px, " + t.y + "px) scale(" + t.k + ")";
+        }
+        el.style.backgroundPosition = t.x + "px " + t.y + "px";
+        el.style.backgroundSize = GRID * t.k + "px " + GRID * t.k + "px";
+        // (The counting words are banned from surface code — this is a scale.)
+        const shared = pillCounterScale(t.k);
+        el.style.setProperty("--pill-scale", String(shared));
+        el.style.setProperty("--verb-scale", String(shared));
+        const chip = chipRef.current;
+        if (chip !== null) chip.textContent = zoomChipPercent(t.k) + "%";
       })
       .on("start.cursor", (event: D3ZoomEvent<HTMLDivElement, unknown>) => {
         if (event.sourceEvent?.type === "mousedown") el.classList.add("dragging");
@@ -439,6 +466,11 @@ export function CanvasPlane({
         // sourceEvent and must never be read as a band change: the handoff
         // itself moved them.
         if (!event.sourceEvent) return;
+        // STORY 25-5 — THE CAMERA CATCHES UP: React state lands ONCE, when the
+        // gesture settles (the frames above wrote the DOM directly). The
+        // per-map cameras and every zoom reader update here.
+        const settled: ZoomTransform = event.transform;
+        intents.setTransform({ x: settled.x, y: settled.y, zoom: settled.k });
         // The wheel's crossing is the band change (ADR-0018); a pan reports
         // the same zoom and derives the same band, so it writes nothing.
         onZoomSettleRef.current?.(event.transform.k);
@@ -709,6 +741,7 @@ export function CanvasPlane({
         onDoubleClick={handleDoubleClick}
       >
         <div
+          ref={innerRef}
           className="plane-inner"
           style={{
             transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
@@ -791,7 +824,9 @@ export function CanvasPlane({
         )}
         {/* The chip reads through the band helpers (story 2): never a rounded
             percent that contradicts the level or the labels. */}
-        <div className="zoom-chip">{zoomChipPercent(camera.zoom)}%</div>
+        <div ref={chipRef} className="zoom-chip">
+          {zoomChipPercent(camera.zoom)}%
+        </div>
         {/* The hint is ONE rule's sentence (mapContentRules.ts's `planeHint`):
             the shelf's fold is named only where a shelf renders. */}
         <div className="plane-hint">{hint}</div>

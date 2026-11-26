@@ -111,8 +111,7 @@ export interface PillNameRules {
 interface CardNamePillProps {
   /** The record's name — the person's exact words, possibly an empty field. */
   name: string;
-  /** The camera's zoom, read from the plane (never re-derived here). */
-  zoom: number;
+
   /**
    * Write a new name through the card's one name path. Optional so a render
    * test needs no writer; the pill then floatingly shows the name but offers
@@ -172,7 +171,6 @@ export function pillRenameOutcome(
 
 export function CardNamePill({
   name,
-  zoom,
   onRename,
   busy = false,
   rules = REFERENCE_PILL_RULES,
@@ -222,10 +220,12 @@ export function CardNamePill({
       className="ground-pill"
       style={
         {
-          // The layer hands the plane's camera zoom; the pill's one job with it
+          // STORY 25-5: the counter-scale moved to the PLANE — one shared var set per
+  // zoom frame (the camera's frames leave React now), so the pill INHERITS it
+  // and no render carries it. The pill's one job with the camera is nothing.
           // is to stay the same size on screen. CSS owns the transform so the
           // clamp's number is the only thing this component decides.
-          "--pill-scale": pillCounterScale(zoom),
+
           // The handle's cursor tells the truth: a movable card offers the grab
           // (see A HANDLE FOR EVERY MOVABLE KIND above).
           "--pill-cursor": movable ? "grab" : "default",

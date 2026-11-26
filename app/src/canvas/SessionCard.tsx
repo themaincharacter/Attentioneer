@@ -20,7 +20,7 @@ import {
 } from "../map/sessions";
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
 import { IconMore, IconRun, IconStop, IconWire } from "./icons";
-import { VerbBubble, verbCounterScale } from "./VerbBubble";
+import { VerbBubble } from "./VerbBubble";
 import type { WorkingChannel } from "./workingRef";
 import { epistemicState, frameFor } from "../reading/frames";
 import { SESSION_TASK_REFUSAL, type GroundAddResult } from "./useGround";
@@ -1083,9 +1083,7 @@ export function SessionCard({
           left: session.x,
           top: session.y,
           "--preview-lines": previewLines,
-          // STORY 24-9 (ADR-0044): the verb strip counter-scales like the
-          // name pill, so its bubbles stay finger-sized at every zoom.
-          "--verb-scale": verbCounterScale(zoom),
+          // STORY 25-5: the counter-scale is the plane's shared var now.
         } as CSSProperties
       }
       data-slug={session.on}
@@ -1098,7 +1096,6 @@ export function SessionCard({
           transcript cropped it and the plane's scale shrank it away. */}
       <CardNamePill
         name={session.name}
-        zoom={zoom}
         busy={busy}
         rules={SESSION_PILL_RULES}
         renameLabel="rename this session card"
