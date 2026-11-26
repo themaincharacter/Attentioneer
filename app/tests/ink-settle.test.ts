@@ -25,16 +25,21 @@ describe("the silent ink (story 25-3)", () => {
 
   test("the appear is FELT: a lift and the ink resolving — never a glow", () => {
     // STORY 25-4 (the person: minimal never meant silent — "a simple appear
-    // that generates some dopamine is fine"). The words land, lift a hair and
-    // resolve from wet blur to crisp ink.
+    // that generates some dopamine is fine"). The words land WET — dark and
+    // dense, a hair blurred (story 25-16: the wet-to-dry ink from the brief) —
+    // and dry into their resting ink as they lift into place.
     const keyframes = CSS.slice(
       CSS.indexOf("@keyframes ink-appear"),
-      CSS.indexOf("@keyframes ink-appear") + 300,
+      CSS.indexOf("@keyframes ink-appear") + 320,
     );
     expect(keyframes).toContain("opacity: 0;");
     expect(keyframes).toContain("translateY(8px)");
-    expect(keyframes).toContain("blur(1.5px)");
-    expect(keyframes).toContain("blur(0)");
+    expect(keyframes).toContain("blur(1.6px)");
+    // WET: darker and denser than the resting ink.
+    expect(keyframes).toContain("brightness(0.82)");
+    expect(keyframes).toContain("contrast(1.35)");
+    // DRY: exactly the resting ink.
+    expect(keyframes).toContain("blur(0) brightness(1) contrast(1)");
     // But it never glows and never loops.
     expect(keyframes).not.toContain("box-shadow");
   });

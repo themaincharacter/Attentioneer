@@ -9938,24 +9938,28 @@ body.wiring .session-card-actions {
    scratch are both deferred wants). One-shot per page change; the box is
    completely still afterwards (the motion clarification's rule: the moment
    earns the motion, and it never loops). */
-/* STORY 25-14: the settle's speed is the person's knob (--settle-ms). */
+/* STORY 25-14: the settle's speed is the person's knob (--settle-ms). The
+   ease is the ink's own: quick to land, slowest at the dry (the settling
+   curve). */
 .ink-settle {
-  animation: ink-appear var(--settle-ms, 260ms) var(--ease-out);
+  animation: ink-appear var(--settle-ms, 260ms) cubic-bezier(0.22, 0.8, 0.3, 1);
 }
 
-/* STORY 25-4 (the person: "a simple appear that generates some dopamine is
-   fine" — minimal never meant silent): the words land, lift a hair, and
-   resolve from wet blur to crisp ink. Felt, not busy; no typewriter. */
+/* STORY 25-4 + 25-16 (the person: "a simple appear that generates some
+   dopamine is fine"; then the wet-to-dry ink from the brief): the words land
+   WET — dark and dense, a hair blurred — and dry into their resting ink as
+   they lift into place. The wetness is one filter on the arriving page's own
+   paint: no per-letter work, no typewriter. */
 @keyframes ink-appear {
   from {
     opacity: 0;
     transform: translateY(8px);
-    filter: blur(1.5px);
+    filter: blur(1.6px) brightness(0.82) contrast(1.35);
   }
   to {
     opacity: 1;
     transform: none;
-    filter: blur(0);
+    filter: blur(0) brightness(1) contrast(1);
   }
 }
 
