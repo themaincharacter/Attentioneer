@@ -9983,6 +9983,25 @@ body.wiring .session-card-actions {
     0 2px 6px rgb(var(--ink-rgb) / 0.12);
 }
 
+/* The footers' pin buttons (the ask and session families) sit beside their
+   open verb and read the same two words the reference's key does. */
+.ask-card-pin,
+.session-card-pin {
+  border: 1px solid var(--ink-rule);
+  border-radius: 6px;
+  background: transparent;
+  padding: 3px 10px;
+  font-family: var(--voice-quiet);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.ask-card-pin:hover,
+.session-card-pin:hover {
+  color: var(--ink);
+  border-color: var(--ink-kept);
+}
+
 
 /* THE PIN WINDOW (the person's modal, built modeless — the map stays live
    behind it): the card's own face on the glass, moved by its header. */

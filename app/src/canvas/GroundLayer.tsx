@@ -1528,6 +1528,8 @@ export function GroundLayer({
             /* STORY 21.7 — a question the command card's act left waiting. It
                reaches the composer as a DRAFT: no record, no turn, no send. */
             draft={askDrafts.find((entry) => entry.slug === ask.on)}
+          pinned={pinnedOn.includes(ask.on)}
+          onPin={() => togglePin(ask.on)}
             onForkTurn={
               onForkAsk === undefined
                 ? undefined
@@ -1670,7 +1672,9 @@ export function GroundLayer({
             running={sessionRunning.includes(session.on)}
             working={working}
             zoom={zoom}
-            open={openSessionOn === session.on}
+            pinned={pinnedOn.includes(session.on)}
+          onPin={() => togglePin(session.on)}
+          open={openSessionOn === session.on}
             previewLines={previewLines}
             onOpen={() => {
               setOpenOn(null);

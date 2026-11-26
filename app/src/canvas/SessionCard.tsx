@@ -19,6 +19,8 @@ import {
   type SessionEntry,
 } from "../map/sessions";
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
+import { createPortal } from "react-dom";
+import { PinWindow } from "./PinWindow";
 import { IconMore, IconRun, IconStop, IconWire } from "./icons";
 import { VerbBubble } from "./VerbBubble";
 import type { WorkingChannel } from "./workingRef";
@@ -350,6 +352,8 @@ export function SessionCard({
   open,
   previewLines,
   onOpen,
+  pinned = false,
+  onPin,
   onClose,
   onRun,
   onFollowUp,
@@ -559,6 +563,9 @@ export function SessionCard({
   interactionMode?: GestureMode;
   /** The one sentence a wiring drag speaks; absent in a render test. */
   onNarrate?: (gesture: GestureNarration) => void;
+  /** STORY 25-13 (ADR-0047): the pin keeps the card's face open in a window. */
+  pinned?: boolean;
+  onPin?: () => void;
 }) {
   // STORY 24-15 — THE WORKING SIGNAL: the card publishes its live run to the
   // map's working channel so the wires feeding it carry current.
@@ -1070,12 +1077,55 @@ export function SessionCard({
     newest.kind === "text" &&
     previewOverflows(newest.text, previewLines);
 
+  // STORY 25-13 (ADR-0047) — THE FACE, RENDERED TWICE: the map's token and
+  // the pin window's copy. The parameter is the FACE's own openness.
+  // (`_inWindow` earns its keep when this face pages like the reference's.)
+  const renderBody = (open: boolean, _inWindow = false) => (
+    <>
+
+        {open ? (
+          entries.length === 0 ? (
+            <div className="session-card-empty">{SESSION_EMPTY_SENTENCE}</div>
+          ) : (
+            <div
+              className="session-card-transcript"
+              aria-live={running ? "polite" : undefined}
+            >
+              {entries.map((entry, index) => (
+                <SessionEntryLine key={index} entry={entry} />
+              ))}
+            </div>
+          )
+        ) : newest === null ? (
+          <div className="session-card-empty">{SESSION_EMPTY_SENTENCE}</div>
+        ) : (
+          <div className="session-card-transcript">
+            <SessionEntryLine entry={newest} crop={previewLines} />
+          </div>
+        )}
+        {smallFolded && (
+          <div className="ground-fold">
+            <div className="ground-fade" aria-hidden="true" />
+            <button
+              type="button"
+              className="ground-more"
+              title="open the card"
+              onClick={onOpen}
+            >
+              more
+            </button>
+          </div>
+        )}
+      
+    </>
+  );
+
   return (
     <div
       ref={cardRef}
       className={`session-card ${frameFor(
         epistemicState({ absentWords: toolName === null }),
-      )}${open ? " expanded" : ""}`}
+      )}${open ? " expanded" : ""}${pinned ? " pinned" : ""}`}
       style={
         {
           // STORY 16.25: the RECORD's point is what React renders; the hand's
@@ -1133,39 +1183,7 @@ export function SessionCard({
         </button>
       )}
       <div className="session-card-body" ref={bodyRef} onScroll={trackScroll}>
-        {open ? (
-          entries.length === 0 ? (
-            <div className="session-card-empty">{SESSION_EMPTY_SENTENCE}</div>
-          ) : (
-            <div
-              className="session-card-transcript"
-              aria-live={running ? "polite" : undefined}
-            >
-              {entries.map((entry, index) => (
-                <SessionEntryLine key={index} entry={entry} />
-              ))}
-            </div>
-          )
-        ) : newest === null ? (
-          <div className="session-card-empty">{SESSION_EMPTY_SENTENCE}</div>
-        ) : (
-          <div className="session-card-transcript">
-            <SessionEntryLine entry={newest} crop={previewLines} />
-          </div>
-        )}
-        {smallFolded && (
-          <div className="ground-fold">
-            <div className="ground-fade" aria-hidden="true" />
-            <button
-              type="button"
-              className="ground-more"
-              title="open the card"
-              onClick={onOpen}
-            >
-              more
-            </button>
-          </div>
-        )}
+        {renderBody(open, false)}
       </div>
       {problem !== null && (
         <div className="session-card-problem" role="status">
@@ -1651,9 +1669,27 @@ export function SessionCard({
           </div>
         </div>
       )}
+      {/* STORY 25-13 (ADR-0047) — THE PIN WINDOW: the card's own face,
+          rendered twice — the token above and the glass here. */}
+      {pinned &&
+        createPortal(
+          <PinWindow name={session.name} onClose={() => onPin?.()}>
+            <div className="session-card-body">{renderBody(true, true)}</div>
+          </PinWindow>,
+          document.body,
+        )}
       {!open && (
         <div className="session-card-footer">
-          <button type="button" className="session-card-open" onClick={onOpen}>
+          {onPin !== undefined && (
+          <button
+            type="button"
+            className="session-card-pin"
+            onClick={() => onPin()}
+          >
+            {pinned ? "unpin" : "pin"}
+          </button>
+        )}
+        <button type="button" className="session-card-open" onClick={onOpen}>
             open
           </button>
         </div>

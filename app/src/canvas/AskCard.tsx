@@ -56,6 +56,8 @@ import { PacketSurface } from "./PacketSurface";
 import { STEP_LIMIT_SENTENCE } from "../turn/steps";
 import { PROVIDER_SENTENCES } from "../turn/providers";
 import { CardNamePill, type PillNameRules } from "./CardNamePill";
+import { createPortal } from "react-dom";
+import { PinWindow } from "./PinWindow";
 import type { GroundAddResult } from "./useGround";
 
 /**
@@ -528,6 +530,8 @@ export function AskCard({
   autoAsk,
   onAutoAsked,
   draft,
+  pinned = false,
+  onPin,
   interactionMode = "idle",
   onNarrate,
   drag,
@@ -706,6 +710,9 @@ export function AskCard({
    * makes it ONCE, so a re-render cannot refill a field the person edited.
    */
   draft?: { question: string; token: number };
+  /** STORY 25-13 (ADR-0047): the pin keeps the card's face open in a window. */
+  pinned?: boolean;
+  onPin?: () => void;
   /** The gesture gate, so a wiring drag never starts under an armed tool. */
   interactionMode?: GestureMode;
   /** The one sentence a wiring drag speaks; absent in a render test. */
@@ -1328,99 +1335,12 @@ export function AskCard({
   const smallFolded =
     !open && smallTurn !== null && previewOverflows(smallTurn.text, previewLines);
 
-  return (
-    <div
-      ref={cardRef}
-      className={`ask-card ${frameFor(
-        epistemicState({ absentWords: turns.length === 0 }),
-      )}${open ? " expanded" : ""}`}
-      style={
-        {
-          // STORY 16.25: the RECORD's point is what React renders; the hand's
-          // own frame is written on the element, so a drag re-renders nothing.
-          left: ask.x,
-          top: ask.y,
-          "--preview-lines": previewLines,
-          // STORY 25-5: the counter-scale is the plane's shared var now.
-        } as CSSProperties
-      }
-      data-slug={ask.on}
-      data-working={running ? "" : undefined}
-    >
-      {/* STORY 16.22 — THE NAME FLOATS ABOVE THE ASK CARD, in the SAME pill the
-          reference cards wear (one component, one counter-scale, one rename
-          field). The name left the card's body because the body's own thread
-          cropped it and the plane's scale shrank it; the pill is legible at any
-          zoom and is this card's one place a name changes. The card's OWN name
-          rules ride in (ASK_PILL_RULES): a blank field is a REFUSAL here, so no
-          placeholder is ever stored. */}
-      <CardNamePill
-        name={ask.name}
-        busy={busy}
-        rules={ASK_PILL_RULES}
-        renameLabel="rename this ask card"
-        onRename={
-          onRename === undefined
-            ? undefined
-            : async (name: string) => {
-                const result = await onRename(name);
-                // A refused write is one sentence on the card, never a name that
-                // quietly snaps back for no stated reason.
-                if (!result.ok) setProblem(result.message);
-                return result;
-              }
-        }
-      />
-      {/* STORY 17.6 — WHEN THE ANCHOR IS GONE the second line STATES it: the
-          name the record remembered, and that the card is gone. It clears by
-          itself when the anchor resolves again (the deleted card's own
-          Restore) — a consequence of the field, never a repair. STORY 17.10
-          keeps this sentence: it is still true of an old record. */}
-      <div className="ask-card-kind">
-        {/* STORY 17.10 — AN ABSENT ANCHOR IS NOT A DANGLING ONE. A peer ask
-            says what it is; a legacy card with an anchor still says what it was
-            about, or states the dangling sentence (17.6, kept). */}
-        {ask.anchor === undefined
-          ? ASK_PEER_LINE
-          : anchorName === null
-            ? askDanglingLine(ask.anchorName ?? null)
-            : askKindLine(anchorName)}
-      </div>
-      {/* STORY 17.9 — WHAT THIS CARD HAS WIRED INTO IT. STORY 16.27 keeps it as
-          ONE short line above the thread (the face) and moves the FULL list into
-          the declaration, where the same press that shows the bytes shows every
-          wire. The line truncates; nothing is dropped, only shortened. A gone
-          wire is still SAID here (it is news when it happens), once, never
-          repaired. When nothing is wired the face says nothing at all — the one
-          quiet sentence lives in the declaration with the rest of the list. */}
-      {open && (context.length > 0 || contextMissing) && (
-        <div className="ask-card-context">
-          {context.length > 0 && (
-            <div className="ask-card-context-line">
-              {ASK_CONTEXT_LABEL}
-              {context.map((card) => card.name).join(" · ")}
-            </div>
-          )}
-          {contextMissing && (
-            <div className="ask-card-context-missing">
-              {ASK_CONTEXT_DANGLING}
-            </div>
-          )}
-        </div>
-      )}
-      {/* STORY 17.9 — THE WIRING HANDLE: an ask card is wired INTO, and may
-          also be a wire's source (an ask's answer is context for another ask). */}
-      {onLink !== undefined && (
-        <button
-          type="button"
-          className="ground-link-handle"
-          aria-label="wire this card to another"
-        >
-          <IconWire />
-          <span className="verb-tip">wire this card to another</span>
-        </button>
-      )}
-      <div className="ask-card-body" ref={bodyRef} onScroll={trackScroll}>
+  // STORY 25-13 (ADR-0047) — THE FACE, RENDERED TWICE: the map's token and
+  // the pin window's copy. The parameter is the FACE's own openness.
+  // (`_inWindow` earns its keep when this face pages like the reference's.)
+  const renderBody = (open: boolean, _inWindow = false) => (
+    <>
+
         {open ? (
           <div className="ask-card-thread">
             {/* STORY 17.5 — THE FORK'S THREAD: the carried prefix first, one
@@ -1540,6 +1460,104 @@ export function AskCard({
             </button>
           </div>
         )}
+      
+    </>
+  );
+
+  return (
+    <div
+      ref={cardRef}
+      className={`ask-card ${frameFor(
+        epistemicState({ absentWords: turns.length === 0 }),
+      )}${open ? " expanded" : ""}${pinned ? " pinned" : ""}`}
+      style={
+        {
+          // STORY 16.25: the RECORD's point is what React renders; the hand's
+          // own frame is written on the element, so a drag re-renders nothing.
+          left: ask.x,
+          top: ask.y,
+          "--preview-lines": previewLines,
+          // STORY 25-5: the counter-scale is the plane's shared var now.
+        } as CSSProperties
+      }
+      data-slug={ask.on}
+      data-working={running ? "" : undefined}
+    >
+      {/* STORY 16.22 — THE NAME FLOATS ABOVE THE ASK CARD, in the SAME pill the
+          reference cards wear (one component, one counter-scale, one rename
+          field). The name left the card's body because the body's own thread
+          cropped it and the plane's scale shrank it; the pill is legible at any
+          zoom and is this card's one place a name changes. The card's OWN name
+          rules ride in (ASK_PILL_RULES): a blank field is a REFUSAL here, so no
+          placeholder is ever stored. */}
+      <CardNamePill
+        name={ask.name}
+        busy={busy}
+        rules={ASK_PILL_RULES}
+        renameLabel="rename this ask card"
+        onRename={
+          onRename === undefined
+            ? undefined
+            : async (name: string) => {
+                const result = await onRename(name);
+                // A refused write is one sentence on the card, never a name that
+                // quietly snaps back for no stated reason.
+                if (!result.ok) setProblem(result.message);
+                return result;
+              }
+        }
+      />
+      {/* STORY 17.6 — WHEN THE ANCHOR IS GONE the second line STATES it: the
+          name the record remembered, and that the card is gone. It clears by
+          itself when the anchor resolves again (the deleted card's own
+          Restore) — a consequence of the field, never a repair. STORY 17.10
+          keeps this sentence: it is still true of an old record. */}
+      <div className="ask-card-kind">
+        {/* STORY 17.10 — AN ABSENT ANCHOR IS NOT A DANGLING ONE. A peer ask
+            says what it is; a legacy card with an anchor still says what it was
+            about, or states the dangling sentence (17.6, kept). */}
+        {ask.anchor === undefined
+          ? ASK_PEER_LINE
+          : anchorName === null
+            ? askDanglingLine(ask.anchorName ?? null)
+            : askKindLine(anchorName)}
+      </div>
+      {/* STORY 17.9 — WHAT THIS CARD HAS WIRED INTO IT. STORY 16.27 keeps it as
+          ONE short line above the thread (the face) and moves the FULL list into
+          the declaration, where the same press that shows the bytes shows every
+          wire. The line truncates; nothing is dropped, only shortened. A gone
+          wire is still SAID here (it is news when it happens), once, never
+          repaired. When nothing is wired the face says nothing at all — the one
+          quiet sentence lives in the declaration with the rest of the list. */}
+      {open && (context.length > 0 || contextMissing) && (
+        <div className="ask-card-context">
+          {context.length > 0 && (
+            <div className="ask-card-context-line">
+              {ASK_CONTEXT_LABEL}
+              {context.map((card) => card.name).join(" · ")}
+            </div>
+          )}
+          {contextMissing && (
+            <div className="ask-card-context-missing">
+              {ASK_CONTEXT_DANGLING}
+            </div>
+          )}
+        </div>
+      )}
+      {/* STORY 17.9 — THE WIRING HANDLE: an ask card is wired INTO, and may
+          also be a wire's source (an ask's answer is context for another ask). */}
+      {onLink !== undefined && (
+        <button
+          type="button"
+          className="ground-link-handle"
+          aria-label="wire this card to another"
+        >
+          <IconWire />
+          <span className="verb-tip">wire this card to another</span>
+        </button>
+      )}
+      <div className="ask-card-body" ref={bodyRef} onScroll={trackScroll}>
+        {renderBody(open, false)}
       </div>
       {/* STORY 16.27 — THE HONEST SENTENCES STAND OUTSIDE THE THREAD. Story
           17.7b's two facts and 17.11's no-card line describe the turn that just
@@ -1720,8 +1738,26 @@ export function AskCard({
           )}
         </div>
       )}
+      {/* STORY 25-13 (ADR-0047) — THE PIN WINDOW: the card's own face,
+          rendered twice — the token above and the glass here. */}
+      {pinned &&
+        createPortal(
+          <PinWindow name={ask.name} onClose={() => onPin?.()}>
+            <div className="ask-card-body">{renderBody(true, true)}</div>
+          </PinWindow>,
+          document.body,
+        )}
       {!open && (
         <div className="ask-card-footer">
+          {onPin !== undefined && (
+            <button
+              type="button"
+              className="ask-card-pin"
+              onClick={() => onPin()}
+            >
+              {pinned ? "unpin" : "pin"}
+            </button>
+          )}
           <button
             type="button"
             className="ask-card-open"

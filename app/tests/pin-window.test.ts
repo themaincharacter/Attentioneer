@@ -86,6 +86,26 @@ describe("the pin window (story 25-11)", () => {
     expect(LAYER).toContain("fill={inWindow}");
   });
 
+  test("every card family carries the pin (story 25-13)", () => {
+    // The ask and session footers pin beside their open verb, and each
+    // family's window shows its OWN face (the renderBody seam).
+    for (const [file, body, name] of [
+      ["AskCard.tsx", "ask-card-body", "ask.name"],
+      ["SessionCard.tsx", "session-card-body", "session.name"],
+    ] as const) {
+      const src = readFileSync(
+        join(import.meta.dir, "../src/canvas/" + file),
+        "utf8",
+      );
+      expect(src).toContain("const renderBody = (open: boolean");
+      expect(src).toContain("renderBody(open, false)");
+      expect(src).toContain("renderBody(true, true)");
+      expect(src).toContain('<div className="' + body + '">{renderBody(true, true)}</div>');
+      expect(src).toContain("<PinWindow name={" + name + "}");
+      expect(src).toContain('{pinned ? "unpin" : "pin"}');
+    }
+  });
+
   test("the window moves by its header and the body stays text", () => {
     const PW = readFileSync(
       join(import.meta.dir, "../src/canvas/PinWindow.tsx"),
