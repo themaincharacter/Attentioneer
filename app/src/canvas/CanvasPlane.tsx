@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -287,6 +286,11 @@ export function CanvasPlane({
   // through these — never through a render.
   const innerRef = useRef<HTMLDivElement>(null);
   const chipRef = useRef<HTMLDivElement>(null);
+  // STORY 25-7: the grid rides the camera transform (no per-frame repaint),
+  // and the per-frame writes are quantized (last value wins).
+  const gridRef = useRef<HTMLDivElement>(null);
+  const scaleShownRef = useRef<number>(-1);
+  const fadeShownRef = useRef<number>(-1);
   // STORY 25-6: the glide's shown/target pair (the wheel eases toward its
   // step; a pan and a pinch stay instant — the hand holds the content).
   const shownRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
@@ -412,20 +416,27 @@ export function CanvasPlane({
         inner.style.transform =
           "translate(" + cam.x + "px, " + cam.y + "px) scale(" + cam.zoom + ")";
       }
-      el.style.backgroundPosition = cam.x + "px " + cam.y + "px";
-      el.style.backgroundSize = GRID * cam.zoom + "px " + GRID * cam.zoom + "px";
+      // STORY 25-7 — THE FRAME BUDGET: the grid no longer repaints with the
+      // camera (it rides the transform below — a composited scale, no paint),
+      // and the shared scale is QUANTIZED so a slow glide changes it in
+      // visible-meaningful steps only. Both were per-frame work on every card
+      // and the whole plane — the dropped frames the person sees as jitter.
       // (The counting words are banned from surface code — this is a scale.)
-      const shared = pillCounterScale(cam.zoom);
-      el.style.setProperty("--pill-scale", String(shared));
-      el.style.setProperty("--verb-scale", String(shared));
-      // STORY 25-6 — THE GRID FADES toward the pixel grid: a hairline pattern
-      // at a 6-7px pitch beats against the screen and reads as JITTER while the
-      // zoom moves (the person's gif was at 25%, where the bench's grid is
-      // densest). The bench keeps its material at working pitches and goes
-      // quiet at the far ones — the classic map answer, and nothing the map
-      // carries is lost.
-      const fade = Math.min(1, Math.max(0, (GRID * cam.zoom - 4) / 8));
-      el.style.setProperty("--grid-fade", String(fade));
+      const shared = Number(pillCounterScale(cam.zoom).toFixed(2));
+      if (shared !== scaleShownRef.current) {
+        scaleShownRef.current = shared;
+        el.style.setProperty("--pill-scale", String(shared));
+        el.style.setProperty("--verb-scale", String(shared));
+      }
+      const fade = Math.round(Math.min(1, Math.max(0, (GRID * cam.zoom - 4) / 8)) * 20) / 20;
+      const grid = gridRef.current;
+      if (grid !== null && fade !== fadeShownRef.current) {
+        fadeShownRef.current = fade;
+        grid.style.setProperty("--grid-fade", String(fade));
+      }
+      // (The fade: a hairline pattern at a 6-7px pitch beats against the
+      // screen — the bench keeps its material at working pitches and goes
+      // quiet at the far ones.)
       const chip = chipRef.current;
       if (chip !== null) chip.textContent = zoomChipPercent(cam.zoom) + "%";
     };
@@ -774,17 +785,15 @@ export function CanvasPlane({
     }
   }, [camera]);
 
-  const gridStyle: CSSProperties = {
-    backgroundPosition: `${camera.x}px ${camera.y}px`,
-    backgroundSize: `${GRID * camera.zoom}px ${GRID * camera.zoom}px`,
-  };
+  // STORY 25-7: the grid rides the camera transform (a child of plane-inner),
+  // so it tracks the camera with NOTHING written per frame — the old
+  // gridStyle rewrote the plane's whole background every tick.
 
   return (
     <PlaneContext.Provider value={planeApi}>
       <div
         ref={planeRef}
         className={`plane${gestureMode !== "idle" ? " gesture-armed" : ""}${lassoArmed ? " lasso-armed" : ""}${boxArmed ? " veil-armed" : ""}${drawArmed ? " draw-armed" : ""}${selectArmed ? " select-armed" : ""}${picking ? " ring-picking" : ""}`}
-        style={gridStyle}
         data-map={mapId}
         onDoubleClick={handleDoubleClick}
       >
@@ -795,6 +804,12 @@ export function CanvasPlane({
             transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`,
           }}
         >
+          {/* STORY 25-7 — THE GRID RIDES THE TRANSFORM: its tile is fixed in
+              WORLD units inside the scaled layer, so panning and zooming move
+              it with the map and nothing repaints per frame. (It used to be
+              the plane's own background, rewritten every frame — the whole
+              plane repainted on every tick of a zoom.) */}
+          <div ref={gridRef} className="plane-grid" aria-hidden="true" />
           {children}
           {lassoPath && lassoPath.length > 1 && (
             <svg className="lasso" aria-hidden="true">

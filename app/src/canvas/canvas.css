@@ -131,13 +131,8 @@ body {
   inset: 0;
   overflow: hidden;
   background-color: #f7f6f3;
-  /* Dot grid; background-position/size track the camera (set inline in
-     CanvasPlane) so the plane visibly pans and zooms even when empty. */
-  background-image: radial-gradient(
-    circle,
-    rgba(216, 212, 204, calc(0.95 * var(--grid-fade, 1))) 1px,
-    transparent 1px
-  );
+  /* The dot grid lives on .plane-grid (story 25-7) — it rides the camera
+     transform, so the plane visibly pans and zooms even when empty. */
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -147,24 +142,11 @@ body {
    a warm working surface the cards rest ON: tone plus a faint PLATE grid where
    the other maps keep the dot grid. Scoped by the plane's data-map attribute,
    so the concept and dynamics maps are untouched (ADR-0043's out-list). The
-   grid layers keep the dots' own camera behaviour — background-position and
-   -size are set inline in CanvasPlane and apply to every layer — so the bench
-   pans and zooms with the map. PROVISIONAL: the tone and the grain's rung. */
+   the grid lives on .plane-grid (story 25-7: it rides the camera transform),
+   so the bench pans and zooms with the map and nothing repaints per frame.
+   PROVISIONAL: the tone and the grain's rung. */
 .plane[data-map="ground"] {
   background-color: #e6dccb;
-  /* STORY 25-6: the grid fades toward the pixel grid (--grid-fade, written
-     per camera frame) — a hairline pattern at a 6-7px pitch beats against the
-     screen and reads as jitter while the zoom moves. */
-  background-image: linear-gradient(
-      to right,
-      rgb(30 33 38 / calc(0.08 * var(--grid-fade, 1))) 1px,
-      transparent 1px
-    ),
-    linear-gradient(
-      to bottom,
-      rgb(30 33 38 / calc(0.08 * var(--grid-fade, 1))) 1px,
-      transparent 1px
-    );
 }
 
 .plane.dragging {
@@ -6605,6 +6587,50 @@ body {
     /* No travel: the bright core above is the whole signal. */
     display: none;
   }
+}
+
+/* STORY 25-7 — THE GRID RIDES THE TRANSFORM. Its tile is fixed in WORLD units
+   inside the scaled layer, so panning and zooming move it with the map and
+   NOTHING repaints per frame (it used to be the plane's own background,
+   rewritten on every tick — the whole plane repainted while the zoom moved).
+   The fade (--grid-fade, quantized per camera frame) keeps the hairlines from
+   beating against the pixel grid at far pitches. */
+.plane-grid {
+  position: absolute;
+  left: -50000px;
+  top: -50000px;
+  width: 100000px;
+  height: 100000px;
+  background-repeat: repeat;
+  background-size: 28px 28px;
+  background-image: radial-gradient(
+    circle,
+    rgba(216, 212, 204, calc(0.95 * var(--grid-fade, 1))) 1px,
+    transparent 1px
+  );
+}
+
+.plane[data-map="ground"] .plane-grid {
+  background-image: linear-gradient(
+      to right,
+      rgb(30 33 38 / calc(0.08 * var(--grid-fade, 1))) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      rgb(30 33 38 / calc(0.08 * var(--grid-fade, 1))) 1px,
+      transparent 1px
+    );
+}
+
+/* STORY 25-7 — GLYPHS KEEP FRACTIONAL POSITIONS: under a moving scale,
+   hinted glyphs snap to the pixel grid and the cards' TEXT visibly jitters
+   (the person: "the cards definitely seem to be jittering on zoom").
+   geometricPrecision turns that snap off. */
+.ground-reference,
+.ask-card,
+.session-card {
+  text-rendering: geometricPrecision;
 }
 
 /* STORY 24-10 (ADR-0044, rule 6) — THE STEP-ASIDE. While a wire is being

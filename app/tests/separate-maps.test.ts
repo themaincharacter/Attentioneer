@@ -220,7 +220,9 @@ describe("the render paths ask the ONE rule", () => {
     expect(APP).toContain("{drawArmed && (");
     expect(PLANE).toContain('className="zoom-chip"');
     // The plane's chrome is untouched: pan, zoom and the grid still render.
-    expect(PLANE).toContain("gridStyle");
+    // STORY 25-7: the grid rides the camera transform (inside plane-inner),
+    // so it renders AND tracks the camera with nothing repainting per frame.
+    expect(PLANE).toContain('className="plane-grid"');
     expect(PLANE).toContain("onZoomSettle");
   });
 
