@@ -9975,11 +9975,14 @@ body.wiring .session-card-actions {
   --ink-kept: #b8933f;
 }
 
-.ground-reference.pinned {
+.ground-reference.pinned,
+.ask-card.pinned,
+.session-card.pinned {
   box-shadow:
     0 0 0 1px var(--ink-kept),
     0 2px 6px rgb(var(--ink-rgb) / 0.12);
 }
+
 
 /* THE PIN WINDOW (the person's modal, built modeless — the map stays live
    behind it): the card's own face on the glass, moved by its header. */
