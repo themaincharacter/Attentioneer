@@ -193,6 +193,20 @@ describe("the intent row gains an ask door", () => {
     expect(html).not.toContain(">a video</button>");
   });
 
+  test("one web link: the oEmbed look first, the page behind it (story 25-19)", () => {
+    // The menu offers ONE option for a link; the BUBBLE owns the try-both (the
+    // app's wiring stays family-blind), and the media record's kind says which
+    // flow wrote it.
+    const commit = between(BUBBLE, "async function commitAddress", "async function chooseFile");
+    expect(commit).toContain(
+      'const look = onAddVideo !== undefined ? await onAddVideo(named, url) : null;',
+    );
+    expect(commit).toContain("look !== null && look.ok");
+    expect(commit).toContain("await (onAddPage?.(named, url) ??");
+    // The wiring is untouched by the consolidation: still family-blind.
+    expect(commit).not.toContain("wireHookedCreate");
+  });
+
   test("the wire's menu is the restricted one (story 25-19)", () => {
     // The person asked to be corrected if wrong — they were right: a
     // reference-to-reference wire is read by nothing (the wire's only reader

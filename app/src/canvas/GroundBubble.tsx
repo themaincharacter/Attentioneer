@@ -137,6 +137,7 @@ interface GroundBubbleProps {
    * thumbnail. A refusal is one sentence and nothing is created.
    */
   onAddVideo?: (name: string, url: string) => Promise<GroundAddResult>;
+
   /**
    * STORY 18.3 — make a SESSION CARD at this point, bound to one tool row. The
    * row is named by id (`turn/acpSpecs.ts`), never by a key or a command, and a
@@ -283,27 +284,38 @@ export function GroundBubble({
     nameRef.current?.focus();
   }
 
-  /** Commit a pasted address through the intent's own door. */
+  /**
+   * STORY 25-19 (the person's consolidation) — ONE WEB LINK. The address is
+   * tried as a VIDEO's oEmbed look first (a host that answers one keeps its
+   * title and a thumbnail) and falls back to the page's own fetch; the media
+   * record's kind says which flow wrote it. The BUBBLE owns the try-both —
+   * the app's wiring stays family-blind — and the video's own door keeps its
+   * writer for the flip-back. A blank name is named from the address's own
+   * words (webLinkName, the same rule a pasted link has always used).
+   */
   async function commitAddress() {
     if (doneRef.current || busy) return;
-    const add = intent === "video" ? onAddVideo : onAddPage;
-    if (add === undefined) return;
-    // STORY 24-16: a blank name is named from the address's own words
-    // (webLinkName — the same rule a pasted link has always used).
     const trimmed = name.trim();
     const named = trimmed === "" ? webLinkName(url) : trimmed;
     if (url.trim() === "") {
-      setProblem(
-        intent === "video"
-          ? "paste a video's address first."
-          : "paste a web page's address first.",
-      );
+      setProblem("paste a web link's address first.");
       return;
     }
     setBusy(true);
     setProblem(null);
     // STORED VERBATIM: the address is never trimmed, normalized or repaired.
-    const result = await add(named, url);
+    let result: GroundAddResult = { ok: false, message: "nothing was written." };
+    if (intent === "video") {
+      // The flip-back's own door: the video writer alone.
+      if (onAddVideo !== undefined) result = await onAddVideo(named, url);
+    } else {
+      const look = onAddVideo !== undefined ? await onAddVideo(named, url) : null;
+      result =
+        look !== null && look.ok
+          ? look
+          : await (onAddPage?.(named, url) ??
+              Promise.resolve({ ok: false, message: "nothing was written." }));
+    }
     if (result.ok) {
       doneRef.current = true;
       onClose();
